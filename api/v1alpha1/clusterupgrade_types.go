@@ -46,16 +46,19 @@ type ImageBasedClusterUpgradeSpec struct {
 	RollbackTarget   string       `json:"rollbackTarget,omitempty"`
 }
 
+// SeedImageRef defines the seed image and OCP version for the upgrade
 type SeedImageRef struct {
 	Version string `json:"version,omitempty"`
 	Image   string `json:"image,omitempty"`
 }
 
+// ConfigMapRef defines a reference to a config map
 type ConfigMapRef struct {
 	Name      string `json:"name,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// ImageBasedClusterUpgradeStatus defines the observed state of ImageBasedClusterUpgrade
 type ImageBasedClusterUpgradeStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Status"
 	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
@@ -64,15 +67,18 @@ type ImageBasedClusterUpgradeStatus struct {
 	StateRoots         []StateRoot `json:"stateRoots,omitempty"`
 }
 
+// StateRoot defines a list of saved pod states and the running OCP version when they are saved
 type StateRoot struct {
 	Version   string     `json:"version,omitempty"`
 	PodStates []PodState `json:"podStates,omitempty"`
 }
 
+// PodState defines a saved pod state
 type PodState struct {
 }
 
 // +kubebuilder:object:root=true
+
 // ImageBasedClusterUpgradeList contains a list of ImageBasedClusterUpgrade
 type ImageBasedClusterUpgradeList struct {
 	metav1.TypeMeta `json:",inline"`

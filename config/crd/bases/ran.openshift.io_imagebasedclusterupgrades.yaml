@@ -43,6 +43,7 @@ spec:
               ImageBasedClusterUpgrade
             properties:
               additionalImages:
+                description: ConfigMapRef defines a reference to a config map
                 properties:
                   name:
                     type: string
@@ -50,6 +51,7 @@ spec:
                     type: string
                 type: object
               extraManifests:
+                description: ConfigMapRef defines a reference to a config map
                 properties:
                   name:
                     type: string
@@ -57,6 +59,7 @@ spec:
                     type: string
                 type: object
               oadpContent:
+                description: ConfigMapRef defines a reference to a config map
                 properties:
                   name:
                     type: string
@@ -66,6 +69,8 @@ spec:
               rollbackTarget:
                 type: string
               seedImageRef:
+                description: SeedImageRef defines the seed image and OCP version for
+                  the upgrade
                 properties:
                   image:
                     type: string
@@ -76,6 +81,8 @@ spec:
                 type: string
             type: object
           status:
+            description: ImageBasedClusterUpgradeStatus defines the observed state
+              of ImageBasedClusterUpgrade
             properties:
               completedAt:
                 format: date-time
@@ -88,9 +95,12 @@ spec:
                 type: string
               stateRoots:
                 items:
+                  description: StateRoot defines a list of saved pod states and the
+                    running OCP version when they are saved
                   properties:
                     podStates:
                       items:
+                        description: PodState defines a saved pod state
                         type: object
                       type: array
                     version:

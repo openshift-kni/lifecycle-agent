@@ -45,7 +45,7 @@ common-deps-update:	controller-gen kustomize
 	go mod tidy
 
 .PHONY: ci-job	
-ci-job: common-deps-update generate fmt vet test
+ci-job: common-deps-update generate fmt vet lint golangci-lint test
 
 
 
