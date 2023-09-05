@@ -1,0 +1,105 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+  name: imagebasedclusterupgrades.ran.openshift.io
+spec:
+  group: ran.openshift.io
+  names:
+    kind: ImageBasedClusterUpgrade
+    listKind: ImageBasedClusterUpgradeList
+    plural: imagebasedclusterupgrades
+    shortNames:
+    - icu
+    singular: imagebasedclusterupgrade
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ImageBasedClusterUpgrade is the Schema for the ImageBasedClusterUpgrades
+          API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ImageBasedClusterUpgradeSpec defines the desired state of
+              ImageBasedClusterUpgrade
+            properties:
+              additionalImages:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                type: object
+              extraManifests:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                type: object
+              oadpContent:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                type: object
+              rollbackTarget:
+                type: string
+              seedImageRef:
+                properties:
+                  image:
+                    type: string
+                  version:
+                    type: string
+                type: object
+              stage:
+                type: string
+            type: object
+          status:
+            properties:
+              completedAt:
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              startedAt:
+                format: date-time
+                type: string
+              stateRoots:
+                items:
+                  properties:
+                    podStates:
+                      items:
+                        type: object
+                      type: array
+                    version:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

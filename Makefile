@@ -1,4 +1,8 @@
-
+CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
+OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
+KUSTOMIZE = $(shell pwd)/bin/kustomize
+# Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
+CRD_OPTIONS ?= "crd"
 
 test:
 	@echo "Stub test target"
@@ -43,9 +47,7 @@ common-deps-update:	controller-gen kustomize
 .PHONY: ci-job	
 ci-job: common-deps-update generate fmt vet test
 
-CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
-KUSTOMIZE = $(shell pwd)/bin/kustomize
+
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v4@v4.5.4)
