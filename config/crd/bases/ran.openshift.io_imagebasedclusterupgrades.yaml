@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.13.0
-  name: imagebasedclusterupgrades.ran.openshift.io
+  name: imagebasedupgrades.ran.openshift.io
 spec:
   group: ran.openshift.io
   names:
-    kind: ImageBasedClusterUpgrade
-    listKind: ImageBasedClusterUpgradeList
-    plural: imagebasedclusterupgrades
+    kind: ImageBasedUpgrade
+    listKind: ImageBasedUpgradeList
+    plural: imagebasedupgrades
     shortNames:
     - icu
-    singular: imagebasedclusterupgrade
+    singular: imagebasedupgrade
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -23,7 +23,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ImageBasedClusterUpgrade is the Schema for the ImageBasedClusterUpgrades
+        description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades
           API
         properties:
           apiVersion:
@@ -39,8 +39,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: ImageBasedClusterUpgradeSpec defines the desired state of
-              ImageBasedClusterUpgrade
+            description: ImageBasedUpgradeSpec defines the desired state of
+              ImageBasedUpgrade
             properties:
               additionalImages:
                 description: ConfigMapRef defines a reference to a config map
@@ -81,8 +81,8 @@ spec:
                 type: string
             type: object
           status:
-            description: ImageBasedClusterUpgradeStatus defines the observed state
-              of ImageBasedClusterUpgrade
+            description: ImageBasedUpgradeStatus defines the observed state
+              of ImageBasedUpgrade
             properties:
               completedAt:
                 format: date-time

@@ -23,21 +23,21 @@ import (
 // +genclient
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:path=imagebasedclusterupgrades,shortName=icu
+//+kubebuilder:resource:path=imagebasedupgrades,shortName=ibu
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// ImageBasedClusterUpgrade is the Schema for the ImageBasedClusterUpgrades API
+// ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
 // +operator-sdk:csv:customresourcedefinitions:displayName="Image-based Cluster Upgrade",resources={{Namespace, v1},{Deployment,apps/v1}}
-type ImageBasedClusterUpgrade struct {
+type ImageBasedUpgrade struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ImageBasedClusterUpgradeSpec   `json:"spec,omitempty"`
-	Status ImageBasedClusterUpgradeStatus `json:"status,omitempty"`
+	Spec   ImageBasedUpgradeSpec   `json:"spec,omitempty"`
+	Status ImageBasedUpgradeStatus `json:"status,omitempty"`
 }
 
-// ImageBasedClusterUpgradeSpec defines the desired state of ImageBasedClusterUpgrade
-type ImageBasedClusterUpgradeSpec struct {
+// ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
+type ImageBasedUpgradeSpec struct {
 	Stage            string       `json:"stage,omitempty"`
 	SeedImageRef     SeedImageRef `json:"seedImageRef,omitempty"`
 	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
@@ -58,8 +58,8 @@ type ConfigMapRef struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// ImageBasedClusterUpgradeStatus defines the observed state of ImageBasedClusterUpgrade
-type ImageBasedClusterUpgradeStatus struct {
+// ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
+type ImageBasedUpgradeStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Status"
 	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
 	StartedAt          metav1.Time `json:"startedAt,omitempty"`
@@ -79,13 +79,13 @@ type PodState struct {
 
 // +kubebuilder:object:root=true
 
-// ImageBasedClusterUpgradeList contains a list of ImageBasedClusterUpgrade
-type ImageBasedClusterUpgradeList struct {
+// ImageBasedUpgradeList contains a list of ImageBasedUpgrade
+type ImageBasedUpgradeList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ImageBasedClusterUpgrade `json:"items"`
+	Items           []ImageBasedUpgrade `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ImageBasedClusterUpgrade{}, &ImageBasedClusterUpgradeList{})
+	SchemeBuilder.Register(&ImageBasedUpgrade{}, &ImageBasedUpgradeList{})
 }
