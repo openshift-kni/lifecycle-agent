@@ -1,0 +1,53 @@
+
+# Prometheus Monitor Service (Metrics)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/name: lifecycle-agent-operator
+    app.kubernetes.io/component: lifecycle-agent
+    control-plane: controller-manager
+  name: controller-manager-metrics-monitor
+  namespace: system
+spec:
+  endpoints:
+    - path: /metrics
+      port: https
+      scheme: https
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lifecycle-agent-operator
+      app.kubernetes.io/component: lifecycle-agent
+      control-plane: controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-metrics-reader
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - endpoints
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: prometheus-k8s
+  namespace: openshift-monitoring

@@ -71,7 +71,7 @@ func main() {
 		Scheme:                 scheme,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "9a2365a3.openshift.io",
+		LeaderElectionID:       "lca.ran.openshift.io",
 		Metrics: server.Options{
 			BindAddress: metricsAddr,
 		},

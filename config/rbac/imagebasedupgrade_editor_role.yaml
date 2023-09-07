@@ -1,0 +1,24 @@
+# permissions for end users to edit ClusterGroupUpgrades.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ImageBasedUpgrade-editor-role
+rules:
+- apiGroups:
+  - ran.openshift.io
+  resources:
+  - ImageBasedUpgrades
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ran.openshift.io
+  resources:
+  - ImageBasedUpgrades/status
+  verbs:
+  - get

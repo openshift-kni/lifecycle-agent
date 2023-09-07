@@ -41,7 +41,7 @@ endif
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # openshift.io/lifecycle-agent-bundle:$VERSION and openshift.io/lifecycle-agent-catalog:$VERSION.
-IMAGE_TAG_BASE ?= quay.io/openshift-kni/lifecycle-agent
+IMAGE_TAG_BASE ?= quay.io/junchen/lifecycle-agent
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -51,7 +51,7 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(VERSION)
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
+OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
@@ -136,8 +136,97 @@ run: manifests generate fmt vet ## Run a controller from your host.
 debug: manifests generate fmt vet ## Run a controller from your host that accepts remote attachment.
 	dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
-image-build: ## Build container image with the manager.
+docker-build: ## Build container image with the manager.
 	${ENGINE} build -t ${IMG} -f Dockerfile .
 
-image-push: ## Push container image with the manager.
+docker-push: ## Push container image with the manager.
 	${ENGINE} push ${IMG}
+
+##@ Deployment
+
+install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
+	$(KUSTOMIZE) build config/crd | kubectl apply -f -
+
+uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config.
+	$(KUSTOMIZE) build config/crd | kubectl delete -f -
+
+deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	$(KUSTOMIZE) build config/default | kubectl apply -f -
+
+undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
+	$(KUSTOMIZE) build config/default | kubectl delete -f -
+
+.PHONY: bundle
+bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metadata, then validate generated files.
+	$(OPERATOR_SDK) generate kustomize manifests -q
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
+	$(OPERATOR_SDK) bundle validate ./bundle
+
+.PHONY: bundle-build
+bundle-build: ## Build the bundle image.
+	${ENGINE} build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+
+.PHONY: bundle-push
+bundle-push: ## Push the bundle image.
+	$(MAKE) docker-push IMG=$(BUNDLE_IMG)
+
+.PHONY: bundle-check
+bundle-check: bundle
+	hack/check-git-tree.sh
+
+.PHONY: bundle-run
+bundle-run: # Install bundle on cluster using operator sdk. Index image is require due to upstream issue: https://github.com/operator-framework/operator-registry/issues/984
+	$(OPERATOR_SDK) --index-image=quay.io/operator-framework/opm:v1.28.0 --security-context-config restricted run bundle $(BUNDLE_IMG)
+
+.PHONY: bundle-upgrade
+bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
+	$(OPERATOR_SDK) run bundle-upgrade $(BUNDLE_IMG)
+
+.PHONY: bundle-clean
+bundle-clean: # Uninstall bundle on cluster using operator sdk.
+	$(OPERATOR_SDK) cleanup lifecycle-agent
+
+.PHONY: opm
+OPM = ./bin/opm
+opm: ## Download opm locally if necessary.
+ifeq (,$(wildcard $(OPM)))
+ifeq (,$(shell which opm 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(OPM)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.28.0/$${OS}-$${ARCH}-opm ;\
+	chmod +x $(OPM) ;\
+	}
+else
+OPM = $(shell which opm)
+endif
+endif
+
+# A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
+# These images MUST exist in a registry and be pull-able.
+BUNDLE_IMGS ?= $(BUNDLE_IMG)
+
+# The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+
+# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
+ifneq ($(origin CATALOG_BASE_IMG), undefined)
+FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
+endif
+
+
+
+# Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
+# This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
+# https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
+.PHONY: catalog-build
+catalog-build: opm ## Build a catalog image.
+	$(OPM) index add --container-tool $(ENGINE) --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
+
+# Push the catalog image.
+.PHONY: catalog-push
+catalog-push: ## Push a catalog image.
+	$(MAKE) docker-push IMG=$(CATALOG_IMG)

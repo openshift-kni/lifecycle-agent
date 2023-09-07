@@ -69,12 +69,8 @@ type ImageBasedUpgradeStatus struct {
 
 // StateRoot defines a list of saved pod states and the running OCP version when they are saved
 type StateRoot struct {
-	Version   string     `json:"version,omitempty"`
-	PodStates []PodState `json:"podStates,omitempty"`
-}
-
-// PodState defines a saved pod state
-type PodState struct {
+	Version string `json:"version,omitempty"`
+	// TODO add fields for saved states
 }
 
 // +kubebuilder:object:root=true
