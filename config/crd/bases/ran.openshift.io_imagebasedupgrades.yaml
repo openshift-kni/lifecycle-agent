@@ -12,7 +12,7 @@ spec:
     listKind: ImageBasedUpgradeList
     plural: imagebasedupgrades
     shortNames:
-    - icu
+    - ibu
     singular: imagebasedupgrade
   scope: Namespaced
   versions:
@@ -23,8 +23,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades
-          API
+        description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -39,8 +38,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: ImageBasedUpgradeSpec defines the desired state of
-              ImageBasedUpgrade
+            description: ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
             properties:
               additionalImages:
                 description: ConfigMapRef defines a reference to a config map
@@ -81,8 +79,7 @@ spec:
                 type: string
             type: object
           status:
-            description: ImageBasedUpgradeStatus defines the observed state
-              of ImageBasedUpgrade
+            description: ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
             properties:
               completedAt:
                 format: date-time
