@@ -5,7 +5,7 @@ metadata:
     alm-examples: '[]'
     capabilities: Basic Install
   name: lifecycle-agent.v0.0.0
-  namespace: placeholder
+  namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
@@ -35,13 +35,13 @@ spec:
       deployments: null
     strategy: ""
   installModes:
-  - supported: false
+  - supported: true
     type: OwnNamespace
-  - supported: false
+  - supported: true
     type: SingleNamespace
   - supported: false
     type: MultiNamespace
-  - supported: true
+  - supported: false
     type: AllNamespaces
   keywords:
   - upgrade
