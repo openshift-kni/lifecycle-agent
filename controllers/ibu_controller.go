@@ -45,8 +45,6 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder record.EventRecorder
 }
 
-const statusUpdateWaitInMilliSeconds = 100
-
 func doNotRequeue() ctrl.Result {
 	return ctrl.Result{}
 }
@@ -89,20 +87,19 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (nextReconcile ctrl.Result, err error) {
-	r.Log.Info("Start reconciling CGU", "name", req.NamespacedName)
+	r.Log.Info("Start reconciling IBU", "name", req.NamespacedName)
 	defer func() {
 		if nextReconcile.RequeueAfter > 0 {
-			r.Log.Info("Finish reconciling CGU", "name", req.NamespacedName, "requeueAfter", nextReconcile.RequeueAfter.Seconds())
+			r.Log.Info("Finish reconciling IBU", "name", req.NamespacedName, "requeueAfter", nextReconcile.RequeueAfter.Seconds())
 		} else {
-			r.Log.Info("Finish reconciling CGU", "name", req.NamespacedName, "requeueRightAway", nextReconcile.Requeue)
+			r.Log.Info("Finish reconciling IBU", "name", req.NamespacedName, "requeueRightAway", nextReconcile.Requeue)
 		}
 	}()
 
 	nextReconcile = doNotRequeue()
-	// Wait a bit so that API server/etcd syncs up and this reconcile has a better chance of getting the updated CGU and policies
-	time.Sleep(statusUpdateWaitInMilliSeconds * time.Millisecond)
-	icu := &ranv1alpha1.ImageBasedUpgrade{}
-	err = r.Get(ctx, req.NamespacedName, icu)
+
+	ibu := &ranv1alpha1.ImageBasedUpgrade{}
+	err = r.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = nil
@@ -112,9 +109,9 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 
-	r.Log.Info("Loaded CGU", "name", req.NamespacedName, "version", icu.GetResourceVersion())
+	r.Log.Info("Loaded IBU", "name", req.NamespacedName, "version", ibu.GetResourceVersion())
 	var reconcileTime int
-	reconcileTime, err = r.handleCguFinalizer(ctx, icu)
+	reconcileTime, err = r.handleCguFinalizer(ctx, ibu)
 	if err != nil {
 		return
 	}
@@ -125,19 +122,19 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 	// Update status
-	err = r.updateStatus(ctx, icu)
+	err = r.updateStatus(ctx, ibu)
 	return
 }
 
 func (r *ImageBasedUpgradeReconciler) handleCguFinalizer(
-	ctx context.Context, icu *ranv1alpha1.ImageBasedUpgrade) (int, error) {
+	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (int, error) {
 
-	isCguMarkedToBeDeleted := icu.GetDeletionTimestamp() != nil
+	isCguMarkedToBeDeleted := ibu.GetDeletionTimestamp() != nil
 	if isCguMarkedToBeDeleted {
-		if controllerutil.ContainsFinalizer(icu, utils.CleanupFinalizer) {
+		if controllerutil.ContainsFinalizer(ibu, utils.CleanupFinalizer) {
 			// Run finalization logic for cguFinalizer. If the finalization logic fails, don't remove the finalizer so
 			// that we can retry during the next reconciliation.
-			// err := utils.FinalMultiCloudObjectCleanup(ctx, r.Client, icu)
+			// err := utils.FinalMultiCloudObjectCleanup(ctx, r.Client, ibu)
 			// if err != nil {
 			// 	return utils.StopReconciling, err
 			// }
@@ -146,9 +143,9 @@ func (r *ImageBasedUpgradeReconciler) handleCguFinalizer(
 	}
 
 	// Add finalizer for this CR.
-	if !controllerutil.ContainsFinalizer(icu, utils.CleanupFinalizer) {
-		controllerutil.AddFinalizer(icu, utils.CleanupFinalizer)
-		err := r.Update(ctx, icu)
+	if !controllerutil.ContainsFinalizer(ibu, utils.CleanupFinalizer) {
+		controllerutil.AddFinalizer(ibu, utils.CleanupFinalizer)
+		err := r.Update(ctx, ibu)
 		if err != nil {
 			return utils.StopReconciling, err
 		}
@@ -158,9 +155,9 @@ func (r *ImageBasedUpgradeReconciler) handleCguFinalizer(
 	return utils.DontReconcile, nil
 }
 
-func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, icu *ranv1alpha1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) error {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		err := r.Status().Update(ctx, icu)
+		err := r.Status().Update(ctx, ibu)
 		return err
 	})
 
@@ -182,7 +179,7 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// not metadata or status
 				oldGeneration := e.ObjectOld.GetGeneration()
 				newGeneration := e.ObjectNew.GetGeneration()
-				// spec update only for CGU
+				// spec update only for IBU
 				return oldGeneration != newGeneration
 			},
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
