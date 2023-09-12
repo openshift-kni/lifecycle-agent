@@ -9,5 +9,5 @@ const (
 
 // Finalizers
 const (
-	CleanupFinalizer = "ran.openshift.io/icu-cleanup-finalizer"
+	CleanupFinalizer = "ran.openshift.io/ibu-cleanup-finalizer"
 )
