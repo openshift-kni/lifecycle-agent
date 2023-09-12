@@ -12,5 +12,5 @@ configMapGenerator:
   name: manager-config
 images:
 - name: controller
-  newName: quay.io/junchen/lifecycle-agent
+  newName: quay.io/openshift-kni/lifecycle-agent-operator
   newTag: 4.14.0

@@ -41,7 +41,7 @@ endif
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # openshift.io/lifecycle-agent-bundle:$VERSION and openshift.io/lifecycle-agent-catalog:$VERSION.
-IMAGE_TAG_BASE ?= quay.io/junchen/lifecycle-agent
+IMAGE_TAG_BASE ?= quay.io/openshift-kni/lifecycle-agent-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
