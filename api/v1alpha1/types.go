@@ -36,14 +36,28 @@ type ImageBasedUpgrade struct {
 	Status ImageBasedUpgradeStatus `json:"status,omitempty"`
 }
 
+type ImageBasedUpgradeStage string
+
+var Stages = struct {
+	Idle     ImageBasedUpgradeStage
+	Prep     ImageBasedUpgradeStage
+	Upgrade  ImageBasedUpgradeStage
+	Rollback ImageBasedUpgradeStage
+}{
+	Idle:     "Idle",
+	Prep:     "Prep",
+	Upgrade:  "Upgrade",
+	Rollback: "Rollback",
+}
+
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
 type ImageBasedUpgradeSpec struct {
-	Stage            string       `json:"stage,omitempty"`
-	SeedImageRef     SeedImageRef `json:"seedImageRef,omitempty"`
-	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
-	OADPContent      ConfigMapRef `json:"oadpContent,omitempty"`
-	ExtraManifests   ConfigMapRef `json:"extraManifests,omitempty"`
-	RollbackTarget   string       `json:"rollbackTarget,omitempty"`
+	Stage            ImageBasedUpgradeStage `json:"stage,omitempty"`
+	SeedImageRef     SeedImageRef           `json:"seedImageRef,omitempty"`
+	AdditionalImages ConfigMapRef           `json:"additionalImages,omitempty"`
+	OADPContent      ConfigMapRef           `json:"oadpContent,omitempty"`
+	ExtraManifests   []ConfigMapRef         `json:"extraManifests,omitempty"`
+	RollbackTarget   string                 `json:"rollbackTarget,omitempty"`
 }
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
@@ -65,6 +79,8 @@ type ImageBasedUpgradeStatus struct {
 	StartedAt          metav1.Time `json:"startedAt,omitempty"`
 	CompletedAt        metav1.Time `json:"completedAt,omitempty"`
 	StateRoots         []StateRoot `json:"stateRoots,omitempty"`
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Conditions"
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // StateRoot defines a list of saved pod states and the running OCP version when they are saved

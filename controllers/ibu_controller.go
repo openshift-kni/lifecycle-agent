@@ -22,6 +22,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -29,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -98,6 +99,10 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	nextReconcile = doNotRequeue()
 
+	if req.Name != utils.IBUName {
+		return
+	}
+
 	ibu := &ranv1alpha1.ImageBasedUpgrade{}
 	err = r.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
@@ -109,53 +114,184 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 
-	r.Log.Info("Loaded IBU", "name", req.NamespacedName, "version", ibu.GetResourceVersion())
-	var reconcileTime int
-	reconcileTime, err = r.handleCguFinalizer(ctx, ibu)
-	if err != nil {
-		return
+	r.Log.Info("Loaded IBU", "name", req.NamespacedName, "version", ibu.GetResourceVersion(), "desired stage", ibu.Spec.Stage)
+
+	currentInProgressStage := utils.GetCurrentInProgressStage(ibu)
+	if currentInProgressStage != "" {
+		nextReconcile, err = r.handleStage(ctx, ibu, currentInProgressStage)
+		if err != nil {
+			return
+		}
 	}
-	if reconcileTime == utils.ReconcileNow {
-		nextReconcile = requeueImmediately()
-		return
-	} else if reconcileTime == utils.StopReconciling {
-		return
+
+	desiredStage := ibu.Spec.Stage
+	if desiredStage != currentInProgressStage {
+		if validateStageTransition(ibu) {
+			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
+			if desiredStage != ranv1alpha1.Stages.Idle {
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					utils.GetInProgressConditionType(desiredStage),
+					utils.ConditionReasons.InProgress,
+					metav1.ConditionTrue,
+					"In progress",
+					ibu.Generation,
+				)
+			}
+			nextReconcile, err = r.handleStage(ctx, ibu, desiredStage)
+			if err != nil {
+				return
+			}
+		}
 	}
+
 	// Update status
 	err = r.updateStatus(ctx, ibu)
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) handleCguFinalizer(
-	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (int, error) {
-
-	isCguMarkedToBeDeleted := ibu.GetDeletionTimestamp() != nil
-	if isCguMarkedToBeDeleted {
-		if controllerutil.ContainsFinalizer(ibu, utils.CleanupFinalizer) {
-			// Run finalization logic for cguFinalizer. If the finalization logic fails, don't remove the finalizer so
-			// that we can retry during the next reconciliation.
-			// err := utils.FinalMultiCloudObjectCleanup(ctx, r.Client, ibu)
-			// if err != nil {
-			// 	return utils.StopReconciling, err
-			// }
-		}
-		return utils.StopReconciling, nil
+func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, stage ranv1alpha1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
+	switch stage {
+	case ranv1alpha1.Stages.Idle:
+		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
+	case ranv1alpha1.Stages.Prep:
+		nextReconcile, err = r.handlePrep(ctx, ibu)
+	case ranv1alpha1.Stages.Upgrade:
+		nextReconcile, err = r.handleUpgrade(ctx, ibu)
+	case ranv1alpha1.Stages.Rollback:
+		nextReconcile, err = r.handleRollback(ctx, ibu)
 	}
+	return
+}
 
-	// Add finalizer for this CR.
-	if !controllerutil.ContainsFinalizer(ibu, utils.CleanupFinalizer) {
-		controllerutil.AddFinalizer(ibu, utils.CleanupFinalizer)
-		err := r.Update(ctx, ibu)
-		if err != nil {
-			return utils.StopReconciling, err
+func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
+	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
+	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse {
+		switch idleCondition.Reason {
+		case string(utils.ConditionReasons.Aborting):
+			nextReconcile, err = r.handleAbort(ctx, ibu)
+		case string(utils.ConditionReasons.AbortFailed):
+			nextReconcile, err = r.handleAbortFailure(ctx, ibu)
+		case string(utils.ConditionReasons.Finalizing):
+			nextReconcile, err = r.handleFinalize(ctx, ibu)
+		case string(utils.ConditionReasons.FinalizeFailed):
+			nextReconcile, err = r.handleFinalizeFailure(ctx, ibu)
 		}
-		return utils.ReconcileNow, nil
+		if nextReconcile.Requeue == false {
+			utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+		}
 	}
+	return
+}
 
-	return utils.DontReconcile, nil
+func isRollbackAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+	upgradeInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeInProgress))
+	// TODO check if pivot is done
+	if upgradeInProgressCondition != nil {
+		// allowed if upgrade stage is in progress or has failed/completed
+		return true
+	}
+	return false
+}
+
+// isFinalizeAllowed returns true if upgrade completed or rollback completed
+func isFinalizeAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+	for _, conditionType := range utils.FinalConditionTypes {
+		condition := meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
+		if condition != nil && condition.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func isAbortAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+	upgradeCompletedCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
+	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
+	// TODO check if pivot has not been done
+	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse && upgradeCompletedCondition == nil {
+		// allowed if upgrade has not completed or failed yet
+		return true
+	}
+	return false
+}
+
+// TODO unit test this function once the logic is stablized
+func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+	switch ibu.Spec.Stage {
+	case ranv1alpha1.Stages.Rollback:
+		if !isRollbackAllowed(ibu) {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.ConditionTypes.RollbackInProgress,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Upgrade not started or already finalized",
+				ibu.Generation,
+			)
+			return false
+		}
+
+	case ranv1alpha1.Stages.Idle:
+		if isFinalizeAllowed(ibu) {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Finalizing,
+				metav1.ConditionFalse,
+				"Finalizing",
+				ibu.Generation,
+			)
+		} else if isAbortAllowed(ibu) {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Aborting,
+				metav1.ConditionFalse,
+				"Aborting",
+				ibu.Generation,
+			)
+		} else {
+			rollbackCompletedCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackCompleted))
+			idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
+			// Special cases for setting idle when the IBU just got created or after manual cleanup for rollback failure is done
+			if (rollbackCompletedCondition != nil && rollbackCompletedCondition.Status == metav1.ConditionFalse) ||
+				idleCondition == nil {
+				utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+			} else {
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					utils.ConditionTypes.Idle,
+					utils.ConditionReasons.InvalidTransition,
+					metav1.ConditionFalse,
+					"Upgrade or rollback still in progress",
+					ibu.Generation,
+				)
+				return false
+			}
+		}
+	default:
+		previousCompletedCondition := utils.GetPreviousCompletedCondition(ibu)
+		if previousCompletedCondition == nil || previousCompletedCondition.Status == metav1.ConditionFalse {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.GetInProgressConditionType(ibu.Spec.Stage),
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Previous stage not succeeded yet",
+				ibu.Generation,
+			)
+			return false
+		}
+		// Set idle to false when transitioning to prep
+		if ibu.Spec.Stage == ranv1alpha1.Stages.Prep {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionFalse,
+				"In progress",
+				ibu.Generation)
+		}
+	}
+	return true
 }
 
 func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) error {
+	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		err := r.Status().Update(ctx, ibu)
 		return err
