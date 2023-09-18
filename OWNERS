@@ -5,10 +5,16 @@ filters:
     reviewers:
     - browsell
     - donpenney
+    - eranco74
     - imiller0
     - jc-rh
+    - oourfali
+    - romfreiman
     approvers:
     - browsell
     - donpenney
+    - eranco74
     - imiller0
     - jc-rh
+    - oourfali
+    - romfreiman
