@@ -111,7 +111,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	r.Log.Info("Loaded IBU", "name", req.NamespacedName, "version", ibu.GetResourceVersion())
 	var reconcileTime int
-	reconcileTime, err = r.handleCguFinalizer(ctx, ibu)
+	reconcileTime, err = r.handleIbuFinalizer(ctx, ibu)
 	if err != nil {
 		return
 	}
@@ -126,11 +126,11 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) handleCguFinalizer(
+func (r *ImageBasedUpgradeReconciler) handleIbuFinalizer(
 	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (int, error) {
 
-	isCguMarkedToBeDeleted := ibu.GetDeletionTimestamp() != nil
-	if isCguMarkedToBeDeleted {
+	isIbuMarkedToBeDeleted := ibu.GetDeletionTimestamp() != nil
+	if isIbuMarkedToBeDeleted {
 		if controllerutil.ContainsFinalizer(ibu, utils.CleanupFinalizer) {
 			// Run finalization logic for cguFinalizer. If the finalization logic fails, don't remove the finalizer so
 			// that we can retry during the next reconciliation.
