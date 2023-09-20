@@ -36,14 +36,16 @@ import (
 
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 )
 
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
 type ImageBasedUpgradeReconciler struct {
 	client.Client
-	Log      logr.Logger
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Log           logr.Logger
+	Scheme        *runtime.Scheme
+	Recorder      record.EventRecorder
+	ClusterConfig *clusterconfig.UpgradeClusterConfigGather
 }
 
 func doNotRequeue() ctrl.Result {
