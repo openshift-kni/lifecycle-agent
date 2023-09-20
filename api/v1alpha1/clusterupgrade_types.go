@@ -38,13 +38,25 @@ type ImageBasedUpgrade struct {
 
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
 type ImageBasedUpgradeSpec struct {
-	Stage            string       `json:"stage,omitempty"`
-	SeedImageRef     SeedImageRef `json:"seedImageRef,omitempty"`
-	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
-	OADPContent      ConfigMapRef `json:"oadpContent,omitempty"`
-	ExtraManifests   ConfigMapRef `json:"extraManifests,omitempty"`
-	RollbackTarget   string       `json:"rollbackTarget,omitempty"`
+	Stage            ImageBasedUpgradeStage `json:"stage,omitempty"`
+	SeedImageRef     SeedImageRef           `json:"seedImageRef,omitempty"`
+	AdditionalImages ConfigMapRef           `json:"additionalImages,omitempty"`
+	OADPContent      ConfigMapRef           `json:"oadpContent,omitempty"`
+	ExtraManifests   ConfigMapRef           `json:"extraManifests,omitempty"`
+	RollbackTarget   string                 `json:"rollbackTarget,omitempty"`
 }
+
+// SeedImageRef defines the stage of the image based upgrade
+type ImageBasedUpgradeStage string
+
+const (
+	//UpgradePrep perform preliminary steps to get the node ready for image based upgrade
+	UpgradePrep ImageBasedUpgradeStage = "preUpgrgade"
+	//PreUpgrade backup the platform and application artifacts
+	PreUpgrade ImageBasedUpgradeStage = "preUpgrgade"
+	//Upgrade reboot to the new stateroot and reconfigure the cluster
+	Upgrade ImageBasedUpgradeStage = "preUpgrgade"
+)
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
 type SeedImageRef struct {
