@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"github.com/eranco74/lifecycle-agent/internal/clusterconfig"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -122,6 +123,22 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 	// Update status
+	switch ibu.Spec.Stage {
+	case ranv1alpha1.PreUpgrade:
+		{
+			ucc := clusterconfig.UpgradeClusterConfigGather{
+				Client:  r.Client,
+				Log:     r.Log,
+				Scheme:  r.Scheme,
+				Options: &clusterconfig.UpdateConfigReconcilerOptions{},
+			}
+			if err = ucc.FetchClusterConfig(ctx); err != nil {
+				r.Log.Error(err, "failed fetching cluster config")
+				// TODO: update the relevant status condition
+				return
+			}
+		}
+	}
 	err = r.updateStatus(ctx, ibu)
 	return
 }
