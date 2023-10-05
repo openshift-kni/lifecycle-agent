@@ -92,12 +92,17 @@ lint: ## Run golint against code.
 	@echo "Running golint"
 	hack/lint.sh
 
+.PHONY: unittest
+unittest:
+	@echo "Running unit tests"
+	go test -v ./controllers/...
+
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
 	go mod tidy
 
 .PHONY: ci-job	
-ci-job: common-deps-update generate fmt vet #lint golangci-lint test
+ci-job: common-deps-update generate fmt vet unittest #lint golangci-lint test
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
