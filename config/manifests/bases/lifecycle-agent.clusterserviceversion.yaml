@@ -22,6 +22,8 @@ spec:
         name: ""
         version: v1
       statusDescriptors:
+      - displayName: Conditions
+        path: conditions
       - displayName: Status
         path: observedGeneration
       version: v1alpha1

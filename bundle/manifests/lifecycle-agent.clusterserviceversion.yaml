@@ -14,7 +14,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2023-09-12T18:36:18Z"
+    createdAt: "2023-10-10T18:29:56Z"
     operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
   name: lifecycle-agent.v4.14.0
@@ -35,6 +35,8 @@ spec:
         name: ""
         version: v1
       statusDescriptors:
+      - displayName: Conditions
+        path: conditions
       - displayName: Status
         path: observedGeneration
       version: v1alpha1
@@ -176,7 +178,12 @@ spec:
                     cpu: 100m
                     memory: 20Mi
                 securityContext:
-                  allowPrivilegeEscalation: false
+                  privileged: true
+                  runAsUser: 0
+                tty: true
+                volumeMounts:
+                - mountPath: /host
+                  name: host-root
               - args:
                 - --secure-listen-address=0.0.0.0:8443
                 - --upstream=http://127.0.0.1:8080/
@@ -192,6 +199,11 @@ spec:
                 runAsNonRoot: true
               serviceAccountName: lifecycle-agent-controller-manager
               terminationGracePeriodSeconds: 10
+              volumes:
+              - hostPath:
+                  path: /
+                  type: Directory
+                name: host-root
       permissions:
       - rules:
         - apiGroups:
