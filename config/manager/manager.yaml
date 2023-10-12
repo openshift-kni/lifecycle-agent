@@ -42,7 +42,6 @@ spec:
         securityContext:
           privileged: true
           runAsNonRoot: false
-        tty: true
         volumeMounts:
         - mountPath: /host
           name: host-root

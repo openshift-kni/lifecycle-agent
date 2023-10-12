@@ -124,7 +124,7 @@ func GetCurrentInProgressStage(ibu *ranv1alpha1.ImageBasedUpgrade) ranv1alpha1.I
 
 	for conditionType, stage := range conditionToStageMap {
 		condition := meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
-		if condition.Status == metav1.ConditionTrue {
+		if condition != nil && condition.Status == metav1.ConditionTrue {
 			return stage
 		}
 	}
