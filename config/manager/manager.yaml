@@ -41,12 +41,11 @@ spec:
         name: manager
         securityContext:
           privileged: true
-          runAsUser: 0
+          runAsNonRoot: false
         tty: true
         volumeMounts:
         - mountPath: /host
           name: host-root
-        restartPolicy: Never
         livenessProbe:
           httpGet:
             path: /healthz

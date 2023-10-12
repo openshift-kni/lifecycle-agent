@@ -14,7 +14,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2023-10-10T18:29:56Z"
+    createdAt: "2023-10-11T21:34:40Z"
     operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
   name: lifecycle-agent.v4.14.0
@@ -49,75 +49,6 @@ spec:
     spec:
       clusterPermissions:
       - rules:
-        - apiGroups:
-          - ""
-          resources:
-          - configmaps
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - ""
-          resources:
-          - events
-          verbs:
-          - create
-          - patch
-        - apiGroups:
-          - monitoring.coreos.com
-          resources:
-          - prometheusrules
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - monitoring.coreos.com
-          resources:
-          - servicemonitors
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - ran.openshift.io
-          resources:
-          - imagebasedupgrades
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - ran.openshift.io
-          resources:
-          - imagebasedupgrades/finalizers
-          verbs:
-          - update
-        - apiGroups:
-          - ran.openshift.io
-          resources:
-          - imagebasedupgrades/status
-          verbs:
-          - get
-          - patch
-          - update
         - apiGroups:
           - authentication.k8s.io
           resources:
@@ -179,7 +110,7 @@ spec:
                     memory: 20Mi
                 securityContext:
                   privileged: true
-                  runAsUser: 0
+                  runAsNonRoot: false
                 tty: true
                 volumeMounts:
                 - mountPath: /host
