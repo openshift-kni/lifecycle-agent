@@ -52,6 +52,7 @@ var Stages = struct {
 
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
 type ImageBasedUpgradeSpec struct {
+	//+kubebuilder:validation:Enum=Idle;Prep;Upgrade;Rollback
 	Stage            ImageBasedUpgradeStage `json:"stage,omitempty"`
 	SeedImageRef     SeedImageRef           `json:"seedImageRef,omitempty"`
 	AdditionalImages ConfigMapRef           `json:"additionalImages,omitempty"`

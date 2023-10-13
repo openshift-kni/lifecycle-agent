@@ -14,7 +14,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2023-10-11T21:34:40Z"
+    createdAt: "2023-10-13T18:48:36Z"
     operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
   name: lifecycle-agent.v4.14.0
@@ -111,7 +111,6 @@ spec:
                 securityContext:
                   privileged: true
                   runAsNonRoot: false
-                tty: true
                 volumeMounts:
                 - mountPath: /host
                   name: host-root
