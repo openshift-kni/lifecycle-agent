@@ -1,7 +1,11 @@
 apiVersion: ran.openshift.io/v1alpha1
 kind: ImageBasedUpgrade
 metadata:
-  name: ImageBasedUpgrade-sample
+  name: upgrade
 spec:
-  # Add fields here
+  stage: Idle
+  seedImageRef:
+    version: 4.14.0
+    image: quay.io/xyz
+
 
