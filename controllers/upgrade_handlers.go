@@ -27,6 +27,13 @@ import (
 
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
+	// pre upgrade steps
+	if err := r.ClusterConfig.FetchClusterConfig(ctx); err != nil {
+		r.Log.Error(err, "failed fetching cluster config")
+		// TODO: update the relevant status condition
+		return ctrl.Result{}, err
+	}
+
 	// TODO actual steps
 	// If completed, update conditions and return doNotRequeue
 	utils.SetStatusCondition(&ibu.Status.Conditions,

@@ -90,6 +90,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 		},
 	}
 	for _, tc := range testcases {
+		t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{ns, tc.ibu}
 			fakeClient, err := getFakeClientFromObjects(objs...)
