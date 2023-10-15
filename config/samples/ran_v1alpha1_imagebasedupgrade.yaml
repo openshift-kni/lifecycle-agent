@@ -5,7 +5,7 @@ metadata:
 spec:
   stage: Idle
   seedImageRef:
-    version: 4.14.0
-    image: quay.io/xyz
+    version: 4.13.9
+    image: quay.io/dpenney/upgbackup:oneimage-cnfdf01
 
 
