@@ -30,7 +30,11 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ra
 	// pre upgrade steps
 	if err := r.ClusterConfig.FetchClusterConfig(ctx); err != nil {
 		r.Log.Error(err, "failed fetching cluster config")
-		// TODO: update the relevant status condition
+		return ctrl.Result{}, err
+	}
+
+	if err := r.NetworkConfig.FetchNetworkConfig(ctx); err != nil {
+		r.Log.Error(err, "failed fetching Network config")
 		return ctrl.Result{}, err
 	}
 

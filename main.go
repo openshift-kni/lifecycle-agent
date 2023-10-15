@@ -91,6 +91,7 @@ func main() {
 		Log:           log,
 		Scheme:        mgr.GetScheme(),
 		ClusterConfig: &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
+		NetworkConfig: &clusterconfig.UpgradeNetworkConfigGather{Log: log},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ClusterGroupUpgrade")
 		os.Exit(1)
