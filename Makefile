@@ -116,8 +116,18 @@ unittest:
 common-deps-update:	controller-gen kustomize
 	go mod tidy
 
+.PHONY: shellcheck
+shellcheck: ## Run shellcheck
+	@echo "Running shellcheck"
+	hack/shellcheck.sh
+
+.PHONY: bashate
+bashate: ## Run bashate
+	@echo "Running bashate"
+	hack/bashate.sh
+
 .PHONY: ci-job	
-ci-job: common-deps-update generate fmt vet unittest #verify-bindata lint golangci-lint test
+ci-job: common-deps-update generate fmt vet unittest shellcheck bashate #verify-bindata lint golangci-lint test
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)

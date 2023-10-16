@@ -15,6 +15,7 @@ eval set -- "${OPTS}"
 while :; do
     case "$1" in
         --seed-image)
+            # shellcheck disable=SC2034
             SEED_IMAGE=$2
             shift 2
             ;;
