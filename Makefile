@@ -127,7 +127,7 @@ bashate: ## Run bashate
 	hack/bashate.sh
 
 .PHONY: ci-job	
-ci-job: common-deps-update generate fmt vet unittest shellcheck bashate #verify-bindata lint golangci-lint test
+ci-job: common-deps-update generate fmt vet unittest shellcheck bashate update-bindata bundle-check #test lint golangci-lint
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
@@ -193,6 +193,7 @@ bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metada
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	$(OPERATOR_SDK) bundle validate ./bundle
+	sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml
 
 .PHONY: bundle-build
 bundle-build: ## Build the bundle image.
