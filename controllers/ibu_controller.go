@@ -126,20 +126,10 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	desiredStage := ibu.Spec.Stage
-	if desiredStage != currentInProgressStage {
+	if shouldTransition(currentInProgressStage, ibu) {
 		if validateStageTransition(ibu) {
 			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
-			if desiredStage != ranv1alpha1.Stages.Idle {
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetInProgressConditionType(desiredStage),
-					utils.ConditionReasons.InProgress,
-					metav1.ConditionTrue,
-					"In progress",
-					ibu.Generation,
-				)
-			}
-			nextReconcile, err = r.handleStage(ctx, ibu, desiredStage)
+			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
 			if err != nil {
 				return
 			}
@@ -149,6 +139,35 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Update status
 	err = r.updateStatus(ctx, ibu)
 	return
+}
+
+func shouldTransition(currentInProgressStage ranv1alpha1.ImageBasedUpgradeStage, ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+	desiredStage := ibu.Spec.Stage
+	if desiredStage == currentInProgressStage {
+		return false
+	}
+	if currentInProgressStage != "" {
+		return true
+	}
+	switch desiredStage {
+	case ranv1alpha1.Stages.Prep:
+		prepCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.PrepCompleted))
+		if prepCompleted != nil {
+			return false
+		}
+	case ranv1alpha1.Stages.Upgrade:
+		upgradeCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
+		if upgradeCompleted != nil {
+			return false
+		}
+	case ranv1alpha1.Stages.Rollback:
+		rollbackCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackCompleted))
+		if rollbackCompleted != nil {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, stage ranv1alpha1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
@@ -288,6 +307,15 @@ func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 				"In progress",
 				ibu.Generation)
 		}
+	}
+	if ibu.Spec.Stage != ranv1alpha1.Stages.Idle {
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.GetInProgressConditionType(ibu.Spec.Stage),
+			utils.ConditionReasons.InProgress,
+			metav1.ConditionTrue,
+			"In progress",
+			ibu.Generation,
+		)
 	}
 	return true
 }

@@ -51,6 +51,276 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 	return c, nil
 }
 
+type ConditionTypeAndStatus struct {
+	ConditionType   utils.ConditionType
+	ConditionStatus v1.ConditionStatus
+}
+
+func TestShouldTransition(t *testing.T) {
+	testcases := []struct {
+		name                   string
+		desiredStage           ranv1alpha1.ImageBasedUpgradeStage
+		currentInProgressStage ranv1alpha1.ImageBasedUpgradeStage
+		expected               bool
+		conditions             []ConditionTypeAndStatus
+	}{
+		{
+			name:                   "prep when PrepCompleted is present",
+			desiredStage:           ranv1alpha1.Stages.Prep,
+			currentInProgressStage: "",
+			expected:               false,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse},
+			},
+		},
+		{
+			name:                   "upgrade when UpgradeCompleted is present ",
+			desiredStage:           ranv1alpha1.Stages.Upgrade,
+			currentInProgressStage: "",
+			expected:               false,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse},
+			},
+		},
+		{
+			name:                   "rollback when RollbackCompleted is present",
+			desiredStage:           ranv1alpha1.Stages.Rollback,
+			currentInProgressStage: "",
+			expected:               false,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse},
+			},
+		},
+		{
+			name:                   "different stage",
+			desiredStage:           ranv1alpha1.Stages.Idle,
+			currentInProgressStage: ranv1alpha1.Stages.Prep,
+			expected:               true,
+			conditions:             []ConditionTypeAndStatus{},
+		},
+	}
+	for _, tc := range testcases {
+		var ibu = &ranv1alpha1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:      utils.IBUName,
+				Namespace: lcaNs,
+			},
+		}
+		ibu.Spec.Stage = tc.desiredStage
+		for _, c := range tc.conditions {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
+		}
+		value := shouldTransition(tc.currentInProgressStage, ibu)
+		assert.Equal(t, tc.expected, value)
+	}
+}
+
+func TestValidateStageTransisions(t *testing.T) {
+	type ExpectedCondition struct {
+		ConditionType   utils.ConditionType
+		ConditionReason utils.ConditionReason
+		ConditionStatus v1.ConditionStatus
+		Message         string
+	}
+	testcases := []struct {
+		name               string
+		stage              ranv1alpha1.ImageBasedUpgradeStage
+		conditions         []ConditionTypeAndStatus
+		expectedConditions []ExpectedCondition
+		expected           bool
+	}{
+		{
+			name:       "idle when prep in progress",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue}},
+			expected:   true,
+		},
+		{
+			name:       "idle when prep completed",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue}},
+			expected:   true,
+		},
+		{
+			name:  "idle when prep failed",
+			stage: ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse}},
+			expected: true,
+		},
+		{
+			name:  "rollback when upgrade failed",
+			stage: ranv1alpha1.Stages.Rollback,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse},
+			},
+			expected: true,
+		},
+		{
+			name:  "rollback when upgrade completed",
+			stage: ranv1alpha1.Stages.Rollback,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue},
+			},
+			expected: true,
+		},
+		{
+			name:       "rollback when upgrade in progress",
+			stage:      ranv1alpha1.Stages.Rollback,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue}},
+			expected:   true,
+		},
+		{
+			name:       "rollback without upgrade in progress",
+			stage:      ranv1alpha1.Stages.Rollback,
+			conditions: []ConditionTypeAndStatus{},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.RollbackInProgress,
+				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
+				"Upgrade not started or already finalized",
+			}},
+			expected: false,
+		},
+		{
+			name:       "idle when upgrade completed is true",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue}},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
+				"Finalizing",
+			}},
+			expected: true,
+		},
+		{
+			name:       "idle when rollback completed is true",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue}},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
+				"Finalizing",
+			}},
+			expected: true,
+		},
+		{
+			name:  "idle when upgrade not completed",
+			stage: ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Aborting, metav1.ConditionFalse,
+				"Aborting",
+			}},
+			expected: true,
+		},
+		{
+			name:       "idle when rollback completed is false and no idle condition",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse}},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Idle, metav1.ConditionTrue,
+				"Idle",
+			}},
+		},
+		{
+			name:       "idle without rollback or upgrade completed",
+			stage:      ranv1alpha1.Stages.Idle,
+			conditions: []ConditionTypeAndStatus{},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Idle, metav1.ConditionTrue,
+				"Idle",
+			}},
+		},
+		{
+			name:       "upgrade without prep completed",
+			stage:      ranv1alpha1.Stages.Upgrade,
+			conditions: []ConditionTypeAndStatus{},
+			expected:   false,
+		},
+		{
+			name:       "upgrade with prep completed",
+			stage:      ranv1alpha1.Stages.Upgrade,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue}},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.UpgradeInProgress,
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionTrue,
+				"In progress",
+			}},
+		},
+		{
+			name:       "prep without idle completed",
+			stage:      ranv1alpha1.Stages.Prep,
+			conditions: []ConditionTypeAndStatus{},
+			expected:   false,
+		},
+		{
+			name:       "prep with idle completed",
+			stage:      ranv1alpha1.Stages.Prep,
+			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.Idle, metav1.ConditionTrue}},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionFalse,
+				"In progress",
+			}, {
+				utils.ConditionTypes.PrepInProgress,
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionTrue,
+				"In progress",
+			}},
+		},
+	}
+	for _, tc := range testcases {
+
+		var ibu = &ranv1alpha1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:      utils.IBUName,
+				Namespace: lcaNs,
+			},
+			Spec: ranv1alpha1.ImageBasedUpgradeSpec{
+				Stage: tc.stage,
+			},
+		}
+		for _, c := range tc.conditions {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
+		}
+
+		t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			result := validateStageTransition(ibu)
+			assert.Equal(t, tc.expected, result)
+			for _, expectedCondition := range tc.expectedConditions {
+				con := meta.FindStatusCondition(ibu.Status.Conditions, string(expectedCondition.ConditionType))
+				assert.Equal(t, con == nil, false)
+				if con != nil {
+					assert.Equal(t, expectedCondition, ExpectedCondition{
+						utils.ConditionType(con.Type),
+						utils.ConditionReason(con.Reason),
+						con.Status,
+						con.Message})
+				}
+			}
+		})
+	}
+}
+
 func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 	testcases := []struct {
 		name         string
