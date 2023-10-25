@@ -85,7 +85,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := ctrl.Log.WithName("controllers").WithName("ClusterGroupUpgrade")
+	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:        mgr.GetClient(),
 		Log:           log,
@@ -93,7 +93,7 @@ func main() {
 		ClusterConfig: &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 		NetworkConfig: &clusterconfig.UpgradeNetworkConfigGather{Log: log},
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterGroupUpgrade")
+		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
