@@ -76,14 +76,7 @@ oc patch imagebasedupgrades.ran.openshift.io upgrade -p='{"spec": {"stage": "Idl
 ## Cleanup
 ```console
 # Delete LCA resources
-oc delete imagebasedupgrades.ran.openshift.io upgrade ; \
-oc delete ns openshift-lifecycle-agent ; \
-oc delete customresourcedefinition.apiextensions.k8s.io/imagebasedupgrades.ran.openshift.io \
-    clusterrole.rbac.authorization.k8s.io/lifecycle-agent-manager-role \
-    clusterrole.rbac.authorization.k8s.io/lifecycle-agent-metrics-reader \
-    clusterrole.rbac.authorization.k8s.io/lifecycle-agent-proxy-role \
-    clusterrolebinding.rbac.authorization.k8s.io/lifecycle-agent-manager-rolebinding \
-    clusterrolebinding.rbac.authorization.k8s.io/lifecycle-agent-proxy-rolebinding 
+make undeploy
 
 #
 # Delete the deployment and stateroot (on the SNO)
