@@ -104,7 +104,11 @@ func (in *ImageBasedUpgradeSpec) DeepCopyInto(out *ImageBasedUpgradeSpec) {
 	*out = *in
 	out.SeedImageRef = in.SeedImageRef
 	out.AdditionalImages = in.AdditionalImages
-	out.OADPContent = in.OADPContent
+	if in.OADPContent != nil {
+		in, out := &in.OADPContent, &out.OADPContent
+		*out = make([]ConfigMapRef, len(*in))
+		copy(*out, *in)
+	}
 	if in.ExtraManifests != nil {
 		in, out := &in.ExtraManifests, &out.ExtraManifests
 		*out = make([]ConfigMapRef, len(*in))

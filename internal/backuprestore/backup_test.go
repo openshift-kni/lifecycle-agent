@@ -1,0 +1,487 @@
+/*
+Copyright 2023.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package backuprestore
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/stretchr/testify/assert"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
+)
+
+const oadpNs = "openshift-adp"
+
+var (
+	testscheme = scheme.Scheme
+)
+
+func init() {
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.Backup{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupList{})
+	testscheme.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterVersion{})
+}
+
+func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
+	c := fake.NewClientBuilder().WithScheme(testscheme).WithObjects(objs...).WithStatusSubresource(objs...).Build()
+	return c, nil
+}
+
+func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
+	backup := &velerov1.Backup{
+		TypeMeta: v1.TypeMeta{
+			Kind:       backupGvk.Kind,
+			APIVersion: backupGvk.Group + "/" + backupGvk.Version,
+		},
+	}
+	backup.SetName(name)
+	backup.SetNamespace(oadpNs)
+	backup.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
+
+	backup.Spec = velerov1.BackupSpec{
+		IncludedNamespaces:               []string{"openshift-test"},
+		IncludedNamespaceScopedResources: []string{backupResource},
+	}
+	return backup
+}
+
+func fakeBackupCrWithStatus(name, applyWave, backupResource string, phase velerov1.BackupPhase) *velerov1.Backup {
+	backup := fakeBackupCr(name, applyWave, backupResource)
+	backup.Status = velerov1.BackupStatus{
+		Phase: phase,
+	}
+
+	return backup
+}
+
+func fakeConfigmap(name, applyWave string, number, start int) *corev1.ConfigMap {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      name,
+			Namespace: oadpNs,
+		},
+		Data: map[string]string{},
+	}
+
+	for i := start; i < number+start; i++ {
+		name := "backup" + strconv.Itoa(i)
+		backup := fakeBackupCr(name, applyWave, "fakeResource")
+		backupBytes, _ := yaml.Marshal(backup)
+		cm.Data[name] = string(backupBytes)
+
+		name = "restore" + strconv.Itoa(i)
+		restore := fakeRestoreCr(name, applyWave, backup.Name)
+		restoreBytes, _ := yaml.Marshal(restore)
+		cm.Data[name] = string(restoreBytes)
+	}
+
+	return cm
+}
+
+func fakeSecret(name string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      name,
+			Namespace: oadpNs,
+		},
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+	}
+}
+
+func TestSortBackupCrs(t *testing.T) {
+	testcases := []struct {
+		name           string
+		resources      []*velerov1.Backup
+		expectedResult [][]*velerov1.Backup
+	}{
+		{
+			name: "Multiple resources contain the same wave number",
+			resources: []*velerov1.Backup{
+				fakeBackupCr("c_backup", "3", "fakeResource"),
+				fakeBackupCr("d_backup", "10", "fakeResource"),
+				fakeBackupCr("a_backup", "3", "fakeResource"),
+				fakeBackupCr("b_backup", "1", "fakeResource"),
+				fakeBackupCr("f_backup", "100", "fakeResource"),
+				fakeBackupCr("e_backup", "100", "fakeResource"),
+			},
+			expectedResult: [][]*velerov1.Backup{{
+				fakeBackupCr("b_backup", "1", "fakeResource"),
+			}, {
+				fakeBackupCr("a_backup", "3", "fakeResource"),
+				fakeBackupCr("c_backup", "3", "fakeResource"),
+			}, {
+				fakeBackupCr("d_backup", "10", "fakeResource"),
+			}, {
+				fakeBackupCr("e_backup", "100", "fakeResource"),
+				fakeBackupCr("f_backup", "100", "fakeResource"),
+			},
+			},
+		},
+		{
+			name: "Multiple resources have no wave number",
+			resources: []*velerov1.Backup{
+				fakeBackupCr("c_backup", "", "fakeResource"),
+				fakeBackupCr("d_backup", "10", "fakeResource"),
+				fakeBackupCr("a_backup", "3", "fakeResource"),
+				fakeBackupCr("b_backup", "1", "fakeResource"),
+				fakeBackupCr("f_backup", "100", "fakeResource"),
+				fakeBackupCr("e_backup", "100", "fakeResource"),
+				fakeBackupCr("g_backup", "", "fakeResource"),
+			},
+			expectedResult: [][]*velerov1.Backup{{
+				fakeBackupCr("b_backup", "1", "fakeResource"),
+			}, {
+				fakeBackupCr("a_backup", "3", "fakeResource"),
+			}, {
+				fakeBackupCr("d_backup", "10", "fakeResource"),
+			}, {
+				fakeBackupCr("e_backup", "100", "fakeResource"),
+				fakeBackupCr("f_backup", "100", "fakeResource"),
+			}, {
+				fakeBackupCr("c_backup", "", "fakeResource"),
+				fakeBackupCr("g_backup", "", "fakeResource"),
+			},
+			},
+		},
+		{
+			name: "All resources have no wave number",
+			resources: []*velerov1.Backup{
+				fakeBackupCr("c_backup", "", "fakeResource"),
+				fakeBackupCr("d_backup", "", "fakeResource"),
+				fakeBackupCr("a_backup", "", "fakeResource"),
+				fakeBackupCr("b_backup", "", "fakeResource"),
+				fakeBackupCr("f_backup", "", "fakeResource"),
+				fakeBackupCr("e_backup", "", "fakeResource"),
+			},
+			expectedResult: [][]*velerov1.Backup{{
+				fakeBackupCr("a_backup", "", "fakeResource"),
+				fakeBackupCr("b_backup", "", "fakeResource"),
+				fakeBackupCr("c_backup", "", "fakeResource"),
+				fakeBackupCr("d_backup", "", "fakeResource"),
+				fakeBackupCr("e_backup", "", "fakeResource"),
+				fakeBackupCr("f_backup", "", "fakeResource"),
+			},
+			},
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, _ := sortBackupCrs(tc.resources)
+			assert.Equal(t, tc.expectedResult, result)
+		})
+	}
+}
+
+func TestTriggerBackup(t *testing.T) {
+	testcases := []struct {
+		name                    string
+		existingBackups         []client.Object
+		expectedReconcileResult ctrl.Result
+		expectedStatus          BackupPhase
+		expectedBackupsCount    int
+	}{
+		{
+			name:                    "No backups applied",
+			existingBackups:         []client.Object{},
+			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
+			expectedStatus:          BackupInProgress,
+			expectedBackupsCount:    4,
+		},
+		{
+			name: "Backups applied in the first group but have no status",
+			existingBackups: []client.Object{
+				fakeBackupCr("backup1", "1", "fakeResource1"),
+				fakeBackupCr("backup2", "1", "fakeResource2"),
+				fakeBackupCr("backup3", "1", "fakeResource3"),
+				fakeBackupCr("backup4", "1", "fakeResource4"),
+			},
+			expectedReconcileResult: ctrl.Result{RequeueAfter: 1 * time.Minute},
+			expectedStatus:          BackupPending,
+			expectedBackupsCount:    4,
+		},
+		{
+			name: "Backups applied in the first group but have failed status",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseFailed),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseInProgress),
+				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseFailedValidation),
+			},
+			expectedReconcileResult: ctrl.Result{Requeue: false},
+			expectedStatus:          BackupFailed,
+			expectedBackupsCount:    4,
+		},
+		{
+			name: "Backups applied in the first group but have failed validation status",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseFailedValidation),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
+			},
+			expectedReconcileResult: ctrl.Result{RequeueAfter: 1 * time.Minute},
+			expectedStatus:          BackupFailedValidation,
+			expectedBackupsCount:    4,
+		},
+		{
+			name: "Backup was previously failed on validation and now recreated",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "1", "fakeResourceOld", velerov1.BackupPhaseFailedValidation),
+				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
+			},
+			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
+			expectedStatus:          BackupInProgress,
+			expectedBackupsCount:    4,
+		},
+		{
+			name: "Backups completed in the first group and in progress in the second group",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseInProgress),
+			},
+			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
+			expectedStatus:          BackupInProgress,
+			expectedBackupsCount:    5,
+		},
+		{
+			name: "Backups completed in the first group and failed in the second group",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseFailed),
+			},
+			expectedReconcileResult: ctrl.Result{Requeue: false},
+			expectedStatus:          BackupFailed,
+			expectedBackupsCount:    5,
+		},
+		{
+			name: "All backups have completed",
+			existingBackups: []client.Object{
+				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseCompleted),
+			},
+			expectedReconcileResult: ctrl.Result{Requeue: false},
+			expectedStatus:          BackupCompleted,
+			expectedBackupsCount:    5,
+		},
+	}
+
+	ns := &corev1.Namespace{
+		ObjectMeta: v1.ObjectMeta{
+			Name: oadpNs,
+		},
+	}
+
+	clusterVersion := &configv1.ClusterVersion{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: configv1.ClusterVersionSpec{
+			ClusterID: "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36",
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := []client.Object{ns, clusterVersion}
+			objs = append(objs, tc.existingBackups...)
+
+			fakeClient, err := getFakeClientFromObjects(objs...)
+			if err != nil {
+				t.Errorf("error in creating fake client")
+			}
+
+			backups := [][]*velerov1.Backup{
+				{
+					fakeBackupCr("backup1", "1", "fakeResource1"),
+					fakeBackupCr("backup2", "1", "fakeResource2"),
+					fakeBackupCr("backup3", "1", "fakeResource3"),
+					fakeBackupCr("backup4", "1", "fakeResource4"),
+				}, {
+					fakeBackupCr("backup5", "2", "fakeResource5"),
+				},
+			}
+
+			result, backupStatus, err := triggerBackup(context.TODO(), fakeClient, backups)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err.Error())
+			}
+			assert.Equal(t, tc.expectedReconcileResult, result)
+			assert.Equal(t, tc.expectedStatus, backupStatus.Status)
+
+			backupList := &velerov1.BackupList{}
+			err = fakeClient.List(context.TODO(), backupList, client.InNamespace(oadpNs))
+			if err != nil {
+				t.Errorf("unexpected error: %v", err.Error())
+			}
+			assert.Equal(t, tc.expectedBackupsCount, len(backupList.Items))
+
+			if tc.name == "No backups applied" {
+				for _, backup := range backupList.Items {
+					// check if backup has the clusterID label
+					assert.Equal(t, "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36", backup.Labels[clusterIDLabel])
+				}
+			}
+		})
+	}
+}
+
+func TestExportRestoresToDir(t *testing.T) {
+	configMaps := []ranv1alpha1.ConfigMapRef{
+		{
+			Name:      "configmap1",
+			Namespace: oadpNs,
+		},
+		{
+			Name:      "configmap2",
+			Namespace: oadpNs,
+		},
+	}
+
+	toDir, err := os.MkdirTemp("", "staterootB")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(toDir)
+
+	// Create fake configmaps
+	cm1 := fakeConfigmap("configmap1", "1", 2, 1)
+	cm2 := fakeConfigmap("configmap2", "10", 2, 3)
+
+	fakeClient, err := getFakeClientFromObjects(cm1, cm2)
+	if err != nil {
+		t.Errorf("error in creating fake client")
+	}
+
+	_, err = ExportRestoresToDir(context.TODO(), fakeClient, configMaps, toDir)
+	if err != nil {
+		t.Fatalf("ExportRestoresToDir failed: %v", err)
+	}
+
+	// Check the output
+	expectedDir1 := filepath.Join(toDir, oadpRestoreDir, "restore1")
+	expectedDir2 := filepath.Join(toDir, oadpRestoreDir, "restore2")
+	expectedDirs := []string{expectedDir1, expectedDir2}
+
+	expectedFiles := []string{
+		filepath.Join(expectedDir1, "restore1.yaml"),
+		filepath.Join(expectedDir1, "restore2.yaml"),
+		filepath.Join(expectedDir2, "restore1.yaml"),
+		filepath.Join(expectedDir2, "restore2.yaml"),
+	}
+	for _, dir := range expectedDirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			t.Errorf("ExportRestoresToDir failed to create directory %s: %v", dir, err)
+		}
+	}
+	for _, file := range expectedFiles {
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			t.Errorf("ExportRestoresToDir failed to create file %s: %v", file, err)
+		}
+	}
+}
+
+func TestExportOadpConfigurationToDir(t *testing.T) {
+	c := fake.NewClientBuilder().Build()
+	toDir := "/tmp"
+
+	// Test case 1: storage secret not found
+	err := ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	assert.NoError(t, err)
+
+	// Test case 2: storage secret found
+	storageSecret := fakeSecret(defaultStorageSecret)
+	err = c.Create(context.TODO(), storageSecret)
+	assert.NoError(t, err)
+
+	err = ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	assert.NoError(t, err)
+
+	// Check that the storage secret was written to file
+	storageSecretFilePath := filepath.Join(toDir, oadpSecretDir, defaultStorageSecret+".yaml")
+	_, err = os.Stat(storageSecretFilePath)
+	assert.NoError(t, err)
+
+	// Test case 3: DPA with velero credential found
+	dpa := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"kind":       dpaGvk.Kind,
+			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"metadata": map[string]interface{}{
+				"name":      "dpa-name",
+				"namespace": oadpNs,
+			},
+			"spec": map[string]interface{}{
+				"backupLocations": []interface{}{
+					map[string]interface{}{
+						"velero": map[string]interface{}{
+							"credential": map[string]interface{}{
+								"name": "velero-cred",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	err = c.Create(context.TODO(), dpa)
+	assert.NoError(t, err)
+
+	veleroCreds := fakeSecret("velero-cred")
+	err = c.Create(context.TODO(), veleroCreds)
+	assert.NoError(t, err)
+
+	err = ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	assert.NoError(t, err)
+
+	// Check that the DPA was written to file
+	dpaFilePath := filepath.Join(toDir, oadpDpaDir, dpa.GetName()+".yaml")
+	_, err = os.Stat(dpaFilePath)
+	assert.NoError(t, err)
+
+	// Check that the velero credential secret was written to file
+	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretDir, "velero-cred.yaml")
+	_, err = os.Stat(veleroCredSecretFilePath)
+	assert.NoError(t, err)
+}

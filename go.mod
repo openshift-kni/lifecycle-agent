@@ -19,6 +19,7 @@ require (
 	k8s.io/client-go v0.28.2
 	k8s.io/code-generator v0.28.2
 	sigs.k8s.io/controller-runtime v0.16.1
+	sigs.k8s.io/yaml v1.3.0
 )
 
 require (
@@ -83,5 +84,6 @@ require (
 	open-cluster-management.io/api v0.11.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
-	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+//replace github.com/vmware-tanzu/velero => github.com/openshift/velero v0.10.2-0.20231002153713-b470b0211e1f
