@@ -1,0 +1,9 @@
+[Unit]
+Description=Image base SNO configuration script
+After=nodeip-configuration.service prepare-installation-configuration.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/installation-configuration.sh
+[Install]
+WantedBy=multi-user.target
