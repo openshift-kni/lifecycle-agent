@@ -19,11 +19,12 @@ package clusterconfig
 import (
 	"context"
 	"encoding/json"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/api/errors"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
@@ -67,8 +68,8 @@ func TestClusterConfig(t *testing.T) {
 			name: "Validate success flow",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      PullSecretName,
-					Namespace: ConfigNamespace,
+					Name:      pullSecretName,
+					Namespace: configNamespace,
 				},
 				Data: map[string][]byte{"aaa": []byte("bbb")},
 			},
@@ -88,9 +89,9 @@ func TestClusterConfig(t *testing.T) {
 			},
 			idm: &ocpV1.ImageDigestMirrorSet{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ImageSetName,
+					Name: imageSetName,
 				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: ImageSetName}}},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error) {
@@ -102,7 +103,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, len(dir), numberOfFilesOnSuccess)
 
 				// validate cluster version
-				data, err := os.ReadFile(filepath.Join(filesDir, clusterIdFileName))
+				data, err := os.ReadFile(filepath.Join(filesDir, clusterIDFileName))
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -126,8 +127,8 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, clusterRelocation.Name, croName)
 				assert.Equal(t, clusterRelocation.Spec.Domain, "test.com")
 				assert.Equal(t, len(clusterRelocation.Spec.ImageDigestMirrors), 1)
-				assert.Equal(t, clusterRelocation.Spec.ImageDigestMirrors[0].Source, ImageSetName)
-				assert.Equal(t, clusterRelocation.Spec.PullSecretRef.Name, PullSecretName)
+				assert.Equal(t, clusterRelocation.Spec.ImageDigestMirrors[0].Source, imageSetName)
+				assert.Equal(t, clusterRelocation.Spec.PullSecretRef.Name, pullSecretName)
 				assert.Equal(t, clusterRelocation.Spec.PullSecretRef.Namespace, upgradeConfigurationNamespace)
 
 				// validate pull secret
@@ -142,7 +143,7 @@ func TestClusterConfig(t *testing.T) {
 				}
 				testData := map[string][]byte{"aaa": []byte("bbb")}
 				assert.Equal(t, secret.Data, testData)
-				assert.Equal(t, secret.Name, PullSecretName)
+				assert.Equal(t, secret.Name, pullSecretName)
 				assert.Equal(t, secret.Namespace, upgradeConfigurationNamespace)
 			},
 		},
@@ -165,9 +166,9 @@ func TestClusterConfig(t *testing.T) {
 			},
 			idm: &ocpV1.ImageDigestMirrorSet{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ImageSetName,
+					Name: imageSetName,
 				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: ImageSetName}}},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error) {
@@ -179,8 +180,8 @@ func TestClusterConfig(t *testing.T) {
 			name: " clusterversion error",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      PullSecretName,
-					Namespace: ConfigNamespace,
+					Name:      pullSecretName,
+					Namespace: configNamespace,
 				},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{},
@@ -192,9 +193,9 @@ func TestClusterConfig(t *testing.T) {
 			},
 			idm: &ocpV1.ImageDigestMirrorSet{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ImageSetName,
+					Name: imageSetName,
 				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: ImageSetName}}},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error) {
@@ -205,8 +206,8 @@ func TestClusterConfig(t *testing.T) {
 			name: "ingress error",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      PullSecretName,
-					Namespace: ConfigNamespace,
+					Name:      pullSecretName,
+					Namespace: configNamespace,
 				},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
@@ -220,9 +221,9 @@ func TestClusterConfig(t *testing.T) {
 			ingress: &ocpV1.Ingress{},
 			idm: &ocpV1.ImageDigestMirrorSet{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ImageSetName,
+					Name: imageSetName,
 				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: ImageSetName}}},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error) {
@@ -233,8 +234,8 @@ func TestClusterConfig(t *testing.T) {
 			name: "idm not found, should still succeed",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      PullSecretName,
-					Namespace: ConfigNamespace,
+					Name:      pullSecretName,
+					Namespace: configNamespace,
 				},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
@@ -278,7 +279,7 @@ func TestClusterConfig(t *testing.T) {
 				Client:  fakeClient,
 				Log:     logr.Discard(),
 				Scheme:  fakeClient.Scheme(),
-				Options: &UpdateConfigReconcilerOptions{DataDir: tmpDir},
+				Options: &updateConfigReconcilerOptions{DataDir: tmpDir},
 			}
 			err = ucc.FetchClusterConfig(context.TODO())
 			if !tc.expectedErr && err != nil {

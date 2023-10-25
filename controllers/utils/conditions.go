@@ -28,6 +28,7 @@ var ConditionTypes = struct {
 	RollbackCompleted:  "RollbackCompleted",
 }
 
+// FinalConditionTypes defines the valid conditions for transitioning back to idle
 var FinalConditionTypes = []ConditionType{ConditionTypes.UpgradeCompleted, ConditionTypes.RollbackCompleted}
 
 // ConditionReason is a string representing the condition's reason
@@ -102,6 +103,7 @@ func ResetStatusConditions(existingConditions *[]metav1.Condition, generation in
 	)
 }
 
+// GetCurrentInProgressStage returns the stage that is currently in progress
 func GetCurrentInProgressStage(ibu *ranv1alpha1.ImageBasedUpgrade) ranv1alpha1.ImageBasedUpgradeStage {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(ConditionTypes.Idle))
 	if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {

@@ -36,8 +36,10 @@ type ImageBasedUpgrade struct {
 	Status ImageBasedUpgradeStatus `json:"status,omitempty"`
 }
 
+// ImageBasedUpgradeStage defines the type for the IBU stage field
 type ImageBasedUpgradeStage string
 
+// Stages defines the string values for valid stages
 var Stages = struct {
 	Idle     ImageBasedUpgradeStage
 	Prep     ImageBasedUpgradeStage

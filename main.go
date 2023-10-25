@@ -18,8 +18,9 @@ package main
 
 import (
 	"flag"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"os"
+
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
