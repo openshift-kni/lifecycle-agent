@@ -18,17 +18,75 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+func cleanupUnbootedStateroot(rpmostreeClient *rpmostreeclient.Client, stateroot string) error {
+	status, err := rpmostreeClient.QueryStatus()
+	if err != nil {
+		return err
+	}
+
+	undeployIndices := make([]int, 0)
+	for index, deployment := range status.Deployments {
+		if deployment.OSName != stateroot {
+			continue
+		}
+		// make sure none of the deployments in the stateroot is booted
+		if deployment.Booted {
+			return fmt.Errorf("failed abort: deployment %d in stateroot %s is booted", index, stateroot)
+		}
+		undeployIndices = append(undeployIndices, index)
+	}
+
+	// since undeploy shifts the order, undeploy in the reverse order
+	for i := len(undeployIndices) - 1; i >= 0; i-- {
+		ostreeUndeployCommand := fmt.Sprintf("ostree admin undeploy %d", i)
+		err := utils.ExecuteChrootCmd(utils.Host, ostreeUndeployCommand)
+		if err != nil {
+			return fmt.Errorf("ostree undeploy %d failed: %w", i, err)
+		}
+	}
+
+	// remove stateroot
+	sysrootPath := fmt.Sprintf("/sysroot/ostree/deploy/%s", stateroot)
+	if _, err := os.Stat(pathOutsideChroot(sysrootPath)); err == nil {
+		removeSysrootCommand := fmt.Sprintf("unshare -m /bin/sh -c \"mount -o remount,rw /sysroot && rm -rf %s\"", sysrootPath)
+		err := utils.ExecuteChrootCmd(utils.Host, removeSysrootCommand)
+		if err != nil {
+			return fmt.Errorf("removing stateroot failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func cleanupIBUFiles() error {
+	if _, err := os.Stat(pathOutsideChroot(utils.IBUWorkspacePath)); err == nil {
+		if err := os.RemoveAll(filepath.Join(utils.Host, utils.IBUWorkspacePath)); err != nil {
+			return fmt.Errorf("removing %s failed: %w", utils.IBUWorkspacePath, err)
+		}
+	}
+	return nil
+}
+
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-
-	// TODO actual steps
-	// If succeeds, return doNotRequeue
-	return doNotRequeue(), nil
+	stateroot := getStaterootName(ibu.Spec.SeedImageRef.Version)
+	r.Log.Info("Cleanup stateroot", "stateroot", stateroot)
+	err := cleanupUnbootedStateroot(r.RPMOstreeClient, stateroot)
+	if err != nil {
+		return doNotRequeue(), err
+	}
+	err = cleanupIBUFiles()
+	return doNotRequeue(), err
 }
 
 //nolint:unparam

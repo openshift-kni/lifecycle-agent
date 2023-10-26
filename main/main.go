@@ -20,9 +20,11 @@ import (
 	"flag"
 	"os"
 
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/sirupsen/logrus"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -30,6 +32,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	ocpV1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,6 +49,11 @@ import (
 	"github.com/openshift/library-go/pkg/config/leaderelection"
 	//+kubebuilder:scaffold:imports
 )
+
+var logr = &logrus.Logger{
+	Out:   os.Stdout,
+	Level: logrus.InfoLevel,
+}
 
 var (
 	scheme   = runtime.NewScheme()
@@ -102,15 +110,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	logr.SetFormatter(&logrus.TextFormatter{
+		DisableColors:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+		FullTimestamp:   true,
+	})
+	op := ops.NewOps(logr, ops.NewExecutor(logr, true))
+	rpmOstreeClient := rpmostreeclient.NewClient("ibu-imager", op)
+
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 	if err = (&controllers.ImageBasedUpgradeReconciler{
-		Client:        mgr.GetClient(),
-		Log:           log,
-		Scheme:        mgr.GetScheme(),
-		ClusterConfig: &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
-		NetworkConfig: &clusterconfig.UpgradeNetworkConfigGather{Log: log},
-		BackupRestore: &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
-		ExtraManifest: &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
+		Client:          mgr.GetClient(),
+		Log:             log,
+		Scheme:          mgr.GetScheme(),
+		ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
+		NetworkConfig:   &clusterconfig.UpgradeNetworkConfigGather{Log: log},
+		BackupRestore:   &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
+		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
+		RPMOstreeClient: rpmOstreeClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
