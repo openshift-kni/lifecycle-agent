@@ -103,3 +103,27 @@ fi
 rm -f /var/ibu/*
 ```
 
+## Running the ibu-imager
+
+With the IBU Imager packaged into the LCA image, it can be run on the seed SNO with the LCA deployed.
+
+```console
+# Get the LCA Image reference
+export KUBECONFIG=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-ext.kubeconfig
+LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
+
+# Login to your repo and generate an authfile
+AUTHFILE=/tmp/backup-secret.json
+podman login --authfile ${AUTHFILE} -u ${MY_ID} quay.io/${MY_REPO_ID}
+
+IMG_REPO=quay.io/${MY_REPO_ID}/${MY_REPO}
+
+podman run --privileged --pid=host --rm --net=host \
+    -v /etc:/etc \
+    -v /var:/var \
+    -v /var/run:/var/run \
+    -v /run/systemd/journal/socket:/run/systemd/journal/socket \
+    -v ${AUTHFILE}:${AUTHFILE} \
+    --entrypoint /ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} --registry ${IMG_REPO}
+```
+
