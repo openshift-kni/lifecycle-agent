@@ -53,6 +53,7 @@ func doNotRequeue() ctrl.Result {
 	return ctrl.Result{}
 }
 
+//nolint:unused
 func requeueImmediately() ctrl.Result {
 	return ctrl.Result{Requeue: true}
 }
@@ -61,14 +62,17 @@ func requeueWithShortInterval() ctrl.Result {
 	return requeueWithCustomInterval(30 * time.Second)
 }
 
+//nolint:unused
 func requeueWithMediumInterval() ctrl.Result {
 	return requeueWithCustomInterval(1 * time.Minute)
 }
 
+//nolint:unused
 func requeueWithLongInterval() ctrl.Result {
 	return requeueWithCustomInterval(5 * time.Minute)
 }
 
+//nolint:unused
 func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 	return ctrl.Result{RequeueAfter: interval}
 }

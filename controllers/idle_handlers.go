@@ -23,6 +23,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
@@ -30,6 +31,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *ranv
 	return doNotRequeue(), nil
 }
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
@@ -37,6 +39,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 	return doNotRequeue(), nil
 }
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
@@ -44,6 +47,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *r
 	return doNotRequeue(), nil
 }
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps

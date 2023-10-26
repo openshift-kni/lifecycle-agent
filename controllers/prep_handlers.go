@@ -35,7 +35,7 @@ func pathOutsideChroot(filename string) string {
 }
 
 func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
-	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -43,7 +43,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepGetSeedImage)
 	scriptcontent, _ := generated.Asset(utils.PrepGetSeedImage)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0700)
+	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -59,7 +59,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPullImages(
-	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -67,7 +67,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepPullImages)
 	scriptcontent, _ := generated.Asset(utils.PrepPullImages)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0700)
+	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -83,7 +83,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 }
 
 func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
-	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -91,7 +91,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepSetupStateroot)
 	scriptcontent, _ := generated.Asset(utils.PrepSetupStateroot)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0700)
+	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -107,7 +107,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 }
 
 func (r *ImageBasedUpgradeReconciler) runCleanup(
-	ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) {
+	ibu *ranv1alpha1.ImageBasedUpgrade) {
 	if err := os.Chdir("/"); err != nil {
 		return
 	}
@@ -115,7 +115,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepCleanup)
 	scriptcontent, _ := generated.Asset(utils.PrepCleanup)
-	err := os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0700)
+	err := os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -130,6 +130,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	return
 }
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
 	result = doNotRequeue()
 
@@ -140,7 +141,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 	}
 
 	if _, err = os.Stat(pathOutsideChroot(utils.Path)); os.IsNotExist(err) {
-		err = os.Mkdir(pathOutsideChroot(utils.Path), 0700)
+		err = os.Mkdir(pathOutsideChroot(utils.Path), 0o700)
 	}
 
 	if err != nil {
@@ -176,19 +177,19 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 				"Prep failed",
 				ibu.Generation)
 		} else if progress == "completed-seed-image-pull" {
-			result, err = r.launchSetupStateroot(ctx, ibu, progressfile)
+			result, err = r.launchSetupStateroot(ibu, progressfile)
 			if err != nil {
 				r.Log.Error(err, "Failed to launch get-seed-image phase")
 				return
 			}
 		} else if progress == "completed-stateroot" {
-			result, err = r.launchPullImages(ctx, ibu, progressfile)
+			result, err = r.launchPullImages(ibu, progressfile)
 			if err != nil {
 				r.Log.Error(err, "Failed to launch get-seed-image phase")
 				return
 			}
 		} else if progress == "completed-precache" {
-			r.runCleanup(ctx, ibu)
+			r.runCleanup(ibu)
 
 			// If completed, update conditions and return doNotRequeue
 			utils.SetStatusCondition(&ibu.Status.Conditions,
@@ -207,7 +208,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 			result = requeueWithShortInterval()
 		}
 	} else if os.IsNotExist(err) {
-		result, err = r.launchGetSeedImage(ctx, ibu, progressfile)
+		result, err = r.launchGetSeedImage(ibu, progressfile)
 		if err != nil {
 			r.Log.Error(err, "Failed to launch get-seed-image phase")
 			return

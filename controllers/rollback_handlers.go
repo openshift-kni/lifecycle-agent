@@ -25,6 +25,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps

@@ -23,12 +23,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const Path string = "/var/ibu"
-const Host string = "/host"
-const PrepGetSeedImage string = "prepGetSeedImage.sh"
-const PrepPullImages string = "prepPullImages.sh"
-const PrepSetupStateroot string = "prepSetupStateroot.sh"
-const PrepCleanup string = "prepCleanup.sh"
+// Constants for file and directory names
+const (
+	Path               string = "/var/ibu"
+	Host               string = "/host"
+	PrepGetSeedImage   string = "prepGetSeedImage.sh"
+	PrepPullImages     string = "prepPullImages.sh"
+	PrepSetupStateroot string = "prepSetupStateroot.sh"
+	PrepCleanup        string = "prepCleanup.sh"
+)
 
 // ExecuteCmd execute shell commands
 func ExecuteCmd(cmd string) {

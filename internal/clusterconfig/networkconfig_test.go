@@ -83,7 +83,7 @@ func TestNetworkConfig(t *testing.T) {
 
 			unc := UpgradeNetworkConfigGather{
 				Log:     logr.Discard(),
-				Options: &UpdateConfigReconcilerOptions{DataDir: tmpDir},
+				Options: &updateConfigReconcilerOptions{DataDir: tmpDir},
 			}
 			err := unc.FetchNetworkConfig(context.TODO())
 			if !tc.expectedErr && err != nil {

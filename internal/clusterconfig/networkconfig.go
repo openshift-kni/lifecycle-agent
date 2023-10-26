@@ -14,7 +14,7 @@ const networkDir = "network-configuration"
 // UpgradeNetworkConfigGather Gather network config files from host
 type UpgradeNetworkConfigGather struct {
 	Log     logr.Logger
-	Options *UpdateConfigReconcilerOptions
+	Options *updateConfigReconcilerOptions
 }
 
 var listOfPaths = []string{
@@ -44,7 +44,7 @@ func (r *UpgradeNetworkConfigGather) FetchNetworkConfig(ctx context.Context) err
 // configDir returns the files directory for the given cluster config
 func (r *UpgradeNetworkConfigGather) configDir() (string, error) {
 	filesDir := filepath.Join(r.Options.DataDir, networkDir)
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
+	if err := os.MkdirAll(filesDir, 0o700); err != nil {
 		return "", err
 	}
 	return filesDir, nil
