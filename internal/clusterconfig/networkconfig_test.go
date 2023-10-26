@@ -31,21 +31,20 @@ func TestNetworkConfig(t *testing.T) {
 		name          string
 		filesToCreate []string
 		expectedErr   bool
-		validateFunc  func(t *testing.T, tempDir string, err error, files []string, unc UpgradeNetworkConfigGather)
+		validateFunc  func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather)
 	}{
 		{
 			name: "Validate success flow",
 			filesToCreate: []string{"/etc/hostname", "/etc/NetworkManager/system-connections/test1.txt",
-				"/etc/NetworkManager/system-connections/scripts/test1.txt"},
+				"/etc/NetworkManager/system-connections/scripts/test1.txt", "/var/run/nodeip-configuration/primary-ip"},
 			expectedErr: false,
-			validateFunc: func(t *testing.T, tempDir string, err error, files []string, unc UpgradeNetworkConfigGather) {
-				dir, err := unc.configDir()
+			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather) {
+				dir, err := unc.configDir(tmpDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				counter := 0
 				for _, file := range files {
-
 					err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 						if err == nil && info.Name() == filepath.Base(file) {
 							counter++
@@ -56,7 +55,7 @@ func TestNetworkConfig(t *testing.T) {
 						t.Errorf("unexpected error: %v", err)
 					}
 				}
-				assert.Equal(t, counter, len(files))
+				assert.Equal(t, len(files), counter)
 			},
 		},
 	}
@@ -82,10 +81,9 @@ func TestNetworkConfig(t *testing.T) {
 			}
 
 			unc := UpgradeNetworkConfigGather{
-				Log:     logr.Discard(),
-				Options: &updateConfigReconcilerOptions{DataDir: tmpDir},
+				Log: logr.Discard(),
 			}
-			err := unc.FetchNetworkConfig(context.TODO())
+			err := unc.FetchNetworkConfig(context.TODO(), tmpDir)
 			if !tc.expectedErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}

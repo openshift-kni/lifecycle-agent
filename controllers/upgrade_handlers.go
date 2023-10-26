@@ -18,7 +18,7 @@ package controllers
 
 import (
 	"context"
-
+	"fmt"
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,13 +27,15 @@ import (
 
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
+	utils.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
+	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 	// pre upgrade steps
-	if err := r.ClusterConfig.FetchClusterConfig(ctx); err != nil {
+	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {
 		r.Log.Error(err, "failed fetching cluster config")
 		return ctrl.Result{}, err
 	}
 
-	if err := r.NetworkConfig.FetchNetworkConfig(ctx); err != nil {
+	if err := r.NetworkConfig.FetchNetworkConfig(ctx, stateRootRepo); err != nil {
 		r.Log.Error(err, "failed fetching Network config")
 		return ctrl.Result{}, err
 	}
