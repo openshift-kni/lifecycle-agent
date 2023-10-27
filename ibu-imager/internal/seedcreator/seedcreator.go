@@ -1,4 +1,4 @@
-package seed_creator
+package seedcreator
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostree_client"
+	ostree "ibu-imager/internal/ostreeclient"
 )
 
 const (
@@ -36,6 +36,7 @@ type SeedCreator struct {
 	authFile          string
 }
 
+// NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
 	kubeconfig, containerRegistry, backupTag, authFile string) *SeedCreator {
 	return &SeedCreator{
@@ -50,6 +51,7 @@ func NewSeedCreator(log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client
 	}
 }
 
+// CreateSeedImage comprises the Imager workflow for creating a single OCI seed image
 func (s *SeedCreator) CreateSeedImage() error {
 	s.log.Println("Creating seed image")
 
@@ -264,26 +266,26 @@ func (s *SeedCreator) backupOstree() error {
 
 func (s *SeedCreator) backupRPMOstree() error {
 	// Check if the backup file for rpm-ostree doesn't exist
-	rpmJson := s.backupDir + "/rpm-ostree.json"
-	_, err := os.Stat(rpmJson)
+	rpmJSON := s.backupDir + "/rpm-ostree.json"
+	_, err := os.Stat(rpmJSON)
 	if err == nil || !os.IsNotExist(err) {
 		return err
 	}
 	_, err = s.ops.RunBashInHostNamespace(
-		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJson)...)
+		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJSON)...)
 	log.Println("Backup of rpm-ostree.json created successfully.")
 	return err
 }
 
 func (s *SeedCreator) backupMCOConfig() error {
 	// Check if the backup file for mco-currentconfig doesn't exist
-	mcoJson := s.backupDir + "/mco-currentconfig.json"
-	_, err := os.Stat(mcoJson)
+	mcoJSON := s.backupDir + "/mco-currentconfig.json"
+	_, err := os.Stat(mcoJSON)
 	if err == nil || !os.IsNotExist(err) {
 		return err
 	}
 	_, err = s.ops.RunBashInHostNamespace(
-		"cp", "/etc/machine-config-daemon/currentconfig", mcoJson)
+		"cp", "/etc/machine-config-daemon/currentconfig", mcoJSON)
 	log.Println("Backup of mco-currentconfig created successfully.")
 	return err
 }

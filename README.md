@@ -2,7 +2,7 @@
 
 ## What it is
 
-The Lifecylce Agent Operator provides local (on cluster) lifecycle management services for Single
+The Lifecycle Agent Operator provides local (on cluster) lifecycle management services for Single
 Node Openshift (SNO) clusters.
 
 ## How to deploy
