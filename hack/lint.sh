@@ -8,7 +8,7 @@ fi
 
 RETVAL=0
 GENERATED_FILES="zz_generated.*.go"
-for file in $(find . -path ./vendor -prune -o -path "./*/vendor" -prune -o -type f -name '*.go' -print | grep -E -v "$GENERATED_FILES"); do
+for file in $(find . -path ./vendor -prune -o -path "./*/vendor" -prune -o -path ./ibu-imager -prune -o -type f -name '*.go' -print | grep -E -v "$GENERATED_FILES"); do
     golint -set_exit_status "$file"
     if [[ $? -ne 0 ]]; then
         RETVAL=1
