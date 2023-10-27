@@ -1,4 +1,4 @@
-package seed_creator
+package seedcreator
 
 import (
 	"fmt"

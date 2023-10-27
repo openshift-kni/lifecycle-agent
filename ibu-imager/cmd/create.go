@@ -25,8 +25,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostree_client"
-	seed "ibu-imager/internal/seed_creator"
+	ostree "ibu-imager/internal/ostreeclient"
+	seed "ibu-imager/internal/seedcreator"
 )
 
 // authFile is the path to the registry credentials used to push the OCI image

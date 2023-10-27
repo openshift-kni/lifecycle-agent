@@ -16,7 +16,7 @@ limitations under the License.
 
 // This client lifts code from: https://github.com/coreos/rpmostree-client-go/blob/main/pkg/client/client.go
 
-package rpm_ostree_client
+package rpmostreeclient
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-package seed_creator
+package seedcreator
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostree_client"
+	ostree "ibu-imager/internal/ostreeclient"
 )
 
 const (
