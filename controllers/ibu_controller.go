@@ -47,6 +47,8 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder      record.EventRecorder
 	ClusterConfig *clusterconfig.UpgradeClusterConfigGather
 	NetworkConfig *clusterconfig.UpgradeNetworkConfigGather
+	FS            utils.FileSystem
+	Cmd           utils.CommandLine
 }
 
 func doNotRequeue() ctrl.Result {

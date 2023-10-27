@@ -28,7 +28,7 @@ import (
 
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
-	utils.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
+	r.Cmd.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 	// pre upgrade steps
 	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {

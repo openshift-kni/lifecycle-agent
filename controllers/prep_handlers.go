@@ -43,7 +43,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepGetSeedImage)
 	scriptcontent, _ := generated.Asset(utils.PrepGetSeedImage)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err = r.FS.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -52,7 +52,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 	r.Log.Info("Handler script written")
 
 	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s", scriptname, ibu.Spec.SeedImageRef.Image, progressfile)
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
+	go r.Cmd.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
 
 	return
@@ -67,8 +67,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepPullImages)
 	scriptcontent, _ := generated.Asset(utils.PrepPullImages)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
-
+	err = r.FS.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
 		return
@@ -76,7 +75,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 	r.Log.Info("Handler script written")
 
 	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s", scriptname, ibu.Spec.SeedImageRef.Image, progressfile)
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
+	go r.Cmd.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
 
 	return
@@ -91,7 +90,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepSetupStateroot)
 	scriptcontent, _ := generated.Asset(utils.PrepSetupStateroot)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err = r.FS.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -100,7 +99,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	r.Log.Info("Handler script written")
 
 	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s", scriptname, ibu.Spec.SeedImageRef.Image, progressfile)
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
+	go r.Cmd.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
 
 	return
@@ -115,7 +114,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	// Write the script
 	scriptname := filepath.Join(utils.Path, utils.PrepCleanup)
 	scriptcontent, _ := generated.Asset(utils.PrepCleanup)
-	err := os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err := r.FS.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
@@ -125,7 +124,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 
 	cmd := fmt.Sprintf("%s --seed-image %s", scriptname, ibu.Spec.SeedImageRef.Image)
 	// This should be a quick operation, so we can run it within the handler thread
-	utils.ExecuteChrootCmd(utils.Host, cmd)
+	r.Cmd.ExecuteChrootCmd(utils.Host, cmd)
 
 	return
 }
@@ -134,14 +133,14 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
 	result = doNotRequeue()
 
-	_, err = os.Stat(utils.Host)
+	_, err = r.FS.Stat(utils.Host)
 	if err != nil {
 		// fail without /host
 		return
 	}
 
 	if _, err = os.Stat(pathOutsideChroot(utils.Path)); os.IsNotExist(err) {
-		err = os.Mkdir(pathOutsideChroot(utils.Path), 0o700)
+		err = r.FS.Mkdir(pathOutsideChroot(utils.Path), 0o700)
 	}
 
 	if err != nil {
@@ -149,13 +148,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 	}
 
 	progressfile := filepath.Join(utils.Path, "prep-progress")
-
-	_, err = os.Stat(pathOutsideChroot(progressfile))
-
+	_, err = r.FS.Stat(pathOutsideChroot(progressfile))
 	if err == nil {
 		// in progress
 		var content []byte
-		content, err = os.ReadFile(pathOutsideChroot(progressfile))
+		content, err = r.FS.ReadFile(pathOutsideChroot(progressfile))
 		if err != nil {
 			return
 		}

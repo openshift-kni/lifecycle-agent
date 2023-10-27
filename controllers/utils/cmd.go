@@ -33,8 +33,17 @@ const (
 	PrepCleanup        string = "prepCleanup.sh"
 )
 
+// CommandLine interface
+type CommandLine interface {
+	ExecuteCmd(string)
+	ExecuteChrootCmd(string, string)
+}
+
+// OSCmd executes commands on OS
+type OSCmd struct{}
+
 // ExecuteCmd execute shell commands
-func ExecuteCmd(cmd string) {
+func (OSCmd) ExecuteCmd(cmd string) {
 
 	logger := log.StandardLogger()
 	lw := logger.Writer()
@@ -55,7 +64,7 @@ func ExecuteCmd(cmd string) {
 }
 
 // ExecuteChrootCmd execute shell commands in a chroot environment
-func ExecuteChrootCmd(root, cmd string) {
+func (OSCmd) ExecuteChrootCmd(root, cmd string) {
 
 	logger := log.StandardLogger()
 	lw := logger.Writer()
@@ -75,4 +84,20 @@ func ExecuteChrootCmd(root, cmd string) {
 	if err != nil {
 		log.Error(err)
 	}
+}
+
+// FakeCmd fakes commands and record history
+type FakeCmd struct {
+	Commands       chan string
+	ChrootCommands chan string
+}
+
+// ExecuteCmd keep track of the command instead of running it
+func (f *FakeCmd) ExecuteCmd(cmd string) {
+	f.Commands <- cmd
+}
+
+// ExecuteChrootCmd keep track of the command instead of running it
+func (f *FakeCmd) ExecuteChrootCmd(root, cmd string) {
+	f.ChrootCommands <- cmd
 }
