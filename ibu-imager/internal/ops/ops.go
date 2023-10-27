@@ -7,6 +7,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// Ops is an interface for executing commands and actions in the host namespace
+//
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
 type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
@@ -19,6 +21,7 @@ type ops struct {
 	executor Execute
 }
 
+// NewOps creates and returns an Ops interface for executing host namespace operations
 func NewOps(log *logrus.Logger, executor Execute) Ops {
 	return &ops{executor: executor, log: log}
 }

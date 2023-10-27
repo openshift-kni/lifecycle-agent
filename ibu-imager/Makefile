@@ -14,9 +14,6 @@ IMAGE_TAG_BASE ?= quay.io/lochoa/ibu-imager
 
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
-TEST_FORMAT ?= standard-verbose
-GOTEST_FLAGS = --format=$(TEST_FORMAT)
-GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
