@@ -24,13 +24,12 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	ocpV1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -276,12 +275,11 @@ func TestClusterConfig(t *testing.T) {
 			}
 
 			ucc := UpgradeClusterConfigGather{
-				Client:  fakeClient,
-				Log:     logr.Discard(),
-				Scheme:  fakeClient.Scheme(),
-				Options: &updateConfigReconcilerOptions{DataDir: tmpDir},
+				Client: fakeClient,
+				Log:    logr.Discard(),
+				Scheme: fakeClient.Scheme(),
 			}
-			err = ucc.FetchClusterConfig(context.TODO())
+			err = ucc.FetchClusterConfig(context.TODO(), tmpDir)
 			if !tc.expectedErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
