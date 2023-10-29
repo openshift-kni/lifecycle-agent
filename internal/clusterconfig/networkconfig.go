@@ -44,7 +44,7 @@ func (r *UpgradeNetworkConfigGather) FetchNetworkConfig(ctx context.Context, ost
 
 func (r *UpgradeNetworkConfigGather) configDir(dir string) (string, error) {
 	filesDir := filepath.Join(dir, networkDir)
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
+	if err := os.MkdirAll(filesDir, 0o700); err != nil {
 		return "", err
 	}
 	return filesDir, nil

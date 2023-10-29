@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

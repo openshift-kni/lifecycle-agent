@@ -45,7 +45,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	// TODO: Add the following
 	// ssh keys
 	// Other Machine configs?
-	//additionalTrustedCA (from the images.config)
+	// additionalTrustedCA (from the images.config)
 	// Other Certificates?
 	// Catalog source
 	// ACM registration?
@@ -78,13 +78,13 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err != nil {
 		return err
 	}
-	if err = r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir); err != nil {
+	if err := r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, IDMS *v1.ImageDigestMirrorSet) (*cro.ClusterRelocation, error) {
+func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, idms *v1.ImageDigestMirrorSet) (*cro.ClusterRelocation, error) {
 	config := &cro.ClusterRelocation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      croName,
@@ -96,7 +96,7 @@ func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, 
 				Namespace: upgradeConfigurationNamespace,
 				Name:      pullSecretName,
 			},
-			ImageDigestMirrors: IDMS.Spec.ImageDigestMirrors,
+			ImageDigestMirrors: idms.Spec.ImageDigestMirrors,
 		},
 	}
 
@@ -112,7 +112,7 @@ func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, 
 func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 	filesDir := filepath.Join(dir, clusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder", "folder", filesDir)
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
+	if err := os.MkdirAll(filesDir, 0o700); err != nil {
 		return "", err
 	}
 	return filesDir, nil
@@ -126,16 +126,16 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterReloc
 		return err
 	}
 
-	if err = r.writeNamespaceToFile(filepath.Join(clusterConfigPath, "namespace.json")); err != nil {
+	if err := r.writeNamespaceToFile(filepath.Join(clusterConfigPath, "namespace.json")); err != nil {
 		return err
 	}
-	if err = r.writeClusterRelocationToFile(config, filepath.Join(clusterConfigPath, croFileName)); err != nil {
+	if err := r.writeClusterRelocationToFile(config, filepath.Join(clusterConfigPath, croFileName)); err != nil {
 		return err
 	}
-	if err = r.writeSecretToFile(pullSecret, filepath.Join(clusterConfigPath, pullSecretFileName)); err != nil {
+	if err := r.writeSecretToFile(pullSecret, filepath.Join(clusterConfigPath, pullSecretFileName)); err != nil {
 		return err
 	}
-	if err = r.writeClusterIDToFile(clusterID, filepath.Join(clusterConfigPath, clusterIDFileName)); err != nil {
+	if err := r.writeClusterIDToFile(clusterID, filepath.Join(clusterConfigPath, clusterIDFileName)); err != nil {
 		return err
 	}
 
@@ -158,7 +158,7 @@ func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error
 	if err != nil {
 		return fmt.Errorf("failed to marshal namespace: %w", err)
 	}
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write namespace: %w", err)
 	}
 	return nil
@@ -170,7 +170,7 @@ func (r *UpgradeClusterConfigGather) writeClusterRelocationToFile(config *cro.Cl
 	if err != nil {
 		return fmt.Errorf("failed to marshal cluster relocation: %w", err)
 	}
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write cluster relocation: %w", err)
 	}
 
@@ -185,7 +185,7 @@ func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, fi
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
 		return err
 	}
 	return nil
@@ -228,7 +228,7 @@ func (r *UpgradeClusterConfigGather) writeClusterIDToFile(clusterID v1.ClusterID
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
 		return err
 	}
 	return nil

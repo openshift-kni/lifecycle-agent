@@ -68,7 +68,7 @@ func TestNetworkConfig(t *testing.T) {
 			// create list of files to copy
 			for _, path := range tc.filesToCreate {
 				dir := filepath.Join(tmpDir, filepath.Dir(path))
-				if err := os.MkdirAll(dir, 0700); err != nil {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				newPath := filepath.Join(dir, filepath.Base(path))

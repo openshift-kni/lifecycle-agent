@@ -56,7 +56,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	s.log.Println("Creating seed image")
 
 	// create backup dir
-	if err := os.MkdirAll(s.backupDir, 0700); err != nil {
+	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
 		return err
 	}
 
