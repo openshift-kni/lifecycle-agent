@@ -4,9 +4,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.13.0
   creationTimestamp: null
-  name: imagebasedupgrades.ran.openshift.io
+  name: imagebasedupgrades.lca.openshift.io
 spec:
-  group: ran.openshift.io
+  group: lca.openshift.io
   names:
     kind: ImageBasedUpgrade
     listKind: ImageBasedUpgradeList

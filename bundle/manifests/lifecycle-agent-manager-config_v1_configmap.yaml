@@ -11,7 +11,7 @@ data:
       port: 9443
     leaderElection:
       leaderElect: true
-      resourceName: lca.ran.openshift.io
+      resourceName: lca.openshift.io
 kind: ConfigMap
 metadata:
   name: lifecycle-agent-manager-config

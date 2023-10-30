@@ -5,7 +5,7 @@ metadata:
   name: ImageBasedUpgrade-viewer-role
 rules:
 - apiGroups:
-  - ran.openshift.io
+  - lca.openshift.io
   resources:
   - ImageBasedUpgrades
   verbs:
@@ -13,7 +13,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ran.openshift.io
+  - lca.openshift.io
   resources:
   - ImageBasedUpgrades/status
   verbs:

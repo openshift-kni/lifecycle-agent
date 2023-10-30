@@ -77,9 +77,9 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 	return ctrl.Result{RequeueAfter: interval}
 }
 
-//+kubebuilder:rbac:groups=ran.openshift.io,resources=imagebasedupgrades,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=ran.openshift.io,resources=imagebasedupgrades/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=ran.openshift.io,resources=imagebasedupgrades/finalizers,verbs=update
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
