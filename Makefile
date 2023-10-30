@@ -110,7 +110,7 @@ lint: ## Run golint against code.
 .PHONY: unittest
 unittest:
 	@echo "Running unit tests"
-	go test -v ./controllers/...
+	go test -v ./...
 
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize

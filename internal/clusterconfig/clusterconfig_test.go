@@ -19,6 +19,7 @@ package clusterconfig
 import (
 	"context"
 	"encoding/json"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,6 @@ import (
 	ocpV1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,7 +61,7 @@ func TestClusterConfig(t *testing.T) {
 		ingress        client.Object
 		idm            client.Object
 		expectedErr    bool
-		validateFunc   func(t *testing.T, tempDir string, err error)
+		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
 		{
 			name: "Validate success flow",
@@ -93,8 +93,11 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: false,
-			validateFunc: func(t *testing.T, tempDir string, err error) {
-				filesDir := filepath.Join(tempDir, "namespaces", upgradeConfigurationNamespace, "cluster", clusterConfigDir)
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				filesDir, err := ucc.configDirs(tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
 				dir, err := os.ReadDir(filesDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
@@ -170,7 +173,7 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
-			validateFunc: func(t *testing.T, tempDir string, err error) {
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, errors.IsNotFound(err), true)
 				assert.Equal(t, strings.Contains(err.Error(), "secret"), true)
 			},
@@ -197,7 +200,7 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
-			validateFunc: func(t *testing.T, tempDir string, err error) {
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, strings.Contains(err.Error(), "clusterversion"), true)
 			},
 		},
@@ -225,7 +228,7 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: imageSetName}}},
 			},
 			expectedErr: true,
-			validateFunc: func(t *testing.T, tempDir string, err error) {
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, strings.Contains(err.Error(), "ingress"), true)
 			},
 		},
@@ -253,8 +256,11 @@ func TestClusterConfig(t *testing.T) {
 			},
 			idm:         &ocpV1.ImageDigestMirrorSet{},
 			expectedErr: false,
-			validateFunc: func(t *testing.T, tempDir string, err error) {
-				filesDir := filepath.Join(tempDir, "namespaces", upgradeConfigurationNamespace, "cluster", clusterConfigDir)
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				filesDir, err := ucc.configDirs(tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
 				dir, err := os.ReadDir(filesDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
@@ -286,7 +292,7 @@ func TestClusterConfig(t *testing.T) {
 			if tc.expectedErr && err == nil {
 				t.Errorf("expected error but it didn't happened")
 			}
-			tc.validateFunc(t, tmpDir, err)
+			tc.validateFunc(t, tmpDir, err, ucc)
 		})
 	}
 }

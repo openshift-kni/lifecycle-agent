@@ -28,16 +28,18 @@ import (
 
 func TestNetworkConfig(t *testing.T) {
 	testcases := []struct {
-		name          string
-		filesToCreate []string
-		expectedErr   bool
-		validateFunc  func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather)
+		name                 string
+		filesToCreate        []string
+		ipAddressFileContent string
+		expectedErr          bool
+		validateFunc         func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather)
 	}{
 		{
 			name: "Validate success flow",
 			filesToCreate: []string{"/etc/hostname", "/etc/NetworkManager/system-connections/test1.txt",
-				"/etc/NetworkManager/system-connections/scripts/test1.txt", "/var/run/nodeip-configuration/primary-ip"},
-			expectedErr: false,
+				"/etc/NetworkManager/system-connections/scripts/test1.txt", ipAddressFile},
+			expectedErr:          false,
+			ipAddressFileContent: "192.168.127.10",
 			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather) {
 				dir, err := unc.configDir(tmpDir)
 				if err != nil {
@@ -58,13 +60,33 @@ func TestNetworkConfig(t *testing.T) {
 				assert.Equal(t, len(files), counter)
 			},
 		},
+		{
+			name: "No ip address file should fail",
+			filesToCreate: []string{"/etc/hostname", "/etc/NetworkManager/system-connections/test1.txt",
+				"/etc/NetworkManager/system-connections/scripts/test1.txt"},
+			expectedErr:          true,
+			ipAddressFileContent: "",
+			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather) {
+				assert.Equal(t, err != nil, true)
+			},
+		},
+		{
+			name: "Bad ip address found, should fail",
+			filesToCreate: []string{"/etc/hostname", "/etc/NetworkManager/system-connections/test1.txt",
+				"/etc/NetworkManager/system-connections/scripts/test1.txt", ipAddressFile},
+			expectedErr:          true,
+			ipAddressFileContent: "bad ip",
+			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeNetworkConfigGather) {
+				assert.Equal(t, err != nil, true)
+			},
+		},
 	}
 
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
 			listOfPaths = []string{}
-
+			hostPath = tmpDir
 			// create list of files to copy
 			for _, path := range tc.filesToCreate {
 				dir := filepath.Join(tmpDir, filepath.Dir(path))
@@ -76,8 +98,15 @@ func TestNetworkConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+				if path == ipAddressFile {
+					_, err = f.WriteString(tc.ipAddressFileContent)
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+
 				_ = f.Close()
-				listOfPaths = append(listOfPaths, newPath)
+				listOfPaths = append(listOfPaths, path)
 			}
 
 			unc := UpgradeNetworkConfigGather{
