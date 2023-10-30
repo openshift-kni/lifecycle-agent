@@ -11,8 +11,9 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"github.com/sirupsen/logrus"
 	"ibu-imager/internal/ops"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestIbuImager(t *testing.T) {
@@ -33,7 +34,7 @@ var _ = Describe("Backup /var", func() {
 		ctrl = gomock.NewController(GinkgoT())
 		opsMock = ops.NewMockOps(ctrl)
 		tmpDir, _ = os.MkdirTemp("", "test")
-		seed = NewSeedCreator(l, opsMock, nil, tmpDir, "", "", "", "")
+		seed = NewSeedCreator(l, opsMock, nil, tmpDir, "", "", "")
 	})
 	AfterEach(func() {
 		Expect(os.RemoveAll(tmpDir)).To(Succeed())

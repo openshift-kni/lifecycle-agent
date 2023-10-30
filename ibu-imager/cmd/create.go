@@ -51,7 +51,7 @@ func init() {
 
 	// Add flags related to container registry
 	createCmd.Flags().StringVarP(&authFile, "authfile", "a", imageRegistryAuthFile, "The path to the authentication file of the container registry.")
-	createCmd.Flags().StringVarP(&containerRegistry, "registry", "r", "", "The container registry used to push the OCI image.")
+	createCmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
 }
 
 func create() {
@@ -75,7 +75,7 @@ func create() {
 	}
 
 	seedCreator := seed.NewSeedCreator(log, op, rpmOstreeClient, backupDir, kubeconfigFile,
-		containerRegistry, backupTag, authFile)
+		containerRegistry, authFile)
 	err = seedCreator.CreateSeedImage()
 	if err != nil {
 		log.Fatal(err)
