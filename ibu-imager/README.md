@@ -2,42 +2,43 @@
 
 [![CI](https://github.com/leo8a/ibu-imager/actions/workflows/pull_request_workflow.yml/badge.svg)](https://github.com/leo8a/ibu-imager/actions/workflows/pull_request_workflow.yml)
 
-This application will assist users to easily create an OCI seed image for the Image-Based Upgrade (IBU) workflow, using 
+This application will assist users to easily create an OCI seed image for the Image-Based Upgrade (IBU) workflow, using
 a simple CLI.
 
 ## Motivation
 
 One of the most important / critical day2 operations for Telecommunications cloud-native deployments is upgrading their
-Container-as-a-Service (CaaS) platforms as quick (and secure!) as possible while minimizing the disruption time of 
+Container-as-a-Service (CaaS) platforms as quick (and secure!) as possible while minimizing the disruption time of
 active workloads.
 
 A novel method to approach this problem can be derived based on the
-[CoreOS Layering](https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md) concepts, which proposes a 
+[CoreOS Layering](https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md) concepts, which proposes a
 new way of updating the underlying Operating System (OS) using OCI-compliant container images.
 
-This tool aims at creating such OCI images plus bundling the main cluster artifacts and configurations in order to 
-provide seed images that can be used during an image-based upgrade procedure that would drastically reduce the 
-upgrading and reconfiguration times.  
+This tool aims at creating such OCI images plus bundling the main cluster artifacts and configurations in order to
+provide seed images that can be used during an image-based upgrade procedure that would drastically reduce the
+upgrading and reconfiguration times.
 
 ### What does this tool do?
 
-The purpose of the `ibu-imager` tool is to assist in the creation of IBU seed images, which are used later on by 
-other components (e.g., [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent)) during an image-based 
+The purpose of the `ibu-imager` tool is to assist in the creation of IBU seed images, which are used later on by
+other components (e.g., [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent)) during an image-based
 upgrade procedure.
 
-In that direction, the tool does the following: 
+In that direction, the tool does the following:
 
 - Saves a list of container images used by `crio` (needed for pre-caching operations afterward)
 - Creates a backup of the main platform configurations (e.g., `/var` and `/etc` directories, ostree artifacts, etc.)
-- Encapsulates OCI images (as of now three: `backup`, `base`, and `parent`) and push them to a local registry (used 
-during the image-based upgrade workflow afterward)
+- Creates a backup of the ostree repository
+- Creates a seed container image (OCI) with all the generated content and pushes it to a remote container registry
+  (used during the image-based upgrade workflow afterwards)
 
 ### Building
 
 Building the binary locally.
 
 ```shell
--> make build 
+-> make build
 go mod tidy && go mod vendor
 Running go fmt
 go fmt ./...
@@ -56,13 +57,13 @@ podman build -t quay.io/lochoa/ibu-imager:4.14.0 -f Dockerfile .
 [1/2] STEP 1/9: FROM registry.hub.docker.com/library/golang:1.19 AS builder
 Trying to pull registry.hub.docker.com/library/golang:1.19...
 Getting image source signatures
-Copying blob 5ec11cb68eac done   | 
-Copying blob 012c0b3e998c done   | 
-Copying blob 9f13f5a53d11 done   | 
-Copying blob 00046d1e755e done   | 
-Copying blob 190fa1651026 done   | 
-Copying blob 0808c6468790 done   | 
-Copying config 80b76a6c91 done   | 
+Copying blob 5ec11cb68eac done   |
+Copying blob 012c0b3e998c done   |
+Copying blob 9f13f5a53d11 done   |
+Copying blob 00046d1e755e done   |
+Copying blob 190fa1651026 done   |
+Copying blob 0808c6468790 done   |
+Copying config 80b76a6c91 done   |
 Writing manifest to image destination
 [1/2] STEP 2/9: ENV CRIO_VERSION="v1.28.0"
 --> f33ad7e8ba50
@@ -85,8 +86,8 @@ crictl
 Trying to pull registry.access.redhat.com/ubi9/ubi:latest...
 Getting image source signatures
 Checking if image destination supports signatures
-Copying blob cc7c08d56aad done   | 
-Copying config 20cef05760 done   | 
+Copying blob cc7c08d56aad done   |
+Copying config 20cef05760 done   |
 Writing manifest to image destination
 Storing signatures
 [2/2] STEP 2/6: WORKDIR /
@@ -103,11 +104,11 @@ Successfully tagged quay.io/lochoa/ibu-imager:4.14.0
 4f070f5dc851ef5476287fe4a8192f0d6969fc6471cb0e753d5cdd13b6a9c3b6
 podman push quay.io/lochoa/ibu-imager:4.14.0
 Getting image source signatures
-Copying blob 2b35b9c14c2a done   | 
-Copying blob 6f740e943089 done   | 
-Copying blob bcfbd6cf92f8 done   | 
-Copying blob 13843eae2086 done   | 
-Copying config 4f070f5dc8 done   | 
+Copying blob 2b35b9c14c2a done   |
+Copying blob 6f740e943089 done   |
+Copying blob bcfbd6cf92f8 done   |
+Copying blob 13843eae2086 done   |
+Copying config 4f070f5dc8 done   |
 Writing manifest to image destination
 ```
 
@@ -118,8 +119,8 @@ To see the tool's help on your local host, run the following command:
 ```shell
 -> ./bin/ibu-imager -h
 
- ___ ____  _   _            ___                                 
-|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __ 
+ ___ ____  _   _            ___
+|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __
  | ||  _ \| | | |   _____   | ||  _   _ \ / _  |/ _  |/ _ \ '__|
  | || |_) | |_| |  |_____|  | || | | | | | (_| | (_| |  __/ |
 |___|____/ \___/           |___|_| |_| |_|\__,_|\__, |\___|_|
@@ -153,17 +154,17 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
  				-v /var:/var \
  				-v /var/run:/var/run \
  				-v /run/systemd/journal/socket:/run/systemd/journal/socket \
- 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json --registry ${LOCAL_USER_REGISTRY}
+ 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json --image quay.io/somewhere/ibu-seed-images:4.14.0-du
 
- ___ ____  _   _            ___                                 
-|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __ 
+ ___ ____  _   _            ___
+|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __
  | ||  _ \| | | |   _____   | ||  _   _ \ / _  |/ _  |/ _ \ '__|
  | || |_) | |_| |  |_____|  | || | | | | | (_| | (_| |  __/ |
 |___|____/ \___/           |___|_| |_| |_|\__,_|\__, |\___|_|
                                                 |___/
 
  A tool to assist building OCI seed images for Image Based Upgrades (IBU)
-	
+
 time="2023-09-22 10:18:58" level=info msg="OCI image creation has started"
 time="2023-09-22 10:18:58" level=info msg="Saving list of running containers and clusterversion."
 time="2023-09-22 10:18:58" level=info msg="List of containers, catalogsources, and clusterversion saved successfully."
@@ -181,7 +182,7 @@ time="2023-09-22 10:21:45" level=info msg="Encapsulate and push parent OCI image
 time="2023-09-22 10:24:21" level=info msg="OCI image created successfully!"
 ```
 
-> **Note:** For a disconnected environment, first mirror the `ibu-imager` container image to your local registry using 
+> **Note:** For a disconnected environment, first mirror the `ibu-imager` container image to your local registry using
 > [skopeo](https://github.com/containers/skopeo) or a similar tool.
 
 ## TODO

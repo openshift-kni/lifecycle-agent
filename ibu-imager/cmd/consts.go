@@ -17,8 +17,6 @@ limitations under the License.
 package cmd
 
 const (
-	// Default OCI image tag
-	backupTag = "oneimage"
 	// Pull secret. Written by the machine-config-operator
 	imageRegistryAuthFile = "/var/lib/kubelet/config.json"
 	// backupDir is the directory where the ostree backup will be

@@ -32,13 +32,12 @@ type SeedCreator struct {
 	backupDir         string
 	kubeconfig        string
 	containerRegistry string
-	backupTag         string
 	authFile          string
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, backupTag, authFile string) *SeedCreator {
+	kubeconfig, containerRegistry, authFile string) *SeedCreator {
 	return &SeedCreator{
 		log:               log,
 		ops:               ops,
@@ -46,7 +45,6 @@ func NewSeedCreator(log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client
 		backupDir:         backupDir,
 		kubeconfig:        kubeconfig,
 		containerRegistry: containerRegistry,
-		backupTag:         backupTag,
 		authFile:          authFile,
 	}
 }
@@ -292,8 +290,7 @@ func (s *SeedCreator) backupMCOConfig() error {
 
 // Building and pushing OCI image
 func (s *SeedCreator) createAndPushSeedImage() error {
-	image := s.containerRegistry + ":" + s.backupTag
-	s.log.Println("Build and push OCI image to", image)
+	s.log.Println("Build and push OCI image to", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
 	// Get the current status of rpm-ostree daemon in the host
@@ -321,14 +318,14 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 
 	// Build the single OCI image (note: We could include --squash-all option, as well)
 	_, err = s.ops.RunInHostNamespace(
-		"podman", []string{"build", "-f", tmpfile.Name(), "-t", image, s.backupDir}...)
+		"podman", []string{"build", "-f", tmpfile.Name(), "-t", s.containerRegistry, s.backupDir}...)
 	if err != nil {
 		return errors.Wrap(err, "Failed to build seed image")
 	}
 
 	// Push the created OCI image to user's repository
 	_, err = s.ops.RunInHostNamespace(
-		"podman", []string{"push", "--authfile", s.authFile, image}...)
+		"podman", []string{"push", "--authfile", s.authFile, s.containerRegistry}...)
 	if err != nil {
 		return errors.Wrap(err, "Failed to push seed image")
 	}
