@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the ran v1alpha1 API group
+// Package v1alpha1 contains API Schema definitions for the lca v1alpha1 API group
 // +kubebuilder:object:generate=true
-// +groupName=ran.openshift.io
+// +groupName=lca.openshift.io
 package v1alpha1
 
 import (
@@ -26,10 +26,10 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "ran.openshift.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "lca.openshift.io", Version: "v1alpha1"}
 
 	// SchemeGroupVersion is expected by k8s.io/code-generator
-	SchemeGroupVersion = schema.GroupVersion{Group: "ran.openshift.io", Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: "lca.openshift.io", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

@@ -5,7 +5,7 @@ metadata:
   name: ImageBasedUpgrade-editor-role
 rules:
 - apiGroups:
-  - ran.openshift.io
+  - lca.openshift.io
   resources:
   - ImageBasedUpgrades
   verbs:
@@ -17,7 +17,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ran.openshift.io
+  - lca.openshift.io
   resources:
   - ImageBasedUpgrades/status
   verbs:

@@ -13,7 +13,7 @@ spec:
     - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
       displayName: Image-based Cluster Upgrade
       kind: ImageBasedUpgrade
-      name: imagebasedupgrades.ran.openshift.io
+      name: imagebasedupgrades.lca.openshift.io
       resources:
       - kind: Deployment
         name: ""
@@ -39,7 +39,7 @@ spec:
   installModes:
   - supported: true
     type: OwnNamespace
-  - supported: true
+  - supported: false
     type: SingleNamespace
   - supported: false
     type: MultiNamespace

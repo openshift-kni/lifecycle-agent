@@ -55,7 +55,7 @@ oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-
 ```console
 # Generate the IBU CR, specifying the seed image
 oc create -f - <<EOF
-apiVersion: ran.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1alpha1
 kind: ImageBasedUpgrade
 metadata:
   name: upgrade
@@ -67,10 +67,10 @@ spec:
 EOF
 
 # Set the stage to Prep
-oc patch imagebasedupgrades.ran.openshift.io upgrade -p='{"spec": {"stage": "Prep"}}' --type=merge
+oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Prep"}}' --type=merge
 
 # Set the stage back to Idle
-oc patch imagebasedupgrades.ran.openshift.io upgrade -p='{"spec": {"stage": "Idle"}}' --type=merge
+oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Idle"}}' --type=merge
 ```
 
 ## Cleanup
