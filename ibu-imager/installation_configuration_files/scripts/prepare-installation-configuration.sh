@@ -47,15 +47,25 @@ echo "${CONFIG_PATH} has been created"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
-if [[ -d "${NETWORK_CONFIG_PATH}" ]]; then
-    echo "Static network configuration exist"
-    cp "${NETWORK_CONFIG_PATH}"/*.nmconnection /etc/NetworkManager/system-connections/ -f
-    systemctl restart NetworkManager
-  # TODO: we might need to delete the connection first
-else
-    echo "Static network configuration do not exist"
+echo "Network configuration exist"
+if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
+   # TODO: we might need to delete the connection first
+    rm -f /etc/NetworkManager/system-connections/*.nmconnection
+    cp "${NETWORK_CONFIG_PATH}"/system-connections/*.nmconnection /etc/NetworkManager/system-connections/ -f
+    find /etc/NetworkManager/system-connections/*.nmconnection -type f -exec chmod 600 {} \;
 fi
+if [[ -f "${NETWORK_CONFIG_PATH}"/hostname ]]; then
+    cp "${NETWORK_CONFIG_PATH}"/hostname /etc/hostname
+fi
+
+if [[ -f "${NETWORK_CONFIG_PATH}"/primary-ip ]]; then
+    cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
+fi
+systemctl restart NetworkManager
+
 systemctl disable prepare-installation-configuration.service
+echo "Enabling kubelet"
+systemctl enable kubelet
 
 if [[ -n "${DEVICE}" ]]; then
     umount_config "${DEVICE}"
