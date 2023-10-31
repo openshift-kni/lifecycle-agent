@@ -38,6 +38,8 @@ import (
 
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/config/leaderelection"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -74,11 +76,16 @@ func main() {
 		&ocpV1.ImageDigestMirrorSet{})
 	scheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 
+	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "lca.openshift.io",
+		LeaseDuration:          &le.LeaseDuration.Duration,
+		RenewDeadline:          &le.RenewDeadline.Duration,
+		RetryPeriod:            &le.RetryPeriod.Duration,
 		Metrics: server.Options{
 			BindAddress: metricsAddr,
 		},
