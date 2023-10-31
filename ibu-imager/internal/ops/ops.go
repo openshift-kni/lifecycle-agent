@@ -1,9 +1,9 @@
 package ops
 
 import (
+	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -30,7 +30,7 @@ func (o *ops) SystemctlAction(action string, args ...string) (string, error) {
 	o.log.Infof("Running systemctl %s %s", action, args)
 	output, err := o.RunInHostNamespace("systemctl", append([]string{action}, args...)...)
 	if err != nil {
-		err = errors.Wrapf(err, "Failed executing systemctl %s %s", action, args)
+		err = fmt.Errorf("failed executing systemctl %s %s: %w", action, args, err)
 	}
 	return output, err
 }

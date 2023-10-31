@@ -2,10 +2,10 @@ package ops
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -33,5 +33,9 @@ func (e *executor) Execute(command string, args ...string) (string, error) {
 	cmd.Stdout = &stdoutBytes
 	cmd.Stderr = &stderrBytes
 	err := cmd.Run()
-	return strings.TrimSpace(stdoutBytes.String()), errors.Wrap(err, stderrBytes.String())
+	stdoutBytesTrimmed := strings.TrimSpace(stdoutBytes.String())
+	if err != nil {
+		return stdoutBytesTrimmed, fmt.Errorf("%s: %w", stderrBytes.String(), err)
+	}
+	return stdoutBytesTrimmed, nil
 }

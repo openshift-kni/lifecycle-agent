@@ -7,7 +7,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"ibu-imager/internal/ops"
@@ -296,7 +295,7 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	// Get the current status of rpm-ostree daemon in the host
 	statusRpmOstree, err := s.ostreeClient.QueryStatus()
 	if err != nil {
-		return errors.Wrap(err, "Failed to query ostree status")
+		return fmt.Errorf("failed to query ostree status: %w", err)
 	}
 	if err = s.backupOstreeOrigin(statusRpmOstree); err != nil {
 		return err
@@ -305,14 +304,14 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	// Create a temporary file for the Dockerfile content
 	tmpfile, err := os.CreateTemp("/var/tmp", "dockerfile-")
 	if err != nil {
-		return errors.Wrap(err, "Error creating temporary file")
+		return fmt.Errorf("error creating temporary file: %w", err)
 	}
 	defer os.Remove(tmpfile.Name()) // Clean up the temporary file
 
 	// Write the content to the temporary file
 	_, err = tmpfile.WriteString(containerFileContent)
 	if err != nil {
-		return errors.Wrap(err, "Error writing to temporary file")
+		return fmt.Errorf("error writing to temporary file: %w", err)
 	}
 	_ = tmpfile.Close() // Close the temporary file
 
@@ -320,14 +319,14 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	_, err = s.ops.RunInHostNamespace(
 		"podman", []string{"build", "-f", tmpfile.Name(), "-t", s.containerRegistry, s.backupDir}...)
 	if err != nil {
-		return errors.Wrap(err, "Failed to build seed image")
+		return fmt.Errorf("failed to build seed image: %w", err)
 	}
 
 	// Push the created OCI image to user's repository
 	_, err = s.ops.RunInHostNamespace(
 		"podman", []string{"push", "--authfile", s.authFile, s.containerRegistry}...)
 	if err != nil {
-		return errors.Wrap(err, "Failed to push seed image")
+		return fmt.Errorf("failed to push seed image: %w", err)
 	}
 	return nil
 }
