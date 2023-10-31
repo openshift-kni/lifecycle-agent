@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-logr/logr"
 	cp "github.com/otiai10/copy"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -59,7 +58,7 @@ func (r *UpgradeNetworkConfigGather) validateIPAddressFile() error {
 	filePath := filepath.Join(hostPath, ipAddressFile)
 	hostIP, err := os.ReadFile(filePath)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to read ip from file %s", filePath)
+		return fmt.Errorf("failed to read ip from file %s: %w", filePath, err)
 	}
 
 	ip := net.ParseIP(string(hostIP))
