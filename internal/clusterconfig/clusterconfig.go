@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
@@ -38,6 +39,11 @@ type UpgradeClusterConfigGather struct {
 	client.Client
 	Log    logr.Logger
 	Scheme *runtime.Scheme
+}
+
+type clusterConfig struct {
+	Domain      string `json:"domain,omitempty"`
+	ClusterName string `json:"cluster_name,omitempty"`
 }
 
 // FetchClusterConfig collect the current cluster config and write it as json files into data dir:
@@ -91,7 +97,7 @@ func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, 
 			Namespace: upgradeConfigurationNamespace,
 		},
 		Spec: cro.ClusterRelocationSpec{
-			Domain: ingress.Spec.Domain,
+			Domain: strings.Replace(ingress.Spec.Domain, "apps.", "", 1),
 			PullSecretRef: &corev1.SecretReference{
 				Namespace: upgradeConfigurationNamespace,
 				Name:      pullSecretName,

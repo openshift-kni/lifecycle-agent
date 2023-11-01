@@ -13,6 +13,7 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
+	"ibu-imager/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -154,7 +155,7 @@ func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
 		return err
 	}
 
-	return nil
+	return s.renderInstallationScript(manifestObj.ClusterName, manifestObj.Domain)
 }
 
 // TODO: split function per operation
@@ -438,4 +439,15 @@ func (s *SeedCreator) getInstallConfig(ctx context.Context) (*basicInstallConfig
 		return nil, fmt.Errorf("failed to decode install config, err: %w", err)
 	}
 	return instConf, nil
+}
+
+// TODO: change destination to var in order to be able to test it?
+func (s *SeedCreator) renderInstallationScript(clusterName string, domain string) error {
+	var params = map[string]interface{}{
+		"SEED_DOMAIN": fmt.Sprintf("%s.%s", clusterName, domain),
+	}
+	dir := "installation_configuration_files/templates"
+	// requires not standard delims cause bash ${} and jq {{}} elements
+	return utils.RenderTemplateFile(path.Join(dir, "installation-configuration.sh_template"), params,
+		"/var/usrlocal/bin/installation-configuration.sh", os.FileMode(0777), []string{"{{*", "*}}"})
 }

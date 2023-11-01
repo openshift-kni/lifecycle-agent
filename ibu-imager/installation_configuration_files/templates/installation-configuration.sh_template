@@ -26,8 +26,7 @@ echo "${RELOCATION_CONFIG_PATH} has been found"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
-DOMAIN="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
-
+NEW_DOMAIN=$(jq -r '.spec.domain' "${RELOCATION_CONFIG_PATH}"/cluster-relocation.json)
 
 # Recertify
 function recert {
@@ -44,7 +43,12 @@ function recert {
     # Recert node ip in order to support single ip
     # remove this condition when we will support only single ip
     if [[ -n "${NODE_IP}" ]]; then
+        OLD_DOMAIN="{{* .SEED_DOMAIN *}}"
         recert_cmd="${recert_cmd} ""--cn-san-replace ${OLD_IP},${NODE_IP}"
+        recert_cmd="${recert_cmd} ""--cn-san-replace api.${OLD_DOMAIN},api.${NEW_DOMAIN}"
+        recert_cmd="${recert_cmd} ""--cn-san-replace api-int.${OLD_DOMAIN},api-int.${NEW_DOMAIN}"
+        recert_cmd="${recert_cmd} ""--cn-san-replace *.apps.${OLD_DOMAIN},*.apps.${NEW_DOMAIN}"
+        recert_cmd="${recert_cmd} ""--rename ${NEW_DOMAIN}"
         if [[ ${NODE_IP} =~ .*:.* ]]; then
             ETCD_NEW_IP="[${NODE_IP}]"
         else
@@ -180,9 +184,9 @@ if [ -z ${domain+x} ]; then
 else
     echo "Updating dnsmasq with new domain"
     cat << EOF > /etc/dnsmasq.d/customer-domain.conf
-address=/apps.${domain}/${node_ip}
-address=/api-int.${domain}/${node_ip}
-address=/api.${domain}/${node_ip}
+address=/apps.${NEW_DOMAIN}/${node_ip}
+address=/api-int.${NEW_DOMAIN}/${node_ip}
+address=/api.${NEW_DOMAIN}/${node_ip}
 EOF
     systemctl restart dnsmasq
 fi
