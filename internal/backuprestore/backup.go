@@ -39,7 +39,7 @@ import (
 )
 
 // ReconcileBackup reconciles the backup CRs
-func ReconcileBackup(ctx context.Context, c client.Client, oadpContent []ranv1alpha1.ConfigMapRef,
+func (h *BRHandler) ReconcileBackup(ctx context.Context, oadpContent []ranv1alpha1.ConfigMapRef,
 ) (
 	result ctrl.Result, status BackupStatus, err error,
 ) {
@@ -50,7 +50,7 @@ func ReconcileBackup(ctx context.Context, c client.Client, oadpContent []ranv1al
 		return
 	}
 
-	oadpConfigmaps, err := getConfigMaps(ctx, c, oadpContent)
+	oadpConfigmaps, err := getConfigMaps(ctx, h.Client, oadpContent)
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return
@@ -72,10 +72,10 @@ func ReconcileBackup(ctx context.Context, c client.Client, oadpContent []ranv1al
 		return
 	}
 
-	return triggerBackup(ctx, c, sortedBackupGroups)
+	return h.triggerBackup(ctx, sortedBackupGroups)
 }
 
-func triggerBackup(ctx context.Context, c client.Client, backupGroups [][]*velerov1.Backup,
+func (h *BRHandler) triggerBackup(ctx context.Context, backupGroups [][]*velerov1.Backup,
 ) (
 	result ctrl.Result, status BackupStatus, err error,
 ) {
@@ -90,7 +90,7 @@ func triggerBackup(ctx context.Context, c client.Client, backupGroups [][]*veler
 
 		for _, backup := range backupGroup {
 			var existingBackup *velerov1.Backup
-			existingBackup, err = getBackup(ctx, c, backup.Name, backup.Namespace)
+			existingBackup, err = getBackup(ctx, h.Client, backup.Name, backup.Namespace)
 			if err != nil {
 				return
 			}
@@ -98,20 +98,20 @@ func triggerBackup(ctx context.Context, c client.Client, backupGroups [][]*veler
 			if existingBackup == nil {
 				// Backup has not been applied. Applying backup
 				var clusterID string
-				clusterID, err = getClusterID(ctx, c)
+				clusterID, err = getClusterID(ctx, h.Client)
 				if err != nil {
 					return
 				}
 
 				setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
-				if err = c.Create(ctx, backup); err != nil {
+				if err = h.Create(ctx, backup); err != nil {
 					return
 				}
-				log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
+				h.Log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
 				progressingBackups = append(progressingBackups, backup.Name)
 
 			} else {
-				currentBackupStatus := checkVeleroBackupProcessStatus(existingBackup)
+				currentBackupStatus := h.checkVeleroBackupProcessStatus(existingBackup)
 
 				switch currentBackupStatus {
 				case BackupPending:
@@ -125,17 +125,17 @@ func triggerBackup(ctx context.Context, c client.Client, backupGroups [][]*veler
 				case BackupFailedValidation:
 					// Re-create the failed validation backup if it has been updated
 					if !equivalentBackups(existingBackup, backup) {
-						if err = c.Delete(ctx, existingBackup); err != nil {
+						if err = h.Delete(ctx, existingBackup); err != nil {
 							return
 						}
 
 						var clusterID string
-						clusterID, err = getClusterID(ctx, c)
+						clusterID, err = getClusterID(ctx, h.Client)
 						if err != nil {
 							return
 						}
 						setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
-						if err = c.Create(ctx, backup); err != nil {
+						if err = h.Create(ctx, backup); err != nil {
 							return
 						}
 
@@ -202,8 +202,8 @@ func equivalentBackups(backup1, backup2 *velerov1.Backup) bool {
 	return equality.Semantic.DeepEqual(backup1.Spec, backup2.Spec)
 }
 
-func checkVeleroBackupProcessStatus(backup *velerov1.Backup) BackupPhase {
-	log.Info("Backup",
+func (h *BRHandler) checkVeleroBackupProcessStatus(backup *velerov1.Backup) BackupPhase {
+	h.Log.Info("Backup",
 		"name", backup.Name,
 		"phase", backup.Status.Phase,
 		"warnings", backup.Status.Warnings,
@@ -301,27 +301,31 @@ func extractBackupFromConfigmaps(configmaps []corev1.ConfigMap) ([]*velerov1.Bac
 }
 
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CRs and required storage creds to a given location
-func ExportOadpConfigurationToDir(ctx context.Context, c client.Client, toDir, oadpNamespace string) error {
+func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	// Create the directories for OADP and secret
-	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretDir), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretPath), 0o700); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaDir), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaPath), 0o700); err != nil {
 		return err
 	}
 
 	// Write the object storage secret to a given directory if found
 	storageSecret := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{
+	if err := h.Get(ctx, types.NamespacedName{
 		Name:      defaultStorageSecret,
 		Namespace: oadpNamespace,
 	}, storageSecret); err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return err
 		}
+	} else {
+		// Unset uid and resource version
+		storageSecret.SetUID("")
+		storageSecret.SetResourceVersion("")
 
-		filePath := filepath.Join(toDir, oadpSecretDir, defaultStorageSecret+".yaml")
+		filePath := filepath.Join(toDir, oadpSecretPath, defaultStorageSecret+".yaml")
 		if err := writeSecretToFile(storageSecret, filePath); err != nil {
 			return err
 		}
@@ -332,13 +336,17 @@ func ExportOadpConfigurationToDir(ctx context.Context, c client.Client, toDir, o
 	opts := []client.ListOption{
 		client.InNamespace(oadpNamespace),
 	}
-	if err := c.List(ctx, dpaList, opts...); err != nil {
+	if err := h.List(ctx, dpaList, opts...); err != nil {
 		return err
 	}
 
 	// Write DPAs to a given directory
 	for _, dpa := range dpaList.Items {
-		filePath := filepath.Join(toDir, oadpDpaDir, dpa.GetName()+".yaml")
+		// Unset uid and resource version
+		dpa.SetUID("")
+		dpa.SetResourceVersion("")
+
+		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+".yaml")
 		if err := writeDpaToFile(&dpa, filePath); err != nil {
 			return err
 		}
@@ -367,14 +375,17 @@ func ExportOadpConfigurationToDir(ctx context.Context, c client.Client, toDir, o
 			}
 
 			storageSecret := &corev1.Secret{}
-			if err := c.Get(ctx, types.NamespacedName{
+			if err := h.Get(ctx, types.NamespacedName{
 				Name:      secretName,
 				Namespace: oadpNamespace,
 			}, storageSecret); err != nil {
 				return err
 			}
 
-			filePath := filepath.Join(toDir, oadpSecretDir, secretName+".yaml")
+			storageSecret.SetUID("")
+			storageSecret.SetResourceVersion("")
+
+			filePath := filepath.Join(toDir, oadpSecretPath, secretName+".yaml")
 			if err := writeSecretToFile(storageSecret, filePath); err != nil {
 				return err
 			}
@@ -385,38 +396,38 @@ func ExportOadpConfigurationToDir(ctx context.Context, c client.Client, toDir, o
 }
 
 // ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
-// returns: restore namespace, error
-func ExportRestoresToDir(ctx context.Context, c client.Client, configMaps []ranv1alpha1.ConfigMapRef, toDir string) (string, error) {
-	configmaps, err := getConfigMaps(ctx, c, configMaps)
+// returns: error
+func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []ranv1alpha1.ConfigMapRef, toDir string) error {
+	configmaps, err := getConfigMaps(ctx, h.Client, configMaps)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	restores, err := extractRestoreFromConfigmaps(configmaps)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	sortedRestores, err := sortRestoreCrs(restores)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	for i, restoreGroup := range sortedRestores {
 		// Create a directory for each group
-		group := filepath.Join(toDir, oadpRestoreDir, "restore"+strconv.Itoa(i+1))
+		group := filepath.Join(toDir, oadpRestorePath, "restore"+strconv.Itoa(i+1))
 		// If the directory already exists, it does nothing
 		if err := os.MkdirAll(group, 0o700); err != nil {
-			return "", err
+			return err
 		}
 
 		for j, restore := range restoreGroup {
 			filePath := filepath.Join(group, "restore"+strconv.Itoa(j+1)+".yaml")
 			if err := writeRestoreToFile(restore, filePath); err != nil {
-				return "", err
+				return err
 			}
 		}
 	}
 
-	return sortedRestores[0][0].GetNamespace(), nil
+	return nil
 }

@@ -31,25 +31,26 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
 // ReconcileRestore reconciles the restore CRs
-func ReconcileRestore(ctx context.Context, c client.Client, fileDir string,
+func (h *BRHandler) ReconcileRestore(ctx context.Context, fileDir string,
 ) (
 	result ctrl.Result, status RestoreStatus, err error,
 ) {
-	sortedRestores, err := loadRestoresFromDir(fileDir)
+	sortedRestores, err := h.loadRestoresFromDir(fileDir)
 	if err != nil {
 		return
 	}
 
-	return triggerRestore(ctx, c, sortedRestores)
+	return h.triggerRestore(ctx, sortedRestores)
 }
 
-func triggerRestore(ctx context.Context, c client.Client, restoreGroups [][]*velerov1.Restore,
+func (h *BRHandler) triggerRestore(ctx context.Context, restoreGroups [][]*velerov1.Restore,
 ) (
 	result ctrl.Result, status RestoreStatus, err error,
 ) {
@@ -64,7 +65,7 @@ func triggerRestore(ctx context.Context, c client.Client, restoreGroups [][]*vel
 
 		for _, restore := range restoreGroup {
 			existingRestore := &velerov1.Restore{}
-			if err = c.Get(ctx, types.NamespacedName{
+			if err = h.Get(ctx, types.NamespacedName{
 				Name:      restore.Name,
 				Namespace: restore.Namespace,
 			}, existingRestore); err != nil {
@@ -78,7 +79,7 @@ func triggerRestore(ctx context.Context, c client.Client, restoreGroups [][]*vel
 				// OADP is running and connects to the object storage.
 				// Ensure the backup exists before creating the restore.
 				var existingBackup *velerov1.Backup
-				existingBackup, err = getBackup(ctx, c, restore.Spec.BackupName, restore.Namespace)
+				existingBackup, err = getBackup(ctx, h, restore.Spec.BackupName, restore.Namespace)
 				if err != nil {
 					return
 				}
@@ -86,15 +87,15 @@ func triggerRestore(ctx context.Context, c client.Client, restoreGroups [][]*vel
 				if existingBackup == nil {
 					missingBackups = append(missingBackups, restore.Spec.BackupName)
 				} else {
-					if err = c.Create(ctx, restore); err != nil {
+					if err = h.Create(ctx, restore); err != nil {
 						return
 					}
-					log.Info("Restore created", "name", restore.Name, "namespace", restore.Namespace)
+					h.Log.Info("Restore created", "name", restore.Name, "namespace", restore.Namespace)
 					progressingRestores = append(progressingRestores, restore.Name)
 				}
 
 			} else {
-				currentRestoreStatus := checkVeleroRestoreProcessStatus(existingRestore)
+				currentRestoreStatus := h.checkVeleroRestoreProcessStatus(existingRestore)
 
 				switch currentRestoreStatus {
 				case RestorePending:
@@ -238,11 +239,11 @@ func sortRestoresByName(resources []*velerov1.Restore) {
 	})
 }
 
-func loadRestoresFromDir(fromDir string) ([][]*velerov1.Restore, error) {
+func (h *BRHandler) loadRestoresFromDir(fromDir string) ([][]*velerov1.Restore, error) {
 	var sortedRestores [][]*velerov1.Restore
 
 	// The returned list of entries are sorted by name alphabetically
-	restoreSubDirs, err := os.ReadDir(filepath.Join(fromDir, oadpRestoreDir))
+	restoreSubDirs, err := os.ReadDir(filepath.Join(fromDir, oadpRestorePath))
 	if err != nil {
 		return nil, err
 	}
@@ -250,12 +251,13 @@ func loadRestoresFromDir(fromDir string) ([][]*velerov1.Restore, error) {
 	for _, restoreSubDir := range restoreSubDirs {
 		if !restoreSubDir.IsDir() {
 			// Unexpected
-			log.Info("Unexpected file found, skipping...", "file", restoreSubDir.Name())
+			h.Log.Info("Unexpected file found, skipping...", "file",
+				filepath.Join(fromDir, oadpRestorePath, restoreSubDir.Name()))
 			continue
 		}
 
 		// The returned list of entries are sorted by name alphabetically
-		restoreDirPath := filepath.Join(fromDir, oadpRestoreDir, restoreSubDir.Name())
+		restoreDirPath := filepath.Join(fromDir, oadpRestorePath, restoreSubDir.Name())
 		restoreYamls, err := os.ReadDir(restoreDirPath)
 		if err != nil {
 			return nil, err
@@ -265,7 +267,8 @@ func loadRestoresFromDir(fromDir string) ([][]*velerov1.Restore, error) {
 		for _, restoreYaml := range restoreYamls {
 			if restoreYaml.IsDir() {
 				// Unexpected
-				log.Info("Unexpected directory found, skipping...", "directory", restoreYaml.Name())
+				h.Log.Info("Unexpected directory found, skipping...", "directory",
+					filepath.Join(restoreDirPath, restoreYaml.Name()))
 				continue
 			}
 
@@ -289,8 +292,8 @@ func loadRestoresFromDir(fromDir string) ([][]*velerov1.Restore, error) {
 	return sortedRestores, nil
 }
 
-func checkVeleroRestoreProcessStatus(restore *velerov1.Restore) RestorePhase {
-	log.Info("Restore",
+func (h *BRHandler) checkVeleroRestoreProcessStatus(restore *velerov1.Restore) RestorePhase {
+	h.Log.Info("Restore",
 		"name", restore.Name,
 		"phase", restore.Status.Phase,
 		"warnings", restore.Status.Warnings,
@@ -314,10 +317,21 @@ func checkVeleroRestoreProcessStatus(restore *velerov1.Restore) RestorePhase {
 	}
 }
 
-// RestoreOadpConfigurations restores the backed up OADP DataProtectionApplication CRs and storage secrets
+// RestoreOadpConfigurationsFromDir restores the backed up OADP DataProtectionApplication CRs and storage secrets
 // from the given location
-func RestoreOadpConfigurations(ctx context.Context, c client.Client, fromDir string) error {
-	secretDir := filepath.Join(fromDir, oadpSecretDir)
+// returns true if the storage backend is available after the restore of OADP configurations, otherwise false
+func (h *BRHandler) RestoreOadpConfigurationsFromDir(ctx context.Context, fromDir string) (bool, error) {
+	if err := h.restoreSecrets(ctx, fromDir); err != nil {
+		return false, err
+	}
+
+	return h.restoreDataProtectionApplications(ctx, fromDir)
+}
+
+// restoreSecrets restores the previous backed up secrets for object storage backend
+// from the given location
+func (h *BRHandler) restoreSecrets(ctx context.Context, fromDir string) error {
+	secretDir := filepath.Join(fromDir, oadpSecretPath)
 	secretYamls, err := os.ReadDir(secretDir)
 	if err != nil {
 		return err
@@ -326,11 +340,12 @@ func RestoreOadpConfigurations(ctx context.Context, c client.Client, fromDir str
 	for _, secretYaml := range secretYamls {
 		if secretYaml.IsDir() {
 			// Unexpected
-			log.Info("Unexpected directory found, skipping...", "directory", secretYaml.Name())
+			h.Log.Info("Unexpected directory found, skipping...", "directory",
+				filepath.Join(secretDir, secretYaml.Name()))
 			continue
 		}
 
-		secretBytes, err := os.ReadFile(secretYaml.Name())
+		secretBytes, err := os.ReadFile(filepath.Join(secretDir, secretYaml.Name()))
 		if err != nil {
 			return err
 		}
@@ -339,42 +354,136 @@ func RestoreOadpConfigurations(ctx context.Context, c client.Client, fromDir str
 		if err := yaml.Unmarshal(secretBytes, secret); err != nil {
 			return err
 		}
-		if err := c.Create(ctx, secret); err != nil {
+
+		if err := h.Create(ctx, secret); err != nil {
 			if !k8serrors.IsAlreadyExists(err) {
 				return err
 			}
-		}
-	}
 
-	dpaDir := filepath.Join(fromDir, oadpDpaDir)
+			// Update if it already exists
+			existingSecret := &corev1.Secret{}
+			if err := h.Get(ctx, types.NamespacedName{
+				Name:      secret.Name,
+				Namespace: secret.Namespace,
+			}, existingSecret); err != nil {
+				return err
+			}
+
+			secret.SetResourceVersion(existingSecret.GetResourceVersion())
+			secret.SetUID(existingSecret.GetUID())
+			if err := h.Update(ctx, secret); err != nil {
+				return err
+			}
+		}
+		h.Log.Info("Secret restored", "name", secret.GetName(), "namespace", secret.GetNamespace())
+	}
+	return nil
+}
+
+// restoreDataProtectionApplications restores the previous backed up DataProtectionApplication CRs
+// from the given location
+func (h *BRHandler) restoreDataProtectionApplications(ctx context.Context, fromDir string) (bool, error) {
+	dpaDir := filepath.Join(fromDir, oadpDpaPath)
 	dpaYamls, err := os.ReadDir(dpaDir)
 	if err != nil {
-		return err
+		return false, err
 	}
 
+	var oadpNs string
 	for _, dpaYaml := range dpaYamls {
 		if dpaYaml.IsDir() {
 			// Unexpected
-			log.Info("Unexpected directory found, skipping...", "directory", dpaYaml.Name())
+			h.Log.Info("Unexpected directory found, skipping...", "directory",
+				filepath.Join(dpaDir, dpaYaml.Name()))
 			continue
 		}
 
-		dpaBytes, err := os.ReadFile(dpaYaml.Name())
+		dpaBytes, err := os.ReadFile(filepath.Join(dpaDir, dpaYaml.Name()))
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		dpa := &unstructured.Unstructured{}
 		dpa.SetGroupVersionKind(dpaGvk)
 		if err := yaml.Unmarshal(dpaBytes, dpa); err != nil {
-			return err
+			return false, err
 		}
-		if err := c.Create(ctx, dpa); err != nil {
+
+		if err := h.Create(ctx, dpa); err != nil {
 			if !k8serrors.IsAlreadyExists(err) {
-				return err
+				return false, err
 			}
+
+			// Update if it already exists
+			existingDpa := &unstructured.Unstructured{}
+			existingDpa.SetGroupVersionKind(dpaGvk)
+			if err := h.Get(ctx, types.NamespacedName{
+				Name:      dpa.GetName(),
+				Namespace: dpa.GetNamespace(),
+			}, existingDpa); err != nil {
+				return false, err
+			}
+
+			dpa.SetResourceVersion(existingDpa.GetResourceVersion())
+			dpa.SetUID(existingDpa.GetUID())
+			if err := h.Update(ctx, dpa); err != nil {
+				return false, err
+			}
+		}
+		h.Log.Info("DataProtectionApplication restored", "name", dpa.GetName(), "namespace", dpa.GetNamespace())
+		oadpNs = dpa.GetNamespace()
+	}
+
+	// Ensure the storage backends are created and available
+	// after the restore of DataProtectionApplications
+	return h.ensureStorageBackendAvaialble(ctx, oadpNs)
+}
+
+// ensureStorageBackendAvaialble ensures the storage backend is available.
+// It returns false if the storage backend is not available because of an error,
+// no storage backend is created after a minute, or it's timed out waiting for
+// the storage backend to be available due to unknown reasons
+func (h *BRHandler) ensureStorageBackendAvaialble(ctx context.Context, lookupNs string) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 1*time.Minute, true,
+		func(ctx context.Context) (done bool, err error) {
+			var succeededBsls []string
+			backupStorageLocation := &velerov1.BackupStorageLocationList{}
+			err = h.List(ctx, backupStorageLocation, client.InNamespace(lookupNs))
+			if err != nil {
+				return false, err
+			}
+
+			for _, bsl := range backupStorageLocation.Items {
+				if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseUnavailable {
+					err := fmt.Errorf("BackupStorageLocation is unavailable. Name: %s, Error: %s", bsl.Name, bsl.Status.Message)
+					return false, err
+				} else if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseAvailable {
+					succeededBsls = append(succeededBsls, bsl.Name)
+				}
+			}
+
+			if len(succeededBsls) == len(backupStorageLocation.Items) {
+				h.Log.Info("All backup storage locations are available")
+				return true, nil
+			}
+			return false, nil
+		})
+	if err != nil {
+		if err == context.DeadlineExceeded || strings.Contains(err.Error(), "BackupStorageLocation is unavailable") {
+			h.Log.Error(err, "Backup storage locations are not available")
+			return false, nil
 		}
 	}
 
-	return nil
+	backupStorageLocation := &velerov1.BackupStorageLocationList{}
+	err = h.List(ctx, backupStorageLocation, client.InNamespace(lookupNs))
+	if err != nil {
+		return false, err
+	}
+	if len(backupStorageLocation.Items) == 0 {
+		h.Log.Error(nil, "No backup storage location found")
+		return false, nil
+	}
+
+	return true, nil
 }

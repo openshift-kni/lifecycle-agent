@@ -20,6 +20,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 
@@ -29,6 +30,7 @@ import (
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	ocpV1 "github.com/openshift/api/config/v1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -55,6 +57,7 @@ func init() {
 	utilruntime.Must(ranv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
 	utilruntime.Must(velerov1.AddToScheme(scheme))
+	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }
@@ -105,6 +108,7 @@ func main() {
 		Scheme:        mgr.GetScheme(),
 		ClusterConfig: &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 		NetworkConfig: &clusterconfig.UpgradeNetworkConfigGather{Log: log},
+		BackupRestore: &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

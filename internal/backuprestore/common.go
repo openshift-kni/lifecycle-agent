@@ -21,6 +21,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/go-logr/logr"
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -29,18 +30,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list
 // +kubebuilder:rbac:groups=velero.io/v1,resources=backups,verbs=get;list;delete;create;update
 // +kubebuilder:rbac:groups=velero.io/v1,resources=restores,verbs=get;list;delete;create;update
-
-var log = ctrl.Log.WithName("backuprestore")
+// +kubebuilder:rbac:groups=velero.io/v1,resources=backupstoragelocations,verbs=get;list
 
 const (
 	applyWaveAnn     = "lca.openshift.io/apply-wave"
@@ -49,10 +48,9 @@ const (
 
 	defaultStorageSecret = "cloud-credentials"
 
-	oadpRestoreDir = "/OADP/veleroRestore"
-	oadpDpaDir     = "/OADP/dpa"
-	oadpSecretDir  = "/OADP/secret"
-	oadpPackage    = "redhat-oadp-operator"
+	oadpRestorePath = "OADP/veleroRestore"
+	oadpDpaPath     = "OADP/dpa"
+	oadpSecretPath  = "OADP/secret"
 )
 
 // BackupPhase defines the phase of backup
@@ -84,6 +82,12 @@ var (
 	backupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
 	restoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
 )
+
+// BRHandler handles the backup and restore
+type BRHandler struct {
+	client.Client
+	Log logr.Logger
+}
 
 // BackupStatus defines the status of backup
 type BackupStatus struct {
@@ -189,14 +193,4 @@ func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 		labels[k] = v
 	}
 	backup.SetLabels(labels)
-}
-
-// nolint:unused
-// TODO: remove oadp operator
-func deleteOperator() {
-}
-
-// nolint:unused
-// TODO: delete backups
-func deleteBackups() {
 }
