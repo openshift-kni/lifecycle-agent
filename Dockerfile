@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM registry.hub.docker.com/library/golang:1.19 as builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.19 as builder
 
 WORKDIR /workspace
 
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 
 #####################################################################################################
 # Build the imager binary
-FROM registry.hub.docker.com/library/golang:1.19 as imager
+FROM registry.access.redhat.com/ubi9/go-toolset:1.19 as imager
 
 ENV CRIO_VERSION="v1.28.0"
 
