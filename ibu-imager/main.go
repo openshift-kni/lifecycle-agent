@@ -16,7 +16,7 @@ limitations under the License.
 
 package main
 
-import "ibu-imager/cmd"
+import "github.com/openshift-kni/lifecycle-agent/ibu-imager/cmd"
 
 func main() {
 	_ = cmd.Execute()

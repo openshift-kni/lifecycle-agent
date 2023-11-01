@@ -1,7 +1,6 @@
 package seedcreator
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,14 +12,13 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
-	"ibu-imager/internal/utils"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/pkg/clusterconfigmanifest"
 )
 
 const (
@@ -33,21 +31,6 @@ FROM scratch
 COPY . /
 `
 
-type manifest struct {
-	Version     string `json:"version,omitempty"`
-	Domain      string `json:"domain,omitempty"`
-	ClusterName string `json:"cluster_name,omitempty"`
-}
-
-type installConfigMetadata struct {
-	Name string `json:"name"`
-}
-
-type basicInstallConfig struct {
-	BaseDomain string                `json:"baseDomain"`
-	Metadata   installConfigMetadata `json:"metadata"`
-}
-
 // SeedCreator TODO: move params to Options
 type SeedCreator struct {
 	client            runtime.Client
@@ -58,11 +41,13 @@ type SeedCreator struct {
 	kubeconfig        string
 	containerRegistry string
 	authFile          string
+	manifestClient    *clusterconfigmanifest.ManifestClient
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
 	kubeconfig, containerRegistry, authFile string) *SeedCreator {
+
 	return &SeedCreator{
 		client:            client,
 		log:               log,
@@ -72,6 +57,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 		kubeconfig:        kubeconfig,
 		containerRegistry: containerRegistry,
 		authFile:          authFile,
+		manifestClient:    clusterconfigmanifest.NewManifestClient(client),
 	}
 }
 
@@ -124,23 +110,19 @@ func (s *SeedCreator) CreateSeedImage() error {
 }
 
 func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
+	// TODO: remove after removing usage of clusterversion.json
 	clusterVersion := &v1.ClusterVersion{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return err
 	}
-	manifestObj := manifest{Version: clusterVersion.Status.Desired.Version}
-
-	installConfig, err := s.getInstallConfig(ctx)
+	clusterManifest, err := s.manifestClient.CreateClusterManifest(ctx)
 	if err != nil {
 		return err
 	}
-	manifestObj.Domain = installConfig.BaseDomain
-	manifestObj.ClusterName = installConfig.Metadata.Name
-	data, err := json.Marshal(manifestObj)
+	data, err := json.Marshal(clusterManifest)
 	if err != nil {
 		return err
 	}
-
 	s.log.Println("Creating manifest.json")
 	if err := os.WriteFile(path.Join(s.backupDir, "manifest.json"), data, 0o644); err != nil {
 		return err
@@ -155,7 +137,7 @@ func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
 		return err
 	}
 
-	return s.renderInstallationScript(manifestObj.ClusterName, manifestObj.Domain)
+	return s.renderInstallationScript(clusterManifest.ClusterName, clusterManifest.Domain)
 }
 
 // TODO: split function per operation
@@ -418,27 +400,6 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	}
 	log.Println("Backup of .origin created successfully.")
 	return nil
-}
-
-func (s *SeedCreator) getInstallConfig(ctx context.Context) (*basicInstallConfig, error) {
-
-	cm := &corev1.ConfigMap{}
-	err := s.client.Get(ctx, types.NamespacedName{Name: "cluster-config-v1", Namespace: "kube-system"}, cm)
-	if err != nil {
-		return nil, err
-	}
-
-	data, ok := cm.Data["install-config"]
-	if !ok {
-		return nil, fmt.Errorf("did not find key install-config in configmap")
-	}
-
-	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(data)), 4096)
-	instConf := &basicInstallConfig{}
-	if err := decoder.Decode(instConf); err != nil {
-		return nil, fmt.Errorf("failed to decode install config, err: %w", err)
-	}
-	return instConf, nil
 }
 
 // TODO: change destination to var in order to be able to test it?

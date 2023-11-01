@@ -24,7 +24,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"ibu-imager/internal/ops"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/ops"
 )
 
 // Status summarizes the current worldview of the rpm-ostree daemon.

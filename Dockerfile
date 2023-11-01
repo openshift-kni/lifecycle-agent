@@ -12,6 +12,7 @@ COPY main.go main.go
 COPY api/ api/
 COPY controllers/ controllers/
 COPY internal/ internal/
+COPY ibu-imager/ ibu-imager/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o manager main.go
@@ -31,6 +32,7 @@ COPY ibu-imager/vendor/ vendor/
 COPY ibu-imager/main.go main.go
 COPY ibu-imager/cmd/ cmd/
 COPY ibu-imager/internal/ internal/
+COPY ibu-imager/pkg/ pkg/
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o ibu-imager main.go

@@ -29,9 +29,9 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostreeclient"
-	seed "ibu-imager/internal/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/ostreeclient"
+	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/internal/seedcreator"
 	"k8s.io/client-go/tools/clientcmd"
 )
 

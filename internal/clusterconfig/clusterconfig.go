@@ -4,19 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
-	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"os"
+	"path/filepath"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/pkg/clusterconfigmanifest"
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
@@ -69,49 +67,26 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingress); err != nil {
 		return err
 	}
-	// TODO: we might need a list here and perhaps we want to apply these as extra-manifests
-	idms := &v1.ImageDigestMirrorSet{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: imageSetName}, idms); err != nil {
-		if errors.IsNotFound(err) {
-			r.Log.Info("ImageDigestMirrorSet", imageSetName, "was not found, skipping")
-		} else {
-			return err
-		}
-	}
+	// TODO: we might need in the future
+	//idms := &v1.ImageDigestMirrorSet{}
+	//if err := r.Client.Get(ctx, types.NamespacedName{Name: imageSetName}, idms); err != nil {
+	//	if errors.IsNotFound(err) {
+	//		r.Log.Info("ImageDigestMirrorSet", imageSetName, "was not found, skipping")
+	//	} else {
+	//		return err
+	//	}
+	//}
 	r.Log.Info("Successfully fetched cluster config")
 
-	clusterConfig, err := r.generateClusterConfig(ingress, idms)
+	cmClient := clusterconfigmanifest.NewManifestClient(r.Client)
+	config, err := cmClient.CreateClusterManifest(ctx)
 	if err != nil {
 		return err
 	}
-	if err := r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir); err != nil {
+	if err := r.writeClusterConfig(config, pullSecret, clusterID, ostreeDir); err != nil {
 		return err
 	}
 	return nil
-}
-
-func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, idms *v1.ImageDigestMirrorSet) (*cro.ClusterRelocation, error) {
-	config := &cro.ClusterRelocation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      croName,
-			Namespace: upgradeConfigurationNamespace,
-		},
-		Spec: cro.ClusterRelocationSpec{
-			Domain: strings.Replace(ingress.Spec.Domain, "apps.", "", 1),
-			PullSecretRef: &corev1.SecretReference{
-				Namespace: upgradeConfigurationNamespace,
-				Name:      pullSecretName,
-			},
-			ImageDigestMirrors: idms.Spec.ImageDigestMirrors,
-		},
-	}
-
-	typeMeta, err := r.typeMetaForObject(config)
-	if err != nil {
-		return nil, err
-	}
-	config.TypeMeta = *typeMeta
-	return config, nil
 }
 
 // configDirs returns the files directory for the given cluster config
@@ -125,8 +100,8 @@ func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 }
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
-func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterRelocation, pullSecret *corev1.Secret,
-	clusterID v1.ClusterID, dir string) error {
+func (r *UpgradeClusterConfigGather) writeClusterConfig(config *clusterconfigmanifest.ClusterManifest,
+	pullSecret *corev1.Secret, clusterID v1.ClusterID, dir string) error {
 	clusterConfigPath, err := r.configDirs(dir)
 	if err != nil {
 		return err
@@ -170,7 +145,7 @@ func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) writeClusterRelocationToFile(config *cro.ClusterRelocation, filePath string) error {
+func (r *UpgradeClusterConfigGather) writeClusterRelocationToFile(config *clusterconfigmanifest.ClusterManifest, filePath string) error {
 	r.Log.Info("Writing cluster relocation to file", "path", filePath)
 	data, err := json.Marshal(config)
 	if err != nil {
