@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -53,6 +54,8 @@ func init() {
 
 	utilruntime.Must(ranv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
+	utilruntime.Must(velerov1.AddToScheme(scheme))
+
 	//+kubebuilder:scaffold:scheme
 }
 

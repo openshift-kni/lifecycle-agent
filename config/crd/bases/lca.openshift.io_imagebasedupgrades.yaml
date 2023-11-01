@@ -47,6 +47,9 @@ spec:
                     type: string
                   namespace:
                     type: string
+                required:
+                - name
+                - namespace
                 type: object
               extraManifests:
                 items:
@@ -56,16 +59,24 @@ spec:
                       type: string
                     namespace:
                       type: string
+                  required:
+                  - name
+                  - namespace
                   type: object
                 type: array
               oadpContent:
-                description: ConfigMapRef defines a reference to a config map
-                properties:
-                  name:
-                    type: string
-                  namespace:
-                    type: string
-                type: object
+                items:
+                  description: ConfigMapRef defines a reference to a config map
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
               rollbackTarget:
                 type: string
               seedImageRef:

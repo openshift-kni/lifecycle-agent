@@ -58,7 +58,7 @@ type ImageBasedUpgradeSpec struct {
 	Stage            ImageBasedUpgradeStage `json:"stage,omitempty"`
 	SeedImageRef     SeedImageRef           `json:"seedImageRef,omitempty"`
 	AdditionalImages ConfigMapRef           `json:"additionalImages,omitempty"`
-	OADPContent      ConfigMapRef           `json:"oadpContent,omitempty"`
+	OADPContent      []ConfigMapRef         `json:"oadpContent,omitempty"`
 	ExtraManifests   []ConfigMapRef         `json:"extraManifests,omitempty"`
 	RollbackTarget   string                 `json:"rollbackTarget,omitempty"`
 }
@@ -71,8 +71,13 @@ type SeedImageRef struct {
 
 // ConfigMapRef defines a reference to a config map
 type ConfigMapRef struct {
-	Name      string `json:"name,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
+	// +kubebuilder:validation:Required
+	// +required
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:Required
+	// +required
+	Namespace string `json:"namespace"`
 }
 
 // ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade

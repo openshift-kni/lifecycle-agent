@@ -12,11 +12,13 @@ require (
 	github.com/otiai10/copy v1.14.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/stretchr/testify v1.8.2
+	github.com/vmware-tanzu/velero v1.12.0
 	k8s.io/api v0.28.2
 	k8s.io/apimachinery v0.28.2
 	k8s.io/client-go v0.28.2
 	k8s.io/code-generator v0.28.2
 	sigs.k8s.io/controller-runtime v0.16.1
+	sigs.k8s.io/yaml v1.3.0
 )
 
 require (
@@ -57,7 +59,7 @@ require (
 	github.com/stolostron/klusterlet-addon-controller v0.0.0-20230528112800-a466a2368df4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
-	golang.org/x/exp v0.0.0-20220722155223-a9213eeb770e // indirect
+	golang.org/x/exp v0.0.0-20221028150844-83b7d23a625f // indirect
 	golang.org/x/mod v0.13.0 // indirect
 	golang.org/x/net v0.16.0 // indirect
 	golang.org/x/oauth2 v0.8.0 // indirect
@@ -82,5 +84,6 @@ require (
 	open-cluster-management.io/api v0.11.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
-	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+//replace github.com/vmware-tanzu/velero => github.com/openshift/velero v0.10.2-0.20231002153713-b470b0211e1f

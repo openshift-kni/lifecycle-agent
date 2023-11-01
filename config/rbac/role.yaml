@@ -34,6 +34,13 @@ rules:
 - apiGroups:
   - config.openshift.io
   resources:
+  - clusterversions
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - config.openshift.io
+  resources:
   - imagedigestmirrorsets
   verbs:
   - get
@@ -89,3 +96,23 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - velero.io/v1
+  resources:
+  - backups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+- apiGroups:
+  - velero.io/v1
+  resources:
+  - restores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
