@@ -11,18 +11,18 @@ cd /opt/openshift
 EXTRA_MANIFESTS_PATH=/opt/openshift/extra-manifests
 RELOCATION_CONFIG_PATH=/opt/openshift/cluster-configuration
 
-echo "Waiting for ${RELOCATION_CONFIG_PATH}"
-while [[ ! -d "${RELOCATION_CONFIG_PATH}" ]]; do
-    echo "Waiting for site-config"
-    sleep 5
-done
+#echo "Waiting for ${RELOCATION_CONFIG_PATH}"
+#while [[ ! -d "${RELOCATION_CONFIG_PATH}" ]]; do
+#    echo "Waiting for site-config"
+#    sleep 5
+#done
+#
+#if [ ! -d "${RELOCATION_CONFIG_PATH}" ]; then
+#    echo "Failed to find cluster configuration at ${RELOCATION_CONFIG_PATH}"
+#    exit 1
+#fi
 
-if [ ! -d "${RELOCATION_CONFIG_PATH}" ]; then
-    echo "Failed to find cluster configuration at ${RELOCATION_CONFIG_PATH}"
-    exit 1
-fi
-
-echo "${RELOCATION_CONFIG_PATH} has been found"
+#echo "${RELOCATION_CONFIG_PATH} has been found"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
@@ -33,8 +33,40 @@ function recert {
 
     ETCD_IMAGE="$(jq -r '.spec.containers[] | select(.name == "etcd") | .image' </etc/kubernetes/manifests/etcd-pod.yaml)"
     RECERT_IMAGE="quay.io/edge-infrastructure/recert:latest"
+    #RECERT_IMAGE="quay.io/otuchfel/recert:noconsole"
+    #RECERT_IMAGE="quay.io/dpenney/poc:recert"
     local certs_dir=/var/opt/openshift/certs
-    local recert_cmd="sudo podman run --name recert --network=host --privileged -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon ${RECERT_IMAGE} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --extend-expiration"
+    local recert_cmd="sudo podman run --pull=always --name recert --network=host --privileged -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon ${RECERT_IMAGE} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --extend-expiration"
+    # DPENNEY: Temporary
+    TMP_SEED_NAME=cnfde8.sno.ptp.lab.eng.bos.redhat.com
+    TMP_SNO_NAME=cnfdf01.sno.telco5gran.eng.rdu2.redhat.com
+    TMP_SEED_HOSTNAME=cnfde8.ptp.lab.eng.bos.redhat.com
+    TMP_SNO_HOSTNAME=cnfdf01.telco5gran.eng.rdu2.redhat.com
+    local recert_cmd="sudo podman run \
+        --pull=always \
+        --name recert \
+        --network=host \
+        --privileged \
+        -v /var/opt/openshift:/var/opt/openshift \
+        -v /etc/kubernetes:/kubernetes \
+        -v /var/lib/kubelet:/kubelet \
+        -v /etc:/host-etc \
+        ${RECERT_IMAGE} \
+        --etcd-endpoint localhost:2379 \
+        --static-dir /kubernetes \
+        --static-dir /kubelet \
+        --static-dir /host-etc/machine-config-daemon \
+        --static-file /host-etc/mcs-machine-config-content.json \
+        --cn-san-replace api-int.${TMP_SEED_NAME}:api-int.${TMP_SNO_NAME} \
+        --cn-san-replace api.${TMP_SEED_NAME}:api.${TMP_SNO_NAME} \
+        --cn-san-replace *.apps.${TMP_SEED_NAME}:*.apps.${TMP_SNO_NAME} \
+        --cn-san-replace ${TMP_SEED_HOSTNAME}:${TMP_SNO_HOSTNAME} \
+        --cluster-rename ${TMP_SNO_NAME/\./:} \
+        --summary-file /kubernetes/recert-summary.yaml \
+        --extend-expiration"
+    if sudo podman container exists recert_etcd; then
+        sudo podman rm -f recert_etcd
+    fi
     sudo podman run --authfile=/var/lib/kubelet/config.json --name recert_etcd --detach --rm --network=host --privileged --entrypoint etcd -v /var/lib/etcd:/store ${ETCD_IMAGE} --name editor --data-dir /store
     sleep 10 # TODO: wait for etcd
 
@@ -51,10 +83,18 @@ function recert {
         sudo podman exec -it recert_etcd bash -c "/usr/bin/etcdctl member list | cut -d',' -f1 | xargs -i etcdctl member update "{}" --peer-urls=http://${ETCD_NEW_IP}:2380"
         sudo podman exec -it recert_etcd bash -c "/usr/bin/etcdctl del /kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"
         find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i "s/${OLD_IP}/${NODE_IP}/g"
+        ## DPENNEY: Wait here
+        #echo "Waiting until /tmp/dpenney-1.flag is created"
+        #while [ ! -f /tmp/dpenney-1.flag ]; do
+        #    sleep 1
+        #done
     fi
 
     # Use previous cluster certs if directory is present
     if [[ -d $certs_dir ]]; then
+        if sudo podman container exists recert; then
+            sudo podman rm -f recert
+        fi
         ingress_key=$(readlink -f $certs_dir/ingresskey-*)
         ingress_cn=$(basename $ingress_key | cut -d - -f 2-)
         $recert_cmd \
@@ -67,6 +107,10 @@ function recert {
         $recert_cmd
     fi
 
+        #echo "Waiting until /tmp/dpenney-2.flag is created"
+        #while [ ! -f /tmp/dpenney-2.flag ]; do
+        #    sleep 1
+        #done
     # TODO: uncomment this once recert is stable
     # sudo podman rm recert
     sudo podman kill recert_etcd
@@ -169,27 +213,29 @@ until openssl x509 -in ${KUBELET_CLIENT_CERTIFICATE} -checkend 30 &> /dev/null; 
 done
 echo "${KUBELET_CLIENT_CERTIFICATE} is valid."
 
-# Reconfigure DNS
-node_ip=$(oc get nodes -o jsonpath='{.items[0].status.addresses[?(@.type == "InternalIP")].address}')
-domain="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
+#### DPENNEY: Uncomment DNS config for next test
+## Reconfigure DNS
+#node_ip=$(oc get nodes -o jsonpath='{.items[0].status.addresses[?(@.type == "InternalIP")].address}')
+#domain="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
+#
+#if [ -z ${domain+x} ]; then
+#    echo "domain not defined"
+#else
+#    echo "Updating dnsmasq with new domain"
+#    cat << EOF > /etc/dnsmasq.d/customer-domain.conf
+#address=/apps.${domain}/${node_ip}
+#address=/api-int.${domain}/${node_ip}
+#address=/api.${domain}/${node_ip}
+#EOF
+#    systemctl restart dnsmasq
+#fi
 
-if [ -z ${domain+x} ]; then
-    echo "domain not defined"
-else
-    echo "Updating dnsmasq with new domain"
-    cat << EOF > /etc/dnsmasq.d/customer-domain.conf
-address=/apps.${domain}/${node_ip}
-address=/api-int.${domain}/${node_ip}
-address=/api.${domain}/${node_ip}
-EOF
-    systemctl restart dnsmasq
-fi
-
-echo "Applying cluster configuration"
-oc apply -f "${RELOCATION_CONFIG_PATH}"
-echo "Waiting for cluster relocation status"
-oc wait --timeout=1h clusterrelocation cluster --for condition=Reconciled=true &> /dev/null
-echo "Cluster configuration updated"
+#### DPENNEY: Skip relocation operator
+#echo "Applying cluster configuration"
+#oc apply -f "${RELOCATION_CONFIG_PATH}"
+#echo "Waiting for cluster relocation status"
+#oc wait --timeout=1h clusterrelocation cluster --for condition=Reconciled=true &> /dev/null
+#echo "Cluster configuration updated"
 
 if [ -d ${EXTRA_MANIFESTS_PATH} ]; then
     echo "Applying extra-manifests"

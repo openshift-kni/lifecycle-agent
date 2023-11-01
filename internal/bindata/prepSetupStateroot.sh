@@ -155,6 +155,13 @@ fi
 oc extract -n openshift-ingress-operator secret/router-ca --keys=tls.key --to=- > "${certs_dir}/ingresskey-${ingress_cn}" \
     || fatal "Failed: oc extract -n openshift-ingress-operator secret/router-ca --keys=tls.key"
 
+log_it "Create clusterID override"
+extra_manifests_dir="/ostree/deploy/${new_osname}/var/opt/openshift/extra-manifests"
+mkdir -p "${extra_manifests_dir}"
+oc get clusterversion version -o json \
+    | jq '{apiVersion: .apiVersion, kind: .kind, metadata: {name: .metadata.name}, spec: {clusterID: .spec.clusterID}}' \
+    > "${extra_manifests_dir}"/cluster_id_override.json
+
 set_progress "completed-stateroot"
 
 exit 0

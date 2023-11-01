@@ -8,6 +8,4 @@ sudo systemctl disable installation-configuration.service && \
 sudo systemctl disable prepare-installation-configuration.service && \
 rm -f /etc/systemd/system/installation-configuration.service \
     /etc/systemd/system/prepare-installation-configuration.service && \
-sudo podman rmi quay.io/alosadag/ibu-seed-sno0:oneimage --force && \
-sudo systemctl enable --now kubelet && \
-    sudo systemctl enable --now crio
+sudo systemctl enable --now kubelet
