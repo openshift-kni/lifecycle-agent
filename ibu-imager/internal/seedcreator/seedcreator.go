@@ -1,14 +1,22 @@
 package seedcreator
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path"
 	"strings"
 
+	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"ibu-imager/internal/ops"
 	ostree "ibu-imager/internal/ostreeclient"
@@ -24,8 +32,24 @@ FROM scratch
 COPY . /
 `
 
+type manifest struct {
+	Version     string `json:"version,omitempty"`
+	Domain      string `json:"domain,omitempty"`
+	ClusterName string `json:"cluster_name,omitempty"`
+}
+
+type installConfigMetadata struct {
+	Name string `json:"name"`
+}
+
+type basicInstallConfig struct {
+	BaseDomain string                `json:"baseDomain"`
+	Metadata   installConfigMetadata `json:"metadata"`
+}
+
 // SeedCreator TODO: move params to Options
 type SeedCreator struct {
+	client            runtime.Client
 	log               *logrus.Logger
 	ops               ops.Ops
 	ostreeClient      *ostree.Client
@@ -36,9 +60,10 @@ type SeedCreator struct {
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
-func NewSeedCreator(log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
+func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
 	kubeconfig, containerRegistry, authFile string) *SeedCreator {
 	return &SeedCreator{
+		client:            client,
 		log:               log,
 		ops:               ops,
 		ostreeClient:      ostreeClient,
@@ -59,6 +84,10 @@ func (s *SeedCreator) CreateSeedImage() error {
 	}
 
 	if err := s.createContainerList(); err != nil {
+		return err
+	}
+
+	if err := s.gatherSeedClusterInfo(context.TODO()); err != nil {
 		return err
 	}
 
@@ -93,9 +122,44 @@ func (s *SeedCreator) CreateSeedImage() error {
 	return nil
 }
 
+func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
+	clusterVersion := &v1.ClusterVersion{}
+	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
+		return err
+	}
+	manifestObj := manifest{Version: clusterVersion.Status.Desired.Version}
+
+	installConfig, err := s.getInstallConfig(ctx)
+	if err != nil {
+		return err
+	}
+	manifestObj.Domain = installConfig.BaseDomain
+	manifestObj.ClusterName = installConfig.Metadata.Name
+	data, err := json.Marshal(manifestObj)
+	if err != nil {
+		return err
+	}
+
+	s.log.Println("Creating manifest.json")
+	if err := os.WriteFile(path.Join(s.backupDir, "manifest.json"), data, 0o644); err != nil {
+		return err
+	}
+
+	data, err = json.Marshal(clusterVersion)
+	if err != nil {
+		return err
+	}
+	s.log.Println("Creating clusterversion.json")
+	if err := os.WriteFile(path.Join(s.backupDir, "clusterversion.json"), data, 0o644); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // TODO: split function per operation
 func (s *SeedCreator) createContainerList() error {
-	s.log.Println("Saving list of running containers, catalogsources, and clusterversion.")
+	s.log.Println("Saving list of running containers and catalogsources.")
 
 	// Check if the file /var/tmp/container_list.done does not exist
 	if _, err := os.Stat("/var/tmp/container_list.done"); os.IsNotExist(err) {
@@ -114,15 +178,6 @@ func (s *SeedCreator) createContainerList() error {
 		_, err = s.ops.RunBashInHostNamespace(
 			"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
 				s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
-		if err != nil {
-			return err
-		}
-
-		// Execute 'oc get clusterversion' command and save it
-		s.log.Println("Save clusterversion to file")
-		_, err = s.ops.RunBashInHostNamespace(
-			"oc", append([]string{"get", "clusterversion", "version", "-o", "json", "--kubeconfig", s.kubeconfig},
-				">", s.backupDir+"/clusterversion.json")...)
 		if err != nil {
 			return err
 		}
@@ -362,4 +417,25 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	}
 	log.Println("Backup of .origin created successfully.")
 	return nil
+}
+
+func (s *SeedCreator) getInstallConfig(ctx context.Context) (*basicInstallConfig, error) {
+
+	cm := &corev1.ConfigMap{}
+	err := s.client.Get(ctx, types.NamespacedName{Name: "cluster-config-v1", Namespace: "kube-system"}, cm)
+	if err != nil {
+		return nil, err
+	}
+
+	data, ok := cm.Data["install-config"]
+	if !ok {
+		return nil, fmt.Errorf("did not find key install-config in configmap")
+	}
+
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(data)), 4096)
+	instConf := &basicInstallConfig{}
+	if err := decoder.Decode(instConf); err != nil {
+		return nil, fmt.Errorf("failed to decode install config, err: %w", err)
+	}
+	return instConf, nil
 }

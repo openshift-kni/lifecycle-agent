@@ -10,7 +10,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 COPY vendor/ vendor/
 
-# Copy the Go source installation_configuration_files
+# Copy the go source
 COPY main.go main.go
 COPY cmd/ cmd/
 COPY internal/ internal/
@@ -37,3 +37,4 @@ RUN yum -y install jq && \
     rm -rf /var/cache/yum
 
 ENTRYPOINT ["./ibu-imager"]
+

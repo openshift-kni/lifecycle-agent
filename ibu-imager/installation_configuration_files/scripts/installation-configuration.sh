@@ -26,6 +26,9 @@ echo "${RELOCATION_CONFIG_PATH} has been found"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
+DOMAIN="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
+
+
 # Recertify
 function recert {
     NODE_IP=$(cat /etc/default/node-ip)
@@ -34,7 +37,7 @@ function recert {
     ETCD_IMAGE="$(jq -r '.spec.containers[] | select(.name == "etcd") | .image' </etc/kubernetes/manifests/etcd-pod.yaml)"
     RECERT_IMAGE="quay.io/edge-infrastructure/recert:latest"
     local certs_dir=/var/opt/openshift/certs
-    local recert_cmd="sudo podman run --name recert --network=host --privileged -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon ${RECERT_IMAGE} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --extend-expiration"
+    local recert_cmd="sudo podman run --name recert --network=host --privileged -v /tmp:/tmp -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon ${RECERT_IMAGE} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --extend-expiration --summary-file /tmp/recert-summary.yaml"
     sudo podman run --authfile=/var/lib/kubelet/config.json --name recert_etcd --detach --rm --network=host --privileged --entrypoint etcd -v /var/lib/etcd:/store ${ETCD_IMAGE} --name editor --data-dir /store
     sleep 10 # TODO: wait for etcd
 
@@ -171,7 +174,6 @@ echo "${KUBELET_CLIENT_CERTIFICATE} is valid."
 
 # Reconfigure DNS
 node_ip=$(oc get nodes -o jsonpath='{.items[0].status.addresses[?(@.type == "InternalIP")].address}')
-domain="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
 
 if [ -z ${domain+x} ]; then
     echo "domain not defined"

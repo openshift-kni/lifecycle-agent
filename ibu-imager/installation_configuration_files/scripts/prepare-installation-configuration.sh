@@ -50,7 +50,7 @@ set +o allexport
 echo "Network configuration exist"
 if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
    # TODO: we might need to delete the connection first
-    rm -f /etc/NetworkManager/system-connections/*.nmconnection
+    rm -f /etc/NetworkManager/system-connections/*
     cp "${NETWORK_CONFIG_PATH}"/system-connections/*.nmconnection /etc/NetworkManager/system-connections/ -f
     find /etc/NetworkManager/system-connections/*.nmconnection -type f -exec chmod 600 {} \;
 fi
