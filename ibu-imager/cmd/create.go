@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"text/template"
 
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
@@ -49,6 +51,9 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
+// recertContainerImage is the container image for the recert tool
+var recertContainerImage string
+
 // createCmd represents the create command
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -66,6 +71,7 @@ func init() {
 	// Add flags related to container registry
 	createCmd.Flags().StringVarP(&authFile, "authfile", "a", imageRegistryAuthFile, "The path to the authentication file of the container registry.")
 	createCmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
+	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", defaultRecertImage, "The full image name for the recert container tool.")
 }
 
 func create() {
@@ -116,12 +122,58 @@ func copyConfigurationFiles(ops ops.Ops) error {
 		return err
 	}
 
+	// Prepare variable substitutions for template files
+	substitutions := map[string]interface{}{
+		"RecertContainerImage": recertContainerImage,
+	}
+
+	// copy env file
+	err = copyEnvFile(substitutions)
+	if err != nil {
+		return err
+	}
+
 	return handleServices(ops)
 }
 
 func copyConfigurationScripts() error {
 	log.Infof("Copying installation_configuration_files/scripts to local/bin")
 	return cp.Copy("installation_configuration_files/scripts", "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
+}
+
+// copyEnvFile reads and copy the env file from the source directory to the destination directory
+// while performing variable substitution for each var.
+func copyEnvFile(data interface{}) error {
+	// Define source and destination file paths
+	srcFile := "installation_configuration_files/conf/installation-configuration.env"
+	destFile := "/etc/systemd/system/installation-configuration.env"
+
+	// Read the content of the source file
+	scriptContent, err := os.ReadFile(srcFile)
+	if err != nil {
+		return err
+	}
+
+	// Create a new template and parse the script content
+	t, err := template.New("envTemplate").Parse(string(scriptContent))
+	if err != nil {
+		return err
+	}
+
+	// Execute the template with the provided data for variable substitution
+	var modifiedScript strings.Builder
+	err = t.Execute(&modifiedScript, data)
+	if err != nil {
+		return err
+	}
+
+	// Write the modified script content to the destination file with appropriate permissions
+	err = os.WriteFile(destFile, []byte(modifiedScript.String()), os.FileMode(0o644))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func handleServices(ops ops.Ops) error {

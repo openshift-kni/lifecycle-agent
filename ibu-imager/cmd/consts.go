@@ -19,6 +19,8 @@ package cmd
 const (
 	// Pull secret. Written by the machine-config-operator
 	imageRegistryAuthFile = "/var/lib/kubelet/config.json"
+	// defaultRecertImage is the default recert image location
+	defaultRecertImage = "quay.io/edge-infrastructure/recert:latest"
 	// backupDir is the directory where the ostree backup will be
 	backupDir = "/var/tmp/backup"
 	// Default kubeconfigFile location
