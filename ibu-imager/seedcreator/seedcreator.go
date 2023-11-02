@@ -1,9 +1,11 @@
 package seedcreator
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 
@@ -155,7 +157,9 @@ func (s *SeedCreator) stopServices() error {
 
 	s.log.Println("Stopping containers and CRI-O runtime.")
 	crioSystemdStatus, err := s.ops.SystemctlAction("is-active", "crio")
-	if err != nil {
+	var exitErr *exec.ExitError
+	// If ExitCode is 3, the command succeeded and told us that crio is down
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
 		return err
 	}
 	s.log.Println("crio status is", crioSystemdStatus)
