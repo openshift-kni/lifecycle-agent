@@ -2,7 +2,6 @@ package clusterconfig
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
@@ -31,6 +33,7 @@ const (
 	croFileName                   = "cluster-relocation.json"
 	croName                       = "cluster"
 	pullSecretFileName            = "pullsecret.json"
+	clusterInfoFileName           = "clusterinfo/manifest.json"
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -78,7 +81,14 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err != nil {
 		return err
 	}
-	if err := r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir); err != nil {
+
+	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
+	clusterData, err := cmClient.CreateClusterInfo(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir, clusterData); err != nil {
 		return err
 	}
 	return nil
@@ -112,7 +122,7 @@ func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, 
 func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 	filesDir := filepath.Join(dir, clusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder", "folder", filesDir)
-	if err := os.MkdirAll(filesDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(filesDir, filepath.Dir(clusterInfoFileName)), 0o700); err != nil {
 		return "", err
 	}
 	return filesDir, nil
@@ -120,7 +130,7 @@ func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
 func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterRelocation, pullSecret *corev1.Secret,
-	clusterID v1.ClusterID, dir string) error {
+	clusterID v1.ClusterID, dir string, clusterData *clusterinfo.ClusterInfo) error {
 	clusterConfigPath, err := r.configDirs(dir)
 	if err != nil {
 		return err
@@ -138,6 +148,9 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterReloc
 	if err := r.writeClusterIDToFile(clusterID, filepath.Join(clusterConfigPath, clusterIDFileName)); err != nil {
 		return err
 	}
+	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, clusterInfoFileName)); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -153,42 +166,19 @@ func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error
 			Kind:       "Namespace",
 		},
 	}
-
-	data, err := json.Marshal(ns)
-	if err != nil {
-		return fmt.Errorf("failed to marshal namespace: %w", err)
-	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write namespace: %w", err)
-	}
-	return nil
+	return utils.WriteToFile(ns, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) writeClusterRelocationToFile(config *cro.ClusterRelocation, filePath string) error {
 	r.Log.Info("Writing cluster relocation to file", "path", filePath)
-	data, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cluster relocation: %w", err)
-	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write cluster relocation: %w", err)
-	}
-
-	return nil
+	return utils.WriteToFile(config, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, filePath string) error {
 	// override namespace
 	r.Log.Info("Writing secret to file", "path", filePath)
 	secret.Namespace = upgradeConfigurationNamespace
-	data, err := json.Marshal(secret)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return err
-	}
-	return nil
+	return utils.WriteToFile(secret, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav1.TypeMeta, error) {
@@ -223,13 +213,5 @@ func (r *UpgradeClusterConfigGather) writeClusterIDToFile(clusterID v1.ClusterID
 		return err
 	}
 	clusterVersion.TypeMeta = *typeMeta
-
-	data, err := json.Marshal(clusterVersion)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return err
-	}
-	return nil
+	return utils.WriteToFile(clusterVersion, filePath)
 }
