@@ -138,6 +138,25 @@ function wait_for_api {
 
 wait_for_api
 
+# Workaround for MCO issue
+oc patch controllerconfigs.machineconfiguration.openshift.io machine-config-controller -p='
+    {
+        "spec": {
+            "infra": {
+                "status": {
+                    "apiServerURL": "https://api.'"${SNO_CLUSTER_NAME}.${SNO_DNS_DOMAIN}"':6443",
+                    "apiServerInternalURI": "https://api-int.'"${SNO_CLUSTER_NAME}.${SNO_DNS_DOMAIN}"':6443"
+                }
+            },
+            "dns": {
+                "spec": {
+                    "baseDomain": "'"${SNO_CLUSTER_NAME}.${SNO_DNS_DOMAIN}"'"
+                }
+            }
+        }
+    }
+' --type=merge
+
 wait_approve_csr() {
     local name=${1}
 
