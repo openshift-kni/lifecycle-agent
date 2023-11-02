@@ -60,6 +60,14 @@ while :; do
             PROGRESS_FILE=$2
             shift 2
             ;;
+        --os-version)
+            CR_OS_VERSION=$2
+            shift 2
+            ;;
+        --os-name)
+            CR_OS_NAME=$2
+            shift 2
+            ;;
         --)
             shift
             break
@@ -107,7 +115,11 @@ if [ -z "${up_ver}" ]; then
     fatal "Failed to identify version from seed image"
 fi
 
-new_osname="rhcos_${up_ver}"
+if [ ${CR_OS_VERSION} -ne ${up_ver} ]; then
+    fatal "Seed image version(${up_ver}) differs from version specified in ibu.Spec.SeedImageRef.Version(${CR_OS_VERSION})"
+fi
+
+new_osname="${CR_OS_NAME}"
 
 log_it "Importing remote ostree"
 ostree pull-local "${ostree_repo}" || fatal "Failed: ostree pull-local ${ostree_repo}"
