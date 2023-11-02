@@ -24,9 +24,9 @@ import (
 	cp "github.com/otiai10/copy"
 	"github.com/spf13/cobra"
 
-	"ibu-imager/internal/ops"
-	ostree "ibu-imager/internal/ostreeclient"
-	seed "ibu-imager/internal/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
 )
 
 // authFile is the path to the registry credentials used to push the OCI image
@@ -97,7 +97,7 @@ func copyConfigurationFiles(ops ops.Ops) error {
 
 func copyConfigurationScripts() error {
 	log.Infof("Copying installation_configuration_files/scripts to local/bin")
-	return cp.Copy("installation_configuration_files/scripts", "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0777)})
+	return cp.Copy("installation_configuration_files/scripts", "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
 }
 
 func handleServices(ops ops.Ops) error {

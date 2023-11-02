@@ -158,10 +158,10 @@ endef
 ##@ Build
 
 build: generate fmt vet ## Build manager binary.
-	go build -o bin/manager main.go
+	go build -o bin/manager main/main.go
 
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./main.go
+	go run /main/main.go
 
 debug: manifests generate fmt vet ## Run a controller from your host that accepts remote attachment.
 	dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
