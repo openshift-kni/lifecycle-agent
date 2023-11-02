@@ -19,6 +19,7 @@ package clusterconfig
 import (
 	"context"
 	"encoding/json"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"path/filepath"
@@ -36,7 +37,43 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const numberOfFilesOnSuccess = 4
+const numberOfFilesOnSuccess = 5
+
+var clusterCmData = `
+    additionalTrustBundlePolicy: Proxyonly
+    apiVersion: v1
+    baseDomain: redhat.com
+    bootstrapInPlace:
+      installationDisk: /dev/disk/by-id/wwn-0x05abcd6da8679a1c
+    compute:
+    - architecture: amd64
+      hyperthreading: Enabled
+      name: worker
+      platform: {}
+      replicas: 0
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      platform: {}
+      replicas: 1
+    metadata:
+      creationTimestamp: null
+      name: test-infra-cluster-7078f3ad
+    networking:
+      clusterNetwork:
+      - cidr: 172.30.0.0/16
+        hostPrefix: 23
+      machineNetwork:
+      - cidr: 192.168.127.0/24
+      networkType: OVNKubernetes
+      serviceNetwork:
+      - 10.128.0.0/14
+    platform:
+      none: {}
+    publish: External
+    pullSecret: ""
+`
 
 var (
 	testscheme = scheme.Scheme
@@ -273,8 +310,9 @@ func TestClusterConfig(t *testing.T) {
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
-
-			objs := []client.Object{tc.secret, tc.clusterVersion, tc.ingress, tc.idm}
+			installConfig := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterinfo.InstallConfigCM,
+				Namespace: clusterinfo.InstallConfigCMNamespace}, Data: map[string]string{"install-config": clusterCmData}}
+			objs := []client.Object{tc.secret, tc.clusterVersion, tc.ingress, tc.idm, installConfig}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")

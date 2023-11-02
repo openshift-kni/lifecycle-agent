@@ -21,19 +21,33 @@ import (
 	"os"
 	"path/filepath"
 
+	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
+	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
 )
 
-// authFile is the path to the registry credentials used to push the OCI image
-var authFile string
+var (
+	scheme = runtime.NewScheme()
+	// authFile is the path to the registry credentials used to push the OCI image
+	authFile string
+	// containerRegistry is the registry to push the OCI image
+	containerRegistry string
+)
 
-// containerRegistry is the registry to push the OCI image
-var containerRegistry string
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
+	//+kubebuilder:scaffold:scheme
+}
 
 // createCmd represents the create command
 var createCmd = &cobra.Command{
@@ -74,7 +88,17 @@ func create() {
 		log.Fatal("Failed to add configuration files", err)
 	}
 
-	seedCreator := seed.NewSeedCreator(log, op, rpmOstreeClient, backupDir, kubeconfigFile,
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigFile)
+	if err != nil {
+		log.Fatal("failed top create k8s config", err)
+	}
+
+	client, err := runtimeClient.New(config, runtimeClient.Options{Scheme: scheme})
+	if err != nil {
+		log.Fatal("failed to create runtime client", err)
+	}
+
+	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, backupDir, kubeconfigFile,
 		containerRegistry, authFile)
 	err = seedCreator.CreateSeedImage()
 	if err != nil {
