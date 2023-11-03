@@ -48,13 +48,13 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		return nil
 	}
 
-	// Create the directory for the extra manifests
-	if err := os.MkdirAll(filepath.Join(toDir, extraManifestPath), 0o700); err != nil {
+	configmaps, err := getManifestConfigmaps(ctx, h.Client, extraManifestCMs)
+	if err != nil {
 		return err
 	}
 
-	configmaps, err := getManifestConfigmaps(ctx, h.Client, extraManifestCMs)
-	if err != nil {
+	// Create the directory for the extra manifests
+	if err := os.MkdirAll(filepath.Join(toDir, extraManifestPath), 0o700); err != nil {
 		return err
 	}
 

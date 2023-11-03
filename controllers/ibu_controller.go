@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -38,7 +40,6 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
@@ -61,6 +62,11 @@ type ImageBasedUpgradeReconciler struct {
 
 func doNotRequeue() ctrl.Result {
 	return ctrl.Result{}
+}
+
+func requeueWithError(err error) (ctrl.Result, error) {
+	// can not be fixed by user during reconcile
+	return ctrl.Result{}, err
 }
 
 //nolint:unused
@@ -117,6 +123,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	nextReconcile = doNotRequeue()
 
 	if req.Name != utils.IBUName {
+		r.Log.Error(fmt.Errorf("ibu CR must be named, %s", utils.IBUName), "")
 		return
 	}
 

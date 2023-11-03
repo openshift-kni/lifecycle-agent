@@ -64,7 +64,11 @@ apiVersion: lca.openshift.io/v1alpha1
 kind: ImageBasedUpgrade
 metadata:
   name: upgrade
+  namespace: openshift-lifecycle-agent
 spec:
+  oadpContent:
+    - name: oadp-cm
+      namespace: openshift-adp
   stage: Idle
   seedImageRef:
     version: 4.13.9
@@ -145,4 +149,140 @@ perform some checks in the seed SNO cluster.
 
 ```shell
 skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTRY}/edge-infrastructure/recert
+````
+
+## Setup dev backup steps
+
+### minio + oadp oprator
+
+Consider using podman if you have a HV 
+```shell
+podman run --name minio -d -p 9000:9000 -p 9001:9001 quay.io/minio/minio server /data --console-address ":9001" 
+```
+
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio-dev
+  labels:
+    name: minio-dev
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: minio
+  name: minio
+  namespace: minio-dev
+spec:
+  containers:
+  - name: minio
+    image: quay.io/minio/minio:latest
+    command:
+    - /bin/bash
+    - -c
+    args:
+    - minio server /data --console-address :9090
+    volumeMounts:
+    - mountPath: /var/local/data
+      name: localvolume
+  volumes:
+  - name: localvolume
+    hostPath:
+      path: /var/local/data
+      type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio-dev
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: two
+      protocol: TCP
+      port: 9090
+    - name: one
+      protocol: TCP
+      port: 9000
+# kubectl port-forward svc/minio 9000 9090 -n minio-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-adp
+  labels:
+    name: openshift-adp
+
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-adp
+  namespace: openshift-adp
+spec:
+  targetNamespaces:
+  - openshift-adp
+
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-adp
+  namespace: openshift-adp
+spec:
+  channel: stable-1.2
+  installPlanApproval: Automatic
+  approved: true
+  name: redhat-oadp-operator
+  source: redhat-operators-disconnected
+  sourceNamespace: openshift-marketplace
+```
+
+### setup DataProtectionApplication CR
+```yaml
+# before applying this setup creds for the bucket access + create bucket
+# create bucket: aws s3api create-bucket --bucket test-backups --profile minio
+# create a new called `credentials-velero`
+#
+# [default]
+# aws_access_key_id=testkey
+# aws_secret_access_key=testaccesskey
+#
+# apply: oc create secret generic cloud-credentials -n openshift-adp --from-file cloud=credentials-velero
+
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: dataprotectionapplication
+  namespace: openshift-adp
+spec:
+  configuration:
+    velero:
+      defaultPlugins:
+        - aws
+        - openshift
+      resourceTimeout: 10m
+  backupLocations:
+    - velero:
+        config:
+          profile: "default" # todo find out why it didnt work with a different profile name
+          region: minio
+          s3Url: "http://minio.minio-dev.svc.cluster.local:9000"
+          insecureSkipTLSVerify: "true"
+          s3ForcePathStyle: "true"
+        provider: aws
+        default: true
+        credential:
+          key: cloud
+          name: cloud-credentials
+        objectStorage:
+          bucket: test-backups
+          prefix: velero # a required value if no image provided
 ```
