@@ -6,7 +6,7 @@ After=nodeip-configuration.service prepare-installation-configuration.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/installation-configuration.sh
-EnvironmentFile=-/etc/systemd/system/installation-configuration.env
+EnvironmentFile=/etc/systemd/system/installation-configuration.env
 
 [Install]
 WantedBy=multi-user.target

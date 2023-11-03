@@ -6,11 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,8 +28,6 @@ const (
 	clusterConfigDir              = "/opt/openshift/cluster-configuration"
 	imageSetName                  = "mirror-ocp"
 	clusterIDFileName             = "cluster-id-override.json"
-	croFileName                   = "cluster-relocation.json"
-	croName                       = "cluster"
 	pullSecretFileName            = "pullsecret.json"
 	clusterInfoFileName           = "clusterinfo/manifest.json"
 )
@@ -66,21 +62,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingress); err != nil {
 		return err
 	}
-	// TODO: we might need a list here and perhaps we want to apply these as extra-manifests
-	idms := &v1.ImageDigestMirrorSet{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: imageSetName}, idms); err != nil {
-		if errors.IsNotFound(err) {
-			r.Log.Info("ImageDigestMirrorSet", imageSetName, "was not found, skipping")
-		} else {
-			return err
-		}
-	}
 	r.Log.Info("Successfully fetched cluster config")
-
-	clusterConfig, err := r.generateClusterConfig(ingress, idms)
-	if err != nil {
-		return err
-	}
 
 	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
 	clusterData, err := cmClient.CreateClusterInfo(ctx)
@@ -88,34 +70,10 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 
-	if err := r.writeClusterConfig(clusterConfig, pullSecret, clusterID, ostreeDir, clusterData); err != nil {
+	if err := r.writeClusterConfig(pullSecret, clusterID, ostreeDir, clusterData); err != nil {
 		return err
 	}
 	return nil
-}
-
-func (r *UpgradeClusterConfigGather) generateClusterConfig(ingress *v1.Ingress, idms *v1.ImageDigestMirrorSet) (*cro.ClusterRelocation, error) {
-	config := &cro.ClusterRelocation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      croName,
-			Namespace: upgradeConfigurationNamespace,
-		},
-		Spec: cro.ClusterRelocationSpec{
-			Domain: ingress.Spec.Domain,
-			PullSecretRef: &corev1.SecretReference{
-				Namespace: upgradeConfigurationNamespace,
-				Name:      pullSecretName,
-			},
-			ImageDigestMirrors: idms.Spec.ImageDigestMirrors,
-		},
-	}
-
-	typeMeta, err := r.typeMetaForObject(config)
-	if err != nil {
-		return nil, err
-	}
-	config.TypeMeta = *typeMeta
-	return config, nil
 }
 
 // configDirs returns the files directory for the given cluster config
@@ -129,7 +87,7 @@ func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 }
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
-func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterRelocation, pullSecret *corev1.Secret,
+func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secret,
 	clusterID v1.ClusterID, dir string, clusterData *clusterinfo.ClusterInfo) error {
 	clusterConfigPath, err := r.configDirs(dir)
 	if err != nil {
@@ -137,9 +95,6 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(config *cro.ClusterReloc
 	}
 
 	if err := r.writeNamespaceToFile(filepath.Join(clusterConfigPath, "namespace.json")); err != nil {
-		return err
-	}
-	if err := r.writeClusterRelocationToFile(config, filepath.Join(clusterConfigPath, croFileName)); err != nil {
 		return err
 	}
 	if err := r.writeSecretToFile(pullSecret, filepath.Join(clusterConfigPath, pullSecretFileName)); err != nil {
@@ -167,11 +122,6 @@ func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error
 		},
 	}
 	return utils.WriteToFile(ns, filePath)
-}
-
-func (r *UpgradeClusterConfigGather) writeClusterRelocationToFile(config *cro.ClusterRelocation, filePath string) error {
-	r.Log.Info("Writing cluster relocation to file", "path", filePath)
-	return utils.WriteToFile(config, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, filePath string) error {

@@ -8,6 +8,7 @@ rm -f /usr/local/bin/prepare-installation-configuration.sh /usr/local/bin/instal
 systemctl disable installation-configuration.service
 systemctl disable prepare-installation-configuration.service
 rm -f /etc/systemd/system/installation-configuration.service /etc/systemd/system/prepare-installation-configuration.service
+rm -f /etc/systemd/system/installation-configuration.env
 
 # 3) restore etcd
 RECERT_IMAGE="quay.io/edge-infrastructure/recert:latest"

@@ -25,6 +25,25 @@ fi
 echo "${RELOCATION_CONFIG_PATH} has been found"
 # Replace this with a function that loads values from yaml file
 set +o allexport
+NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
+NEW_CLUSTER_BASE_DOMAIN=$(jq -r '.domain' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
+NEW_CLUSTER_FULL_DOMAIN="${NEW_CLUSTER_NAME}.${NEW_CLUSTER_BASE_DOMAIN}"
+
+function reconfigure_dnsmasq {
+    if [ -z $1 ]; then
+        echo "domain not defined"
+    else
+        echo "Updating dnsmasq with new domain"
+        # shellcheck disable=SC1009
+        cat << EOF > /etc/dnsmasq.d/customer-domain.conf
+address=/apps.$1/$2
+address=/api-int.$1/$2
+address=/api.$1/$2
+EOF
+        systemctl restart dnsmasq --no-block
+    fi
+}
+
 
 # Recertify
 function recert {
@@ -42,6 +61,12 @@ function recert {
     # remove this condition when we will support only single ip
     if [[ -n "${NODE_IP}" ]]; then
         recert_cmd="${recert_cmd} ""--cn-san-replace ${OLD_IP},${NODE_IP}"
+        if [[ -n "${SEED_FULL_DOMAIN}" ]]; then
+            recert_cmd="${recert_cmd} ""--cn-san-replace api.${SEED_FULL_DOMAIN},api.${NEW_CLUSTER_FULL_DOMAIN}"
+            recert_cmd="${recert_cmd} ""--cn-san-replace api-int.${SEED_FULL_DOMAIN},api-int.${NEW_CLUSTER_FULL_DOMAIN}"
+            recert_cmd="${recert_cmd} ""--cn-san-replace *.apps.${SEED_FULL_DOMAIN},*.apps.${NEW_CLUSTER_FULL_DOMAIN}"
+            recert_cmd="${recert_cmd} ""--cluster-rename ${NEW_CLUSTER_NAME}:${NEW_CLUSTER_BASE_DOMAIN}"
+        fi
         if [[ ${NODE_IP} =~ .*:.* ]]; then
             ETCD_NEW_IP="[${NODE_IP}]"
         else
@@ -51,6 +76,7 @@ function recert {
         sudo podman exec -it recert_etcd bash -c "/usr/bin/etcdctl member list | cut -d',' -f1 | xargs -i etcdctl member update "{}" --peer-urls=http://${ETCD_NEW_IP}:2380"
         sudo podman exec -it recert_etcd bash -c "/usr/bin/etcdctl del /kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"
         find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i "s/${OLD_IP}/${NODE_IP}/g"
+        reconfigure_dnsmasq ${NEW_CLUSTER_FULL_DOMAIN} ${NODE_IP}
     fi
 
     # Use previous cluster certs if directory is present
@@ -169,27 +195,8 @@ until openssl x509 -in ${KUBELET_CLIENT_CERTIFICATE} -checkend 30 &> /dev/null; 
 done
 echo "${KUBELET_CLIENT_CERTIFICATE} is valid."
 
-# Reconfigure DNS
-node_ip=$(oc get nodes -o jsonpath='{.items[0].status.addresses[?(@.type == "InternalIP")].address}')
-domain="$(oc apply -f "${RELOCATION_CONFIG_PATH}" --dry-run=client -o jsonpath='{.items[?(@.kind=="ClusterRelocation")].spec.domain}')"
-
-if [ -z ${domain+x} ]; then
-    echo "domain not defined"
-else
-    echo "Updating dnsmasq with new domain"
-    cat << EOF > /etc/dnsmasq.d/customer-domain.conf
-address=/apps.${domain}/${node_ip}
-address=/api-int.${domain}/${node_ip}
-address=/api.${domain}/${node_ip}
-EOF
-    systemctl restart dnsmasq
-fi
-
 echo "Applying cluster configuration"
 oc apply -f "${RELOCATION_CONFIG_PATH}"
-echo "Waiting for cluster relocation status"
-oc wait --timeout=1h clusterrelocation cluster --for condition=Reconciled=true &> /dev/null
-echo "Cluster configuration updated"
 
 if [ -d ${EXTRA_MANIFESTS_PATH} ]; then
     echo "Applying extra-manifests"

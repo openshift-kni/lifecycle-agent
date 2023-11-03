@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"log"
 	"os"
 	"os/exec"
@@ -34,31 +35,33 @@ COPY . /
 
 // SeedCreator TODO: move params to Options
 type SeedCreator struct {
-	client            runtime.Client
-	log               *logrus.Logger
-	ops               ops.Ops
-	ostreeClient      *ostree.Client
-	backupDir         string
-	kubeconfig        string
-	containerRegistry string
-	authFile          string
-	manifestClient    *clusterinfo.InfoClient
+	client               runtime.Client
+	log                  *logrus.Logger
+	ops                  ops.Ops
+	ostreeClient         *ostree.Client
+	backupDir            string
+	kubeconfig           string
+	containerRegistry    string
+	authFile             string
+	recertContainerImage string
+	manifestClient       *clusterinfo.InfoClient
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, authFile string) *SeedCreator {
+	kubeconfig, containerRegistry, authFile, recertContainerImage string) *SeedCreator {
 
 	return &SeedCreator{
-		client:            client,
-		log:               log,
-		ops:               ops,
-		ostreeClient:      ostreeClient,
-		backupDir:         backupDir,
-		kubeconfig:        kubeconfig,
-		containerRegistry: containerRegistry,
-		authFile:          authFile,
-		manifestClient:    clusterinfo.NewClusterInfoClient(client),
+		client:               client,
+		log:                  log,
+		ops:                  ops,
+		ostreeClient:         ostreeClient,
+		backupDir:            backupDir,
+		kubeconfig:           kubeconfig,
+		containerRegistry:    containerRegistry,
+		authFile:             authFile,
+		recertContainerImage: recertContainerImage,
+		manifestClient:       clusterinfo.NewClusterInfoClient(client),
 	}
 }
 
@@ -75,7 +78,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := s.gatherSeedClusterInfo(context.TODO()); err != nil {
+	if err := s.gatherClusterInfo(context.TODO()); err != nil {
 		return err
 	}
 
@@ -110,7 +113,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	return nil
 }
 
-func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
+func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	// TODO: remove after removing usage of clusterversion.json
 	clusterVersion := &v1.ClusterVersion{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
@@ -132,7 +135,8 @@ func (s *SeedCreator) gatherSeedClusterInfo(ctx context.Context) error {
 		return err
 	}
 
-	return nil
+	return s.renderInstallationEnvFile(s.recertContainerImage,
+		fmt.Sprintf("%s.%s", clusterManifest.ClusterName, clusterManifest.Domain))
 }
 
 // TODO: split function per operation
@@ -397,4 +401,17 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	}
 	log.Println("Backup of .origin created successfully.")
 	return nil
+}
+
+func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDomain string) error {
+	// Define source and destination file paths
+	srcFile := "installation_configuration_files/conf/installation-configuration.env"
+	destFile := "/etc/systemd/system/installation-configuration.env"
+	// Prepare variable substitutions for template files
+	substitutions := map[string]any{
+		"RecertContainerImage": recertContainerImage,
+		"SeedFullDomain":       seedFullDomain,
+	}
+
+	return utils.RenderTemplateFile(srcFile, substitutions, destFile, 0o644)
 }
