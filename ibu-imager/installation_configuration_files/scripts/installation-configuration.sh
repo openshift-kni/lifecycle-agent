@@ -53,8 +53,8 @@ function recert {
     ETCD_IMAGE="$(jq -r '.spec.containers[] | select(.name == "etcd") | .image' </etc/kubernetes/manifests/etcd-pod.yaml)"
     local recert_tool_image=${RECERT_IMAGE:-quay.io/edge-infrastructure/recert:latest}
     local certs_dir=/var/opt/openshift/certs
-    local recert_cmd="sudo podman run --name recert --network=host --privileged -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon ${recert_tool_image} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --extend-expiration"
-    sudo podman run --authfile=/var/lib/kubelet/config.json --name recert_etcd --detach --rm --network=host --privileged --entrypoint etcd -v /var/lib/etcd:/store ${ETCD_IMAGE} --name editor --data-dir /store
+    local recert_cmd="sudo podman run --name recert --network=host --privileged --replace -v /var/opt/openshift:/var/opt/openshift -v /etc/kubernetes:/kubernetes -v /var/lib/kubelet:/kubelet -v /etc/machine-config-daemon:/machine-config-daemon -v /etc:/host-etc ${recert_tool_image} --etcd-endpoint localhost:2379 --static-dir /kubernetes --static-dir /kubelet --static-dir /machine-config-daemon --static-file /host-etc/mcs-machine-config-content.json --extend-expiration"
+    sudo podman run --authfile=/var/lib/kubelet/config.json --name recert_etcd --detach --rm --network=host --replace --privileged --entrypoint etcd -v /var/lib/etcd:/store ${ETCD_IMAGE} --name editor --data-dir /store
     sleep 10 # TODO: wait for etcd
 
     # Recert node ip in order to support single ip
