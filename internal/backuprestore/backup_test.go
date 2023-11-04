@@ -48,6 +48,8 @@ func init() {
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.Backup{})
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupList{})
 	testscheme.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterVersion{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.DeleteBackupRequest{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.DeleteBackupRequestList{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -504,4 +506,92 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretPath, "velero-cred.yaml")
 	_, err = os.Stat(veleroCredSecretFilePath)
 	assert.NoError(t, err)
+}
+
+func TestCleanupBackups(t *testing.T) {
+	currentCluster := &configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: configv1.ClusterVersionSpec{
+			ClusterID: "cluster1",
+		},
+	}
+
+	// Create backups for different clusters
+	backups := []client.Object{
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster1",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster1",
+				},
+			},
+		},
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster2",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster2",
+				},
+			},
+		},
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster3",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster2",
+				},
+			},
+		},
+	}
+
+	objs := []client.Object{currentCluster}
+	objs = append(objs, backups...)
+	fakeClient, err := getFakeClientFromObjects(objs...)
+	if err != nil {
+		t.Errorf("error in creating fake client")
+	}
+	assert.Equal(t, 3, len(backups))
+
+	handler := &BRHandler{
+		Client: fakeClient,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
+
+	resultChan := make(chan bool)
+	errorChan := make(chan error)
+
+	// Test backup cleanup for cluster1
+	go func() {
+		result, err := handler.CleanupBackups(context.Background())
+		resultChan <- result
+		errorChan <- err
+	}()
+
+	// Mock the deletion of backup for cluster1
+	time.Sleep(1 * time.Second)
+	if err := fakeClient.Delete(context.Background(), backups[0]); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	result := <-resultChan
+	err = <-errorChan
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Verify that the backup for cluster1 was deleted
+	assert.Equal(t, true, result)
+
+	// Verify backupDeletionRequest was created for cluster1 only
+	deletionRequests := &velerov1.DeleteBackupRequestList{}
+	if err := fakeClient.List(context.Background(), deletionRequests); err != nil {
+		t.Errorf("failed to list deleteBackupRequest: %v", err)
+	}
+	assert.Equal(t, 1, len(deletionRequests.Items))
+	assert.Equal(t, "backupCluster1", deletionRequests.Items[0].Name)
 }

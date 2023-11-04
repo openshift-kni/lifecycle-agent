@@ -31,8 +31,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -430,4 +432,80 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []ranv1a
 	}
 
 	return nil
+}
+
+// CleanupBackups deletes all backups for this cluster from object storage
+// returns: true if all backups have been deleted, error
+func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
+	// Get the cluster ID
+	clusterID, err := getClusterID(ctx, h.Client)
+	if err != nil {
+		return false, err
+	}
+
+	// List all backups created for this cluster
+	backupList := &velerov1.BackupList{}
+	if err := h.List(ctx, backupList, client.MatchingLabels{
+		clusterIDLabel: clusterID,
+	}); err != nil {
+		return false, err
+	}
+
+	// Create deleteBackupRequest CR to delete the backup in the object storage
+	for _, backup := range backupList.Items {
+		deleteBackupRequest := &velerov1.DeleteBackupRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      backup.Name,
+				Namespace: backup.Namespace,
+			},
+			Spec: velerov1.DeleteBackupRequestSpec{
+				BackupName: backup.Name,
+			},
+		}
+
+		if err := h.Create(ctx, deleteBackupRequest); err != nil {
+			return false, err
+		}
+		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
+	}
+
+	// Ensure all backups are deleted
+	return h.ensureBackupsDeleted(ctx, backupList.Items)
+}
+func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
+		func(ctx context.Context) (bool, error) {
+			var remainingBackups []string
+			for _, backup := range backups {
+				err := h.Get(ctx, types.NamespacedName{
+					Name:      backup.Name,
+					Namespace: backup.Namespace,
+				}, &velerov1.Backup{})
+				if err != nil {
+					if !k8serrors.IsNotFound(err) {
+						return false, err
+					}
+				} else {
+					// Backup still exists
+					remainingBackups = append(remainingBackups, backup.Name)
+				}
+			}
+
+			if len(remainingBackups) == 0 {
+				h.Log.Info("All backups have been deleted")
+				return true, nil
+			}
+
+			h.Log.Info("Waiting for backups to be deleted", "backups", remainingBackups)
+			return false, nil
+		})
+	if err != nil {
+		if err == context.DeadlineExceeded {
+			h.Log.Error(err, "Timeout waiting for backups to be deleted")
+			return false, nil
+		}
+		// API call errors
+		return false, err
+	}
+	return true, nil
 }

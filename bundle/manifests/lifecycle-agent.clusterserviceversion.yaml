@@ -76,10 +76,18 @@ spec:
         - apiGroups:
           - ""
           resources:
+          - namespaces
+          verbs:
+          - delete
+        - apiGroups:
+          - ""
+          resources:
           - secrets
           verbs:
+          - create
           - get
           - list
+          - update
           - watch
         - apiGroups:
           - config.openshift.io
@@ -147,6 +155,22 @@ spec:
           - update
           - watch
         - apiGroups:
+          - operators.coreos.com/v1alpha1
+          resources:
+          - clusterserviceversions
+          verbs:
+          - delete
+          - get
+          - list
+        - apiGroups:
+          - operators.coreos.com/v1alpha1
+          resources:
+          - subscriptions
+          verbs:
+          - delete
+          - get
+          - list
+        - apiGroups:
           - velero.io/v1
           resources:
           - backups
@@ -156,6 +180,13 @@ spec:
           - get
           - list
           - update
+        - apiGroups:
+          - velero.io/v1
+          resources:
+          - backupstoragelocations
+          verbs:
+          - get
+          - list
         - apiGroups:
           - velero.io/v1
           resources:
