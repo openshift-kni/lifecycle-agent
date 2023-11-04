@@ -363,7 +363,7 @@ function build_kargs {
         | xargs --no-run-if-empty -I% echo -n "--karg-append % "
 }
 
-LONGOPTS="seed-image:,progress-file:"
+LONGOPTS="seed-image:,progress-file:,os-version:,os-name:"
 OPTS=$(getopt -o h --long "${LONGOPTS}" --name "$0" -- "$@")
 
 eval set -- "${OPTS}"
@@ -433,7 +433,7 @@ if [ -z "${up_ver}" ]; then
     fatal "Failed to identify version from seed image"
 fi
 
-if [ ${CR_OS_VERSION} -ne ${up_ver} ]; then
+if [ ${CR_OS_VERSION} != ${up_ver} ]; then
     fatal "Seed image version(${up_ver}) differs from version specified in ibu.Spec.SeedImageRef.Version(${CR_OS_VERSION})"
 fi
 
