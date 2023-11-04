@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"text/template"
 
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
@@ -105,7 +103,7 @@ func create() {
 	}
 
 	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, backupDir, kubeconfigFile,
-		containerRegistry, authFile)
+		containerRegistry, authFile, recertContainerImage)
 	err = seedCreator.CreateSeedImage()
 	if err != nil {
 		log.Fatal(err)
@@ -122,17 +120,6 @@ func copyConfigurationFiles(ops ops.Ops) error {
 		return err
 	}
 
-	// Prepare variable substitutions for template files
-	substitutions := map[string]interface{}{
-		"RecertContainerImage": recertContainerImage,
-	}
-
-	// copy env file
-	err = copyEnvFile(substitutions)
-	if err != nil {
-		return err
-	}
-
 	return handleServices(ops)
 }
 
@@ -143,38 +130,6 @@ func copyConfigurationScripts() error {
 
 // copyEnvFile reads and copy the env file from the source directory to the destination directory
 // while performing variable substitution for each var.
-func copyEnvFile(data interface{}) error {
-	// Define source and destination file paths
-	srcFile := "installation_configuration_files/conf/installation-configuration.env"
-	destFile := "/etc/systemd/system/installation-configuration.env"
-
-	// Read the content of the source file
-	scriptContent, err := os.ReadFile(srcFile)
-	if err != nil {
-		return err
-	}
-
-	// Create a new template and parse the script content
-	t, err := template.New("envTemplate").Parse(string(scriptContent))
-	if err != nil {
-		return err
-	}
-
-	// Execute the template with the provided data for variable substitution
-	var modifiedScript strings.Builder
-	err = t.Execute(&modifiedScript, data)
-	if err != nil {
-		return err
-	}
-
-	// Write the modified script content to the destination file with appropriate permissions
-	err = os.WriteFile(destFile, []byte(modifiedScript.String()), os.FileMode(0o644))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 func handleServices(ops ops.Ops) error {
 	dir := "installation_configuration_files/services"
