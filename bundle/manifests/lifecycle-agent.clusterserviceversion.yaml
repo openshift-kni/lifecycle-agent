@@ -55,6 +55,118 @@ spec:
       clusterPermissions:
       - rules:
         - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - clusterversions
+          verbs:
+          - get
+          - list
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - imagedigestmirrorsets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - lca.openshift.io
+          resources:
+          - imagebasedupgrades
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - lca.openshift.io
+          resources:
+          - imagebasedupgrades/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - lca.openshift.io
+          resources:
+          - imagebasedupgrades/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - monitoring.coreos.com
+          resources:
+          - prometheusrules
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - monitoring.coreos.com
+          resources:
+          - servicemonitors
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - velero.io/v1
+          resources:
+          - backups
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - update
+        - apiGroups:
+          - velero.io/v1
+          resources:
+          - restores
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - update
+        - apiGroups:
           - authentication.k8s.io
           resources:
           - tokenreviews
@@ -83,6 +195,8 @@ spec:
           strategy: {}
           template:
             metadata:
+              annotations:
+                openshift.io/scc: privileged
               labels:
                 app.kubernetes.io/component: lifecycle-agent
                 app.kubernetes.io/name: lifecyle-agent-operator
@@ -115,7 +229,7 @@ spec:
                     memory: 20Mi
                 securityContext:
                   privileged: true
-                  runAsUser: 0
+                  readOnlyRootFilesystem: false
                 tty: true
                 volumeMounts:
                 - mountPath: /host

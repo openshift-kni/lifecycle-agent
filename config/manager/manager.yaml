@@ -5,6 +5,9 @@ metadata:
     app.kubernetes.io/name: lifecyle-agent-operator
     app.kubernetes.io/component: lifecycle-agent
     control-plane: controller-manager
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged    
   name: system
 ---
 apiVersion: apps/v1
@@ -29,6 +32,8 @@ spec:
         app.kubernetes.io/name: lifecyle-agent-operator
         app.kubernetes.io/component: lifecycle-agent
         control-plane: controller-manager
+      annotations:
+        openshift.io/scc: privileged
     spec:
       containers:
       - command:
@@ -39,7 +44,7 @@ spec:
         name: manager
         securityContext:
           privileged: true
-          runAsUser: 0
+          readOnlyRootFilesystem: false
         tty: true
         volumeMounts:
         - mountPath: /host
