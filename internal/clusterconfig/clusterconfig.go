@@ -19,14 +19,13 @@ import (
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 
 const (
 	pullSecretName                = "pull-secret"
 	configNamespace               = "openshift-config"
 	upgradeConfigurationNamespace = "upgrade-configuration"
 	clusterConfigDir              = "/opt/openshift/cluster-configuration"
-	imageSetName                  = "mirror-ocp"
 	clusterIDFileName             = "cluster-id-override.json"
 	pullSecretFileName            = "pullsecret.json"
 	clusterInfoFileName           = "clusterinfo/manifest.json"
@@ -58,17 +57,13 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 	clusterID := clusterVersion.Spec.ClusterID
-	ingress := &v1.Ingress{}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingress); err != nil {
-		return err
-	}
-	r.Log.Info("Successfully fetched cluster config")
 
 	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
 	clusterData, err := cmClient.CreateClusterInfo(ctx)
 	if err != nil {
 		return err
 	}
+	r.Log.Info("Successfully fetched cluster config")
 
 	if err := r.writeClusterConfig(pullSecret, clusterID, ostreeDir, clusterData); err != nil {
 		return err
