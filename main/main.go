@@ -22,6 +22,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -109,6 +110,7 @@ func main() {
 		ClusterConfig: &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 		NetworkConfig: &clusterconfig.UpgradeNetworkConfigGather{Log: log},
 		BackupRestore: &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
+		ExtraManifest: &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

@@ -30,7 +30,14 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ra
 
 	utils.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
-	// pre upgrade steps
+
+	// TODO: Pre-pivot steps
+	err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo)
+	if err != nil {
+		r.Log.Error(err, "Failed to export extra manifests")
+		return ctrl.Result{}, err
+	}
+
 	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {
 		r.Log.Error(err, "failed fetching cluster config")
 		return ctrl.Result{}, err
@@ -41,7 +48,16 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ra
 		return ctrl.Result{}, err
 	}
 
-	// TODO actual steps
+	// TODO: Pivot to new stateroot
+
+	// TODO: Post-pivot steps
+	//
+	// err = r.ExtraManifest.ApplyExtraManifestsFromDir(ctx, stateRootRepo)
+	// if err != nil {
+	// 	 r.Log.Error(err, "Failed to apply extra manifests")
+	//	 return ctrl.Result{}, err
+	// }
+
 	// If completed, update conditions and return doNotRequeue
 	utils.SetStatusCondition(&ibu.Status.Conditions,
 		utils.GetCompletedConditionType(ranv1alpha1.Stages.Upgrade),
