@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -48,6 +48,8 @@ func init() {
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.Backup{})
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupList{})
 	testscheme.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterVersion{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.DeleteBackupRequest{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.DeleteBackupRequestList{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -57,7 +59,7 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 
 func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
 	backup := &velerov1.Backup{
-		TypeMeta: v1.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       backupGvk.Kind,
 			APIVersion: backupGvk.Group + "/" + backupGvk.Version,
 		},
@@ -84,7 +86,7 @@ func fakeBackupCrWithStatus(name, applyWave, backupResource string, phase velero
 
 func fakeConfigmap(name, applyWave string, number, start int) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: oadpNs,
 		},
@@ -108,7 +110,7 @@ func fakeConfigmap(name, applyWave string, number, start int) *corev1.ConfigMap 
 
 func fakeSecret(name string) *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: oadpNs,
 		},
@@ -308,13 +310,13 @@ func TestTriggerBackup(t *testing.T) {
 	}
 
 	ns := &corev1.Namespace{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: oadpNs,
 		},
 	}
 
 	clusterVersion := &configv1.ClusterVersion{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "version",
 		},
 		Spec: configv1.ClusterVersionSpec{
@@ -343,7 +345,12 @@ func TestTriggerBackup(t *testing.T) {
 				},
 			}
 
-			result, backupStatus, err := triggerBackup(context.TODO(), fakeClient, backups)
+			handler := &BRHandler{
+				Client: fakeClient,
+				Log:    ctrl.Log.WithName("BackupRestore"),
+			}
+
+			result, backupStatus, err := handler.triggerBackup(context.Background(), backups)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
@@ -351,7 +358,7 @@ func TestTriggerBackup(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, backupStatus.Status)
 
 			backupList := &velerov1.BackupList{}
-			err = fakeClient.List(context.TODO(), backupList, client.InNamespace(oadpNs))
+			err = fakeClient.List(context.Background(), backupList, client.InNamespace(oadpNs))
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
@@ -394,14 +401,19 @@ func TestExportRestoresToDir(t *testing.T) {
 		t.Errorf("error in creating fake client")
 	}
 
-	_, err = ExportRestoresToDir(context.TODO(), fakeClient, configMaps, toDir)
+	handler := &BRHandler{
+		Client: fakeClient,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
+
+	err = handler.ExportRestoresToDir(context.Background(), configMaps, toDir)
 	if err != nil {
 		t.Fatalf("ExportRestoresToDir failed: %v", err)
 	}
 
 	// Check the output
-	expectedDir1 := filepath.Join(toDir, oadpRestoreDir, "restore1")
-	expectedDir2 := filepath.Join(toDir, oadpRestoreDir, "restore2")
+	expectedDir1 := filepath.Join(toDir, oadpRestorePath, "restore1")
+	expectedDir2 := filepath.Join(toDir, oadpRestorePath, "restore2")
 	expectedDirs := []string{expectedDir1, expectedDir2}
 
 	expectedFiles := []string{
@@ -424,22 +436,31 @@ func TestExportRestoresToDir(t *testing.T) {
 
 func TestExportOadpConfigurationToDir(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
-	toDir := "/tmp"
+	toDir, err := os.MkdirTemp("", "staterootB")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(toDir)
+
+	handler := &BRHandler{
+		Client: c,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
 
 	// Test case 1: storage secret not found
-	err := ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
 	assert.NoError(t, err)
 
 	// Test case 2: storage secret found
 	storageSecret := fakeSecret(defaultStorageSecret)
-	err = c.Create(context.TODO(), storageSecret)
+	err = c.Create(context.Background(), storageSecret)
 	assert.NoError(t, err)
 
-	err = ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
 	assert.NoError(t, err)
 
 	// Check that the storage secret was written to file
-	storageSecretFilePath := filepath.Join(toDir, oadpSecretDir, defaultStorageSecret+".yaml")
+	storageSecretFilePath := filepath.Join(toDir, oadpSecretPath, defaultStorageSecret+".yaml")
 	_, err = os.Stat(storageSecretFilePath)
 	assert.NoError(t, err)
 
@@ -465,23 +486,112 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 			},
 		},
 	}
-	err = c.Create(context.TODO(), dpa)
+	err = c.Create(context.Background(), dpa)
 	assert.NoError(t, err)
 
 	veleroCreds := fakeSecret("velero-cred")
-	err = c.Create(context.TODO(), veleroCreds)
+	err = c.Create(context.Background(), veleroCreds)
 	assert.NoError(t, err)
 
-	err = ExportOadpConfigurationToDir(context.TODO(), c, toDir, oadpNs)
+	// Test oadp configurations are exported to files
+	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
 	assert.NoError(t, err)
 
 	// Check that the DPA was written to file
-	dpaFilePath := filepath.Join(toDir, oadpDpaDir, dpa.GetName()+".yaml")
+	dpaFilePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+".yaml")
 	_, err = os.Stat(dpaFilePath)
 	assert.NoError(t, err)
 
 	// Check that the velero credential secret was written to file
-	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretDir, "velero-cred.yaml")
+	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretPath, "velero-cred.yaml")
 	_, err = os.Stat(veleroCredSecretFilePath)
 	assert.NoError(t, err)
+}
+
+func TestCleanupBackups(t *testing.T) {
+	currentCluster := &configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: configv1.ClusterVersionSpec{
+			ClusterID: "cluster1",
+		},
+	}
+
+	// Create backups for different clusters
+	backups := []client.Object{
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster1",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster1",
+				},
+			},
+		},
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster2",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster2",
+				},
+			},
+		},
+		&velerov1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backupCluster3",
+				Namespace: oadpNs,
+				Labels: map[string]string{
+					clusterIDLabel: "cluster2",
+				},
+			},
+		},
+	}
+
+	objs := []client.Object{currentCluster}
+	objs = append(objs, backups...)
+	fakeClient, err := getFakeClientFromObjects(objs...)
+	if err != nil {
+		t.Errorf("error in creating fake client")
+	}
+	assert.Equal(t, 3, len(backups))
+
+	handler := &BRHandler{
+		Client: fakeClient,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
+
+	resultChan := make(chan bool)
+	errorChan := make(chan error)
+
+	// Test backup cleanup for cluster1
+	go func() {
+		result, err := handler.CleanupBackups(context.Background())
+		resultChan <- result
+		errorChan <- err
+	}()
+
+	// Mock the deletion of backup for cluster1
+	time.Sleep(1 * time.Second)
+	if err := fakeClient.Delete(context.Background(), backups[0]); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	result := <-resultChan
+	err = <-errorChan
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Verify that the backup for cluster1 was deleted
+	assert.Equal(t, true, result)
+
+	// Verify backupDeletionRequest was created for cluster1 only
+	deletionRequests := &velerov1.DeleteBackupRequestList{}
+	if err := fakeClient.List(context.Background(), deletionRequests); err != nil {
+		t.Errorf("failed to list deleteBackupRequest: %v", err)
+	}
+	assert.Equal(t, 1, len(deletionRequests.Items))
+	assert.Equal(t, "backupCluster1", deletionRequests.Items[0].Name)
 }

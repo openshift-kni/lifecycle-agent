@@ -37,6 +37,7 @@ import (
 
 	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 )
 
@@ -48,6 +49,7 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder      record.EventRecorder
 	ClusterConfig *clusterconfig.UpgradeClusterConfigGather
 	NetworkConfig *clusterconfig.UpgradeNetworkConfigGather
+	BackupRestore *backuprestore.BRHandler
 }
 
 func doNotRequeue() ctrl.Result {

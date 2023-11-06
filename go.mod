@@ -9,6 +9,7 @@ require (
 	github.com/openshift/api v0.0.0-20231010191030-1f9525271dda
 	github.com/openshift/build-machinery-go v0.0.0-20230824093055-6a18da01283c
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
+	github.com/operator-framework/api v0.17.6
 	github.com/otiai10/copy v1.14.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/spf13/cobra v1.7.0
@@ -25,6 +26,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.10.2 // indirect

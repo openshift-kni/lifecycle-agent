@@ -27,7 +27,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -35,6 +37,8 @@ import (
 func init() {
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.Restore{})
 	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.RestoreList{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupStorageLocation{})
+	testscheme.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupStorageLocationList{})
 }
 
 func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
@@ -293,7 +297,11 @@ func TestTriggerRestore(t *testing.T) {
 				},
 			}
 
-			result, restoreStatus, err := triggerRestore(context.TODO(), fakeClient, restores)
+			handler := &BRHandler{
+				Client: fakeClient,
+				Log:    ctrl.Log.WithName("BackupRestore"),
+			}
+			result, restoreStatus, err := handler.triggerRestore(context.Background(), restores)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
@@ -301,7 +309,7 @@ func TestTriggerRestore(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, restoreStatus.Status)
 
 			restoreList := &velerov1.RestoreList{}
-			err = fakeClient.List(context.TODO(), restoreList, client.InNamespace(oadpNs))
+			err = fakeClient.List(context.Background(), restoreList, client.InNamespace(oadpNs))
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
@@ -318,7 +326,7 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create restores directory
-	restoreDir := filepath.Join(tmpDir, oadpRestoreDir)
+	restoreDir := filepath.Join(tmpDir, oadpRestorePath)
 	if err := os.MkdirAll(restoreDir, 0755); err != nil {
 		t.Fatalf("Failed to create restore directory: %v", err)
 	}
@@ -361,8 +369,12 @@ func TestLoadRestoresFromDir(t *testing.T) {
 		t.Fatalf("Failed to create restore file: %v", err)
 	}
 
+	handler := &BRHandler{
+		Client: nil,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
 	// Load restores from the temporary directory
-	restores, err := loadRestoresFromDir(tmpDir)
+	restores, err := handler.loadRestoresFromDir(tmpDir)
 	if err != nil {
 		t.Fatalf("Failed to load restores: %v", err)
 	}
@@ -412,5 +424,141 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	}
 	if !reflect.DeepEqual(restores, expectedRestores) {
 		t.Errorf("Unexpected restores: got %v, expected %v", restores, expectedRestores)
+	}
+}
+
+func TestRestoreDataProtectionApplications(t *testing.T) {
+	// Create temporary directory
+	fromDir, err := os.MkdirTemp("", "staterootB")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(fromDir)
+
+	// Create oadp DPA directory
+	dpaDir := filepath.Join(fromDir, oadpDpaPath)
+	if err := os.MkdirAll(dpaDir, 0755); err != nil {
+		t.Fatalf("Failed to create oadp directory: %v", err)
+	}
+
+	// Create oadp DPA file
+	dpa := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"kind":       dpaGvk.Kind,
+			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"metadata": map[string]interface{}{
+				"name":      "oadp",
+				"namespace": oadpNs,
+			},
+		},
+	}
+	dpaFilePath := filepath.Join(dpaDir, dpa.GetName()+".yaml")
+	if err := writeDpaToFile(dpa, dpaFilePath); err != nil {
+		t.Errorf("error in writing dpa to file")
+	}
+
+	fakeClient, err := getFakeClientFromObjects()
+	if err != nil {
+		t.Errorf("error in creating fake client")
+	}
+
+	handler := &BRHandler{
+		Client: fakeClient,
+		Log:    ctrl.Log.WithName("BackupRestore"),
+	}
+
+	resultChan := make(chan bool)
+	errorChan := make(chan error)
+
+	// Test restore of DataProtectionApplication
+	go func() {
+		result, err := handler.restoreDataProtectionApplications(context.Background(), fromDir)
+		resultChan <- result
+		errorChan <- err
+	}()
+
+	// Mock the backup storage
+	time.Sleep(1 * time.Second)
+	bsl := fakeBackupStorageBackendWithStatus("oadp-1", velerov1.BackupStorageLocationPhaseAvailable)
+	if err := fakeClient.Create(context.Background(), bsl); err != nil {
+		t.Errorf("error in creating backup storage location")
+	}
+
+	// Verify dpa is created
+	existingDpa := &unstructured.Unstructured{}
+	existingDpa.SetGroupVersionKind(dpaGvk)
+	err = fakeClient.Get(context.Background(), client.ObjectKey{
+		Name: "oadp", Namespace: "openshift-adp",
+	}, existingDpa)
+	assert.NoError(t, err)
+
+}
+
+func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorageLocationPhase) *velerov1.BackupStorageLocation {
+	return &velerov1.BackupStorageLocation{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      name,
+			Namespace: oadpNs,
+		},
+		Status: velerov1.BackupStorageLocationStatus{
+			Phase: phase,
+		},
+	}
+}
+
+func TestEnsureStorageBackendAvaialble(t *testing.T) {
+	testcases := []struct {
+		name     string
+		bsl      []client.Object
+		expected bool
+	}{
+		{
+			name:     "No backup storage locations",
+			bsl:      []client.Object{},
+			expected: false,
+		},
+		{
+			name: "Backup storage location is unavailable",
+			bsl: []client.Object{
+				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseUnavailable),
+				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
+			},
+			expected: false,
+		},
+		{
+			name: "Backup storage locations are available",
+			bsl: []client.Object{
+				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseAvailable),
+				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
+			},
+			expected: true,
+		},
+	}
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: oadpNs,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := []client.Object{ns}
+			objs = append(objs, tc.bsl...)
+			fakeClient, err := getFakeClientFromObjects(objs...)
+			if err != nil {
+				t.Errorf("error in creating fake client")
+			}
+
+			handler := &BRHandler{
+				Client: fakeClient,
+				Log:    ctrl.Log.WithName("BackupRestore"),
+			}
+
+			ok, err := handler.ensureStorageBackendAvaialble(context.Background(), oadpNs)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			assert.Equal(t, tc.expected, ok)
+		})
 	}
 }
