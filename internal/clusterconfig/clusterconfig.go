@@ -20,6 +20,7 @@ import (
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
 
 const (
 	pullSecretName                = "pull-secret"
@@ -29,6 +30,7 @@ const (
 	clusterIDFileName             = "cluster-id-override.json"
 	pullSecretFileName            = "pullsecret.json"
 	clusterInfoFileName           = "clusterinfo/manifest.json"
+	idmsFIlePath                  = "image-digest-mirror-set.json"
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -63,9 +65,14 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err != nil {
 		return err
 	}
+
+	idmsList, err := r.getIDMSs(ctx)
+	if err != nil {
+		return err
+	}
 	r.Log.Info("Successfully fetched cluster config")
 
-	if err := r.writeClusterConfig(pullSecret, clusterID, ostreeDir, clusterData); err != nil {
+	if err := r.writeClusterConfig(pullSecret, clusterID, ostreeDir, clusterData, idmsList); err != nil {
 		return err
 	}
 	return nil
@@ -83,7 +90,7 @@ func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
 func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secret,
-	clusterID v1.ClusterID, dir string, clusterData *clusterinfo.ClusterInfo) error {
+	clusterID v1.ClusterID, dir string, clusterData *clusterinfo.ClusterInfo, idmsList *v1.ImageDigestMirrorSetList) error {
 	clusterConfigPath, err := r.configDirs(dir)
 	if err != nil {
 		return err
@@ -99,6 +106,9 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secre
 		return err
 	}
 	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, clusterInfoFileName)); err != nil {
+		return err
+	}
+	if err := r.writeIDMSsToFile(idmsList, filepath.Join(clusterConfigPath, idmsFIlePath)); err != nil {
 		return err
 	}
 
@@ -159,4 +169,45 @@ func (r *UpgradeClusterConfigGather) writeClusterIDToFile(clusterID v1.ClusterID
 	}
 	clusterVersion.TypeMeta = *typeMeta
 	return utils.WriteToFile(clusterVersion, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) writeIDMSsToFile(idms *v1.ImageDigestMirrorSetList, filePath string) error {
+	// We just want to override the clusterID
+	if idms == nil || len(idms.Items) < 1 {
+		r.Log.Info("ImageDigestMirrorSetList is empty, skipping")
+		return nil
+	}
+	r.Log.Info("Writing idms to file", "path", filePath)
+	return utils.WriteToFile(idms, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (*v1.ImageDigestMirrorSetList, error) {
+	idmsList := &v1.ImageDigestMirrorSetList{}
+	currentIdms := &v1.ImageDigestMirrorSetList{}
+	if err := r.Client.List(ctx, currentIdms); err != nil {
+		return nil, err
+	}
+
+	for _, idms := range currentIdms.Items {
+		obj := v1.ImageDigestMirrorSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idms.ObjectMeta.Name,
+			},
+			Spec: idms.Spec,
+		}
+		typeMeta, err := r.typeMetaForObject(currentIdms)
+		if err != nil {
+			return nil, err
+		}
+		idms.TypeMeta = *typeMeta
+
+		idmsList.Items = append(idmsList.Items, obj)
+	}
+	typeMeta, err := r.typeMetaForObject(idmsList)
+	if err != nil {
+		return nil, err
+	}
+	idmsList.TypeMeta = *typeMeta
+
+	return idmsList, nil
 }
