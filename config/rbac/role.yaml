@@ -46,13 +46,6 @@ rules:
   verbs:
   - get
   - list
-- apiGroups:
-  - config.openshift.io
-  resources:
-  - imagedigestmirrorsets
-  verbs:
-  - get
-  - list
   - watch
 - apiGroups:
   - lca.openshift.io

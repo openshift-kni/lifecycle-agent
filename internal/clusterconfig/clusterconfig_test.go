@@ -80,7 +80,7 @@ var (
 )
 
 func init() {
-	testscheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{}, &ocpV1.Ingress{},
+	testscheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{},
 		&ocpV1.ImageDigestMirrorSet{})
 	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 }
@@ -95,7 +95,6 @@ func TestClusterConfig(t *testing.T) {
 		name           string
 		secret         client.Object
 		clusterVersion client.Object
-		ingress        client.Object
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -115,12 +114,6 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ClusterVersionSpec{
 					ClusterID: "1",
 				},
-			},
-			ingress: &ocpV1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-				Spec: ocpV1.IngressSpec{Domain: "test.com"},
 			},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -173,12 +166,6 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			ingress: &ocpV1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-				Spec: ocpV1.IngressSpec{Domain: "test.com"},
-			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, errors.IsNotFound(err), true)
@@ -194,37 +181,9 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{},
-			ingress: &ocpV1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-				Spec: ocpV1.IngressSpec{Domain: "test.com"},
-			},
-			expectedErr: true,
+			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, strings.Contains(err.Error(), "clusterversion"), true)
-			},
-		},
-		{
-			name: "ingress error",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: configNamespace,
-				},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			ingress:     &ocpV1.Ingress{},
-			expectedErr: true,
-			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				assert.Equal(t, strings.Contains(err.Error(), "ingress"), true)
 			},
 		},
 	}
@@ -234,7 +193,7 @@ func TestClusterConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			installConfig := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterinfo.InstallConfigCM,
 				Namespace: clusterinfo.InstallConfigCMNamespace}, Data: map[string]string{"install-config": clusterCmData}}
-			objs := []client.Object{tc.secret, tc.clusterVersion, tc.ingress, installConfig}
+			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
