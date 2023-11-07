@@ -29,6 +29,7 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -169,7 +170,7 @@ func (h *BRHandler) triggerRestore(ctx context.Context, restoreGroups [][]*veler
 }
 
 // extractRestoreFromConfigmaps extacts Restore CRs from configmaps
-func extractRestoreFromConfigmaps(configmaps []corev1.ConfigMap) ([]*velerov1.Restore, error) {
+func extractRestoreFromConfigmaps(ctx context.Context, c client.Client, configmaps []corev1.ConfigMap) ([]*velerov1.Restore, error) {
 	var restores []*velerov1.Restore
 
 	for _, cm := range configmaps {
@@ -182,6 +183,13 @@ func extractRestoreFromConfigmaps(configmaps []corev1.ConfigMap) ([]*velerov1.Re
 
 			if resource.GroupVersionKind() != restoreGvk {
 				continue
+			}
+
+			// Create the restore CR in dry-run mode to detect any validation errors in the CR
+			// i.e., missing required fields
+			err = c.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+			if err != nil {
+				return nil, err
 			}
 
 			restore := velerov1.Restore{}
