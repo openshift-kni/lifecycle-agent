@@ -45,6 +45,7 @@ var (
 
 	// recertContainerImage is the container image for the recert tool
 	recertContainerImage string
+	recertSkipValidation bool
 )
 
 func init() {
@@ -67,11 +68,13 @@ func init() {
 	// Add create command
 	rootCmd.AddCommand(createCmd)
 
-	// Add flags related to container registry
+	// Add flags to imager command
 	createCmd.Flags().StringVarP(&authFile, "authfile", "a", imageRegistryAuthFile, "The path to the authentication file of the container registry.")
 	createCmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
 	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", defaultRecertImage, "The full image name for the recert container tool.")
+	createCmd.Flags().BoolVarP(&recertSkipValidation, "skip-recert-validation", "", false, "Skips the validations performed by the recert tool.")
 
+	// Mark flags as required
 	createCmd.MarkFlagRequired("image")
 }
 
@@ -99,7 +102,7 @@ func create() {
 	}
 
 	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, backupDir, kubeconfigFile,
-		containerRegistry, authFile, recertContainerImage)
+		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
 	err = seedCreator.CreateSeedImage()
 	if err != nil {
 		log.Fatal(err)

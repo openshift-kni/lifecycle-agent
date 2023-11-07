@@ -47,12 +47,13 @@ type SeedCreator struct {
 	containerRegistry    string
 	authFile             string
 	recertContainerImage string
+	recertSkipValidation bool
 	manifestClient       *clusterinfo.InfoClient
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, authFile, recertContainerImage string) *SeedCreator {
+	kubeconfig, containerRegistry, authFile, recertContainerImage string, recertSkipValidation bool) *SeedCreator {
 
 	return &SeedCreator{
 		client:               client,
@@ -64,6 +65,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 		containerRegistry:    containerRegistry,
 		authFile:             authFile,
 		recertContainerImage: recertContainerImage,
+		recertSkipValidation: recertSkipValidation,
 		manifestClient:       clusterinfo.NewClusterInfoClient(client),
 	}
 }
@@ -89,8 +91,12 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := s.runRecertValidation(); err != nil {
-		return err
+	if s.recertSkipValidation {
+		s.log.Info("Skipping recert validation.")
+	} else {
+		if err := s.runRecertValidation(); err != nil {
+			return err
+		}
 	}
 
 	if err := s.backupVar(); err != nil {
