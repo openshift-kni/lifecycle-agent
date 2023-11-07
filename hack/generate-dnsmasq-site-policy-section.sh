@@ -5,13 +5,15 @@ PROG=$(basename "$0")
 
 declare CLUSTER_NAME_DOMAIN=
 declare CLUSTER_IP=
+declare GENERATE="site-config"
 
 function usage {
     cat <<EOF
-Usage: ${PROG} --name --ip
+Usage: ${PROG} --name <cluster.domain> --ip <addr> [ --mc ]
 Options:
-    --name <cluster name + baseDomain>
-    --ip   <node ip>
+    --name <cluster.domain> - Cluster name + baseDomain
+    --ip   <addr>           - Node IP
+    --mc                    - Generate machine-config only
 
 Summary:
     Generates a subsection of site-policy to include dnsmasq config for an SNO.
@@ -59,53 +61,69 @@ rc-manager=unmanaged
 EOF
 }
 
+function generate_dnsmasq_body {
+    cat <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 50-master-dnsmasq-configuration
+spec:
+  config:
+    storage:
+      files:
+        - contents:
+            source: data:text/plain;charset=utf-8;base64,$(generate_single_node_conf_template | base64 -w 0)
+          mode: 420
+          path: /etc/default/single-node.conf_template
+          overwrite: true
+        - contents:
+            source: data:text/plain;charset=utf-8;base64,$(generate_forcedns | base64 -w 0)
+          mode: 365
+          path: /etc/NetworkManager/dispatcher.d/forcedns
+          overwrite: true
+        - contents:
+            source: data:text/plain;charset=utf-8;base64,$(generate_single_node_conf | base64 -w 0)
+          mode: 420
+          path: /etc/NetworkManager/conf.d/single-node.conf
+          overwrite: true
+    systemd:
+      units:
+        - name: dnsmasq.service
+          enabled: true
+          contents: |
+            [Unit]
+            Description=Run dnsmasq to provide local dns for Single Node OpenShift
+            Before=kubelet.service crio.service
+            After=network.target nodeip-configuration.service
+            [Service]
+            TimeoutStartSec=30
+            ExecStartPre=/bin/bash -c 'until [ -e /var/run/nodeip-configuration/primary-ip ]; do sleep 1; done'
+            ExecStartPre=/bin/bash -c 'sed "s/HOST_IP/\$(cat /var/run/nodeip-configuration/primary-ip)/g" /etc/default/single-node.conf_template > /etc/dnsmasq.d/single-node.conf'
+            ExecStart=/usr/sbin/dnsmasq -k
+            Restart=always
+            [Install]
+            WantedBy=multi-user.target
+EOF
+}
+
 function generate_dnsmasq_policy {
     cat <<EOF
     # Override 50-master-dnsmasq-configuration
     - fileName: MachineConfigGeneric.yaml
       policyName: "config-policy"
       complianceType: mustonlyhave # This is to update array entry as opposed to appending a new entry.
-      metadata:
-        labels:
-          machineconfiguration.openshift.io/role: master
-        name: 50-master-dnsmasq-configuration
-      spec:
-        config:
-          storage:
-            files:
-              - contents:
-                  source: data:text/plain;charset=utf-8;base64,$(generate_single_node_conf_template | base64 -w 0)
-                mode: 420
-                path: /etc/default/single-node.conf_template
-                overwrite: true
-              - contents:
-                  source: data:text/plain;charset=utf-8;base64,$(generate_forcedns | base64 -w 0)
-                mode: 365
-                path: /etc/NetworkManager/dispatcher.d/forcedns
-                overwrite: true
-              - contents:
-                  source: data:text/plain;charset=utf-8;base64,$(generate_single_node_conf | base64 -w 0)
-                mode: 420
-                path: /etc/NetworkManager/conf.d/single-node.conf
-                overwrite: true
-          systemd:
-            units:
-              - name: dnsmasq.service
-                enabled: true
-                contents: |
-                  [Unit]
-                  Description=Run dnsmasq to provide local dns for Single Node OpenShift
-                  Before=kubelet.service crio.service
-                  After=network.target nodeip-configuration.service
-                  [Service]
-                  TimeoutStartSec=30
-                  ExecStartPre=/bin/bash -c 'until [ -e /var/run/nodeip-configuration/primary-ip ]; do sleep 1; done'
-                  ExecStartPre=/bin/bash -c 'sed "s/HOST_IP/\$(cat /var/run/nodeip-configuration/primary-ip)/g" /etc/default/single-node.conf_template > /etc/dnsmasq.d/single-node.conf'
-                  ExecStart=/usr/sbin/dnsmasq -k
-                  Restart=always
-                  [Install]
-                  WantedBy=multi-user.target
 EOF
+    generate_dnsmasq_body | sed 's/^/      /'
+}
+
+function generate_dnsmasq_machine_config {
+    cat <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+EOF
+    generate_dnsmasq_body
 }
 
 #
@@ -116,11 +134,12 @@ longopts=(
     "help"
     "name:"
     "ip:"
+    "mc"
 )
 
 longopts_str=$(IFS=,; echo "${longopts[*]}")
 
-if ! OPTS=$(getopt -o "hn:i:" --long "${longopts_str}" --name "$0" -- "$@"); then
+if ! OPTS=$(getopt -o "hn:i:m" --long "${longopts_str}" --name "$0" -- "$@"); then
     usage
     exit 1
 fi
@@ -136,6 +155,10 @@ while :; do
         -i|--ip)
             CLUSTER_IP="${2}"
             shift 2
+            ;;
+        -m|--mc)
+            GENERATE="machine-config"
+            shift
             ;;
         --)
             shift
@@ -154,5 +177,15 @@ if [ -z "${CLUSTER_NAME_DOMAIN}" ] || [ -z "${CLUSTER_IP}" ]; then
     usage
 fi
 
-generate_dnsmasq_policy
+case "${GENERATE}" in
+    site-config)
+        generate_dnsmasq_policy
+        ;;
+    machine-config)
+        generate_dnsmasq_machine_config
+        ;;
+    *)
+        usage
+        ;;
+esac
 
