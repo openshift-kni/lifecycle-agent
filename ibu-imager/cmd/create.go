@@ -73,7 +73,6 @@ func init() {
 	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", defaultRecertImage, "The full image name for the recert container tool.")
 
 	createCmd.MarkFlagRequired("image")
-	createCmd.MarkFlagRequired("recert-image")
 }
 
 func create() {

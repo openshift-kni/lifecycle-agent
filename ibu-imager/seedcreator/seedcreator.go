@@ -25,6 +25,9 @@ import (
 
 const (
 	varFolder = "/var"
+	// Default location for etcdStaticPodFile
+	etcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
+	etcdStaticPodContainer = "etcd"
 )
 
 // containerFileContent is the Dockerfile content for the IBU seed image
@@ -227,11 +230,11 @@ func (s *SeedCreator) stopServices() error {
 }
 
 func (s *SeedCreator) runRecertValidation() error {
-	s.log.Println("Running recert --force-expire tool and save a summary without sensitive data.")
+	s.log.Info("Running recert --force-expire tool and saving a summary without sensitive data.")
 
 	// Get etcdImage available for the current release, this is needed by recert to
 	// run an unauthenticated etcd server for running successfully.
-	etcdImage, err := s.ops.GetImageFromPodDefinition("etcd")
+	etcdImage, err := s.ops.GetImageFromPodDefinition(etcdStaticPodFile, etcdStaticPodContainer)
 	if err != nil {
 		return err
 	}
@@ -252,10 +255,8 @@ func (s *SeedCreator) runRecertValidation() error {
 		return fmt.Errorf("failed to run recert_etcd container: %w", err)
 	}
 
-	// Ensure that the unauthenticated etcd server is killed before the runRecertValidation
-	// function returns, even if an error occurs.
 	defer func() {
-		s.log.Info("Kill the unauthenticated etcd server")
+		s.log.Info("Killing the unauthenticated etcd server")
 		_, err = s.ops.RunInHostNamespace(
 			"podman", []string{"kill", "recert_etcd"}...)
 		if err != nil {
@@ -263,11 +264,10 @@ func (s *SeedCreator) runRecertValidation() error {
 		}
 	}()
 
-	// Wait for unauthenticated etcd server
-	s.log.Info("Wait for unauthenticated etcd start serving for recert tool")
+	s.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
 	err = s.ops.WaitForEtcd("http://localhost:2379/health")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
 	}
 	s.log.Info("Unauthenticated etcd server for recert is up and running")
 
@@ -286,10 +286,10 @@ func (s *SeedCreator) runRecertValidation() error {
 			"--static-dir", "/kubernetes",
 			"--static-dir", "/kubelet",
 			"--static-dir", "/machine-config-daemon",
-			"--summary-file-clean", "/kubernetes/recert-summary.yaml",
+			"--summary-file-clean", "/kubernetes/recert-seed-summary.yaml",
 			"--force-expire"}...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to run recert tool container: %w", err)
 	}
 
 	log.Println("Recert --force-expire tool ran and summary created successfully.")
