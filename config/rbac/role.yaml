@@ -48,6 +48,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - config.openshift.io
+  resources:
+  - imagedigestmirrorsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - lca.openshift.io
   resources:
   - imagebasedupgrades

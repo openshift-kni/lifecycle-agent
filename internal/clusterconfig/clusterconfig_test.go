@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const numberOfFilesOnSuccess = 4
+const numberOfFilesOnSuccess = 5
 
 var clusterCmData = `
     additionalTrustBundlePolicy: Proxyonly
@@ -81,7 +81,7 @@ var (
 
 func init() {
 	testscheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{},
-		&ocpV1.ImageDigestMirrorSet{})
+		&ocpV1.ImageDigestMirrorSet{}, &ocpV1.ImageDigestMirrorSetList{})
 	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 }
 
@@ -95,6 +95,7 @@ func TestClusterConfig(t *testing.T) {
 		name           string
 		secret         client.Object
 		clusterVersion client.Object
+		idms           client.Object
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -114,6 +115,12 @@ func TestClusterConfig(t *testing.T) {
 				Spec: ocpV1.ClusterVersionSpec{
 					ClusterID: "1",
 				},
+			},
+			idms: &ocpV1.ImageDigestMirrorSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "any",
+				},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
 			},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -153,6 +160,19 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, secret.Data, testData)
 				assert.Equal(t, secret.Name, pullSecretName)
 				assert.Equal(t, secret.Namespace, upgradeConfigurationNamespace)
+
+				// validate pull idms
+				data, err = os.ReadFile(filepath.Join(filesDir, idmsFIlePath))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				idms := &ocpV1.ImageDigestMirrorSetList{}
+				err = json.Unmarshal(data, idms)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, idms.Items[0].Name, "any")
+				assert.Equal(t, idms.Items[0].Spec.ImageDigestMirrors[0].Source, "data")
 			},
 		},
 		{
@@ -166,6 +186,7 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
+			idms:        nil,
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, errors.IsNotFound(err), true)
@@ -180,10 +201,41 @@ func TestClusterConfig(t *testing.T) {
 					Namespace: configNamespace,
 				},
 			},
+			idms:           nil,
 			clusterVersion: &ocpV1.ClusterVersion{},
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, strings.Contains(err.Error(), "clusterversion"), true)
+			},
+		},
+		{
+			name: "idm not found, should still succeed",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pullSecretName,
+					Namespace: configNamespace,
+				},
+			},
+			clusterVersion: &ocpV1.ClusterVersion{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "version",
+				},
+				Spec: ocpV1.ClusterVersionSpec{
+					ClusterID: "1",
+				},
+			},
+			idms:        nil,
+			expectedErr: false,
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				filesDir, err := ucc.configDirs(tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				dir, err := os.ReadDir(filesDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, len(dir), numberOfFilesOnSuccess-1)
 			},
 		},
 	}
@@ -194,6 +246,9 @@ func TestClusterConfig(t *testing.T) {
 			installConfig := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterinfo.InstallConfigCM,
 				Namespace: clusterinfo.InstallConfigCMNamespace}, Data: map[string]string{"install-config": clusterCmData}}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig}
+			if tc.idms != nil {
+				objs = append(objs, tc.idms)
+			}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
