@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
@@ -113,7 +113,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 
-	ibu := &ranv1alpha1.ImageBasedUpgrade{}
+	ibu := &lcav1alpha1.ImageBasedUpgrade{}
 	err = r.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -149,7 +149,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func shouldTransition(currentInProgressStage ranv1alpha1.ImageBasedUpgradeStage, ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+func shouldTransition(currentInProgressStage lcav1alpha1.ImageBasedUpgradeStage, ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	desiredStage := ibu.Spec.Stage
 	if desiredStage == currentInProgressStage {
 		return false
@@ -158,17 +158,17 @@ func shouldTransition(currentInProgressStage ranv1alpha1.ImageBasedUpgradeStage,
 		return true
 	}
 	switch desiredStage {
-	case ranv1alpha1.Stages.Prep:
+	case lcav1alpha1.Stages.Prep:
 		prepCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.PrepCompleted))
 		if prepCompleted != nil {
 			return false
 		}
-	case ranv1alpha1.Stages.Upgrade:
+	case lcav1alpha1.Stages.Upgrade:
 		upgradeCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
 		if upgradeCompleted != nil {
 			return false
 		}
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		rollbackCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackCompleted))
 		if rollbackCompleted != nil {
 			return false
@@ -178,21 +178,21 @@ func shouldTransition(currentInProgressStage ranv1alpha1.ImageBasedUpgradeStage,
 	return true
 }
 
-func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade, stage ranv1alpha1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
 	switch stage {
-	case ranv1alpha1.Stages.Idle:
+	case lcav1alpha1.Stages.Idle:
 		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
-	case ranv1alpha1.Stages.Prep:
+	case lcav1alpha1.Stages.Prep:
 		nextReconcile, err = r.handlePrep(ctx, ibu)
-	case ranv1alpha1.Stages.Upgrade:
+	case lcav1alpha1.Stages.Upgrade:
 		nextReconcile, err = r.handleUpgrade(ctx, ibu)
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		nextReconcile, err = r.handleRollback(ctx, ibu)
 	}
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse {
 		switch idleCondition.Reason {
@@ -212,7 +212,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context,
 	return
 }
 
-func isRollbackAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+func isRollbackAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	upgradeInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeInProgress))
 	// TODO check if pivot is done
 	if upgradeInProgressCondition != nil {
@@ -223,7 +223,7 @@ func isRollbackAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 }
 
 // isFinalizeAllowed returns true if upgrade completed or rollback completed
-func isFinalizeAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+func isFinalizeAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	for _, conditionType := range utils.FinalConditionTypes {
 		condition := meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
 		if condition != nil && condition.Status == metav1.ConditionTrue {
@@ -233,7 +233,7 @@ func isFinalizeAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 	return false
 }
 
-func isAbortAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+func isAbortAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	upgradeCompletedCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	// TODO check if pivot has not been done
@@ -245,9 +245,9 @@ func isAbortAllowed(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 }
 
 // TODO unit test this function once the logic is stablized
-func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
+func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	switch ibu.Spec.Stage {
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		if !isRollbackAllowed(ibu) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.ConditionTypes.RollbackInProgress,
@@ -259,7 +259,7 @@ func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 			return false
 		}
 
-	case ranv1alpha1.Stages.Idle:
+	case lcav1alpha1.Stages.Idle:
 		if isFinalizeAllowed(ibu) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.ConditionTypes.Idle,
@@ -307,7 +307,7 @@ func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 			return false
 		}
 		// Set idle to false when transitioning to prep
-		if ibu.Spec.Stage == ranv1alpha1.Stages.Prep {
+		if ibu.Spec.Stage == lcav1alpha1.Stages.Prep {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.ConditionTypes.Idle,
 				utils.ConditionReasons.InProgress,
@@ -316,7 +316,7 @@ func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 				ibu.Generation)
 		}
 	}
-	if ibu.Spec.Stage != ranv1alpha1.Stages.Idle {
+	if ibu.Spec.Stage != lcav1alpha1.Stages.Idle {
 		utils.SetStatusCondition(&ibu.Status.Conditions,
 			utils.GetInProgressConditionType(ibu.Spec.Stage),
 			utils.ConditionReasons.InProgress,
@@ -328,7 +328,7 @@ func validateStageTransition(ibu *ranv1alpha1.ImageBasedUpgrade) bool {
 	return true
 }
 
-func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		err := r.Status().Update(ctx, ibu)
@@ -347,7 +347,7 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("ImageBasedUpgrade")
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&ranv1alpha1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
+		For(&lcav1alpha1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				// Generation is only updated on spec changes (also on deletion),
 				// not metadata or status

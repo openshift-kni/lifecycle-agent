@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -41,7 +41,7 @@ import (
 )
 
 // ReconcileBackup reconciles the backup CRs
-func (h *BRHandler) ReconcileBackup(ctx context.Context, oadpContent []ranv1alpha1.ConfigMapRef,
+func (h *BRHandler) ReconcileBackup(ctx context.Context, oadpContent []lcav1alpha1.ConfigMapRef,
 ) (
 	result ctrl.Result, status BackupStatus, err error,
 ) {
@@ -235,7 +235,7 @@ func sortBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
 	var resourcesApplyWaveMap = make(map[int][]*velerov1.Backup)
 	var sortedResources [][]*velerov1.Backup
 
-	// sort backups by annotation ran.openshift.io/apply-wave
+	// sort backups by annotation lca.openshift.io/apply-wave
 	for _, resource := range resources {
 		applyWave, _ := resource.GetAnnotations()[applyWaveAnn]
 		if applyWave == "" {
@@ -399,7 +399,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 
 // ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
 // returns: error
-func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []ranv1alpha1.ConfigMapRef, toDir string) error {
+func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
 	configmaps, err := getConfigMaps(ctx, h.Client, configMaps)
 	if err != nil {
 		return err

@@ -201,7 +201,7 @@ func sortRestoreCrs(resources []*velerov1.Restore) ([][]*velerov1.Restore, error
 	var resourcesApplyWaveMap = make(map[int][]*velerov1.Restore)
 	var sortedResources [][]*velerov1.Restore
 
-	// sort restore CRs by annotation ran.openshift.io/apply-wave
+	// sort restore CRs by annotation lca.openshift.io/apply-wave
 	for _, resource := range resources {
 		applyWave, _ := resource.GetAnnotations()[applyWaveAnn]
 		if applyWave == "" {

@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -107,7 +107,7 @@ type RestoreStatus struct {
 }
 
 // getConfigMaps restrieves the configmaps from cluster
-func getConfigMaps(ctx context.Context, c client.Client, configMaps []ranv1alpha1.ConfigMapRef) ([]corev1.ConfigMap, error) {
+func getConfigMaps(ctx context.Context, c client.Client, configMaps []lcav1alpha1.ConfigMapRef) ([]corev1.ConfigMap, error) {
 	var cms []corev1.ConfigMap
 
 	for _, cm := range configMaps {

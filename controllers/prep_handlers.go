@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/generated"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +35,7 @@ func pathOutsideChroot(filename string) string {
 }
 
 func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
-	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -59,7 +59,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPullImages(
-	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -83,7 +83,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 }
 
 func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
-	ibu *ranv1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -109,7 +109,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 }
 
 func (r *ImageBasedUpgradeReconciler) runCleanup(
-	ibu *ranv1alpha1.ImageBasedUpgrade) {
+	ibu *lcav1alpha1.ImageBasedUpgrade) {
 	if err := os.Chdir("/"); err != nil {
 		return
 	}
@@ -133,7 +133,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
 	result = doNotRequeue()
 
 	_, err = os.Stat(utils.Host)
@@ -167,13 +167,13 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 
 		if progress == "Failed" {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetCompletedConditionType(ranv1alpha1.Stages.Prep),
+				utils.GetCompletedConditionType(lcav1alpha1.Stages.Prep),
 				utils.ConditionReasons.Completed,
 				metav1.ConditionFalse,
 				"Prep failed",
 				ibu.Generation)
 			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetInProgressConditionType(ranv1alpha1.Stages.Prep),
+				utils.GetInProgressConditionType(lcav1alpha1.Stages.Prep),
 				utils.ConditionReasons.Completed,
 				metav1.ConditionFalse,
 				"Prep failed",
@@ -195,13 +195,13 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ranv1
 
 			// If completed, update conditions and return doNotRequeue
 			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetCompletedConditionType(ranv1alpha1.Stages.Prep),
+				utils.GetCompletedConditionType(lcav1alpha1.Stages.Prep),
 				utils.ConditionReasons.Completed,
 				metav1.ConditionTrue,
 				"Prep completed",
 				ibu.Generation)
 			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetInProgressConditionType(ranv1alpha1.Stages.Prep),
+				utils.GetInProgressConditionType(lcav1alpha1.Stages.Prep),
 				utils.ConditionReasons.Completed,
 				metav1.ConditionFalse,
 				"Prep completed",

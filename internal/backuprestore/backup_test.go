@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -375,7 +375,7 @@ func TestTriggerBackup(t *testing.T) {
 }
 
 func TestExportRestoresToDir(t *testing.T) {
-	configMaps := []ranv1alpha1.ConfigMapRef{
+	configMaps := []lcav1alpha1.ConfigMapRef{
 		{
 			Name:      "configmap1",
 			Namespace: oadpNs,
