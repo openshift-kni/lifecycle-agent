@@ -286,3 +286,13 @@ spec:
           bucket: test-backups
           prefix: velero # a required value if no image provided
 ```
+
+## How to view Pre-caching logs (from the Prep stage)
+The precaching functionality is implemented as a Kubernetes job. Therefore, The precaching logs are separate from the 
+lifecycle-agent operator logs. The precaching logs can be viewed as shown below.
+
+```shell
+oc logs -f --tail=-1 --timestamps --prefix --selector job-name=lca-precache-job -n openshift-lifecycle-agent
+```
+
+Note that the logs are available until the user triggers a clean-up through an abort process.

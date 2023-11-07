@@ -157,10 +157,10 @@ build: generate fmt vet ## Build manager binary.
 	go build -o bin/manager main/main.go
 
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./main/main.go
+	PRECACHE_WORKLOAD_IMG=${IMG} go run ./main/main.go
 
 debug: manifests generate fmt vet ## Run a controller from your host that accepts remote attachment.
-	dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
+	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
 	${ENGINE} build -t ${IMG} -f Dockerfile .
@@ -177,7 +177,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	$(KUSTOMIZE) build config/crd | kubectl delete -f -
 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG) && PRECACHE_WORKLOAD_IMG=$(IMG) envsubst < related-images/in.yaml > related-images/patch.yaml
 	$(KUSTOMIZE) build config/default | kubectl apply -f -
 
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
@@ -186,7 +186,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 .PHONY: bundle
 bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metadata, then validate generated files.
 	$(OPERATOR_SDK) generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG) && PRECACHE_WORKLOAD_IMG=$(IMG) envsubst < related-images/in.yaml > related-images/patch.yaml
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	$(OPERATOR_SDK) bundle validate ./bundle
 	sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml

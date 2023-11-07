@@ -2,7 +2,6 @@
 // sources:
 // internal/bindata/prepCleanup.sh
 // internal/bindata/prepGetSeedImage.sh
-// internal/bindata/prepPullImages.sh
 // internal/bindata/prepSetupStateroot.sh
 package generated
 
@@ -129,105 +128,14 @@ var _prepgetseedimageSh = []byte(`#!/bin/bash
 
 declare SEED_IMAGE=
 declare PROGRESS_FILE=
+declare IMAGE_LIST_FILE=
 
 function usage {
     cat <<ENDUSAGE
 Parameters:
     --seed-image <image>
     --progress-file <file>
-ENDUSAGE
-    exit 1
-}
-
-function set_progress {
-    echo "$1" > "${PROGRESS_FILE}"
-}
-
-function fatal {
-    set_progress "Failed"
-    echo "$@" >&2
-    exit 1
-}
-
-function log_it {
-    echo "$@" | tr '[:print:]' -
-    echo "$@"
-    echo "$@" | tr '[:print:]' -
-}
-
-LONGOPTS="seed-image:,progress-file:"
-OPTS=$(getopt -o h --long "${LONGOPTS}" --name "$0" -- "$@")
-
-eval set -- "${OPTS}"
-
-while :; do
-    case "$1" in
-        --seed-image)
-            SEED_IMAGE=$2
-            shift 2
-            ;;
-        --progress-file)
-            PROGRESS_FILE=$2
-            shift 2
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            usage
-            exit 1
-            ;;
-    esac
-done
-
-set_progress "started-seed-image-pull"
-
-log_it "Pulling and mounting seed image"
-podman pull "${SEED_IMAGE}" || fatal "Failed to pull image: ${SEED_IMAGE}"
-
-img_mnt=$(podman image mount "${SEED_IMAGE}")
-if [ -z "${img_mnt}" ]; then
-    fatal "Failed to mount image: ${SEED_IMAGE}"
-fi
-
-# Collect / validate information? Verify required files exist?
-
-set_progress "completed-seed-image-pull"
-
-log_it "Pulled seed image"
-
-exit 0
-`)
-
-func prepgetseedimageShBytes() ([]byte, error) {
-	return _prepgetseedimageSh, nil
-}
-
-func prepgetseedimageSh() (*asset, error) {
-	bytes, err := prepgetseedimageShBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "prepGetSeedImage.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _preppullimagesSh = []byte(`#!/bin/bash
-#
-# Image Based Upgrade Prep - Precache images
-#
-
-declare SEED_IMAGE=
-declare PROGRESS_FILE=
-
-function usage {
-    cat <<ENDUSAGE
-Parameters:
-    --seed-image <image>
-    --progress-file <file>
+    --image-list-file <file>
 ENDUSAGE
     exit 1
 }
@@ -254,7 +162,7 @@ function build_catalog_regex {
     fi
 }
 
-LONGOPTS="seed-image:,progress-file:"
+LONGOPTS="seed-image:,progress-file:,image-list-file:"
 OPTS=$(getopt -o h --long "${LONGOPTS}" --name "$0" -- "$@")
 
 eval set -- "${OPTS}"
@@ -269,6 +177,10 @@ while :; do
             PROGRESS_FILE=$2
             shift 2
             ;;
+        --image-list-file)
+            IMAGE_LIST_FILE=$2
+            shift 2
+            ;;
         --)
             shift
             break
@@ -280,38 +192,47 @@ while :; do
     esac
 done
 
-set_progress "started-precache"
+set_progress "started-seed-image-pull"
 
-# Image should already be pulled and mounted
-img_mnt=$(podman image mount --format json | jq -r --arg img "${SEED_IMAGE}" '.[] | select(.Repositories[0] == $img) | .mountpoint')
+log_it "Pulling and mounting seed image"
+podman pull "${SEED_IMAGE}" || fatal "Failed to pull image: ${SEED_IMAGE}"
+
+img_mnt=$(podman image mount "${SEED_IMAGE}")
 if [ -z "${img_mnt}" ]; then
-    fatal "Seed image is not mounted: ${SEED_IMAGE}"
+    fatal "Failed to mount image: ${SEED_IMAGE}"
 fi
 
-log_it "Precaching non-catalog images"
-grep -vE "$(build_catalog_regex)" "${img_mnt}/containers.list" | xargs --no-run-if-empty --max-args 1 --max-procs 10 crictl pull
+# Extract list of images to be pre-cached
+log_it "Extracting precaching image list of non-catalog images"
+grep -vE "$(build_catalog_regex)" "${img_mnt}/containers.list" > "${IMAGE_LIST_FILE}"
 
-log_it "Precaching catalog images"
+log_it "Extracting precaching image list of catalog images"
 if grep -q . "${img_mnt}/catalogimages.list"; then
-    xargs --no-run-if-empty --max-args 1 --max-procs 10 crictl pull < "${img_mnt}/catalogimages.list"
+    cat "${img_mnt}/catalogimages.list"  >> "${IMAGE_LIST_FILE}"
 fi
 
-set_progress "completed-precache"
+log_it "Finished preparing image list for pre-caching"
+
+# Collect / validate information? Verify required files exist?
+
+set_progress "completed-seed-image-pull"
+
+log_it "Pulled seed image"
 
 exit 0
 `)
 
-func preppullimagesShBytes() ([]byte, error) {
-	return _preppullimagesSh, nil
+func prepgetseedimageShBytes() ([]byte, error) {
+	return _prepgetseedimageSh, nil
 }
 
-func preppullimagesSh() (*asset, error) {
-	bytes, err := preppullimagesShBytes()
+func prepgetseedimageSh() (*asset, error) {
+	bytes, err := prepgetseedimageShBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "prepPullImages.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	info := bindataFileInfo{name: "prepGetSeedImage.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -562,7 +483,6 @@ func AssetNames() []string {
 var _bindata = map[string]func() (*asset, error){
 	"prepCleanup.sh":        prepcleanupSh,
 	"prepGetSeedImage.sh":   prepgetseedimageSh,
-	"prepPullImages.sh":     preppullimagesSh,
 	"prepSetupStateroot.sh": prepsetupstaterootSh,
 }
 
@@ -611,7 +531,6 @@ type bintree struct {
 var _bintree = &bintree{nil, map[string]*bintree{
 	"prepCleanup.sh":        {prepcleanupSh, map[string]*bintree{}},
 	"prepGetSeedImage.sh":   {prepgetseedimageSh, map[string]*bintree{}},
-	"prepPullImages.sh":     {preppullimagesSh, map[string]*bintree{}},
 	"prepSetupStateroot.sh": {prepsetupstaterootSh, map[string]*bintree{}},
 }}
 

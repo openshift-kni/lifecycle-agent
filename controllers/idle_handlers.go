@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -67,6 +69,13 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	// Cleanup precaching resources
+	r.Log.Info("Cleanup precaching resources")
+	if err := precache.Cleanup(ctx, r.Client); err != nil {
+		r.Log.Error(err, "Failed to cleanup precaching resources")
+		return doNotRequeue(), err
+	}
+
 	stateroot := getStaterootName(ibu.Spec.SeedImageRef.Version)
 	r.Log.Info("Cleanup stateroot", "stateroot", stateroot)
 	err := r.cleanupUnbootedStateroot(stateroot)

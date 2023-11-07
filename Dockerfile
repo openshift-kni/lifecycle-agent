@@ -43,6 +43,25 @@ COPY ibu-imager ibu-imager
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ibu-imager main/ibu-imager/main.go
 
+#####################################################################################################
+# Build the workload binary
+FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as precache-workload
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+COPY vendor/ vendor/
+
+# Copy the go modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# Copy the go source
+COPY main/precache-workload/ main/precache-workload/
+COPY controllers/utils/constants.go controllers/utils/constants.go
+COPY internal/precache/ internal/precache/
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go
 
 #####################################################################################################
 # Use distroless as minimal base image to package the manager binary
@@ -58,5 +77,7 @@ COPY --from=builder /opt/app-root/src/build/manager /usr/local/bin/manager
 
 COPY --from=imager /opt/app-root/src/build/ibu-imager /usr/local/bin/ibu-imager
 COPY ibu-imager/installation_configuration_files/ /usr/local/installation_configuration_files/
+
+COPY --from=precache-workload /opt/app-root/src/build/precache /usr/local/bin/precache
 
 ENTRYPOINT ["/usr/local/bin/manager"]
