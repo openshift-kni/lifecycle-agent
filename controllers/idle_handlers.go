@@ -19,12 +19,12 @@ package controllers
 import (
 	"context"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
 	// If succeeds, return doNotRequeue
@@ -32,7 +32,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *ranv
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
 	// If succeeds, return doNotRequeue
@@ -40,7 +40,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
 	// If succeeds, return doNotRequeue
@@ -48,7 +48,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *r
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
 	// If succeeds, return doNotRequeue

@@ -19,25 +19,25 @@ package controllers
 import (
 	"context"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	// TODO actual steps
 	// If completed, update conditions and return doNotRequeue
 	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(ranv1alpha1.Stages.Rollback),
+		utils.GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
 		utils.ConditionReasons.Completed,
 		metav1.ConditionTrue,
 		"Rollback completed",
 		ibu.Generation)
 	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(ranv1alpha1.Stages.Rollback),
+		utils.GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
 		utils.ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		"Rollback completed",

@@ -20,13 +20,13 @@ import (
 	"context"
 	"fmt"
 
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ranv1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
 	utils.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
@@ -44,13 +44,13 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ra
 	// TODO actual steps
 	// If completed, update conditions and return doNotRequeue
 	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(ranv1alpha1.Stages.Upgrade),
+		utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
 		utils.ConditionReasons.Completed,
 		metav1.ConditionTrue,
 		"Upgrade completed",
 		ibu.Generation)
 	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(ranv1alpha1.Stages.Upgrade),
+		utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
 		utils.ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		"Upgrade completed",

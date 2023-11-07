@@ -1,7 +1,7 @@
 package utils
 
 import (
-	ranv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -104,7 +104,7 @@ func ResetStatusConditions(existingConditions *[]metav1.Condition, generation in
 }
 
 // GetCurrentInProgressStage returns the stage that is currently in progress
-func GetCurrentInProgressStage(ibu *ranv1alpha1.ImageBasedUpgrade) ranv1alpha1.ImageBasedUpgradeStage {
+func GetCurrentInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBasedUpgradeStage {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(ConditionTypes.Idle))
 	if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {
 		return ""
@@ -115,13 +115,13 @@ func GetCurrentInProgressStage(ibu *ranv1alpha1.ImageBasedUpgrade) ranv1alpha1.I
 	case string(ConditionReasons.AbortFailed):
 	case string(ConditionReasons.Finalizing):
 	case string(ConditionReasons.FinalizeFailed):
-		return ranv1alpha1.Stages.Idle
+		return lcav1alpha1.Stages.Idle
 	}
 
-	conditionToStageMap := map[ConditionType]ranv1alpha1.ImageBasedUpgradeStage{
-		ConditionTypes.PrepInProgress:     ranv1alpha1.Stages.Prep,
-		ConditionTypes.UpgradeInProgress:  ranv1alpha1.Stages.Upgrade,
-		ConditionTypes.RollbackInProgress: ranv1alpha1.Stages.Rollback,
+	conditionToStageMap := map[ConditionType]lcav1alpha1.ImageBasedUpgradeStage{
+		ConditionTypes.PrepInProgress:     lcav1alpha1.Stages.Prep,
+		ConditionTypes.UpgradeInProgress:  lcav1alpha1.Stages.Upgrade,
+		ConditionTypes.RollbackInProgress: lcav1alpha1.Stages.Rollback,
 	}
 
 	for conditionType, stage := range conditionToStageMap {
@@ -134,42 +134,42 @@ func GetCurrentInProgressStage(ibu *ranv1alpha1.ImageBasedUpgrade) ranv1alpha1.I
 }
 
 // GetInProgressConditionType returns the pending condition type based on the current stage
-func GetInProgressConditionType(stage ranv1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
+func GetInProgressConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
-	case ranv1alpha1.Stages.Prep:
+	case lcav1alpha1.Stages.Prep:
 		conditionType = ConditionTypes.PrepInProgress
-	case ranv1alpha1.Stages.Upgrade:
+	case lcav1alpha1.Stages.Upgrade:
 		conditionType = ConditionTypes.UpgradeInProgress
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		conditionType = ConditionTypes.RollbackInProgress
 	}
 	return
 }
 
 // GetCompletedConditionType returns the succeeded condition type based on the current stage
-func GetCompletedConditionType(stage ranv1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
+func GetCompletedConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
-	case ranv1alpha1.Stages.Idle:
+	case lcav1alpha1.Stages.Idle:
 		conditionType = ConditionTypes.Idle
-	case ranv1alpha1.Stages.Prep:
+	case lcav1alpha1.Stages.Prep:
 		conditionType = ConditionTypes.PrepCompleted
-	case ranv1alpha1.Stages.Upgrade:
+	case lcav1alpha1.Stages.Upgrade:
 		conditionType = ConditionTypes.UpgradeCompleted
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		conditionType = ConditionTypes.RollbackCompleted
 	}
 	return
 }
 
 // GetPreviousCompletedCondition returns the succeeded condition for the previous stage
-func GetPreviousCompletedCondition(ibu *ranv1alpha1.ImageBasedUpgrade) *metav1.Condition {
+func GetPreviousCompletedCondition(ibu *lcav1alpha1.ImageBasedUpgrade) *metav1.Condition {
 	var conditionType ConditionType
 	switch ibu.Spec.Stage {
-	case ranv1alpha1.Stages.Prep:
+	case lcav1alpha1.Stages.Prep:
 		conditionType = ConditionTypes.Idle
-	case ranv1alpha1.Stages.Upgrade:
+	case lcav1alpha1.Stages.Upgrade:
 		conditionType = ConditionTypes.PrepCompleted
-	case ranv1alpha1.Stages.Rollback:
+	case lcav1alpha1.Stages.Rollback:
 		conditionType = ConditionTypes.UpgradeCompleted
 	}
 	if conditionType != "" {
