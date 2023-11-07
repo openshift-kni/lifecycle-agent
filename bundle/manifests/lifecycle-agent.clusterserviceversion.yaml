@@ -163,6 +163,7 @@ spec:
           - delete
           - get
           - list
+          - watch
         - apiGroups:
           - operators.coreos.com/v1alpha1
           resources:
@@ -171,6 +172,7 @@ spec:
           - delete
           - get
           - list
+          - watch
         - apiGroups:
           - velero.io/v1
           resources:
@@ -181,6 +183,7 @@ spec:
           - get
           - list
           - update
+          - watch
         - apiGroups:
           - velero.io/v1
           resources:
@@ -188,6 +191,7 @@ spec:
           verbs:
           - get
           - list
+          - watch
         - apiGroups:
           - velero.io/v1
           resources:
@@ -198,6 +202,7 @@ spec:
           - get
           - list
           - update
+          - watch
         - apiGroups:
           - authentication.k8s.io
           resources:
