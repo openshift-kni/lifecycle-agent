@@ -56,6 +56,7 @@ KUSTOMIZE = $(shell pwd)/bin/kustomize
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
+default: help
 
 # Include the bindata makefile
 include ./vendor/github.com/openshift/build-machinery-go/make/targets/openshift/bindata.mk
@@ -263,3 +264,7 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+help:   ## Shows this message.
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
