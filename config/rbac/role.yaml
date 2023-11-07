@@ -113,6 +113,7 @@ rules:
   - delete
   - get
   - list
+  - watch
 - apiGroups:
   - operators.coreos.com/v1alpha1
   resources:
@@ -121,6 +122,7 @@ rules:
   - delete
   - get
   - list
+  - watch
 - apiGroups:
   - velero.io/v1
   resources:
@@ -131,6 +133,7 @@ rules:
   - get
   - list
   - update
+  - watch
 - apiGroups:
   - velero.io/v1
   resources:
@@ -138,6 +141,7 @@ rules:
   verbs:
   - get
   - list
+  - watch
 - apiGroups:
   - velero.io/v1
   resources:
@@ -148,3 +152,4 @@ rules:
   - get
   - list
   - update
+  - watch
