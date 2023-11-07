@@ -39,6 +39,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 )
 
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
@@ -50,6 +51,7 @@ type ImageBasedUpgradeReconciler struct {
 	ClusterConfig *clusterconfig.UpgradeClusterConfigGather
 	NetworkConfig *clusterconfig.UpgradeNetworkConfigGather
 	BackupRestore *backuprestore.BRHandler
+	ExtraManifest *extramanifest.EMHandler
 }
 
 func doNotRequeue() ctrl.Result {
