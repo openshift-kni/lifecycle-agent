@@ -34,6 +34,10 @@ import (
 	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
 )
 
+const (
+	installationConfigurationFilesDir = "/usr/local/installation_configuration_files"
+)
+
 var (
 	scheme = runtime.NewScheme()
 
@@ -124,11 +128,11 @@ func copyConfigurationFiles(ops ops.Ops) error {
 
 func copyConfigurationScripts() error {
 	log.Infof("Copying installation_configuration_files/scripts to local/bin")
-	return cp.Copy("installation_configuration_files/scripts", "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
+	return cp.Copy(filepath.Join(installationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
 }
 
 func handleServices(ops ops.Ops) error {
-	dir := "installation_configuration_files/services"
+	dir := filepath.Join(installationConfigurationFilesDir, "services")
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
 			return nil

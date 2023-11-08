@@ -125,7 +125,7 @@ podman run --privileged --pid=host --rm --net=host \
     -v /var/run:/var/run \
     -v /run/systemd/journal/socket:/run/systemd/journal/socket \
     -v ${AUTHFILE}:${AUTHFILE} \
-    --entrypoint /ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
+    --entrypoint ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
                                                  --image ${IMG_REPO} \
                                                  --recert-image ${IMG_RECERT_TOOL}
 ```
