@@ -64,8 +64,17 @@ func (h *BRHandler) ReconcileBackup(ctx context.Context, oadpContent []lcav1alph
 		return
 	}
 
-	backupCrs, err := extractBackupFromConfigmaps(oadpConfigmaps)
+	backupCrs, err := extractBackupFromConfigmaps(ctx, h.Client, oadpConfigmaps)
 	if err != nil {
+		if k8serrors.IsInvalid(err) {
+			h.Log.Error(err, "Invalid backup CR")
+
+			status.Status = BackupFailedValidation
+			status.Message = fmt.Sprintf("Invalid backup CR: %s", err.Error())
+			result.RequeueAfter = 1 * time.Minute
+
+			err = nil
+		}
 		return
 	}
 
@@ -275,7 +284,7 @@ func sortBackupsByName(resources []*velerov1.Backup) {
 }
 
 // extractBackupFromConfigmaps extacts Backup CRs from configmaps
-func extractBackupFromConfigmaps(configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
+func extractBackupFromConfigmaps(ctx context.Context, c client.Client, configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
 	var backups []*velerov1.Backup
 
 	for _, cm := range configmaps {
@@ -288,6 +297,13 @@ func extractBackupFromConfigmaps(configmaps []corev1.ConfigMap) ([]*velerov1.Bac
 
 			if resource.GroupVersionKind() != backupGvk {
 				continue
+			}
+
+			// Create the backup CR in dry-run mode to detect any validation errors in the CR
+			// i.e., missing required fields
+			err = c.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+			if err != nil {
+				return nil, err
 			}
 
 			backup := velerov1.Backup{}
@@ -405,7 +421,7 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		return err
 	}
 
-	restores, err := extractRestoreFromConfigmaps(configmaps)
+	restores, err := extractRestoreFromConfigmaps(ctx, h.Client, configmaps)
 	if err != nil {
 		return err
 	}

@@ -32,6 +32,11 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 
 	// TODO: Pre-pivot steps
+	//
+	// TODO: Call r.BackupRestore.ExportRestoresToDir to write restore CRs to the new stateroot.
+	//       If there is invalid type of error returned, we should update the ibu status and
+	//       requeue with short interval.
+	//
 	err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo)
 	if err != nil {
 		r.Log.Error(err, "Failed to export extra manifests")
