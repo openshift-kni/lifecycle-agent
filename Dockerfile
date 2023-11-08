@@ -1,30 +1,45 @@
 # Build the manager binary
-FROM registry.hub.docker.com/library/golang:1.20 as builder
-
-WORKDIR /workspace/
+FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as builder
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
 COPY vendor/ vendor/
 
+# Copy the go modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
 # Copy the go source
-COPY . /workspace
+COPY api api
+COPY controllers controllers
+COPY internal internal
+COPY ibu-imager ibu-imager
+COPY utils utils
+COPY main main
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
 
 #####################################################################################################
 # Build the imager binary
-FROM registry.hub.docker.com/library/golang:1.20 as imager
-
-WORKDIR /workspace
+FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as imager
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
 COPY vendor/ vendor/
 
-# Copy the Go Modules manifests
-COPY . /workspace
+# Copy the go modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# Copy the go source
+COPY main main
+COPY utils utils
+COPY ibu-imager/clusterinfo ibu-imager/clusterinfo
+COPY ibu-imager/cmd ibu-imager/cmd
+COPY ibu-imager/ops ibu-imager/ops
+COPY ibu-imager/seedcreator ibu-imager/seedcreator
+COPY ibu-imager/ostreeclient ibu-imager/ostreeclient
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ibu-imager main/ibu-imager/main.go
@@ -36,15 +51,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 #FROM gcr.io/distroless/static:nonroot
 FROM registry.access.redhat.com/ubi9/ubi:latest
 
-RUN yum -y install jq && \
-    yum clean all && \
-    rm -rf /var/cache/yum
+RUN dnf -y install jq && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
-WORKDIR /
+COPY --from=builder /opt/app-root/src/build/manager /usr/local/bin/manager
 
-COPY --from=builder /workspace/build/manager .
+COPY --from=imager /opt/app-root/src/build/ibu-imager /usr/local/bin/ibu-imager
+COPY ibu-imager/installation_configuration_files/ /usr/local/bin/installation_configuration_files/
 
-COPY --from=imager /workspace/build/ibu-imager .
-COPY ibu-imager/installation_configuration_files/ installation_configuration_files/
-
-ENTRYPOINT ["/manager"]
+ENTRYPOINT ["/usr/local/bin/manager"]
