@@ -25,6 +25,9 @@ import (
 
 const (
 	varFolder = "/var"
+	// Default location for etcdStaticPodFile
+	etcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
+	etcdStaticPodContainer = "etcd"
 )
 
 // containerFileContent is the Dockerfile content for the IBU seed image
@@ -44,12 +47,13 @@ type SeedCreator struct {
 	containerRegistry    string
 	authFile             string
 	recertContainerImage string
+	recertSkipValidation bool
 	manifestClient       *clusterinfo.InfoClient
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, authFile, recertContainerImage string) *SeedCreator {
+	kubeconfig, containerRegistry, authFile, recertContainerImage string, recertSkipValidation bool) *SeedCreator {
 
 	return &SeedCreator{
 		client:               client,
@@ -61,6 +65,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 		containerRegistry:    containerRegistry,
 		authFile:             authFile,
 		recertContainerImage: recertContainerImage,
+		recertSkipValidation: recertSkipValidation,
 		manifestClient:       clusterinfo.NewClusterInfoClient(client),
 	}
 }
@@ -84,6 +89,14 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 	if err := s.stopServices(); err != nil {
 		return err
+	}
+
+	if s.recertSkipValidation {
+		s.log.Info("Skipping recert validation.")
+	} else {
+		if err := s.runRecertValidation(); err != nil {
+			return err
+		}
 	}
 
 	if err := s.backupVar(); err != nil {
@@ -219,6 +232,73 @@ func (s *SeedCreator) stopServices() error {
 		s.log.Println("Skipping running containers and CRI-O engine already stopped.")
 	}
 
+	return nil
+}
+
+func (s *SeedCreator) runRecertValidation() error {
+	s.log.Info("Running recert --force-expire tool and saving a summary without sensitive data.")
+
+	// Get etcdImage available for the current release, this is needed by recert to
+	// run an unauthenticated etcd server for running successfully.
+	etcdImage, err := s.ops.GetImageFromPodDefinition(etcdStaticPodFile, etcdStaticPodContainer)
+	if err != nil {
+		return err
+	}
+
+	// Run unauthenticated etcd server for the recert tool.
+	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
+	// which is required before running the recert tool.
+	s.log.Info("Run unauthenticated etcd server for recert dry-run")
+	_, err = s.ops.RunInHostNamespace(
+		"podman", []string{"run", "--name", "recert_etcd",
+			"--detach", "--rm", "--network=host", "--privileged", "--replace",
+			"--authfile", s.authFile, "--entrypoint", "etcd",
+			"-v", "/var/lib/etcd:/store",
+			etcdImage,
+			"--name", "editor",
+			"--data-dir", "/store"}...)
+	if err != nil {
+		return fmt.Errorf("failed to run recert_etcd container: %w", err)
+	}
+
+	defer func() {
+		s.log.Info("Killing the unauthenticated etcd server")
+		_, err = s.ops.RunInHostNamespace(
+			"podman", []string{"kill", "recert_etcd"}...)
+		if err != nil {
+			s.log.Errorf("Failed to kill recert_etcd container: %v", err)
+		}
+	}()
+
+	s.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
+	err = s.ops.WaitForEtcd("http://localhost:2379/health")
+	if err != nil {
+		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
+	}
+	s.log.Info("Unauthenticated etcd server for recert is up and running")
+
+	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
+	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
+	// into a seed image.
+	s.log.Info("Run recert --force-expire tool")
+	_, err = s.ops.RunInHostNamespace(
+		"podman", []string{"run", "--name", "recert",
+			"--rm", "--network=host", "--privileged", "--replace", "--authfile", s.authFile,
+			"-v", "/etc/kubernetes:/kubernetes",
+			"-v", "/var/lib/kubelet:/kubelet",
+			"-v", "/etc/machine-config-daemon:/machine-config-daemon",
+			s.recertContainerImage,
+			"--etcd-endpoint", "localhost:2379",
+			"--static-dir", "/kubernetes",
+			"--static-dir", "/kubelet",
+			"--static-dir", "/machine-config-daemon",
+			"--summary-file-clean", "/kubernetes/recert-seed-summary.yaml",
+			"--force-expire"}...)
+	if err != nil {
+		return fmt.Errorf("failed to run recert tool container: %w", err)
+	}
+
+	log.Println("Recert --force-expire tool ran and summary created successfully.")
 	return nil
 }
 

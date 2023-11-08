@@ -154,7 +154,9 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
  				-v /var:/var \
  				-v /var/run:/var/run \
  				-v /run/systemd/journal/socket:/run/systemd/journal/socket \
- 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json --image quay.io/somewhere/ibu-seed-images:4.14.0-du
+ 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json \
+ 				                                        --image quay.io/somewhere/ibu-seed-images:4.14.0-du
+ 				                                        --recert-image quay.io/edge-infrastructure/recert:latest
 
  ___ ____  _   _            ___
 |_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __

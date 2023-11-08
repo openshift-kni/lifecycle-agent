@@ -117,6 +117,7 @@ AUTHFILE=/tmp/backup-secret.json
 podman login --authfile ${AUTHFILE} -u ${MY_ID} quay.io/${MY_REPO_ID}
 
 IMG_REFSPEC=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
+IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:latest
 
 podman run --privileged --pid=host --rm --net=host \
     -v /etc:/etc \
@@ -124,6 +125,19 @@ podman run --privileged --pid=host --rm --net=host \
     -v /var/run:/var/run \
     -v /run/systemd/journal/socket:/run/systemd/journal/socket \
     -v ${AUTHFILE}:${AUTHFILE} \
-    --entrypoint /ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} --image ${IMG_REFSPEC}
+    --entrypoint /ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
+                                                 --image ${IMG_REPO} \
+                                                 --recert-image ${IMG_RECERT_TOOL}
 ```
 
+#### Disconnected environments
+
+For disconnected environments, first mirror the `lifecycle-agent` container image to your local registry using
+[skopeo](https://github.com/containers/skopeo) or a similar tool.
+
+Additionally, you'd need to mirror the [recert](https://github.com/rh-ecosystem-edge/recert) tool, which is used to
+perform some checks in the seed SNO cluster.
+
+```shell
+skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTRY}/edge-infrastructure/recert
+```

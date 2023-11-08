@@ -21,7 +21,7 @@ func WriteToFile(data interface{}, filePath string) error {
 func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, perm os.FileMode) error {
 	templateData, err := os.ReadFile(srcTemplate)
 	if err != nil {
-		return fmt.Errorf("error occurred while trying to read %s : %w", srcTemplate, err)
+		return fmt.Errorf("error occurred while trying to read %s: %w", srcTemplate, err)
 	}
 
 	tmpl := template.New("template")
@@ -32,7 +32,7 @@ func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, 
 	}
 
 	if err = os.WriteFile(dest, buf.Bytes(), perm); err != nil {
-		return fmt.Errorf("error occurred while trying to write rendered data to %s : %w", dest, err)
+		return fmt.Errorf("error occurred while trying to write rendered data to %s: %w", dest, err)
 	}
 	return nil
 }
