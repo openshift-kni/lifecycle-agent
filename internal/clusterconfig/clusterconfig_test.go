@@ -19,9 +19,6 @@ package clusterconfig
 import (
 	"context"
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/utils"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,13 +29,15 @@ import (
 	ocpV1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-)
 
-const numberOfFilesOnSuccess = 4
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/utils"
+)
 
 var clusterCmData = `
     additionalTrustBundlePolicy: Proxyonly
@@ -85,8 +84,12 @@ var (
 )
 
 func init() {
-	testscheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{},
-		&ocpV1.ImageDigestMirrorSet{}, &ocpV1.ImageDigestMirrorSetList{})
+	testscheme.AddKnownTypes(
+		ocpV1.GroupVersion,
+		&ocpV1.ClusterVersion{},
+		&ocpV1.ImageDigestMirrorSet{},
+		&ocpV1.ImageDigestMirrorSetList{},
+		&ocpV1.Proxy{})
 	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 }
 
@@ -102,6 +105,7 @@ func TestClusterConfig(t *testing.T) {
 		clusterVersion client.Object
 		idms           client.Object
 		node           client.Object
+		proxy          client.Object
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -128,7 +132,15 @@ func TestClusterConfig(t *testing.T) {
 				},
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
 			},
-			node:        validMasterNode,
+			node: validMasterNode,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+				Spec: ocpV1.ProxySpec{
+					HTTPProxy: "some-http-proxy",
+				},
+			},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDirs(tempDir)
@@ -143,6 +155,14 @@ func TestClusterConfig(t *testing.T) {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, clusterVersion.Spec.ClusterID, ocpV1.ClusterID("1"))
+
+				// validate proxy
+				proxy := &ocpV1.Proxy{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, proxyFileName), proxy); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, proxyName, proxy.Name)
+				assert.Equal(t, "some-http-proxy", proxy.Spec.HTTPProxy)
 
 				// validate pull secret
 				secret := &corev1.Secret{}
@@ -180,7 +200,6 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, len(rConfig.CNSanReplaceRules), 4)
 				assert.Contains(t, rConfig.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedManifestData.MasterIP, clusterInfo.MasterIP))
 				assert.Contains(t, rConfig.UseKeyRules, "ingress@test /opt/openshift/certs/ingresskey-ingress@test")
-
 			},
 		},
 		{
@@ -194,8 +213,13 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			idms:        nil,
-			node:        validMasterNode,
+			idms: nil,
+			node: validMasterNode,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, errors.IsNotFound(err), true)
@@ -210,8 +234,13 @@ func TestClusterConfig(t *testing.T) {
 					Namespace: configNamespace,
 				},
 			},
-			idms:           nil,
-			node:           validMasterNode,
+			idms: nil,
+			node: validMasterNode,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+			},
 			clusterVersion: &ocpV1.ClusterVersion{},
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -234,8 +263,13 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			node:        validMasterNode,
-			idms:        nil,
+			idms: nil,
+			node: validMasterNode,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+			},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				filesDir, err := ucc.configDirs(tempDir)
@@ -246,7 +280,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, len(dir), 3)
+				assert.Equal(t, 4, len(dir))
 			},
 		},
 		{
@@ -265,10 +299,15 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
+			idms: nil,
 			node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker:": ""}},
 				Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
 					{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}},
-			idms:        nil,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+			},
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, strings.Contains(err.Error(), "one master node in sno cluster"), true)
@@ -284,6 +323,9 @@ func TestClusterConfig(t *testing.T) {
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node}
 			if tc.idms != nil {
 				objs = append(objs, tc.idms)
+			}
+			if tc.proxy != nil {
+				objs = append(objs, tc.proxy)
 			}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {

@@ -22,13 +22,16 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 
 const (
+	proxyName                     = "cluster"
 	pullSecretName                = "pull-secret"
 	configNamespace               = "openshift-config"
 	upgradeConfigurationNamespace = "upgrade-configuration"
 	clusterConfigDir              = "/opt/openshift/cluster-configuration"
 	manifestDir                   = "manifests"
+	proxyFileName                 = "proxy.json"
 	clusterIDFileName             = "cluster-id-override.json"
 	pullSecretFileName            = "pullsecret.json"
 	clusterInfoFileName           = "manifest.json"
@@ -63,6 +66,10 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 	clusterID := clusterVersion.Spec.ClusterID
+	proxy := &v1.Proxy{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, proxy); err != nil {
+		return err
+	}
 
 	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
 	clusterData, err := cmClient.CreateClusterInfo(ctx)
@@ -76,7 +83,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	}
 	r.Log.Info("Successfully fetched cluster config")
 
-	if err := r.writeClusterConfig(pullSecret, clusterID, ostreeDir, clusterData, idmsList); err != nil {
+	if err := r.writeClusterConfig(proxy, pullSecret, clusterID, ostreeDir, clusterData, idmsList); err != nil {
 		return err
 	}
 	return nil
@@ -93,8 +100,13 @@ func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error
 }
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
-func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secret,
-	clusterID v1.ClusterID, ostreeDir string, clusterData *clusterinfo.ClusterInfo, idmsList *v1.ImageDigestMirrorSetList) error {
+func (r *UpgradeClusterConfigGather) writeClusterConfig(
+	proxy *v1.Proxy,
+	pullSecret *corev1.Secret,
+	clusterID v1.ClusterID,
+	ostreeDir string,
+	clusterData *clusterinfo.ClusterInfo,
+	idmsList *v1.ImageDigestMirrorSetList) error {
 	clusterConfigPath, err := r.configDirs(ostreeDir)
 	if err != nil {
 		return err
@@ -112,6 +124,9 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secre
 		return err
 	}
 	if err := r.writeIDMSsToFile(idmsList, filepath.Join(manifestsDir, idmsFIlePath)); err != nil {
+		return err
+	}
+	if err := r.writeProxyToFile(proxy, filepath.Join(manifestsDir, proxyFileName)); err != nil {
 		return err
 	}
 	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, clusterInfoFileName)); err != nil {
@@ -143,6 +158,17 @@ func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, fi
 	r.Log.Info("Writing secret to file", "path", filePath)
 	secret.Namespace = upgradeConfigurationNamespace
 	return utils.WriteToFile(secret, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) writeProxyToFile(proxy *v1.Proxy, filePath string) error {
+	r.Log.Info("Writing proxy to file", "path", filePath)
+	p := &v1.Proxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: proxy.Name,
+		},
+		Spec: proxy.Spec,
+	}
+	return utils.WriteToFile(p, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav1.TypeMeta, error) {
