@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"log"
 	"os"
@@ -26,8 +27,9 @@ import (
 const (
 	varFolder = "/var"
 	// Default location for etcdStaticPodFile
-	etcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
-	etcdStaticPodContainer = "etcd"
+	etcdStaticPodFile                 = "/etc/kubernetes/manifests/etcd-pod.yaml"
+	etcdStaticPodContainer            = "etcd"
+	installationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 )
 
 // containerFileContent is the Dockerfile content for the IBU seed image
@@ -485,7 +487,7 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 
 func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDomain string) error {
 	// Define source and destination file paths
-	srcFile := "installation_configuration_files/conf/installation-configuration.env"
+	srcFile := filepath.Join(installationConfigurationFilesDir, "conf/installation-configuration.env")
 	destFile := "/etc/systemd/system/installation-configuration.env"
 	// Prepare variable substitutions for template files
 	substitutions := map[string]any{

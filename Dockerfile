@@ -58,6 +58,6 @@ RUN dnf -y install jq && \
 COPY --from=builder /opt/app-root/src/build/manager /usr/local/bin/manager
 
 COPY --from=imager /opt/app-root/src/build/ibu-imager /usr/local/bin/ibu-imager
-COPY ibu-imager/installation_configuration_files/ /usr/local/bin/installation_configuration_files/
+COPY ibu-imager/installation_configuration_files/ /usr/local/installation_configuration_files/
 
 ENTRYPOINT ["/usr/local/bin/manager"]
