@@ -118,17 +118,17 @@ common-deps-update:	controller-gen kustomize
 	go mod tidy
 
 .PHONY: shellcheck
-shellcheck: ## Run shellcheck
+shellcheck: ## Run shellcheck.
 	@echo "Running shellcheck"
 	hack/shellcheck.sh
 
 .PHONY: bashate
-bashate: ## Run bashate
+bashate: ## Run bashate.
 	@echo "Running bashate"
 	hack/bashate.sh
 
-.PHONY: ci-job	
-ci-job: common-deps-update generate fmt vet lint golangci-lint unittest shellcheck bashate update-bindata bundle-check #test
+.PHONY: ci-job
+ci-job: common-deps-update generate fmt vet lint golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
@@ -139,7 +139,6 @@ operator-sdk: ## Download operator-sdk locally if necessary.
 ifneq ($(OPERATOR_SDK_VERSION_REQ),$(OPERATOR_SDK_VERSION))
 	curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-linux-x86_64.tar.gz | tar -xz -C bin/
 endif
-
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(firstword $(MAKEFILE_LIST))))
@@ -251,8 +250,6 @@ ifneq ($(origin CATALOG_BASE_IMG), undefined)
 FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
 endif
 
-
-
 # Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
 # This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
 # https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
@@ -264,6 +261,25 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Imager
+
+imager-run: common-deps-update fmt vet ## Run the imager tool from your host.
+	go run main/ibu-imager/main.go
+
+# Unittests variables
+TEST_FORMAT ?= standard-verbose
+GOTEST_FLAGS = --format=$(TEST_FORMAT)
+GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
+
+imager_test: $(REPORTS)
+	gotestsum $(GOTEST_FLAGS) $(TEST) $(GINKGO_FLAGS) -timeout $(TIMEOUT)
+
+.PHONY: imager-unittest
+imager-unittest: ## Run unittests for imager.
+	@echo "Running unittests"
+	$(call go-get-tool,$(GOPATH),gotest.tools/gotestsum@latest)
+	$(MAKE) imager_test TEST_SCENARIO=unit TIMEOUT=30m TEST="$(or $(TEST),$(shell go list ./ibu-imager/...))"
 
 help:   ## Shows this message.
 	@echo "Available targets:"
