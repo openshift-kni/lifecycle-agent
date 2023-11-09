@@ -65,8 +65,9 @@ type ImageBasedUpgradeSpec struct {
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
 type SeedImageRef struct {
-	Version string `json:"version,omitempty"`
-	Image   string `json:"image,omitempty"`
+	Version       string         `json:"version,omitempty"`
+	Image         string         `json:"image,omitempty"`
+	PullSecretRef *PullSecretRef `json:"pullSecretRef,omitempty"`
 }
 
 // ConfigMapRef defines a reference to a config map
@@ -78,6 +79,13 @@ type ConfigMapRef struct {
 	// +kubebuilder:validation:Required
 	// +required
 	Namespace string `json:"namespace"`
+}
+
+// PullSecretRef defines a reference to a secret with credentials for pulling container images
+type PullSecretRef struct {
+	// +kubebuilder:validation:Required
+	// +required
+	Name string `json:"name"`
 }
 
 // ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
