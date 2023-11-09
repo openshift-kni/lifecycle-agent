@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-
 	"log"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 
 	v1 "github.com/openshift/api/config/v1"
@@ -130,6 +129,12 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	// TODO: remove after removing usage of clusterversion.json
+	manifestPath := path.Join(s.backupDir, "manifest.json")
+	if _, err := os.Stat(manifestPath); err == nil {
+		s.log.Println("Manifest file was already created, skipping")
+		return nil
+	}
+
 	clusterVersion := &v1.ClusterVersion{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return err
