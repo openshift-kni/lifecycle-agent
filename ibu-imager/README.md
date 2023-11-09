@@ -1,7 +1,5 @@
 # IBU Imager
 
-[![CI](https://github.com/leo8a/ibu-imager/actions/workflows/pull_request_workflow.yml/badge.svg)](https://github.com/leo8a/ibu-imager/actions/workflows/pull_request_workflow.yml)
-
 This application will assist users to easily create an OCI seed image for the Image-Based Upgrade (IBU) workflow, using
 a simple CLI.
 
@@ -15,7 +13,8 @@ A novel method to approach this problem can be derived based on the
 [CoreOS Layering](https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md) concepts, which proposes a
 new way of updating the underlying Operating System (OS) using OCI-compliant container images.
 
-This tool aims at creating such OCI images plus bundling the main cluster artifacts and configurations in order to
+In this context, this tool aims at creating such OCI images, and bundling the main cluster artifacts / configurations
+in order to
 provide seed images that can be used during an image-based upgrade procedure that would drastically reduce the
 upgrading and reconfiguration times.
 
@@ -25,26 +24,26 @@ The purpose of the `ibu-imager` tool is to assist in the creation of IBU seed im
 other components (e.g., [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent)) during an image-based
 upgrade procedure.
 
-In that direction, the tool does the following:
+In that direction, the tool does the following at a high level:
 
 - Saves a list of container images used by `crio` (needed for pre-caching operations afterward)
 - Creates a backup of the main platform configurations (e.g., `/var` and `/etc` directories, ostree artifacts, etc.)
 - Creates a backup of the ostree repository
 - Creates a seed container image (OCI) with all the generated content and pushes it to a remote container registry
-  (used during the image-based upgrade workflow afterwards)
+  (used during the image-based upgrade workflow afterward)
 
 ### Building
 
 Building the binary locally.
 
 ```shell
--> make build
+-> make imager-build
 go mod tidy && go mod vendor
 Running go fmt
 go fmt ./...
 Running go vet
 go vet ./...
-go build -o bin/ibu-imager main.go
+go build -o bin/ibu-imager main/ibu-imager/main.go
 ```
 
 > **Note:** The binary can be found in `./bin/ibu-imager`.
@@ -52,7 +51,7 @@ go build -o bin/ibu-imager main.go
 Building and pushing the tool as container image.
 
 ```shell
--> make docker-build docker-push
+-> make imager-build-container imager-push
 podman build -t quay.io/lochoa/ibu-imager:4.14.0 -f Dockerfile .
 [1/2] STEP 1/9: FROM registry.hub.docker.com/library/golang:1.19 AS builder
 Trying to pull registry.hub.docker.com/library/golang:1.19...
@@ -154,9 +153,7 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
  				-v /var:/var \
  				-v /var/run:/var/run \
  				-v /run/systemd/journal/socket:/run/systemd/journal/socket \
- 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json \
- 				                                        --image quay.io/somewhere/ibu-seed-images:4.14.0-du
- 				                                        --recert-image quay.io/edge-infrastructure/recert:latest
+ 				quay.io/lochoa/ibu-imager:4.14.0 create --authfile /var/lib/kubelet/config.json --image quay.io/somewhere/ibu-seed-images:4.14.0-du
 
  ___ ____  _   _            ___
 |_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __
@@ -186,23 +183,3 @@ time="2023-09-22 10:24:21" level=info msg="OCI image created successfully!"
 
 > **Note:** For a disconnected environment, first mirror the `ibu-imager` container image to your local registry using
 > [skopeo](https://github.com/containers/skopeo) or a similar tool.
-
-## TODO
-
-<details>
-  <summary>TODO List</summary>
-
-- [ ] Refactor wrapped bash commands (e.g., rpm-ostree commands) with stable go-bindings and/or libraries
-- [ ] Fix all code TODO comments
-
-</details>
-
-## Contributors
-
-IBU Imager is built and maintained by our growing community of contributors 🏆!
-
-<a href="https://github.com/leo8a/ibu-imager/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=leo8a/ibu-imager" />
-</a>
-
-Made with [contributors-img](https://contrib.rocks).

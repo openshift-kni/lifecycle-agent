@@ -1,8 +1,7 @@
 #!/bin/bash
 
-which golint
-if [ $? -ne 0 ]; then
-    echo "Downloading golint tool"
+if ! which golint &> /dev/null; then
+    echo "Downloading golint tool..."
     go get -u golang.org/x/lint/golint
 fi
 
