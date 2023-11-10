@@ -61,12 +61,24 @@ fi
 if [[ -f "${NETWORK_CONFIG_PATH}"/primary-ip ]]; then
     cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
 fi
+
+# TODO: change after adding ip to manifest.json
+cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
+
+RELOCATION_CONFIG_PATH=/opt/openshift/cluster-configuration
+NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
+NEW_BASE_DOMAIN=$(jq -r '.domain' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
+NEW_HOST_IP=$(cat /etc/default/node-ip)
+
+cat << EOF > /etc/default/sno_dnsmasq_configuration_overrides
+SNO_CLUSTER_NAME_OVERRIDE=${NEW_CLUSTER_NAME}
+SNO_BASE_DOMAIN_OVERRIDE=${NEW_BASE_DOMAIN}
+SNO_DNSMASQ_IP_OVERRIDE=${NEW_HOST_IP}
+EOF
+
 systemctl restart NetworkManager
 
 systemctl disable prepare-installation-configuration.service
-echo "Enabling kubelet"
-systemctl enable kubelet
-
 if [[ -n "${DEVICE}" ]]; then
     umount_config "${DEVICE}"
 fi
