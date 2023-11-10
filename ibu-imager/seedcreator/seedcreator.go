@@ -14,6 +14,7 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -74,6 +75,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 // CreateSeedImage comprises the Imager workflow for creating a single OCI seed image
 func (s *SeedCreator) CreateSeedImage() error {
 	s.log.Println("Creating seed image")
+	ctx := context.TODO()
 
 	// create backup dir
 	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
@@ -84,7 +86,11 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := s.gatherClusterInfo(context.TODO()); err != nil {
+	if err := s.gatherClusterInfo(ctx); err != nil {
+		return err
+	}
+
+	if err := s.deleteNode(ctx); err != nil {
 		return err
 	}
 
@@ -325,6 +331,7 @@ func (s *SeedCreator) backupVar() error {
 		"/var/lib/containers/*",
 		"/var/lib/kubelet/pods/*",
 		"/var/lib/cni/bin/*",
+		"/var/lib/ovn-ic/etc/ovnkube-node-certs/*",
 	}
 
 	// Build the tar command
@@ -369,8 +376,10 @@ func (s *SeedCreator) backupEtc() error {
 		return err
 	}
 
-	args = []string{"admin", "config-diff", "|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "xargs", "tar", "czf",
+	args = []string{"admin", "config-diff", "|", "grep", "-v", "'cni/multus'",
+		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "xargs", "tar", "czf",
 		path.Join(s.backupDir + "/etc.tgz"), "--selinux"}
+
 	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
 		return err
@@ -501,4 +510,36 @@ func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDo
 	}
 
 	return utils.RenderTemplateFile(srcFile, substitutions, destFile, 0o644)
+}
+
+func (s *SeedCreator) deleteNode(ctx context.Context) error {
+	doneFile := "/var/tmp/node_deletion.done"
+	_, err := os.Stat(doneFile)
+	if err == nil {
+		return nil
+	}
+
+	s.log.Println("Deleting node")
+	nodesList := &corev1.NodeList{}
+	err = s.client.List(context.TODO(), nodesList)
+	if err != nil {
+		return err
+	}
+	if len(nodesList.Items) > 1 {
+		return fmt.Errorf("we should have only one node in sno cluster to run seed image creation")
+	}
+
+	if len(nodesList.Items) > 0 {
+		s.log.Println("Deleting node ", nodesList.Items[0].Name)
+		err = s.client.Delete(ctx, &nodesList.Items[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = os.Create(doneFile)
+	if err != nil {
+		return err
+	}
+	return nil
 }
