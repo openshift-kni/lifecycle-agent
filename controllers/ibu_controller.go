@@ -160,6 +160,11 @@ func shouldTransition(currentInProgressStage lcav1alpha1.ImageBasedUpgradeStage,
 		return true
 	}
 	switch desiredStage {
+	case lcav1alpha1.Stages.Idle:
+		idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
+		if idleCondition != nil && idleCondition.Status == metav1.ConditionTrue {
+			return false
+		}
 	case lcav1alpha1.Stages.Prep:
 		prepCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.PrepCompleted))
 		if prepCompleted != nil {
