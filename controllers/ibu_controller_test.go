@@ -95,6 +95,15 @@ func TestShouldTransition(t *testing.T) {
 			},
 		},
 		{
+			name:                   "Idle while Idle true",
+			desiredStage:           lcav1alpha1.Stages.Idle,
+			currentInProgressStage: "",
+			expected:               false,
+			conditions: []ConditionTypeAndStatus{
+				{utils.ConditionTypes.Idle, metav1.ConditionTrue},
+			},
+		},
+		{
 			name:                   "different stage",
 			desiredStage:           lcav1alpha1.Stages.Idle,
 			currentInProgressStage: lcav1alpha1.Stages.Prep,
@@ -103,19 +112,21 @@ func TestShouldTransition(t *testing.T) {
 		},
 	}
 	for _, tc := range testcases {
-		var ibu = &lcav1alpha1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
-				Name:      utils.IBUName,
-				Namespace: lcaNs,
-			},
-		}
-		ibu.Spec.Stage = tc.desiredStage
-		for _, c := range tc.conditions {
-			utils.SetStatusCondition(&ibu.Status.Conditions,
-				c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
-		}
-		value := shouldTransition(tc.currentInProgressStage, ibu)
-		assert.Equal(t, tc.expected, value)
+		t.Run(tc.name, func(t *testing.T) {
+			var ibu = &lcav1alpha1.ImageBasedUpgrade{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      utils.IBUName,
+					Namespace: lcaNs,
+				},
+			}
+			ibu.Spec.Stage = tc.desiredStage
+			for _, c := range tc.conditions {
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
+			}
+			value := shouldTransition(tc.currentInProgressStage, ibu)
+			assert.Equal(t, tc.expected, value)
+		})
 	}
 }
 
