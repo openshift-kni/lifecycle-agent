@@ -2,8 +2,6 @@ package clusterconfig
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 
@@ -12,8 +10,7 @@ import (
 )
 
 const (
-	networkDir    = "/opt/openshift/network-configuration"
-	ipAddressFile = "/var/run/nodeip-configuration/primary-ip"
+	networkDir = "/opt/openshift/network-configuration"
 )
 
 // UpgradeNetworkConfigGather Gather network config files from host
@@ -26,18 +23,12 @@ var hostPath = "/host"
 var listOfPaths = []string{
 	"/etc/hostname",
 	"/etc/NetworkManager/system-connections",
-	ipAddressFile,
 }
 
 // FetchNetworkConfig gather network files and copy them
 func (r *UpgradeNetworkConfigGather) FetchNetworkConfig(ctx context.Context, ostreeDir string) error {
 	r.Log.Info("Fetching node network files")
 	dir, err := r.configDir(ostreeDir)
-	if err != nil {
-		return err
-	}
-
-	err = r.validateIPAddressFile()
 	if err != nil {
 		return err
 	}
@@ -51,21 +42,6 @@ func (r *UpgradeNetworkConfigGather) FetchNetworkConfig(ctx context.Context, ost
 	}
 	r.Log.Info("Done fetching node network files")
 	return nil
-}
-
-// validateIpAddressFile validates ip file has valid ip
-func (r *UpgradeNetworkConfigGather) validateIPAddressFile() error {
-	filePath := filepath.Join(hostPath, ipAddressFile)
-	hostIP, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read ip from file %s: %w", filePath, err)
-	}
-
-	ip := net.ParseIP(string(hostIP))
-	if ip == nil {
-		return fmt.Errorf("failed to parse ip %s from file %s", string(hostIP), filePath)
-	}
-	return err
 }
 
 // configDir returns the files directory for the given cluster config

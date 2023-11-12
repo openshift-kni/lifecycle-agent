@@ -59,7 +59,7 @@ var clusterCmData = `
       replicas: 1
     metadata:
       creationTimestamp: null
-      name: test-infra-cluster-7078f3ad
+      name: test-infra-cluster
     networking:
       clusterNetwork:
       - cidr: 172.30.0.0/16
@@ -76,7 +76,10 @@ var clusterCmData = `
 `
 
 var (
-	testscheme = scheme.Scheme
+	testscheme      = scheme.Scheme
+	validMasterNode = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+			{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}}
 )
 
 func init() {
@@ -96,6 +99,7 @@ func TestClusterConfig(t *testing.T) {
 		secret         client.Object
 		clusterVersion client.Object
 		idms           client.Object
+		node           client.Object
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -122,6 +126,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
 			},
+			node:        validMasterNode,
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				filesDir, err := ucc.configDirs(tempDir)
@@ -173,6 +178,20 @@ func TestClusterConfig(t *testing.T) {
 				}
 				assert.Equal(t, idms.Items[0].Name, "any")
 				assert.Equal(t, idms.Items[0].Spec.ImageDigestMirrors[0].Source, "data")
+
+				// validate manifest json
+				data, err = os.ReadFile(filepath.Join(filesDir, clusterInfoFileName))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				clusterInfo := &clusterinfo.ClusterInfo{}
+				err = json.Unmarshal(data, clusterInfo)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, clusterInfo.ClusterName, "test-infra-cluster")
+				assert.Equal(t, clusterInfo.Domain, "redhat.com")
+				assert.Equal(t, clusterInfo.MasterIP, "192.168.121.10")
 			},
 		},
 		{
@@ -187,6 +206,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:        nil,
+			node:        validMasterNode,
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, errors.IsNotFound(err), true)
@@ -202,6 +222,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:           nil,
+			node:           validMasterNode,
 			clusterVersion: &ocpV1.ClusterVersion{},
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -224,6 +245,7 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
+			node:        validMasterNode,
 			idms:        nil,
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -238,6 +260,31 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, len(dir), numberOfFilesOnSuccess-1)
 			},
 		},
+		{
+			name: "master not found, should fail",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pullSecretName,
+					Namespace: configNamespace,
+				},
+			},
+			clusterVersion: &ocpV1.ClusterVersion{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "version",
+				},
+				Spec: ocpV1.ClusterVersionSpec{
+					ClusterID: "1",
+				},
+			},
+			node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker:": ""}},
+				Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}},
+			idms:        nil,
+			expectedErr: true,
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				assert.Equal(t, strings.Contains(err.Error(), "one master node in sno cluster"), true)
+			},
+		},
 	}
 
 	for _, tc := range testcases {
@@ -245,7 +292,7 @@ func TestClusterConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			installConfig := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterinfo.InstallConfigCM,
 				Namespace: clusterinfo.InstallConfigCMNamespace}, Data: map[string]string{"install-config": clusterCmData}}
-			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig}
+			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node}
 			if tc.idms != nil {
 				objs = append(objs, tc.idms)
 			}

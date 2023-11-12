@@ -14,7 +14,6 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -513,21 +512,15 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 	}
 
 	s.log.Println("Deleting node")
-	nodesList := &corev1.NodeList{}
-	err = s.client.List(context.TODO(), nodesList)
+	node, err := utils.GetSNOMasterNode(ctx, s.client)
 	if err != nil {
 		return err
 	}
-	if len(nodesList.Items) > 1 {
-		return fmt.Errorf("we should have only one node in sno cluster to run seed image creation")
-	}
 
-	if len(nodesList.Items) > 0 {
-		s.log.Println("Deleting node ", nodesList.Items[0].Name)
-		err = s.client.Delete(ctx, &nodesList.Items[0])
-		if err != nil {
-			return err
-		}
+	s.log.Println("Deleting node ", node.Name)
+	err = s.client.Delete(ctx, node)
+	if err != nil {
+		return err
 	}
 
 	_, err = os.Create(doneFile)

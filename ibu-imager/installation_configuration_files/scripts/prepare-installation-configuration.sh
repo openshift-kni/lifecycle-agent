@@ -62,13 +62,11 @@ if [[ -f "${NETWORK_CONFIG_PATH}"/primary-ip ]]; then
     cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
 fi
 
-# TODO: change after adding ip to manifest.json
-cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
-
 RELOCATION_CONFIG_PATH=/opt/openshift/cluster-configuration
-NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
-NEW_BASE_DOMAIN=$(jq -r '.domain' "${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json)
-NEW_HOST_IP=$(cat /etc/default/node-ip)
+CLUSTER_CONFIG_FILE="${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json
+NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${CLUSTER_CONFIG_FILE}")
+NEW_BASE_DOMAIN=$(jq -r '.domain' "${CLUSTER_CONFIG_FILE}")
+NEW_HOST_IP=$(jq -r '.master_ip' "${CLUSTER_CONFIG_FILE}")
 
 cat << EOF > /etc/default/sno_dnsmasq_configuration_overrides
 SNO_CLUSTER_NAME_OVERRIDE=${NEW_CLUSTER_NAME}

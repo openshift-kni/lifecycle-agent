@@ -2,9 +2,13 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"os"
+	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 	"text/template"
 )
 
@@ -35,4 +39,20 @@ func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, 
 		return fmt.Errorf("error occurred while trying to write rendered data to %s: %w", dest, err)
 	}
 	return nil
+}
+
+func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node, error) {
+	nodesList := &corev1.NodeList{}
+	err := client.List(ctx, nodesList, &runtime.ListOptions{LabelSelector: labels.SelectorFromSet(
+		labels.Set{
+			"node-role.kubernetes.io/master": "",
+		},
+	)})
+	if err != nil {
+		return nil, err
+	}
+	if len(nodesList.Items) != 1 {
+		return nil, fmt.Errorf("we should have one master node in sno cluster, current number is %d", len(nodesList.Items))
+	}
+	return &nodesList.Items[0], nil
 }
