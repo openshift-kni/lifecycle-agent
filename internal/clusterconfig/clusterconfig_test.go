@@ -18,8 +18,9 @@ package clusterconfig
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const numberOfFilesOnSuccess = 5
+const numberOfFilesOnSuccess = 4
 
 var clusterCmData = `
     additionalTrustBundlePolicy: Proxyonly
@@ -80,6 +81,7 @@ var (
 	validMasterNode = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
 		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
 			{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}}
+	seedManifestData = clusterinfo.ClusterInfo{Domain: "seed.com", ClusterName: "seed", MasterIP: "192.168.127.10"}
 )
 
 func init() {
@@ -129,36 +131,22 @@ func TestClusterConfig(t *testing.T) {
 			node:        validMasterNode,
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				filesDir, err := ucc.configDirs(tempDir)
+				clusterConfigPath, err := ucc.configDirs(tempDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				dir, err := os.ReadDir(filesDir)
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				assert.Equal(t, len(dir), numberOfFilesOnSuccess)
+				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
 				// validate cluster version
-				data, err := os.ReadFile(filepath.Join(filesDir, clusterIDFileName))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
 				clusterVersion := &ocpV1.ClusterVersion{}
-				err = json.Unmarshal(data, clusterVersion)
-				if err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, clusterIDFileName), clusterVersion); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, clusterVersion.Spec.ClusterID, ocpV1.ClusterID("1"))
 
 				// validate pull secret
-				data, err = os.ReadFile(filepath.Join(filesDir, pullSecretFileName))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
 				secret := &corev1.Secret{}
-				err = json.Unmarshal(data, secret)
-				if err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, pullSecretFileName), secret); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				testData := map[string][]byte{"aaa": []byte("bbb")}
@@ -167,31 +155,31 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, secret.Namespace, upgradeConfigurationNamespace)
 
 				// validate pull idms
-				data, err = os.ReadFile(filepath.Join(filesDir, idmsFIlePath))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
 				idms := &ocpV1.ImageDigestMirrorSetList{}
-				err = json.Unmarshal(data, idms)
-				if err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFIlePath), idms); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, idms.Items[0].Name, "any")
 				assert.Equal(t, idms.Items[0].Spec.ImageDigestMirrors[0].Source, "data")
 
 				// validate manifest json
-				data, err = os.ReadFile(filepath.Join(filesDir, clusterInfoFileName))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
+
 				clusterInfo := &clusterinfo.ClusterInfo{}
-				err = json.Unmarshal(data, clusterInfo)
-				if err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, clusterInfoFileName), clusterInfo); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, clusterInfo.ClusterName, "test-infra-cluster")
 				assert.Equal(t, clusterInfo.Domain, "redhat.com")
 				assert.Equal(t, clusterInfo.MasterIP, "192.168.121.10")
+
+				rConfig := &recertConfig{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, recertConfigFile), rConfig); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, rConfig.ClusterRename, "test-infra-cluster:redhat.com")
+				assert.Equal(t, len(rConfig.CNSanReplaceRules), 4)
+				assert.Contains(t, rConfig.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedManifestData.MasterIP, clusterInfo.MasterIP))
+
 			},
 		},
 		{
@@ -253,11 +241,11 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				dir, err := os.ReadDir(filesDir)
+				dir, err := os.ReadDir(filepath.Join(filesDir, manifestDir))
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, len(dir), numberOfFilesOnSuccess-1)
+				assert.Equal(t, len(dir), 3)
 			},
 		},
 		{
@@ -306,6 +294,15 @@ func TestClusterConfig(t *testing.T) {
 				Log:    logr.Discard(),
 				Scheme: fakeClient.Scheme(),
 			}
+
+			if err := os.MkdirAll(filepath.Join(tmpDir, filepath.Dir(clusterConfigDir)), 0o700); err != nil {
+				t.Errorf("failed to create opt dir, error: %v", err)
+			}
+			err = utils.WriteToFile(seedManifestData, filepath.Join(tmpDir, filepath.Dir(clusterConfigDir), seedManifest))
+			if err != nil {
+				t.Errorf("failed to create seed manifest, error: %v", err)
+			}
+
 			err = ucc.FetchClusterConfig(context.TODO(), tmpDir)
 			if !tc.expectedErr && err != nil {
 				t.Errorf("unexpected error: %v", err)

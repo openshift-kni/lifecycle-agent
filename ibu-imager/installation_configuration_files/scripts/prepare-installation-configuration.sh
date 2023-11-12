@@ -58,12 +58,8 @@ if [[ -f "${NETWORK_CONFIG_PATH}"/hostname ]]; then
     cp "${NETWORK_CONFIG_PATH}"/hostname /etc/hostname
 fi
 
-if [[ -f "${NETWORK_CONFIG_PATH}"/primary-ip ]]; then
-    cp "${NETWORK_CONFIG_PATH}"/primary-ip /etc/default/node-ip
-fi
-
 RELOCATION_CONFIG_PATH=/opt/openshift/cluster-configuration
-CLUSTER_CONFIG_FILE="${RELOCATION_CONFIG_PATH}"/clusterinfo/manifest.json
+CLUSTER_CONFIG_FILE="${RELOCATION_CONFIG_PATH}"/manifest.json
 NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${CLUSTER_CONFIG_FILE}")
 NEW_BASE_DOMAIN=$(jq -r '.domain' "${CLUSTER_CONFIG_FILE}")
 NEW_HOST_IP=$(jq -r '.master_ip' "${CLUSTER_CONFIG_FILE}")

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"text/template"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"os"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
-	"text/template"
 )
 
 // WriteToFile write interface to file
@@ -41,6 +43,7 @@ func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, 
 	return nil
 }
 
+// GetSNOMasterNode get master node of sno cluster
 func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node, error) {
 	nodesList := &corev1.NodeList{}
 	err := client.List(ctx, nodesList, &runtime.ListOptions{LabelSelector: labels.SelectorFromSet(
@@ -55,4 +58,15 @@ func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node,
 		return nil, fmt.Errorf("we should have one master node in sno cluster, current number is %d", len(nodesList.Items))
 	}
 	return &nodesList.Items[0], nil
+}
+
+// ReadYamlOrJSONFile read json/yaml file into struct
+func ReadYamlOrJSONFile(filePath string, into interface{}) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
+	return decoder.Decode(into)
 }
