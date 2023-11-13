@@ -77,8 +77,8 @@ SNO_DNSMASQ_IP_OVERRIDE=${NEW_HOST_IP}
 EOF
 
 systemctl restart NetworkManager
-
 systemctl disable prepare-installation-configuration.service
+
 if [[ -n "${DEVICE}" ]]; then
     umount_config "${DEVICE}"
 fi

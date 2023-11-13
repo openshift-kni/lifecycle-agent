@@ -105,15 +105,8 @@ function wait_for_api {
         echo "Waiting for api ..."
         sleep 5
     done
-    # Wait until the list of nodes has at least one
-    until oc get nodes -ojsonpath='{.items[0].metadata.name}' &> /dev/null; do
-        echo "Waiting for node ..."
-        sleep 5
-    done
     echo "api is available"
 }
-
-wait_for_api
 
 wait_approve_csr() {
     local name=${1}
@@ -129,14 +122,9 @@ wait_approve_csr() {
     oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | xargs oc adm certificate approve
 }
 
-# if hostname has changed
-if [[ "$(oc get nodes -ojsonpath='{.items[0].metadata.name}')" != "$(hostname)" ]]; then
-    wait_approve_csr "kube-apiserver-client-kubelet"
-    wait_approve_csr "kubelet-serving"
-
-    echo "Deleting previous node..."
-    oc delete node "$(oc get nodes -ojsonpath='{.items[?(@.metadata.name != "'"$(hostname)"'")].metadata.name}')"
-fi
+wait_for_api
+wait_approve_csr "kube-apiserver-client-kubelet"
+wait_approve_csr "kubelet-serving"
 
 verify_csr_subject() {
     local csr=${1}
