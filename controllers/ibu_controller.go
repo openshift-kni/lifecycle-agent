@@ -136,7 +136,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	if shouldTransition(currentInProgressStage, ibu) {
+	if isTransitionRequested(ibu) {
 		if validateStageTransition(ibu) {
 			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
@@ -151,38 +151,12 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func shouldTransition(currentInProgressStage lcav1alpha1.ImageBasedUpgradeStage, ibu *lcav1alpha1.ImageBasedUpgrade) bool {
+func isTransitionRequested(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	desiredStage := ibu.Spec.Stage
-	if desiredStage == currentInProgressStage {
-		return false
+	if desiredStage == lcav1alpha1.Stages.Idle {
+		return !(utils.IsStageCompleted(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
 	}
-	if currentInProgressStage != "" {
-		return true
-	}
-	switch desiredStage {
-	case lcav1alpha1.Stages.Idle:
-		idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
-		if idleCondition != nil && idleCondition.Status == metav1.ConditionTrue {
-			return false
-		}
-	case lcav1alpha1.Stages.Prep:
-		prepCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.PrepCompleted))
-		if prepCompleted != nil {
-			return false
-		}
-	case lcav1alpha1.Stages.Upgrade:
-		upgradeCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
-		if upgradeCompleted != nil {
-			return false
-		}
-	case lcav1alpha1.Stages.Rollback:
-		rollbackCompleted := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackCompleted))
-		if rollbackCompleted != nil {
-			return false
-		}
-	}
-
-	return true
+	return !(utils.IsStageCompletedOrFailed(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
 }
 
 func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
@@ -265,6 +239,20 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 			)
 			return false
 		}
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.ConditionTypes.UpgradeInProgress,
+			utils.ConditionReasons.Failed,
+			metav1.ConditionFalse,
+			"Rollback requested",
+			ibu.Generation,
+		)
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.ConditionTypes.UpgradeCompleted,
+			utils.ConditionReasons.Failed,
+			metav1.ConditionFalse,
+			"Rollback requested",
+			ibu.Generation,
+		)
 
 	case lcav1alpha1.Stages.Idle:
 		if isFinalizeAllowed(ibu) {
@@ -302,13 +290,12 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 			}
 		}
 	default:
-		previousCompletedCondition := utils.GetPreviousCompletedCondition(ibu)
-		if previousCompletedCondition == nil || previousCompletedCondition.Status == metav1.ConditionFalse {
+		if !utils.IsStageCompleted(ibu, utils.GetPreviousStage(ibu.Spec.Stage)) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.GetInProgressConditionType(ibu.Spec.Stage),
 				utils.ConditionReasons.InvalidTransition,
 				metav1.ConditionFalse,
-				"Previous stage not succeeded yet",
+				"Previous stage not succeeded",
 				ibu.Generation,
 			)
 			return false
