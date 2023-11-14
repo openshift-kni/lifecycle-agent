@@ -282,6 +282,7 @@ spec:
                 - containerPort: 8443
                   name: https
                 resources: {}
+              hostPID: true
               serviceAccountName: lifecycle-agent-controller-manager
               terminationGracePeriodSeconds: 10
               volumes:

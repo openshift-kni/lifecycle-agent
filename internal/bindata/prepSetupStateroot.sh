@@ -126,11 +126,8 @@ ostree pull-local "${ostree_repo}" || fatal "Failed: ostree pull-local ${ostree_
 ostree admin os-init "${new_osname}" || fatal "Failed: ostree admin os-init ${new_osname}"
 
 log_it "Creating new deployment ${new_osname}"
-# We should create the new deploy as not-default, and after the whole process is done, be able to switch to it for the next reboot
-# ostree admin deploy --os ${new_osname} $(build_kargs) --not-as-default ${upg_booted_ref}
-# Until I find how to do the switch, I'll deploy as default
 # shellcheck disable=SC2046
-ostree admin deploy --os "${new_osname}" $(build_kargs) "${upg_booted_ref}" || fatal "Failed ostree admin deploy"
+ostree admin deploy --not-as-default --os "${new_osname}" $(build_kargs) "${upg_booted_ref}" || fatal "Failed ostree admin deploy"
 ostree_deploy=$(ostree admin status | awk /"${new_osname}"/'{print $2}')
 if [ -z "${ostree_deploy}" ]; then
     fatal "Unable to determine deployment"

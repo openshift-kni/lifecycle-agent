@@ -19,8 +19,11 @@ limitations under the License.
 package rpmostreeclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 
@@ -111,4 +114,77 @@ func (c *Client) QueryStatus() (*Status, error) {
 	}
 
 	return &q, nil
+}
+
+// TODO: replace with https://github.com/coreos/rpmostree-client-go
+//       when https://github.com/coreos/rpmostree-client-go/issues/23 resolves
+
+// QueryStatusChroot uses chroot to loads the current system state
+func QueryStatusChroot(rootPath string) (*Status, error) {
+	cmd := exec.Command("/usr/bin/env", "--", "bash", "-c", "rpm-ostree status --json")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: rootPath}
+	var stdoutBytes, stderrBytes bytes.Buffer
+	cmd.Stdout = &stdoutBytes
+	cmd.Stderr = &stderrBytes
+	cmd.Dir = "/"
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", stderrBytes.String(), err)
+	}
+	var q Status
+	if err := json.Unmarshal(stdoutBytes.Bytes(), &q); err != nil {
+		return nil, fmt.Errorf("failed to parse `rpm-ostree status --json` output: %w", err)
+	}
+	return &q, nil
+}
+
+// SetDefaultChroot uses chroot to run the set-default command.
+func SetDefaultChroot(rootPath string, deploymentID int) error {
+	// TEMPORARY: Until the set-default feature is available in the platform, access a newer ostree cli from a container image:
+	// This test-ostree-cli image is the rhel-coreos image with the ostree rpms updated to a newer version with the "admin set-default" feature.
+	// Once the new feature is available, this function can be updated/replaced
+	remountCmd := "mount -o remount,rw /sysroot && mount /boot -o remount,rw"
+	ostreeCliContainerCmd := "podman run --rm --privileged -v /sysroot:/sysroot -v /boot:/boot -v /ostree:/ostree quay.io/openshift-kni/telco-ran-tools:test-ostree-cli"
+	setDefaultCmd := fmt.Sprintf("%s && %s ostree admin set-default %d", remountCmd, ostreeCliContainerCmd, deploymentID)
+
+	cmd := exec.Command("/usr/bin/env", "--", "bash", "-c", setDefaultCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: rootPath}
+	var stdoutBytes, stderrBytes bytes.Buffer
+	cmd.Stdout = &stdoutBytes
+	cmd.Stderr = &stderrBytes
+	cmd.Dir = "/"
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("%s: %w", stderrBytes.String(), err)
+	}
+	return nil
+}
+
+// GetDeploymentIDForStaterootChroot uses chroot to run the ostree status check and find the deployment id for the given stateroot.
+func GetDeploymentIDForStaterootChroot(rootPath, stateroot string) (deploymentID int, err error) {
+	status, err := QueryStatusChroot(rootPath)
+	if err != nil {
+		return
+	}
+
+	for index, deployment := range status.Deployments {
+		if deployment.OSName == stateroot {
+			deploymentID = index
+			return
+		}
+	}
+
+	err = fmt.Errorf("Unable to find deployment for stateroot: %s", stateroot)
+	return
+}
+
+// PivotToStaterootChroot uses chroot to set a new default ostree deployment.
+func PivotToStaterootChroot(rootPath, stateroot string) (err error) {
+	deploymentID, err := GetDeploymentIDForStaterootChroot(rootPath, stateroot)
+	if err != nil {
+		return
+	}
+
+	err = SetDefaultChroot(rootPath, deploymentID)
+	return
 }

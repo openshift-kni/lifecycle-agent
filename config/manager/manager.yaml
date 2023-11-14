@@ -66,6 +66,7 @@ spec:
             cpu: 100m
             memory: 20Mi
       serviceAccountName: controller-manager
+      hostPID: true
       terminationGracePeriodSeconds: 10
       volumes:
       - hostPath:
