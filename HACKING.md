@@ -121,8 +121,8 @@ LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-contr
 AUTHFILE=/tmp/backup-secret.json
 podman login --authfile ${AUTHFILE} -u ${MY_ID} quay.io/${MY_REPO_ID}
 
-IMG_REFSPEC=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
-IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:latest
+export IMG_REFSPEC=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
+export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:latest
 
 podman run --privileged --pid=host --rm --net=host \
     -v /etc:/etc \
@@ -131,7 +131,7 @@ podman run --privileged --pid=host --rm --net=host \
     -v /run/systemd/journal/socket:/run/systemd/journal/socket \
     -v ${AUTHFILE}:${AUTHFILE} \
     --entrypoint ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
-                                                 --image ${IMG_REPO} \
+                                                 --image ${IMG_REFSPEC} \
                                                  --recert-image ${IMG_RECERT_TOOL}
 ```
 
