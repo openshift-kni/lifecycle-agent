@@ -53,6 +53,7 @@ IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
+GOTESTSUM = $(shell pwd)/bin/gotestsum
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
@@ -273,12 +274,12 @@ GOTEST_FLAGS = --format=$(TEST_FORMAT)
 GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 
 imager_test: $(REPORTS)
-	gotestsum $(GOTEST_FLAGS) $(TEST) $(GINKGO_FLAGS) -timeout $(TIMEOUT)
+	$(GOTESTSUM) $(GOTEST_FLAGS) $(TEST) $(GINKGO_FLAGS) -timeout $(TIMEOUT)
 
 .PHONY: imager-unittest
 imager-unittest: ## Run unittests for imager.
 	@echo "Running unittests"
-	$(call go-get-tool,$(GOPATH),gotest.tools/gotestsum@latest)
+	$(call go-get-tool,$(GOTESTSUM),gotest.tools/gotestsum@latest)
 	$(MAKE) imager_test TEST_SCENARIO=unit TIMEOUT=30m TEST="$(or $(TEST),$(shell go list ./ibu-imager/...))"
 
 help:   ## Shows this message.
