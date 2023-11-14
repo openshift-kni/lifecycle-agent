@@ -41,7 +41,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 	}
 
 	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepGetSeedImage)
+	scriptname := filepath.Join(utils.Path, utils.PrepGetSeedImage)
 	scriptcontent, _ := generated.Asset(utils.PrepGetSeedImage)
 	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
@@ -65,7 +65,7 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 	}
 
 	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepPullImages)
+	scriptname := filepath.Join(utils.Path, utils.PrepPullImages)
 	scriptcontent, _ := generated.Asset(utils.PrepPullImages)
 	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
@@ -89,7 +89,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	}
 
 	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepSetupStateroot)
+	scriptname := filepath.Join(utils.Path, utils.PrepSetupStateroot)
 	scriptcontent, _ := generated.Asset(utils.PrepSetupStateroot)
 	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
@@ -101,7 +101,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 
 	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s --os-version %s --os-name %s",
 		scriptname, ibu.Spec.SeedImageRef.Image, progressfile,
-		ibu.Spec.SeedImageRef.Version, getStaterootName(ibu.Spec.SeedImageRef.Version))
+		ibu.Spec.SeedImageRef.Version, getOSName(ibu.Spec.SeedImageRef.Version))
 	go utils.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
 
@@ -115,7 +115,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	}
 
 	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepCleanup)
+	scriptname := filepath.Join(utils.Path, utils.PrepCleanup)
 	scriptcontent, _ := generated.Asset(utils.PrepCleanup)
 	err := os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
@@ -142,15 +142,15 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 		return
 	}
 
-	if _, err = os.Stat(pathOutsideChroot(utils.IBUWorkspacePath)); os.IsNotExist(err) {
-		err = os.Mkdir(pathOutsideChroot(utils.IBUWorkspacePath), 0o700)
+	if _, err = os.Stat(pathOutsideChroot(utils.Path)); os.IsNotExist(err) {
+		err = os.Mkdir(pathOutsideChroot(utils.Path), 0o700)
 	}
 
 	if err != nil {
 		return
 	}
 
-	progressfile := filepath.Join(utils.IBUWorkspacePath, "prep-progress")
+	progressfile := filepath.Join(utils.Path, "prep-progress")
 
 	_, err = os.Stat(pathOutsideChroot(progressfile))
 

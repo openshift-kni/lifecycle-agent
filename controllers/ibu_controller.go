@@ -371,6 +371,6 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func getStaterootName(seedImageVersion string) string {
+func getOSName(seedImageVersion string) string {
 	return fmt.Sprintf("rhcos_%s", seedImageVersion)
 }
