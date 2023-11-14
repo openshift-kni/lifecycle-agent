@@ -103,37 +103,73 @@ func ResetStatusConditions(existingConditions *[]metav1.Condition, generation in
 	)
 }
 
+// IsStageCompleted checks if the completed condition status for the stage is true
+func IsStageCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+	condition := GetCompletedCondition(ibu, stage)
+	if condition != nil && condition.Status == metav1.ConditionTrue {
+		return true
+	}
+	return false
+}
+
+// IsStageCompletedOrFailed checks if the completed condition for the stage is present
+func IsStageCompletedOrFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+	condition := GetCompletedCondition(ibu, stage)
+	if condition != nil {
+		return true
+	}
+	return false
+}
+
+// IsStageInProgress checks if ibu is working on the stage
+func IsStageInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+	if stage == lcav1alpha1.Stages.Idle {
+		idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(ConditionTypes.Idle))
+		if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {
+			return false
+		}
+
+		switch idleCondition.Reason {
+		case string(ConditionReasons.Aborting), string(ConditionReasons.AbortFailed), string(ConditionReasons.Finalizing), string(ConditionReasons.FinalizeFailed):
+			return true
+		}
+		return false
+	}
+
+	condition := GetInProgressCondition(ibu, stage)
+	if condition != nil && condition.Status == metav1.ConditionTrue {
+		return true
+	}
+	return false
+}
+
 // GetCurrentInProgressStage returns the stage that is currently in progress
 func GetCurrentInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBasedUpgradeStage {
-	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(ConditionTypes.Idle))
-	if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {
-		return ""
+	stages := []lcav1alpha1.ImageBasedUpgradeStage{
+		lcav1alpha1.Stages.Idle,
+		lcav1alpha1.Stages.Prep,
+		lcav1alpha1.Stages.Upgrade,
+		lcav1alpha1.Stages.Rollback,
 	}
 
-	switch idleCondition.Reason {
-	case string(ConditionReasons.Aborting):
-	case string(ConditionReasons.AbortFailed):
-	case string(ConditionReasons.Finalizing):
-	case string(ConditionReasons.FinalizeFailed):
-		return lcav1alpha1.Stages.Idle
-	}
-
-	conditionToStageMap := map[ConditionType]lcav1alpha1.ImageBasedUpgradeStage{
-		ConditionTypes.PrepInProgress:     lcav1alpha1.Stages.Prep,
-		ConditionTypes.UpgradeInProgress:  lcav1alpha1.Stages.Upgrade,
-		ConditionTypes.RollbackInProgress: lcav1alpha1.Stages.Rollback,
-	}
-
-	for conditionType, stage := range conditionToStageMap {
-		condition := meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
-		if condition != nil && condition.Status == metav1.ConditionTrue {
+	for _, stage := range stages {
+		if IsStageInProgress(ibu, stage) {
 			return stage
 		}
 	}
 	return ""
 }
 
-// GetInProgressConditionType returns the pending condition type based on the current stage
+// GetInProgressCondition returns the in progress condition based on the stage
+func GetInProgressCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) *metav1.Condition {
+	conditionType := GetInProgressConditionType(stage)
+	if conditionType != "" {
+		return meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
+	}
+	return nil
+}
+
+// GetInProgressConditionType returns the in progress condition type based on the stage
 func GetInProgressConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
 	case lcav1alpha1.Stages.Prep:
@@ -146,7 +182,16 @@ func GetInProgressConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (condi
 	return
 }
 
-// GetCompletedConditionType returns the succeeded condition type based on the current stage
+// GetCompletedCondition returns the completed condition based on the stage
+func GetCompletedCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) *metav1.Condition {
+	conditionType := GetCompletedConditionType(stage)
+	if conditionType != "" {
+		return meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
+	}
+	return nil
+}
+
+// GetCompletedConditionType returns the completed condition type based on the stage
 func GetCompletedConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
 	case lcav1alpha1.Stages.Idle:
@@ -161,19 +206,15 @@ func GetCompletedConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (condit
 	return
 }
 
-// GetPreviousCompletedCondition returns the succeeded condition for the previous stage
-func GetPreviousCompletedCondition(ibu *lcav1alpha1.ImageBasedUpgrade) *metav1.Condition {
-	var conditionType ConditionType
-	switch ibu.Spec.Stage {
+// GetPreviousStage returns the previous stage for the one passed in
+func GetPreviousStage(stage lcav1alpha1.ImageBasedUpgradeStage) lcav1alpha1.ImageBasedUpgradeStage {
+	switch stage {
 	case lcav1alpha1.Stages.Prep:
-		conditionType = ConditionTypes.Idle
+		return lcav1alpha1.Stages.Idle
 	case lcav1alpha1.Stages.Upgrade:
-		conditionType = ConditionTypes.PrepCompleted
+		return lcav1alpha1.Stages.Prep
 	case lcav1alpha1.Stages.Rollback:
-		conditionType = ConditionTypes.UpgradeCompleted
+		return lcav1alpha1.Stages.Upgrade
 	}
-	if conditionType != "" {
-		return meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
-	}
-	return nil
+	return ""
 }

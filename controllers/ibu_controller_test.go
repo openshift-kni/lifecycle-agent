@@ -51,64 +51,253 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 	return c, nil
 }
 
-type ConditionTypeAndStatus struct {
-	ConditionType   utils.ConditionType
-	ConditionStatus v1.ConditionStatus
+type Condition struct {
+	Type   utils.ConditionType
+	Status v1.ConditionStatus
+	Reason utils.ConditionReason
 }
 
-func TestShouldTransition(t *testing.T) {
+func TestIsTransitionRequested(t *testing.T) {
 	testcases := []struct {
-		name                   string
-		desiredStage           lcav1alpha1.ImageBasedUpgradeStage
-		currentInProgressStage lcav1alpha1.ImageBasedUpgradeStage
-		expected               bool
-		conditions             []ConditionTypeAndStatus
+		name         string
+		desiredStage lcav1alpha1.ImageBasedUpgradeStage
+		expected     bool
+		conditions   []Condition
 	}{
 		{
-			name:                   "prep when PrepCompleted is present",
-			desiredStage:           lcav1alpha1.Stages.Prep,
-			currentInProgressStage: "",
-			expected:               false,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse},
-				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse},
+			name:         "idle while idle is true",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""},
 			},
 		},
 		{
-			name:                   "upgrade when UpgradeCompleted is present ",
-			desiredStage:           lcav1alpha1.Stages.Upgrade,
-			currentInProgressStage: "",
-			expected:               false,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse},
-				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse},
+			name:         "idle while aborting",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Aborting},
 			},
 		},
 		{
-			name:                   "rollback when RollbackCompleted is present",
-			desiredStage:           lcav1alpha1.Stages.Rollback,
-			currentInProgressStage: "",
-			expected:               false,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse},
-				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse},
+			name:         "idle while finalizing",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Finalizing},
 			},
 		},
 		{
-			name:                   "Idle while Idle true",
-			desiredStage:           lcav1alpha1.Stages.Idle,
-			currentInProgressStage: "",
-			expected:               false,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.Idle, metav1.ConditionTrue},
+			name:         "idle while abort failed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.AbortFailed},
 			},
 		},
 		{
-			name:                   "different stage",
-			desiredStage:           lcav1alpha1.Stages.Idle,
-			currentInProgressStage: lcav1alpha1.Stages.Prep,
-			expected:               true,
-			conditions:             []ConditionTypeAndStatus{},
+			name:         "idle while finalize failed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.FinalizeFailed},
+			},
+		},
+		{
+			name:         "idle when prep in progress",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when prep completed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when prep failed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when upgrade completed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when rollback completed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when upgrade faild",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "idle when rollback failed",
+			desiredStage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "prep when prep completed",
+			desiredStage: lcav1alpha1.Stages.Prep,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "prep with idle true",
+			desiredStage: lcav1alpha1.Stages.Prep,
+			conditions:   []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
+			expected:     true,
+		},
+		{
+			name:         "prep when prep failed",
+			desiredStage: lcav1alpha1.Stages.Prep,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "prep when prep in progress",
+			desiredStage: lcav1alpha1.Stages.Prep,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "upgrade with prep completed",
+			desiredStage: lcav1alpha1.Stages.Upgrade,
+			conditions: []Condition{
+				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "upgrade when upgrade completed",
+			desiredStage: lcav1alpha1.Stages.Upgrade,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "upgrade when upgrade failed",
+			desiredStage: lcav1alpha1.Stages.Upgrade,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "upgrade when upgrade in progress",
+			desiredStage: lcav1alpha1.Stages.Upgrade,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "rollback when rollback completed",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "rollback when rollback failed",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "rollback when rollback in progress",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			expected:     false,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+		},
+		{
+			name:         "rollback when upgrade failed",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "rollback when upgrade completed",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
+		},
+		{
+			name:         "rollback when upgrade in progress",
+			desiredStage: lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expected: true,
 		},
 	}
 	for _, tc := range testcases {
@@ -122,9 +311,9 @@ func TestShouldTransition(t *testing.T) {
 			ibu.Spec.Stage = tc.desiredStage
 			for _, c := range tc.conditions {
 				utils.SetStatusCondition(&ibu.Status.Conditions,
-					c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
+					c.Type, c.Reason, c.Status, "message", ibu.Generation)
 			}
-			value := shouldTransition(tc.currentInProgressStage, ibu)
+			value := isTransitionRequested(ibu)
 			assert.Equal(t, tc.expected, value)
 		})
 	}
@@ -140,91 +329,61 @@ func TestValidateStageTransisions(t *testing.T) {
 	testcases := []struct {
 		name               string
 		stage              lcav1alpha1.ImageBasedUpgradeStage
-		conditions         []ConditionTypeAndStatus
+		conditions         []Condition
 		expectedConditions []ExpectedCondition
 		expected           bool
 	}{
 		{
 			name:       "idle when prep in progress",
 			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue}},
+			conditions: []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
 			expected:   true,
 		},
 		{
 			name:       "idle when prep completed",
 			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue}},
+			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
 			expected:   true,
 		},
 		{
 			name:  "idle when prep failed",
 			stage: lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse},
-				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse}},
+			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""}},
 			expected: true,
 		},
 		{
-			name:  "rollback when upgrade failed",
-			stage: lcav1alpha1.Stages.Rollback,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse},
-				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse},
-			},
-			expected: true,
-		},
-		{
-			name:  "rollback when upgrade completed",
-			stage: lcav1alpha1.Stages.Rollback,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue},
-				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue},
-			},
-			expected: true,
-		},
-		{
-			name:       "rollback when upgrade in progress",
-			stage:      lcav1alpha1.Stages.Rollback,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue}},
-			expected:   true,
-		},
-		{
-			name:       "rollback without upgrade in progress",
-			stage:      lcav1alpha1.Stages.Rollback,
-			conditions: []ConditionTypeAndStatus{},
+			name:       "idle when upgrade completed",
+			stage:      lcav1alpha1.Stages.Idle,
+			conditions: []Condition{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""}},
 			expectedConditions: []ExpectedCondition{{
-				utils.ConditionTypes.RollbackInProgress,
-				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
-				"Upgrade not started or already finalized",
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
+				"Finalizing",
+			}},
+			expected: true,
+		},
+		{
+			name:  "idle when upgrade failed",
+			stage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Upgrade or rollback still in progress",
 			}},
 			expected: false,
 		},
 		{
-			name:       "idle when upgrade completed is true",
-			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue}},
-			expectedConditions: []ExpectedCondition{{
-				utils.ConditionTypes.Idle,
-				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
-				"Finalizing",
-			}},
-			expected: true,
-		},
-		{
-			name:       "idle when rollback completed is true",
-			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue}},
-			expectedConditions: []ExpectedCondition{{
-				utils.ConditionTypes.Idle,
-				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
-				"Finalizing",
-			}},
-			expected: true,
-		},
-		{
-			name:  "idle when upgrade not completed",
+			name:  "idle when upgrade in progress before pivot",
 			stage: lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{
-				{utils.ConditionTypes.Idle, metav1.ConditionFalse},
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 			},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -233,10 +392,27 @@ func TestValidateStageTransisions(t *testing.T) {
 			}},
 			expected: true,
 		},
+		// TODO "idle when upgrade in progress after pivot"
 		{
-			name:       "idle when rollback completed is false and no idle condition",
+			name:  "idle when rollback in progress",
+			stage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+			},
+			expected: false,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Upgrade or rollback still in progress",
+			}},
+		},
+		{
+			name:       "idle when rollback failed",
 			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse}},
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""}},
 			expected:   true,
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -245,44 +421,32 @@ func TestValidateStageTransisions(t *testing.T) {
 			}},
 		},
 		{
-			name:       "idle without rollback or upgrade completed",
+			name:       "idle when rollback completed",
 			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []ConditionTypeAndStatus{},
-			expected:   true,
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""}},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
-				utils.ConditionReasons.Idle, metav1.ConditionTrue,
-				"Idle",
+				utils.ConditionReasons.Finalizing, metav1.ConditionFalse,
+				"Finalizing",
 			}},
-		},
-		{
-			name:       "upgrade without prep completed",
-			stage:      lcav1alpha1.Stages.Upgrade,
-			conditions: []ConditionTypeAndStatus{},
-			expected:   false,
-		},
-		{
-			name:       "upgrade with prep completed",
-			stage:      lcav1alpha1.Stages.Upgrade,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue}},
-			expected:   true,
-			expectedConditions: []ExpectedCondition{{
-				utils.ConditionTypes.UpgradeInProgress,
-				utils.ConditionReasons.InProgress,
-				metav1.ConditionTrue,
-				"In progress",
-			}},
+			expected: true,
 		},
 		{
 			name:       "prep without idle completed",
 			stage:      lcav1alpha1.Stages.Prep,
-			conditions: []ConditionTypeAndStatus{},
+			conditions: []Condition{},
 			expected:   false,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.PrepInProgress,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Previous stage not succeeded",
+			}},
 		},
 		{
 			name:       "prep with idle completed",
 			stage:      lcav1alpha1.Stages.Prep,
-			conditions: []ConditionTypeAndStatus{{utils.ConditionTypes.Idle, metav1.ConditionTrue}},
+			conditions: []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
 			expected:   true,
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -295,6 +459,125 @@ func TestValidateStageTransisions(t *testing.T) {
 				metav1.ConditionTrue,
 				"In progress",
 			}},
+		},
+		{
+			name:       "upgrade without prep completed",
+			stage:      lcav1alpha1.Stages.Upgrade,
+			conditions: []Condition{},
+			expected:   false,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.UpgradeInProgress,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Previous stage not succeeded",
+			}},
+		},
+		{
+			name:       "upgrade with prep completed",
+			stage:      lcav1alpha1.Stages.Upgrade,
+			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.UpgradeInProgress,
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionTrue,
+				"In progress",
+			}},
+		},
+		{
+			name:  "rollback when upgrade failed",
+			stage: lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
+			},
+			expected: true,
+			expectedConditions: []ExpectedCondition{
+				{
+					utils.ConditionTypes.UpgradeInProgress,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.UpgradeCompleted,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.RollbackInProgress,
+					utils.ConditionReasons.InProgress,
+					metav1.ConditionTrue,
+					"In progress",
+				},
+			},
+		},
+		{
+			name:  "rollback when upgrade completed",
+			stage: lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
+			},
+			expected: true,
+			expectedConditions: []ExpectedCondition{
+				{
+					utils.ConditionTypes.UpgradeInProgress,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.UpgradeCompleted,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.RollbackInProgress,
+					utils.ConditionReasons.InProgress,
+					metav1.ConditionTrue,
+					"In progress",
+				},
+			},
+		},
+		{
+			name:       "rollback when upgrade in progress",
+			stage:      lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""}},
+			expected:   true,
+			expectedConditions: []ExpectedCondition{
+				{
+					utils.ConditionTypes.UpgradeInProgress,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.UpgradeCompleted,
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Rollback requested",
+				},
+				{
+					utils.ConditionTypes.RollbackInProgress,
+					utils.ConditionReasons.InProgress,
+					metav1.ConditionTrue,
+					"In progress",
+				},
+			},
+		},
+		{
+			name:       "rollback without upgrade in progress",
+			stage:      lcav1alpha1.Stages.Rollback,
+			conditions: []Condition{},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.RollbackInProgress,
+				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
+				"Upgrade not started or already finalized",
+			}},
+			expected: false,
 		},
 	}
 	for _, tc := range testcases {
@@ -310,7 +593,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		}
 		for _, c := range tc.conditions {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
-				c.ConditionType, "reason", c.ConditionStatus, "message", ibu.Generation)
+				c.Type, c.Reason, c.Status, "message", ibu.Generation)
 		}
 
 		t.TempDir()
