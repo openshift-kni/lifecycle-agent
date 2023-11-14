@@ -56,6 +56,14 @@ type Deployment struct {
 	Unlocked                *string  `json:"unlocked"`
 }
 
+//go:generate mockgen -source=rpmostreeclient.go -package=rpmostreeclient -destination=mock_rpmostreeclient.go
+type IClient interface {
+	newCmd(args ...string) []byte
+	RpmOstreeVersion() (*VersionData, error)
+	QueryStatus() (*Status, error)
+	IsStaterootBooted(stateroot string) (bool, error)
+}
+
 // Client is a handle for interacting with a rpm-ostree based system.
 type Client struct {
 	clientid string
@@ -111,4 +119,19 @@ func (c *Client) QueryStatus() (*Status, error) {
 	}
 
 	return &q, nil
+}
+
+// IsStaterootBooted returns whether the specified stateroot is booted
+func (c *Client) IsStaterootBooted(stateroot string) (bool, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return false, err
+	}
+
+	for _, deployment := range status.Deployments {
+		if deployment.Booted && deployment.OSName == stateroot {
+			return true, nil
+		}
+	}
+	return false, nil
 }
