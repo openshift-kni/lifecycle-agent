@@ -25,7 +25,7 @@ import (
 
 // Constants for file and directory names
 const (
-	IBUWorkspacePath   string = "/var/ibu"
+	Path               string = "/var/ibu"
 	Host               string = "/host"
 	PrepGetSeedImage   string = "prepGetSeedImage.sh"
 	PrepPullImages     string = "prepPullImages.sh"
@@ -34,7 +34,7 @@ const (
 )
 
 // ExecuteCmd execute shell commands
-func ExecuteCmd(cmd string) error {
+func ExecuteCmd(cmd string) {
 
 	logger := log.StandardLogger()
 	lw := logger.Writer()
@@ -48,11 +48,14 @@ func ExecuteCmd(cmd string) error {
 	err := execCmd.Run()
 
 	lw.Close()
-	return err
+
+	if err != nil {
+		log.Error(err)
+	}
 }
 
 // ExecuteChrootCmd execute shell commands in a chroot environment
-func ExecuteChrootCmd(root, cmd string) error {
+func ExecuteChrootCmd(root, cmd string) {
 
 	logger := log.StandardLogger()
 	lw := logger.Writer()
@@ -68,5 +71,8 @@ func ExecuteChrootCmd(root, cmd string) error {
 	err := execCmd.Run()
 
 	lw.Close()
-	return err
+
+	if err != nil {
+		log.Error(err)
+	}
 }

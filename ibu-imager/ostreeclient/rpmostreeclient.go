@@ -19,11 +19,8 @@ limitations under the License.
 package rpmostreeclient
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"syscall"
 
 	"gopkg.in/yaml.v3"
 
@@ -113,27 +110,5 @@ func (c *Client) QueryStatus() (*Status, error) {
 		return nil, fmt.Errorf("failed to parse `rpm-ostree status --json` output: %w", err)
 	}
 
-	return &q, nil
-}
-
-// TODO: replace with https://github.com/coreos/rpmostree-client-go
-//       when https://github.com/coreos/rpmostree-client-go/issues/23 resolves
-
-// QueryStatusChroot uses chroot to loads the current system state
-func QueryStatusChroot(rootPath string) (*Status, error) {
-	cmd := exec.Command("/usr/bin/env", "--", "bash", "-c", "rpm-ostree status --json")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: rootPath}
-	var stdoutBytes, stderrBytes bytes.Buffer
-	cmd.Stdout = &stdoutBytes
-	cmd.Stderr = &stderrBytes
-	cmd.Dir = "/"
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", stderrBytes.String(), err)
-	}
-	var q Status
-	if err := json.Unmarshal(stdoutBytes.Bytes(), &q); err != nil {
-		return nil, fmt.Errorf("failed to parse `rpm-ostree status --json` output: %w", err)
-	}
 	return &q, nil
 }
