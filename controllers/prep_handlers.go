@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,9 +49,8 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 		return
 	}
 	r.Log.Info("Handler script written")
+	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile)
 
-	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s", scriptname, ibu.Spec.SeedImageRef.Image, progressfile)
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
 
 	return
@@ -74,11 +72,9 @@ func (r *ImageBasedUpgradeReconciler) launchPullImages(
 		return
 	}
 	r.Log.Info("Handler script written")
+	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile)
 
-	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s", scriptname, ibu.Spec.SeedImageRef.Image, progressfile)
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
 	result = requeueWithShortInterval()
-
 	return
 }
 
@@ -97,12 +93,10 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
 		return
 	}
-	r.Log.Info("Handler script written")
 
-	cmd := fmt.Sprintf("%s --seed-image %s --progress-file %s --os-version %s --os-name %s",
-		scriptname, ibu.Spec.SeedImageRef.Image, progressfile,
-		ibu.Spec.SeedImageRef.Version, getStaterootName(ibu.Spec.SeedImageRef.Version))
-	go utils.ExecuteChrootCmd(utils.Host, cmd)
+	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile,
+		"--os-version", ibu.Spec.SeedImageRef.Version, "--os-name", getStaterootName(ibu.Spec.SeedImageRef.Version))
+
 	result = requeueWithShortInterval()
 
 	return
@@ -124,10 +118,8 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 		return
 	}
 	r.Log.Info("Handler script written")
-
-	cmd := fmt.Sprintf("%s --seed-image %s", scriptname, ibu.Spec.SeedImageRef.Image)
 	// This should be a quick operation, so we can run it within the handler thread
-	utils.ExecuteChrootCmd(utils.Host, cmd)
+	r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image)
 
 	return
 }

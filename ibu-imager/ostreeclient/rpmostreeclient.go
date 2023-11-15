@@ -59,21 +59,21 @@ type Deployment struct {
 // Client is a handle for interacting with a rpm-ostree based system.
 type Client struct {
 	clientid string
-	ops      ops.Ops
+	executor ops.Execute
 }
 
 // NewClient creates a new rpm-ostree client.  The client identifier should be a short, unique and ideally machine-readable string.
 // This could be as simple as `examplecorp-management-agent`.
 // If you want to be more verbose, you could use a URL, e.g. `https://gitlab.com/examplecorp/management-agent`.
-func NewClient(id string, ops ops.Ops) *Client {
+func NewClient(id string, executor ops.Execute) *Client {
 	return &Client{
 		clientid: id,
-		ops:      ops,
+		executor: executor,
 	}
 }
 
 func (c *Client) newCmd(args ...string) []byte {
-	rawOutput, _ := c.ops.RunInHostNamespace("rpm-ostree", args...)
+	rawOutput, _ := c.executor.Execute("rpm-ostree", args...)
 	return []byte(rawOutput)
 }
 

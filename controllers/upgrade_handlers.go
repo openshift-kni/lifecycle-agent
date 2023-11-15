@@ -28,7 +28,7 @@ import (
 
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
-	utils.ExecuteChrootCmd(utils.Host, "mount /sysroot -o remount,rw")
+	r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw")
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 
 	// TODO: Pre-pivot steps

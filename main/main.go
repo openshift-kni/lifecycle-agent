@@ -20,33 +20,34 @@ import (
 	"flag"
 	"os"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
-	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
-	"github.com/sirupsen/logrus"
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	configv1 "github.com/openshift/api/config/v1"
 	ocpV1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/config/leaderelection"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/sirupsen/logrus"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
-	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/library-go/pkg/config/leaderelection"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -110,15 +111,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// We want to remove logr.Logger first step to move to logrus
+	// in the future we will have only one of them
+	newLogger := logrus.New()
 	logr.SetFormatter(&logrus.TextFormatter{
 		DisableColors:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 		FullTimestamp:   true,
 	})
-	op := ops.NewOps(logr, ops.NewExecutor(logr, true))
-	rpmOstreeClient := rpmostreeclient.NewClient("ibu-imager", op)
-
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
+
+	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
+	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
+
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),
 		Log:             log,
@@ -128,6 +133,7 @@ func main() {
 		BackupRestore:   &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,
+		Executor:        executor,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
