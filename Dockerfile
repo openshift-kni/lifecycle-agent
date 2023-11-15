@@ -40,6 +40,7 @@ COPY utils utils
 COPY ibu-imager/clusterinfo ibu-imager/clusterinfo
 COPY ibu-imager/cmd ibu-imager/cmd
 COPY ibu-imager/ops ibu-imager/ops
+COPY ibu-imager/common ibu-imager/common
 COPY ibu-imager/seedcreator ibu-imager/seedcreator
 COPY ibu-imager/ostreeclient ibu-imager/ostreeclient
 

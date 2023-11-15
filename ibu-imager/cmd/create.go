@@ -29,13 +29,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
-)
-
-const (
-	installationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 )
 
 var (
@@ -73,9 +70,9 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 
 	// Add flags to imager command
-	createCmd.Flags().StringVarP(&authFile, "authfile", "a", imageRegistryAuthFile, "The path to the authentication file of the container registry.")
+	createCmd.Flags().StringVarP(&authFile, "authfile", "a", common.ImageRegistryAuthFile, "The path to the authentication file of the container registry.")
 	createCmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
-	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", defaultRecertImage, "The full image name for the recert container tool.")
+	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", common.DefaultRecertImage, "The full image name for the recert container tool.")
 	createCmd.Flags().BoolVarP(&recertSkipValidation, "skip-recert-validation", "", false, "Skips the validations performed by the recert tool.")
 
 	// Mark flags as required
@@ -95,7 +92,7 @@ func create() {
 		log.Fatal("Failed to add configuration files", err)
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigFile)
+	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {
 		log.Fatal("Failed to create k8s config", err)
 	}
@@ -105,7 +102,7 @@ func create() {
 		log.Fatal("Failed to create runtime client", err)
 	}
 
-	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, backupDir, kubeconfigFile,
+	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
 	err = seedCreator.CreateSeedImage()
 	if err != nil {
@@ -128,11 +125,11 @@ func copyConfigurationFiles(ops ops.Ops) error {
 
 func copyConfigurationScripts() error {
 	log.Infof("Copying installation_configuration_files/scripts to local/bin")
-	return cp.Copy(filepath.Join(installationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
+	return cp.Copy(filepath.Join(common.InstallationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
 }
 
 func handleServices(ops ops.Ops) error {
-	dir := filepath.Join(installationConfigurationFilesDir, "services")
+	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
 			return nil

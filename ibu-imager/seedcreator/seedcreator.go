@@ -19,17 +19,10 @@ import (
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-)
-
-const (
-	varFolder = "/var"
-	// Default location for etcdStaticPodFile
-	etcdStaticPodFile                 = "/etc/kubernetes/manifests/etcd-pod.yaml"
-	etcdStaticPodContainer            = "etcd"
-	installationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 )
 
 // containerFileContent is the Dockerfile content for the IBU seed image
@@ -253,7 +246,7 @@ func (s *SeedCreator) runRecertValidation() error {
 
 	// Get etcdImage available for the current release, this is needed by recert to
 	// run an unauthenticated etcd server for running successfully.
-	etcdImage, err := s.ops.GetImageFromPodDefinition(etcdStaticPodFile, etcdStaticPodContainer)
+	etcdImage, err := s.ops.GetImageFromPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
 	if err != nil {
 		return err
 	}
@@ -340,7 +333,7 @@ func (s *SeedCreator) backupVar() error {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
 	}
-	tarArgs = append(tarArgs, "--selinux", varFolder)
+	tarArgs = append(tarArgs, "--selinux", common.VarFolder)
 
 	// Run the tar command
 	_, err = s.ops.RunBashInHostNamespace("tar", tarArgs...)
@@ -348,7 +341,7 @@ func (s *SeedCreator) backupVar() error {
 		return err
 	}
 
-	s.log.Infof("Backup of %s created successfully.", varFolder)
+	s.log.Infof("Backup of %s created successfully.", common.VarFolder)
 	return nil
 }
 
@@ -501,7 +494,7 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 
 func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDomain string) error {
 	// Define source and destination file paths
-	srcFile := filepath.Join(installationConfigurationFilesDir, "conf/installation-configuration.env")
+	srcFile := filepath.Join(common.InstallationConfigurationFilesDir, "conf/installation-configuration.env")
 	destFile := "/etc/systemd/system/installation-configuration.env"
 	// Prepare variable substitutions for template files
 	substitutions := map[string]any{
