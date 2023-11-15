@@ -58,27 +58,31 @@ func CreateRecertConfigFile(clusterData *clusterinfo.ClusterInfo,
 		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
 	}
 
-	if _, err := os.Stat(filepath.Join(ostreeDir, certsDir)); err == nil {
-		ingressFile, ingressCN, err := getIngressCNAndFile(filepath.Join(ostreeDir, certsDir))
-		if err != nil {
-			return err
-		}
-		config.UseKey = []string{
-			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
-			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
-			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
-			fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
-		}
-
-		config.UseCert = filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")
+	hostPathCertDir := filepath.Join(ostreeDir, certsDir)
+	if _, err := os.Stat(hostPathCertDir); err != nil {
+		return fmt.Errorf("failed to find certs directory %s, err: %w", hostPathCertDir, err)
 	}
+
+	ingressFile, ingressCN, err := getIngressCNAndFile(filepath.Join(ostreeDir, certsDir))
+	if err != nil {
+		return err
+	}
+	config.UseKey = []string{
+		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
+		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
+		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
+		fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
+	}
+	config.UseCert = filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")
+
 	return utils.WriteToFile(config, filepath.Join(clusterConfigPath, recertConfigFile))
 }
 
 func getIngressCNAndFile(certsFolder string) (string, string, error) {
 	certsFiles, err := os.ReadDir(certsFolder)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("failed to list files in %s while searching for ingress cn, "+
+			"err: %w", certsFolder, err)
 	}
 
 	for _, path := range certsFiles {

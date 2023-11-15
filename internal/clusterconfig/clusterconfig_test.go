@@ -179,6 +179,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, rConfig.ClusterRename, "test-infra-cluster:redhat.com")
 				assert.Equal(t, len(rConfig.CNSanReplaceRules), 4)
 				assert.Contains(t, rConfig.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedManifestData.MasterIP, clusterInfo.MasterIP))
+				assert.Contains(t, rConfig.UseKey, "ingress@test /opt/openshift/certs/ingresskey-ingress@test")
 
 			},
 		},
@@ -301,6 +302,14 @@ func TestClusterConfig(t *testing.T) {
 			err = utils.WriteToFile(seedManifestData, filepath.Join(tmpDir, filepath.Dir(clusterConfigDir), seedManifest))
 			if err != nil {
 				t.Errorf("failed to create seed manifest, error: %v", err)
+			}
+
+			if err := os.MkdirAll(filepath.Join(tmpDir, certsDir), 0o700); err != nil {
+				t.Errorf("failed to create opt dir, error: %v", err)
+			}
+			_, err = os.Create(filepath.Join(tmpDir, certsDir, "ingresskey-ingress@test"))
+			if err != nil {
+				t.Errorf("failed to create ingress file, error: %v", err)
 			}
 
 			err = ucc.FetchClusterConfig(context.TODO(), tmpDir)

@@ -43,7 +43,6 @@ func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, 
 	return nil
 }
 
-// GetSNOMasterNode get master node of sno cluster
 func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node, error) {
 	nodesList := &corev1.NodeList{}
 	err := client.List(ctx, nodesList, &runtime.ListOptions{LabelSelector: labels.SelectorFromSet(
@@ -60,7 +59,6 @@ func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node,
 	return &nodesList.Items[0], nil
 }
 
-// ReadYamlOrJSONFile read json/yaml file into struct
 func ReadYamlOrJSONFile(filePath string, into interface{}) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {

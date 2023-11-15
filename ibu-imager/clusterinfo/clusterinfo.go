@@ -77,6 +77,7 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 	}, nil
 }
 
+// TODO: add dual stuck support
 func (m *InfoClient) getNodeInternalIP(ctx context.Context) (string, error) {
 	node, err := utils.GetSNOMasterNode(ctx, m.client)
 	if err != nil {
