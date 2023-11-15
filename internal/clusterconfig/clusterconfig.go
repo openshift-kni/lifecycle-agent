@@ -19,6 +19,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
 
@@ -27,10 +28,13 @@ const (
 	configNamespace               = "openshift-config"
 	upgradeConfigurationNamespace = "upgrade-configuration"
 	clusterConfigDir              = "/opt/openshift/cluster-configuration"
+	manifestDir                   = "manifests"
 	clusterIDFileName             = "cluster-id-override.json"
 	pullSecretFileName            = "pullsecret.json"
-	clusterInfoFileName           = "clusterinfo/manifest.json"
+	clusterInfoFileName           = "manifest.json"
 	idmsFIlePath                  = "image-digest-mirror-set.json"
+	certsDir                      = "/opt/openshift/certs"
+	seedManifest                  = "seed_manifest.json"
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -79,10 +83,10 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 }
 
 // configDirs returns the files directory for the given cluster config
-func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
-	filesDir := filepath.Join(dir, clusterConfigDir)
-	r.Log.Info("Creating cluster configuration folder", "folder", filesDir)
-	if err := os.MkdirAll(filepath.Join(filesDir, filepath.Dir(clusterInfoFileName)), 0o700); err != nil {
+func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error) {
+	filesDir := filepath.Join(ostreeDir, clusterConfigDir)
+	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
+	if err := os.MkdirAll(filepath.Join(filesDir, manifestDir), 0o700); err != nil {
 		return "", err
 	}
 	return filesDir, nil
@@ -90,25 +94,30 @@ func (r *UpgradeClusterConfigGather) configDirs(dir string) (string, error) {
 
 // writeClusterConfig writes the required info based on the cluster config to the config cache dir
 func (r *UpgradeClusterConfigGather) writeClusterConfig(pullSecret *corev1.Secret,
-	clusterID v1.ClusterID, dir string, clusterData *clusterinfo.ClusterInfo, idmsList *v1.ImageDigestMirrorSetList) error {
-	clusterConfigPath, err := r.configDirs(dir)
+	clusterID v1.ClusterID, ostreeDir string, clusterData *clusterinfo.ClusterInfo, idmsList *v1.ImageDigestMirrorSetList) error {
+	clusterConfigPath, err := r.configDirs(ostreeDir)
 	if err != nil {
 		return err
 	}
 
-	if err := r.writeNamespaceToFile(filepath.Join(clusterConfigPath, "namespace.json")); err != nil {
+	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+
+	if err := r.writeNamespaceToFile(filepath.Join(manifestsDir, "namespace.json")); err != nil {
 		return err
 	}
-	if err := r.writeSecretToFile(pullSecret, filepath.Join(clusterConfigPath, pullSecretFileName)); err != nil {
+	if err := r.writeSecretToFile(pullSecret, filepath.Join(manifestsDir, pullSecretFileName)); err != nil {
 		return err
 	}
-	if err := r.writeClusterIDToFile(clusterID, filepath.Join(clusterConfigPath, clusterIDFileName)); err != nil {
+	if err := r.writeClusterIDToFile(clusterID, filepath.Join(manifestsDir, clusterIDFileName)); err != nil {
+		return err
+	}
+	if err := r.writeIDMSsToFile(idmsList, filepath.Join(manifestsDir, idmsFIlePath)); err != nil {
 		return err
 	}
 	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, clusterInfoFileName)); err != nil {
 		return err
 	}
-	if err := r.writeIDMSsToFile(idmsList, filepath.Join(clusterConfigPath, idmsFIlePath)); err != nil {
+	if err := CreateRecertConfigFile(clusterData, clusterConfigPath, ostreeDir); err != nil {
 		return err
 	}
 

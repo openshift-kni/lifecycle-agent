@@ -428,7 +428,7 @@ if [ -z "${upg_booted_id}" ] || [ -z "${upg_booted_deployment}" ] || [ -z "${upg
     fatal "Failed to identify deployment from seed image"
 fi
 
-up_ver=$(jq -r '.status.desired.version' "${img_mnt}/clusterversion.json")
+up_ver=$(jq -r '.version' "${img_mnt}/manifest.json")
 if [ -z "${up_ver}" ]; then
     fatal "Failed to identify version from seed image"
 fi
@@ -484,6 +484,9 @@ if [ -z "${ingress_cn}" ]; then
 fi
 oc extract -n openshift-ingress-operator secret/router-ca --keys=tls.key --to=- > "${certs_dir}/ingresskey-${ingress_cn}" \
     || fatal "Failed: oc extract -n openshift-ingress-operator secret/router-ca --keys=tls.key"
+
+log_it "Providing seed manifest.json"
+cp "${img_mnt}/manifest.json" "/ostree/deploy/${new_osname}/var/opt/openshift/seed_manifest.json"
 
 set_progress "completed-stateroot"
 
