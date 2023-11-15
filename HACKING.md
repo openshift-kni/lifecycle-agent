@@ -1,5 +1,10 @@
 # Developing in lifecycle-agent-operator
 
+## Prerequisites
+
+- go >=1.18
+- Spoke SNO cluster with pull-secret containing credentials to quay.io/${MY_REPO_ID}/
+
 ## Makefile targets
 
 To see all `make` targets, run `make help`
