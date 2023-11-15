@@ -104,11 +104,6 @@ vet: ## Run go vet against code.
 	@echo "Running go vet"
 	go vet ./...
 
-.PHONY: lint
-lint: ## Run golint against code.
-	@echo "Running golint"
-	hack/lint.sh
-
 .PHONY: unittest
 unittest:
 	@echo "Running unit tests"
@@ -129,7 +124,7 @@ bashate: ## Run bashate.
 	hack/bashate.sh
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet lint golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
