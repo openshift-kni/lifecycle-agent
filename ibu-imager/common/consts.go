@@ -18,13 +18,18 @@ package common
 
 // Common constants mainly used by packages in ibu-imager
 const (
-	VarFolder = "/var"
-	BackupDir = "/var/tmp/backup"
+	VarFolder       = "/var"
+	BackupDir       = "/var/tmp/backup"
+	BackupCertsDir  = "/var/tmp/backupCertsDir"
+	BackupChecksDir = "/var/tmp/checks"
+
 	// ImageRegistryAuthFile is the pull secret. Written by the machine-config-operator
-	ImageRegistryAuthFile             = "/var/lib/kubelet/config.json"
-	KubeconfigFile                    = "/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-ext.kubeconfig"
-	DefaultRecertImage                = "quay.io/edge-infrastructure/recert:latest"
-	EtcdStaticPodFile                 = "/etc/kubernetes/manifests/etcd-pod.yaml"
-	EtcdStaticPodContainer            = "etcd"
+	ImageRegistryAuthFile = "/var/lib/kubelet/config.json"
+	KubeconfigFile        = "/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-ext.kubeconfig"
+
+	DefaultRecertImage     = "quay.io/edge-infrastructure/recert:latest"
+	EtcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
+	EtcdStaticPodContainer = "etcd"
+
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 )

@@ -74,6 +74,10 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
+	if err := os.MkdirAll(common.BackupChecksDir, 0o700); err != nil {
+		return err
+	}
+
 	if err := s.createContainerList(); err != nil {
 		return err
 	}
@@ -162,7 +166,7 @@ func (s *SeedCreator) createContainerList() error {
 	s.log.Println("Saving list of running containers and catalogsources.")
 
 	// Check if the file /var/tmp/container_list.done does not exist
-	if _, err := os.Stat("/var/tmp/container_list.done"); os.IsNotExist(err) {
+	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
 		// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
 		s.log.Println("Save list of running containers")
 		args := []string{"images", "-o", "json", "|", "jq", "-r", "'.images[] | .repoDigests[], .repoTags[]'",
@@ -183,7 +187,7 @@ func (s *SeedCreator) createContainerList() error {
 		}
 
 		// Create the file /var/tmp/container_list.done
-		_, err = os.Create("/var/tmp/container_list.done")
+		_, err = os.Create(common.BackupChecksDir + "/container_list.done")
 		if err != nil {
 			return err
 		}
@@ -505,7 +509,7 @@ func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDo
 }
 
 func (s *SeedCreator) deleteNode(ctx context.Context) error {
-	doneFile := "/var/tmp/node_deletion.done"
+	doneFile := filepath.Join(common.BackupChecksDir, "/node_deletion.done")
 	_, err := os.Stat(doneFile)
 	if err == nil {
 		return nil
