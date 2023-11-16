@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 1) cleanup backup dir
-rm -rf /var/tmp/node_deletion.done /var/tmp/container_list.done /var/tmp/backup
+rm -rf /var/tmp/backup /var/tmp/checks
 
 # 2) cleanup preparation scripts and services
 rm -f /usr/local/bin/prepare-installation-configuration.sh /usr/local/bin/installation-configuration.sh
