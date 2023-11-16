@@ -40,18 +40,21 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 )
 
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
 type ImageBasedUpgradeReconciler struct {
 	client.Client
-	Log           logr.Logger
-	Scheme        *runtime.Scheme
-	Recorder      record.EventRecorder
-	ClusterConfig *clusterconfig.UpgradeClusterConfigGather
-	NetworkConfig *clusterconfig.UpgradeNetworkConfigGather
-	BackupRestore *backuprestore.BRHandler
-	ExtraManifest *extramanifest.EMHandler
+	Log             logr.Logger
+	Scheme          *runtime.Scheme
+	Recorder        record.EventRecorder
+	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
+	NetworkConfig   *clusterconfig.UpgradeNetworkConfigGather
+	BackupRestore   *backuprestore.BRHandler
+	ExtraManifest   *extramanifest.EMHandler
+	RPMOstreeClient *rpmostreeclient.Client
 }
 
 func doNotRequeue() ctrl.Result {
@@ -358,6 +361,6 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func getOSName(seedImageVersion string) string {
+func getStaterootName(seedImageVersion string) string {
 	return fmt.Sprintf("rhcos_%s", seedImageVersion)
 }

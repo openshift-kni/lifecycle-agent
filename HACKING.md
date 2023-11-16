@@ -43,7 +43,7 @@ For example:
 # Update bindata, then build and push the image
 make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
     update-bindata \
-    docker-build
+    docker-build \
     docker-push
 
 # Deploy the operator to your SNO (with KUBECONFIG set appropriately)
