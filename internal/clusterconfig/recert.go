@@ -12,6 +12,19 @@ import (
 
 const recertConfigFile = "recert_config.json"
 
+// PodmanRecertArgs is the list of arguments to be used by podman when
+// calling the recert tool
+var PodmanRecertArgs = []string{
+	"run", "--detach", "--rm", "--network=host", "--privileged", "--replace", "--authfile",
+}
+
+// ForceExpireAdditionalFlags are the flags to be passed to recert
+// to force expiring of seed cluster certificates
+var ForceExpireAdditionalFlags = []string{
+	"--summary-file-clean", "/kubernetes/recert-seed-summary.yaml",
+	"--force-expire",
+}
+
 type recertConfig struct {
 	DryRun            bool     `json:"dry_run,omitempty"`
 	ExtendExpiration  bool     `json:"extend_expiration,omitempty"`
