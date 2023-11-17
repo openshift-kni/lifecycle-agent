@@ -37,6 +37,7 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
@@ -55,6 +56,7 @@ type ImageBasedUpgradeReconciler struct {
 	BackupRestore   *backuprestore.BRHandler
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient *rpmostreeclient.Client
+	Executor        ops.Execute
 }
 
 func doNotRequeue() ctrl.Result {

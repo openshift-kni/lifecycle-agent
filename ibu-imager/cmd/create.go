@@ -82,10 +82,14 @@ func init() {
 func create() {
 
 	var err error
+
+	// 2 different logger till we will move to single one after decision which one is better
+	// just in order to use same executor
 	log.Printf("OCI image creation has started")
 
-	op := ops.NewOps(log, ops.NewExecutor(log, true))
-	rpmOstreeClient := ostree.NewClient("ibu-imager", op)
+	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
+	op := ops.NewOps(log, hostCommandsExecutor)
+	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
 
 	err = copyConfigurationFiles(op)
 	if err != nil {

@@ -3,8 +3,10 @@ package ops
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,25 +19,81 @@ type Execute interface {
 }
 
 type executor struct {
-	verbose bool
 	log     *logrus.Logger
+	verbose bool
 }
 
-// NewExecutor creates and returns an Execute interface for executing external commands
-func NewExecutor(logger *logrus.Logger, verbose bool) Execute {
-	return &executor{log: logger, verbose: verbose}
-}
-
-func (e *executor) Execute(command string, args ...string) (string, error) {
-	e.log.Println("Executing", command, args)
+func (e *executor) execute(liveLogger io.Writer, root, command string, args ...string) (string, error) {
+	e.log.Infof("Executing %s with args %s", command, args)
 	cmd := exec.Command(command, args...)
-	var stdoutBytes, stderrBytes bytes.Buffer
-	cmd.Stdout = &stdoutBytes
-	cmd.Stderr = &stderrBytes
+	var stdoutBytes bytes.Buffer
+	if liveLogger != nil {
+		cmd.Stdout = io.MultiWriter(liveLogger, &stdoutBytes)
+		cmd.Stderr = io.MultiWriter(liveLogger, &stdoutBytes)
+	} else {
+		cmd.Stdout = &stdoutBytes
+		cmd.Stderr = &stdoutBytes
+	}
+	if root != "" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+		cmd.Dir = "/"
+	}
+
 	err := cmd.Run()
 	stdoutBytesTrimmed := strings.TrimSpace(stdoutBytes.String())
 	if err != nil {
-		return stdoutBytesTrimmed, fmt.Errorf("%s: %w", stderrBytes.String(), err)
+		return stdoutBytesTrimmed, fmt.Errorf("%s: %w", stdoutBytes.String(), err)
 	}
 	return stdoutBytesTrimmed, nil
+}
+
+type nsenterExecutor struct {
+	executor
+}
+
+func NewNsenterExecutor(logger *logrus.Logger, verbose bool) Execute {
+	return &nsenterExecutor{executor: executor{logger, verbose}}
+}
+
+func (e *nsenterExecutor) Execute(command string, args ...string) (string, error) {
+	// nsenter is used here to launch processes inside the container in a way that makes said processes feel
+	// and behave as if they're running on the host directly rather than inside the container
+	commandBase := "nsenter"
+
+	arguments := []string{
+		"--target", "1",
+		// Entering the cgroup namespace is not required for podman on CoreOS (where the
+		// agent typically runs), but it's needed on some Fedora versions and
+		// some other systemd based systems. Those systems are used to run dry-mode
+		// agents for load testing. If this flag is not used, Podman will sometimes
+		// have trouble creating a systemd cgroup slice for new containers.
+		"--cgroup",
+		// The mount namespace is required for podman to access the host's container
+		// storage
+		"--mount",
+		// TODO: Document why we need the IPC namespace
+		"--ipc",
+		"--pid",
+		"--",
+		command,
+	}
+
+	arguments = append(arguments, args...)
+	return e.executor.execute(nil, "", commandBase, arguments...)
+}
+
+type chrootExecutor struct {
+	executor
+	root string
+}
+
+func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute {
+	return &chrootExecutor{executor: executor{logger, verbose}, root: root}
+}
+
+func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
+	commandBase := "/usr/bin/env"
+	args = append([]string{command}, args...)
+	arguments := []string{"--", "bash", "-c", strings.Join(args, " ")}
+	return e.executor.execute(e.executor.log.Writer(), e.root, commandBase, arguments...)
 }
