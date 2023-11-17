@@ -28,6 +28,17 @@ echo "${RELOCATION_CONFIG_PATH} has been found"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
+function wait_for_etcd {
+    local waiting_msg="Waiting for etcd to be available..."
+
+    echo "${waiting_msg}"
+    until curl -s http://localhost:2379/health |jq -e '.health == "true"' &> /dev/null; do
+        echo "${waiting_msg}"
+        sleep 2
+    done
+    echo "etcd is now available"
+}
+
 # Recertify
 function recert {
     # shellcheck disable=SC1091
@@ -41,7 +52,8 @@ function recert {
 
     # run etcd
     sudo podman run --authfile=/var/lib/kubelet/config.json --name recert_etcd --detach --rm --network=host --replace --privileged --entrypoint etcd -v /var/lib/etcd:/store ${ETCD_IMAGE} --name editor --data-dir /store
-    sleep 10 # TODO: wait for etcd
+
+    wait_for_etcd
 
     if [[ ${NODE_IP} =~ .*:.* ]]; then
         ETCD_NEW_IP="[${NODE_IP}]"
