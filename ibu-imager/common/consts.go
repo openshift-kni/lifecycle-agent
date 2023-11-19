@@ -30,6 +30,7 @@ const (
 	DefaultRecertImage     = "quay.io/edge-infrastructure/recert:latest"
 	EtcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
 	EtcdStaticPodContainer = "etcd"
+	EtcdDefaultEndpoint    = "http://localhost:2379"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 )

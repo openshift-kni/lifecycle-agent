@@ -21,6 +21,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -257,17 +258,8 @@ func (s *SeedCreator) runRecertValidation() error {
 	// Run unauthenticated etcd server for the recert tool.
 	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
 	// which is required before running the recert tool.
-	s.log.Info("Run unauthenticated etcd server for recert dry-run")
-	_, err = s.ops.RunInHostNamespace(
-		"podman", []string{"run", "--name", "recert_etcd",
-			"--detach", "--rm", "--network=host", "--privileged", "--replace",
-			"--authfile", s.authFile, "--entrypoint", "etcd",
-			"-v", "/var/lib/etcd:/store",
-			etcdImage,
-			"--name", "editor",
-			"--data-dir", "/store"}...)
-	if err != nil {
-		return fmt.Errorf("failed to run recert_etcd container: %w", err)
+	if err := s.ops.RunUnauthenticatedEtcdServer(etcdImage, s.authFile); err != nil {
+		return err
 	}
 
 	defer func() {
@@ -279,35 +271,15 @@ func (s *SeedCreator) runRecertValidation() error {
 		}
 	}()
 
-	s.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
-	err = s.ops.WaitForEtcd("http://localhost:2379/health")
-	if err != nil {
-		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
-	}
-	s.log.Info("Unauthenticated etcd server for recert is up and running")
-
 	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
 	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
 	// into a seed image.
 	s.log.Info("Run recert --force-expire tool")
-	_, err = s.ops.RunInHostNamespace(
-		"podman", []string{"run", "--name", "recert",
-			"--rm", "--network=host", "--privileged", "--replace", "--authfile", s.authFile,
-			"-v", "/etc/kubernetes:/kubernetes",
-			"-v", "/var/lib/kubelet:/kubelet",
-			"-v", "/etc/machine-config-daemon:/machine-config-daemon",
-			s.recertContainerImage,
-			"--etcd-endpoint", "localhost:2379",
-			"--static-dir", "/kubernetes",
-			"--static-dir", "/kubelet",
-			"--static-dir", "/machine-config-daemon",
-			"--summary-file-clean", "/kubernetes/recert-seed-summary.yaml",
-			"--force-expire"}...)
-	if err != nil {
-		return fmt.Errorf("failed to run recert tool container: %w", err)
+	if err := s.ops.RunRecert(s.recertContainerImage, s.authFile, clusterconfig.ForceExpireAdditionalFlags...); err != nil {
+		return err
 	}
 
-	log.Println("Recert --force-expire tool ran and summary created successfully.")
+	s.log.Info("Recert --force-expire tool ran and summary created successfully.")
 	return nil
 }
 

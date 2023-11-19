@@ -9,6 +9,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
+
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 )
 
 // Ops is an interface for executing commands and actions in the host namespace
@@ -18,8 +21,10 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
-	WaitForEtcd(endpoint string) error
+
+	RunUnauthenticatedEtcdServer(etcdImage, authFile string) error
 	GetImageFromPodDefinition(etcdStaticPodFile, containerImage string) (string, error)
+	RunRecert(authFile, recertContainerImage string, additionalArgs ...string) error
 }
 
 type ops struct {
@@ -48,26 +53,6 @@ func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, er
 
 func (o *ops) RunInHostNamespace(command string, args ...string) (string, error) {
 	return o.hostCommandsExecutor.Execute(command, args...)
-}
-
-func (o *ops) WaitForEtcd(healthzEndpoint string) error {
-	for {
-		resp, err := http.Get(healthzEndpoint)
-		if err != nil {
-			o.log.Infof("Waiting for etcd: %s", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			o.log.Infof("Waiting for etcd, status: %d", resp.StatusCode)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		return nil
-	}
 }
 
 func (o *ops) GetImageFromPodDefinition(podFile, containerImage string) (string, error) {
@@ -99,4 +84,82 @@ func (o *ops) GetImageFromPodDefinition(podFile, containerImage string) (string,
 	}
 
 	return "", fmt.Errorf("no 'etcd' container found or no image specified in YAML definition: %w", err)
+}
+
+func (o *ops) RunUnauthenticatedEtcdServer(etcdImage, authFile string) error {
+	o.log.Info("Run unauthenticated etcd server for recert tool")
+
+	command := "podman"
+	args := append(clusterconfig.PodmanRecertArgs, authFile, "--name", "recert_etcd",
+		"--entrypoint", "etcd",
+		"-v", "/var/lib/etcd:/store",
+		etcdImage,
+		"--name", "editor", "--data-dir", "/store")
+
+	// Run the command and return an error if it occurs
+	_, err := o.RunInHostNamespace(command, args...)
+	if err != nil {
+		return err
+	}
+
+	o.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
+	err = o.waitForEtcd(common.EtcdDefaultEndpoint + "/health")
+	if err != nil {
+		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
+	}
+	o.log.Info("Unauthenticated etcd server for recert is up and running")
+
+	return nil
+}
+
+func (o *ops) waitForEtcd(healthzEndpoint string) error {
+	timeout := time.After(1 * time.Minute)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for etcd")
+		case <-ticker.C:
+			resp, err := http.Get(healthzEndpoint)
+			if err != nil {
+				o.log.Infof("Waiting for etcd: %s", err)
+				continue
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				o.log.Infof("Waiting for etcd, status: %d", resp.StatusCode)
+				continue
+			}
+
+			return nil
+		}
+	}
+}
+
+func (o *ops) RunRecert(recertContainerImage, authFile string, additionalArgs ...string) error {
+	command := "podman"
+	args := append(clusterconfig.PodmanRecertArgs, authFile, "--name", "recert",
+		"-v", "/etc:/host-etc",
+		"-v", "/etc/kubernetes:/kubernetes",
+		"-v", "/var/lib/kubelet:/kubelet",
+		"-v", common.BackupCertsDir+":/certs",
+		"-v", "/etc/machine-config-daemon:/machine-config-daemon",
+		recertContainerImage,
+		"--etcd-endpoint", "localhost:2379",
+		"--static-dir", "/kubernetes",
+		"--static-dir", "/kubelet",
+		"--static-dir", "/machine-config-daemon")
+
+	// Add additional arguments to the command
+	args = append(args, additionalArgs...)
+
+	_, err := o.RunInHostNamespace(command, args...)
+	if err != nil {
+		return fmt.Errorf("failed to run recert tool container: %w", err)
+	}
+
+	return nil
 }
