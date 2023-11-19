@@ -21,8 +21,8 @@ type recertConfig struct {
 	StaticDirs        []string `json:"static_dirs,omitempty"`
 	StaticFiles       []string `json:"static_files,omitempty"`
 	CNSanReplaceRules []string `json:"cn_san_replace_rules,omitempty"`
-	UseKey            []string `json:"use_key,omitempty"`
-	UseCert           string   `json:"use_cert,omitempty"`
+	UseKeyRules       []string `json:"use_key_rules,omitempty"`
+	UseCertRules      []string `json:"use_cert_rules,omitempty"`
 }
 
 // CreateRecertConfigFile function to create recert config file
@@ -67,13 +67,13 @@ func CreateRecertConfigFile(clusterData *clusterinfo.ClusterInfo,
 	if err != nil {
 		return err
 	}
-	config.UseKey = []string{
+	config.UseKeyRules = []string{
 		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
 		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
 		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
 		fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
 	}
-	config.UseCert = filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")
+	config.UseCertRules = []string{filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")}
 
 	return utils.WriteToFile(config, filepath.Join(clusterConfigPath, recertConfigFile))
 }

@@ -179,7 +179,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, rConfig.ClusterRename, "test-infra-cluster:redhat.com")
 				assert.Equal(t, len(rConfig.CNSanReplaceRules), 4)
 				assert.Contains(t, rConfig.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedManifestData.MasterIP, clusterInfo.MasterIP))
-				assert.Contains(t, rConfig.UseKey, "ingress@test /opt/openshift/certs/ingresskey-ingress@test")
+				assert.Contains(t, rConfig.UseKeyRules, "ingress@test /opt/openshift/certs/ingresskey-ingress@test")
 
 			},
 		},
