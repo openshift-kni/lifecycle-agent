@@ -64,6 +64,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - config.openshift.io
+  resources:
+  - proxies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - lca.openshift.io
   resources:
   - imagebasedupgrades
