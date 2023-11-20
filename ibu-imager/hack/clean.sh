@@ -21,4 +21,5 @@ podman rm -f recert_etcd
 podman rm -f recert
 
 # 4) restore cluster services
+rm -rf /var/lib/ovn-ic/etc/ovnkube-node-certs/* /etc/cni/multus/certs*
 systemctl enable --now kubelet
