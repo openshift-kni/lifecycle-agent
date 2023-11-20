@@ -3,16 +3,19 @@ package ops
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
+
+var podmanRecertArgs = []string{
+	"run", "--rm", "--network=host", "--privileged", "--replace",
+}
 
 // Ops is an interface for executing commands and actions in the host namespace
 //
@@ -21,10 +24,9 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
-
-	RunUnauthenticatedEtcdServer(etcdImage, authFile string) error
+	RunUnauthenticatedEtcdServer(authFile, name string) error
 	GetImageFromPodDefinition(etcdStaticPodFile, containerImage string) (string, error)
-	RunRecert(authFile, recertContainerImage string, additionalArgs ...string) error
+	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
 }
 
 type ops struct {
@@ -55,56 +57,50 @@ func (o *ops) RunInHostNamespace(command string, args ...string) (string, error)
 	return o.hostCommandsExecutor.Execute(command, args...)
 }
 
-func (o *ops) GetImageFromPodDefinition(podFile, containerImage string) (string, error) {
-	type PodConfig struct {
-		Spec struct {
-			Containers []struct {
-				Name  string `yaml:"name"`
-				Image string `yaml:"image"`
-			} `yaml:"containers"`
-		} `yaml:"spec"`
-	}
-
-	yamlData, err := os.ReadFile(podFile)
-	if err != nil {
-		return "", fmt.Errorf("error reading the YAML file: %w", err)
-	}
-
-	var podConfig PodConfig
-	if err = yaml.Unmarshal(yamlData, &podConfig); err != nil {
-		return "", fmt.Errorf("error unmarshaling YAML data: %w", err)
+func (o *ops) GetImageFromPodDefinition(podFile, containerName string) (string, error) {
+	o.log.Infof("Getting image from %s static pod file", podFile)
+	pod := &corev1.Pod{}
+	if err := utils.ReadYamlOrJSONFile(podFile, pod); err != nil {
+		return "", fmt.Errorf("failed to read %s pod static file, err: %w", podFile, err)
 	}
 
 	var etcdImage string
-	for _, container := range podConfig.Spec.Containers {
-		if container.Name == containerImage {
+	for _, container := range pod.Spec.Containers {
+		if container.Name == containerName {
 			etcdImage = container.Image
 			return etcdImage, nil
 		}
 	}
 
-	return "", fmt.Errorf("no 'etcd' container found or no image specified in YAML definition: %w", err)
+	return "", fmt.Errorf("no '%s' container found or no image specified in %s", containerName, podFile)
 }
 
-func (o *ops) RunUnauthenticatedEtcdServer(etcdImage, authFile string) error {
+func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
+	// Get etcdImage available for the current release, this is needed by recert to
+	// run an unauthenticated etcd server for running successfully.
+	etcdImage, err := o.GetImageFromPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
+	if err != nil {
+		return err
+	}
+
 	o.log.Info("Run unauthenticated etcd server for recert tool")
 
 	command := "podman"
-	args := append(clusterconfig.PodmanRecertArgs, authFile, "--name", "recert_etcd",
+	args := append(podmanRecertArgs,
+		"--authfile", authFile, "--detach",
+		"--name", name,
 		"--entrypoint", "etcd",
 		"-v", "/var/lib/etcd:/store",
 		etcdImage,
 		"--name", "editor", "--data-dir", "/store")
 
 	// Run the command and return an error if it occurs
-	_, err := o.RunInHostNamespace(command, args...)
-	if err != nil {
+	if _, err := o.RunInHostNamespace(command, args...); err != nil {
 		return err
 	}
 
 	o.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
-	err = o.waitForEtcd(common.EtcdDefaultEndpoint + "/health")
-	if err != nil {
+	if err := o.waitForEtcd(common.EtcdDefaultEndpoint + "/health"); err != nil {
 		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
 	}
 	o.log.Info("Unauthenticated etcd server for recert is up and running")
@@ -139,25 +135,24 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 	}
 }
 
-func (o *ops) RunRecert(recertContainerImage, authFile string, additionalArgs ...string) error {
+func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
+
 	command := "podman"
-	args := append(clusterconfig.PodmanRecertArgs, authFile, "--name", "recert",
+	args := append(podmanRecertArgs, "--name", "recert",
 		"-v", "/etc:/host-etc",
 		"-v", "/etc/kubernetes:/kubernetes",
 		"-v", "/var/lib/kubelet:/kubelet",
-		"-v", common.BackupCertsDir+":/certs",
+		"-v", "/var/tmp:/var/tmp",
 		"-v", "/etc/machine-config-daemon:/machine-config-daemon",
-		recertContainerImage,
-		"--etcd-endpoint", "localhost:2379",
-		"--static-dir", "/kubernetes",
-		"--static-dir", "/kubelet",
-		"--static-dir", "/machine-config-daemon")
+		"-e", fmt.Sprintf("RECERT_CONFIG=%s", recertConfigFile),
+	)
+	if authFile != "" {
+		args = append(args, "--authfile", authFile)
+	}
 
-	// Add additional arguments to the command
-	args = append(args, additionalArgs...)
-
-	_, err := o.RunInHostNamespace(command, args...)
-	if err != nil {
+	args = append(args, additionalPodmanParams...)
+	args = append(args, recertContainerImage)
+	if _, err := o.hostCommandsExecutor.Execute(command, args...); err != nil {
 		return fmt.Errorf("failed to run recert tool container: %w", err)
 	}
 

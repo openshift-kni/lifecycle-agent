@@ -47,6 +47,18 @@ func (e *executor) execute(liveLogger io.Writer, root, command string, args ...s
 	return stdoutBytesTrimmed, nil
 }
 
+type regularExecutor struct {
+	executor
+}
+
+func NewRegularExecutor(logger *logrus.Logger, verbose bool) Execute {
+	return &regularExecutor{executor: executor{logger, verbose}}
+}
+
+func (e *regularExecutor) Execute(command string, args ...string) (string, error) {
+	return e.executor.execute(nil, "", command, args...)
+}
+
 type nsenterExecutor struct {
 	executor
 }

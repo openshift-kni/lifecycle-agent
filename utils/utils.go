@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"text/template"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	runtime "sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/client-go/tools/clientcmd"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // WriteToFile write interface to file
@@ -43,9 +46,9 @@ func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, 
 	return nil
 }
 
-func GetSNOMasterNode(ctx context.Context, client runtime.Client) (*corev1.Node, error) {
+func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1.Node, error) {
 	nodesList := &corev1.NodeList{}
-	err := client.List(ctx, nodesList, &runtime.ListOptions{LabelSelector: labels.SelectorFromSet(
+	err := client.List(ctx, nodesList, &runtimeclient.ListOptions{LabelSelector: labels.SelectorFromSet(
 		labels.Set{
 			"node-role.kubernetes.io/master": "",
 		},
@@ -67,4 +70,21 @@ func ReadYamlOrJSONFile(filePath string, into interface{}) error {
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
 	return decoder.Decode(into)
+}
+
+func IsIpv6(provideIp string) bool {
+	ip := net.ParseIP(provideIp)
+	if ip == nil {
+		return false
+	}
+	return ip.To4() != nil
+}
+
+func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.Client, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return runtimeclient.New(config, runtimeclient.Options{Scheme: scheme,
+		WarningHandler: runtimeclient.WarningHandlerOptions{SuppressWarnings: true}})
 }

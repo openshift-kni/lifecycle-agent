@@ -33,4 +33,12 @@ const (
 	EtcdDefaultEndpoint    = "http://localhost:2379"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
+	OptOpenshift                      = "/opt/openshift"
+	SeedManifest                      = "seed_manifest.json"
+	CertsDir                          = "certs"
+	ClusterConfigDir                  = "cluster-configuration"
+	ClusterInfoFileName               = "manifest.json"
+	ManifestsDir                      = "manifests"
+	ExtraManifestsDir                 = "extra-manifests"
+	EtcdContainerName                 = "recert_etcd"
 )

@@ -18,10 +18,10 @@ import (
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -72,6 +72,12 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 	// create backup dir
 	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
+		return err
+	}
+
+	s.log.Println("Copy ibu-imager binary")
+	err := cp.Copy("/usr/local/bin/ibu-imager", "/var/usrlocal/bin/ibu-imager", cp.Options{AddPermission: os.FileMode(0o777)})
+	if err != nil {
 		return err
 	}
 
@@ -248,24 +254,17 @@ func (s *SeedCreator) stopServices() error {
 func (s *SeedCreator) runRecertValidation() error {
 	s.log.Info("Running recert --force-expire tool and saving a summary without sensitive data.")
 
-	// Get etcdImage available for the current release, this is needed by recert to
-	// run an unauthenticated etcd server for running successfully.
-	etcdImage, err := s.ops.GetImageFromPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
-	if err != nil {
-		return err
-	}
-
 	// Run unauthenticated etcd server for the recert tool.
 	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
 	// which is required before running the recert tool.
-	if err := s.ops.RunUnauthenticatedEtcdServer(etcdImage, s.authFile); err != nil {
+	if err := s.ops.RunUnauthenticatedEtcdServer(s.authFile, common.EtcdContainerName); err != nil {
 		return err
 	}
 
 	defer func() {
 		s.log.Info("Killing the unauthenticated etcd server")
-		_, err = s.ops.RunInHostNamespace(
-			"podman", []string{"kill", "recert_etcd"}...)
+		_, err := s.ops.RunInHostNamespace(
+			"podman", "kill", "recert_etcd")
 		if err != nil {
 			s.log.Errorf("Failed to kill recert_etcd container: %v", err)
 		}
@@ -275,7 +274,11 @@ func (s *SeedCreator) runRecertValidation() error {
 	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
 	// into a seed image.
 	s.log.Info("Run recert --force-expire tool")
-	if err := s.ops.RunRecert(s.recertContainerImage, s.authFile, clusterconfig.ForceExpireAdditionalFlags...); err != nil {
+	recertConfigFile := path.Join(s.backupDir, recert.RecertConfigFile)
+	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
+		return fmt.Errorf("failed to create %s file", recertConfigFile)
+	}
+	if err := s.ops.RunRecert(s.recertContainerImage, s.authFile, recertConfigFile); err != nil {
 		return err
 	}
 
