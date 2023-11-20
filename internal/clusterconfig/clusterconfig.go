@@ -156,8 +156,15 @@ func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error
 func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, filePath string) error {
 	// override namespace
 	r.Log.Info("Writing secret to file", "path", filePath)
-	secret.Namespace = upgradeConfigurationNamespace
-	return utils.WriteToFile(secret, filePath)
+	s := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secret.Name,
+			Namespace: upgradeConfigurationNamespace,
+		},
+		Data: secret.Data,
+		Type: secret.Type,
+	}
+	return utils.WriteToFile(s, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) writeProxyToFile(proxy *v1.Proxy, filePath string) error {
