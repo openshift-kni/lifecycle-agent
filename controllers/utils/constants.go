@@ -8,5 +8,6 @@ const (
 	PrepPullImages     string = "prepPullImages.sh"
 	PrepSetupStateroot string = "prepSetupStateroot.sh"
 	PrepCleanup        string = "prepCleanup.sh"
-	IBUName                   = "upgrade"
+	IBUName            string = "upgrade"
+	IBUFilePath        string = "/opt/ibu.json"
 )

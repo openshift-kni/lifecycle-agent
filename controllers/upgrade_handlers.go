@@ -27,9 +27,14 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"path/filepath"
+
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -147,6 +152,15 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		return requeueWithError(err)
 	}
 
+	// Save the IBU CR to the new state root before pivot
+	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
+	// Temporarily empty resource version so the file can be used to restore status
+	rv := ibu.ResourceVersion
+	ibu.ResourceVersion = ""
+	if err := lcautils.WriteToFile(ibu, filePath); err != nil {
+		return doNotRequeue(), err
+	}
+	ibu.ResourceVersion = rv
 	// TODO: Pivot to new stateroot
 
 	// TODO: Post-pivot steps
