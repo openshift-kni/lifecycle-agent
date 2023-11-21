@@ -54,6 +54,7 @@ CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 GOTESTSUM = $(shell pwd)/bin/gotestsum
+MOCK_GEN = $(shell pwd)/bin/mockgen
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
@@ -79,8 +80,10 @@ test:
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=manager-role webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
-generate: controller-gen #generate-code ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: controller-gen mock-gen # generate-code
+    ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+	PATH=${PATH}:${PROJECT_DIR}/bin go generate $(shell go list ./...)
 
 generate-code: ## Generate code containing Clientset, Informers, Listers
 	@echo "Running generate-code"
@@ -88,6 +91,9 @@ generate-code: ## Generate code containing Clientset, Informers, Listers
 
 controller-gen: ## Download controller-gen locally if necessary.
 	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.13.0)
+
+mock-gen: ## Download mockgen locally if necessary.
+	$(call go-get-tool,$(MOCK_GEN),go.uber.org/mock/mockgen@v0.3.0)
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.

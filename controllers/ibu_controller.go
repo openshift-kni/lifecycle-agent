@@ -39,10 +39,10 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 )
 
@@ -56,7 +56,7 @@ type ImageBasedUpgradeReconciler struct {
 	NetworkConfig   *clusterconfig.UpgradeNetworkConfigGather
 	BackupRestore   *backuprestore.BRHandler
 	ExtraManifest   *extramanifest.EMHandler
-	RPMOstreeClient *rpmostreeclient.Client
+	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
 }
 
@@ -149,7 +149,12 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	if isTransitionRequested(ibu) {
-		if validateStageTransition(ibu) {
+		var isAfterPivot bool
+		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getStaterootName(ibu.Spec.SeedImageRef.Version))
+		if err != nil {
+			return
+		}
+		if validateStageTransition(ibu, isAfterPivot) {
 			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
 			if err != nil {
@@ -205,9 +210,11 @@ func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context,
 	return
 }
 
-func isRollbackAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
+func isRollbackAllowed(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) bool {
+	if !isAfterPivot {
+		return false
+	}
 	upgradeInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeInProgress))
-	// TODO check if pivot is done
 	if upgradeInProgressCondition != nil {
 		// allowed if upgrade stage is in progress or has failed/completed
 		return true
@@ -238,10 +245,10 @@ func isAbortAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 }
 
 // TODO unit test this function once the logic is stablized
-func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
+func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) bool {
 	switch ibu.Spec.Stage {
 	case lcav1alpha1.Stages.Rollback:
-		if !isRollbackAllowed(ibu) {
+		if !isRollbackAllowed(ibu, isAfterPivot) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.ConditionTypes.RollbackInProgress,
 				utils.ConditionReasons.InvalidTransition,

@@ -23,7 +23,9 @@ import (
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -332,6 +334,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		conditions         []Condition
 		expectedConditions []ExpectedCondition
 		expected           bool
+		afterPivot         bool
 	}{
 		{
 			name:       "idle when prep in progress",
@@ -512,6 +515,7 @@ func TestValidateStageTransisions(t *testing.T) {
 					"In progress",
 				},
 			},
+			afterPivot: true,
 		},
 		{
 			name:  "rollback when upgrade completed",
@@ -541,6 +545,7 @@ func TestValidateStageTransisions(t *testing.T) {
 					"In progress",
 				},
 			},
+			afterPivot: true,
 		},
 		{
 			name:       "rollback when upgrade in progress",
@@ -567,6 +572,7 @@ func TestValidateStageTransisions(t *testing.T) {
 					"In progress",
 				},
 			},
+			afterPivot: true,
 		},
 		{
 			name:       "rollback without upgrade in progress",
@@ -577,7 +583,8 @@ func TestValidateStageTransisions(t *testing.T) {
 				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
 				"Upgrade not started or already finalized",
 			}},
-			expected: false,
+			expected:   false,
+			afterPivot: true,
 		},
 	}
 	for _, tc := range testcases {
@@ -598,7 +605,7 @@ func TestValidateStageTransisions(t *testing.T) {
 
 		t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
-			result := validateStageTransition(ibu)
+			result := validateStageTransition(ibu, tc.afterPivot)
 			assert.Equal(t, tc.expected, result)
 			for _, expectedCondition := range tc.expectedConditions {
 				con := meta.FindStatusCondition(ibu.Status.Conditions, string(expectedCondition.ConditionType))
@@ -662,10 +669,15 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 
+			ctrl := gomock.NewController(t)
+			mockClient := rpmostreeclient.NewMockIClient(ctrl)
+			mockClient.EXPECT().IsStaterootBooted("rhcos_").Return(false, nil)
+
 			r := &ImageBasedUpgradeReconciler{
-				Client: fakeClient,
-				Log:    logr.Discard(),
-				Scheme: fakeClient.Scheme(),
+				Client:          fakeClient,
+				Log:             logr.Discard(),
+				Scheme:          fakeClient.Scheme(),
+				RPMOstreeClient: mockClient,
 			}
 			result, err := r.Reconcile(context.TODO(), tc.request)
 			if err != nil {
