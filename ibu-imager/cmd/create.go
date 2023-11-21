@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
+
 	v1 "github.com/openshift/api/config/v1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,7 +29,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
@@ -56,7 +58,9 @@ var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create OCI image and push it to a container registry.",
 	Run: func(cmd *cobra.Command, args []string) {
-		create()
+		if err := create(); err != nil {
+			log.Fatalf("Error executing create command: %v", err)
+		}
 	},
 }
 
@@ -75,12 +79,9 @@ func init() {
 	createCmd.MarkFlagRequired("image")
 }
 
-func create() {
+func create() error {
 
 	var err error
-
-	// 2 different logger till we will move to single one after decision which one is better
-	// just in order to use same executor
 	log.Info("OCI image creation has started")
 
 	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
@@ -89,22 +90,22 @@ func create() {
 
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {
-		log.Fatal("Failed to create k8s config", err)
+		return fmt.Errorf("failed to create k8s config: %w", err)
 	}
 
 	client, err := runtimeClient.New(config, runtimeClient.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatal("Failed to create runtime client", err)
+		return fmt.Errorf("failed to create runtime client: %w", err)
 	}
 
-	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
+	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
-	err = seedCreator.CreateSeedImage()
-	if err != nil {
-		log.Fatal(err)
+	if err = seedCreator.CreateSeedImage(); err != nil {
+		return fmt.Errorf("failed to create seed image: %w", err)
 	}
 
 	// TODO: add cleanup
 
 	log.Info("OCI image created successfully!")
+	return nil
 }
