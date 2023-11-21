@@ -49,7 +49,7 @@ func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
 		},
 	}
 	restore.SetName(name)
-	restore.SetNamespace(oadpNs)
+	restore.SetNamespace(OadpNs)
 	restore.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
 
 	restore.Spec = velerov1.RestoreSpec{
@@ -272,7 +272,7 @@ func TestTriggerRestore(t *testing.T) {
 
 	ns := &corev1.Namespace{
 		ObjectMeta: v1.ObjectMeta{
-			Name: oadpNs,
+			Name: OadpNs,
 		},
 	}
 
@@ -309,7 +309,7 @@ func TestTriggerRestore(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, restoreStatus.Status)
 
 			restoreList := &velerov1.RestoreList{}
-			err = fakeClient.List(context.Background(), restoreList, client.InNamespace(oadpNs))
+			err = fakeClient.List(context.Background(), restoreList, client.InNamespace(OadpNs))
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
@@ -448,7 +448,7 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
 			"metadata": map[string]interface{}{
 				"name":      "oadp",
-				"namespace": oadpNs,
+				"namespace": OadpNs,
 			},
 		},
 	}
@@ -488,7 +488,7 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 	existingDpa := &unstructured.Unstructured{}
 	existingDpa.SetGroupVersionKind(dpaGvk)
 	err = fakeClient.Get(context.Background(), client.ObjectKey{
-		Name: "oadp", Namespace: "openshift-adp",
+		Name: "oadp", Namespace: OadpNs,
 	}, existingDpa)
 	assert.NoError(t, err)
 
@@ -498,7 +498,7 @@ func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorag
 	return &velerov1.BackupStorageLocation{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      name,
-			Namespace: oadpNs,
+			Namespace: OadpNs,
 		},
 		Status: velerov1.BackupStorageLocationStatus{
 			Phase: phase,
@@ -536,7 +536,7 @@ func TestEnsureStorageBackendAvaialble(t *testing.T) {
 	}
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: oadpNs,
+			Name: OadpNs,
 		},
 	}
 
@@ -554,7 +554,7 @@ func TestEnsureStorageBackendAvaialble(t *testing.T) {
 				Log:    ctrl.Log.WithName("BackupRestore"),
 			}
 
-			ok, err := handler.ensureStorageBackendAvaialble(context.Background(), oadpNs)
+			ok, err := handler.ensureStorageBackendAvaialble(context.Background(), OadpNs)
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}

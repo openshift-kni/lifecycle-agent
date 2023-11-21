@@ -43,6 +43,7 @@ import (
 // +kubebuilder:rbac:groups=velero.io/v1,resources=backups,verbs=get;list;delete;create;update;watch
 // +kubebuilder:rbac:groups=velero.io/v1,resources=restores,verbs=get;list;delete;create;update;watch
 // +kubebuilder:rbac:groups=velero.io/v1,resources=backupstoragelocations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=velero.io/v1,resources=deletebackuprequests,verbs=get;list;delete;create;update;watch
 // +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=subscriptions,verbs=get;list;delete;watch
 // +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=clusterserviceversions,verbs=get;list;delete;watch
 
@@ -56,18 +57,9 @@ const (
 	oadpRestorePath = "OADP/veleroRestore"
 	oadpDpaPath     = "OADP/dpa"
 	oadpSecretPath  = "OADP/secret"
-)
 
-// BackupPhase defines the phase of backup
-type BackupPhase string
-
-// Constants for backup phase
-const (
-	BackupPending          BackupPhase = "BackupPending"
-	BackupFailedValidation BackupPhase = "BackupFailedValidation"
-	BackupFailed           BackupPhase = "BackupFailed"
-	BackupCompleted        BackupPhase = "BackupCompleted"
-	BackupInProgress       BackupPhase = "BackupInProgress"
+	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
+	OadpNs = "openshift-adp"
 )
 
 // RestorePhase defines the phase of restore
@@ -92,12 +84,6 @@ var (
 type BRHandler struct {
 	client.Client
 	Log logr.Logger
-}
-
-// BackupStatus defines the status of backup
-type BackupStatus struct {
-	Status  BackupPhase
-	Message string
 }
 
 // RestoreStatus defines the status of restore
@@ -178,6 +164,7 @@ func getBackup(ctx context.Context, c client.Client, name, namespace string) (*v
 }
 
 func getClusterID(ctx context.Context, c client.Client) (string, error) {
+
 	clusterVersion := &configv1.ClusterVersion{}
 	if err := c.Get(ctx, types.NamespacedName{
 		Name: "version",

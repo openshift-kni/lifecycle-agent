@@ -18,39 +18,133 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
+
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// simple custom error types to handle backup cases
+type (
+	BackupFailedError     string
+	BackupValidationError string
+)
+
+func (b BackupFailedError) Error() string {
+	return string(b)
+}
+
+func (b BackupValidationError) Error() string {
+	return string(b)
+}
+
+// handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 
-	r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw")
+	r.Log.Info("Starting handleUpgrade")
+
+	// backup with OADP
+	r.Log.Info("Backup with Oadp operator")
+	reqBackup, backupCRs, err := r.BackupRestore.CheckIfBackupRequested(ibu.Spec.OADPContent, ctx)
+	if err != nil {
+		if k8serrors.IsInvalid(err) {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionTrue,
+				fmt.Sprintf("Invalid backup resource detected in configMap, please update"),
+				ibu.Generation)
+			return requeueWithShortInterval(), nil
+		}
+		r.Log.Error(err, "")
+		return requeueWithError(err)
+	}
+	if reqBackup {
+		r.Log.Info("Backup requested")
+		ctrlResult, err := r.startBackup(ctx, backupCRs)
+		if err != nil {
+			var (
+				backupFailedError     *BackupFailedError
+				backupValidationError *BackupValidationError
+			)
+			switch {
+			case errors.As(err, &backupFailedError):
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					backupFailedError.Error(),
+					ibu.Generation)
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+					utils.ConditionReasons.Failed,
+					metav1.ConditionFalse,
+					"Upgrade failed",
+					ibu.Generation)
+				return ctrlResult, nil
+			case errors.As(err, &backupValidationError):
+				utils.SetStatusCondition(&ibu.Status.Conditions,
+					utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+					utils.ConditionReasons.InProgress,
+					metav1.ConditionTrue,
+					backupValidationError.Error(),
+					ibu.Generation)
+				return ctrlResult, nil
+			default:
+				return requeueWithError(err)
+			}
+		}
+		if !ctrlResult.IsZero() {
+			return ctrlResult, nil
+		}
+	}
+
+	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+		return requeueWithError(err)
+	}
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 
-	// TODO: Pre-pivot steps
-	//
-	// TODO: Call r.BackupRestore.ExportRestoresToDir to write restore CRs to the new stateroot.
-	//       If there is invalid type of error returned, we should update the ibu status and
-	//       requeue with short interval.
-	//
-	err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo)
-	if err != nil {
-		r.Log.Error(err, "Failed to export extra manifests")
-		return ctrl.Result{}, err
+	r.Log.Info("Writing OadpConfiguratio CRs into new stateroot")
+	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
+		return requeueWithError(err)
 	}
 
+	r.Log.Info("Writing Restore CRs into new stateroot")
+	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, stateRootRepo); err != nil {
+		if k8serrors.IsInvalid(err) {
+			utils.SetStatusCondition(&ibu.Status.Conditions,
+				utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+				utils.ConditionReasons.InProgress,
+				metav1.ConditionTrue,
+				fmt.Sprintf("Invalid restore resource detected in configMap, please update"),
+				ibu.Generation)
+			return requeueWithShortInterval(), nil
+		}
+		return requeueWithError(err)
+	}
+
+	r.Log.Info("Writing extra-manifests into new stateroot")
+	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo); err != nil {
+		return requeueWithError(err)
+	}
+
+	r.Log.Info("Writing cluster-configuration into new stateroot")
 	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {
-		r.Log.Error(err, "failed fetching cluster config")
-		return ctrl.Result{}, err
+		return requeueWithError(err)
 	}
 
+	r.Log.Info("Writing network-configuration into new stateroot")
 	if err := r.NetworkConfig.FetchNetworkConfig(ctx, stateRootRepo); err != nil {
-		r.Log.Error(err, "failed fetching Network config")
-		return ctrl.Result{}, err
+		return requeueWithError(err)
 	}
 
 	// TODO: Pivot to new stateroot
@@ -62,8 +156,8 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	// 	 r.Log.Error(err, "Failed to apply extra manifests")
 	//	 return ctrl.Result{}, err
 	// }
+	r.Log.Info("Done handleUpgrade")
 
-	// If completed, update conditions and return doNotRequeue
 	utils.SetStatusCondition(&ibu.Status.Conditions,
 		utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
 		utils.ConditionReasons.Completed,
@@ -76,5 +170,47 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		metav1.ConditionFalse,
 		"Upgrade completed",
 		ibu.Generation)
+	return doNotRequeue(), nil
+}
+
+// startBackup manages backup flow and returns with possible requeue
+func (r *ImageBasedUpgradeReconciler) startBackup(ctx context.Context, backupCRs []*velerov1.Backup) (ctrl.Result, error) {
+	// sort backupCRs by wave-apply
+	sortedBackupGroups, err := backuprestore.SortByApplyWaveBackupCrs(backupCRs)
+	if err != nil {
+		return requeueWithError(err)
+	}
+
+	// trigger and track each group
+	for _, backups := range sortedBackupGroups {
+		backupTracker, err := r.BackupRestore.TriggerBackup(ctx, backups)
+		if err != nil {
+			return requeueWithError(err)
+		}
+		if len(backupTracker.SucceededBackups) == len(backups) {
+			// The current backup group has done, work on the next group
+			continue
+		} else if len(backupTracker.FailedBackups) != 0 {
+			// not recoverable
+			msg := fmt.Sprintf("Failed backups: %s", strings.Join(backupTracker.FailedBackups, ","))
+			err := BackupFailedError(msg)
+			return doNotRequeue(), &err
+		} else if len(backupTracker.FailedValidationBackups) != 0 {
+			msg := fmt.Sprintf("Failed validation backups reported by Oadp: %s. %s", strings.Join(backupTracker.FailedValidationBackups, ","), "Please update the invalid backups.")
+			err := BackupValidationError(msg)
+			return requeueWithShortInterval(), &err
+		} else if len(backupTracker.ProgressingBackups) != 0 {
+			r.Log.Info(fmt.Sprintf("Inprogress backups: %s", strings.Join(backupTracker.ProgressingBackups, ",")))
+			return requeueWithCustomInterval(2 * time.Second), nil
+		} else {
+			// Backup doesn't have any status, it's likely
+			// that the object storage backend is not available.
+			// Requeue to wait for the object storage backend
+			// to be ready.
+			r.Log.Info(fmt.Sprintf("Pending backups: %s. %s", strings.Join(backupTracker.PendingBackups, ","), "Wait for object storage backend to be available."))
+			return requeueWithMediumInterval(), nil
+		}
+	}
+
 	return doNotRequeue(), nil
 }

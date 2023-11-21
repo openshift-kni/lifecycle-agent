@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -35,177 +34,117 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-// ReconcileBackup reconciles the backup CRs
-func (h *BRHandler) ReconcileBackup(ctx context.Context, oadpContent []lcav1alpha1.ConfigMapRef,
-) (
-	result ctrl.Result, status BackupStatus, err error,
-) {
-	if len(oadpContent) == 0 {
-		status.Status = BackupFailedValidation
-		status.Message = "No oadp configmap is provided."
-		result.RequeueAfter = 1 * time.Minute
-		return
-	}
-
-	oadpConfigmaps, err := getConfigMaps(ctx, h.Client, oadpContent)
-	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return
-		}
-
-		status.Status = BackupFailedValidation
-		status.Message = fmt.Sprintf("The oadp configmap is not found: %s", err.Error())
-		result.RequeueAfter = 1 * time.Minute
-		return
-	}
-
-	backupCrs, err := extractBackupFromConfigmaps(ctx, h.Client, oadpConfigmaps)
-	if err != nil {
-		if k8serrors.IsInvalid(err) {
-			h.Log.Error(err, "Invalid backup CR")
-
-			status.Status = BackupFailedValidation
-			status.Message = fmt.Sprintf("Invalid backup CR: %s", err.Error())
-			result.RequeueAfter = 1 * time.Minute
-
-			err = nil
-		}
-		return
-	}
-
-	sortedBackupGroups, err := sortBackupCrs(backupCrs)
-	if err != nil {
-		return
-	}
-
-	return h.triggerBackup(ctx, sortedBackupGroups)
+type BackupTracker struct {
+	PendingBackups          []string
+	ProgressingBackups      []string
+	SucceededBackups        []string
+	FailedBackups           []string
+	FailedValidationBackups []string
 }
 
-func (h *BRHandler) triggerBackup(ctx context.Context, backupGroups [][]*velerov1.Backup,
-) (
-	result ctrl.Result, status BackupStatus, err error,
-) {
-	for _, backupGroup := range backupGroups {
-		var (
-			pendingBackups          []string
-			progressingBackups      []string
-			succeededBackups        []string
-			failedBackups           []string
-			failedValidationBackups []string
-		)
+// CheckIfBackupRequested check to know if we need backup
+func (h *BRHandler) CheckIfBackupRequested(content []lcav1alpha1.ConfigMapRef, ctx context.Context) (bool, []*velerov1.Backup, error) {
+	// no CM listed
+	if len(content) == 0 {
+		h.Log.Info("no configMap CR provided")
+		return false, []*velerov1.Backup{}, nil
+	}
 
-		for _, backup := range backupGroup {
-			var existingBackup *velerov1.Backup
-			existingBackup, err = getBackup(ctx, h.Client, backup.Name, backup.Namespace)
-			if err != nil {
-				return
-			}
+	// extract CM
+	oadpConfigmaps, err := getConfigMaps(ctx, h, content)
+	if err != nil {
+		return false, []*velerov1.Backup{}, err
+	}
 
-			if existingBackup == nil {
-				// Backup has not been applied. Applying backup
-				var clusterID string
-				clusterID, err = getClusterID(ctx, h.Client)
-				if err != nil {
-					return
-				}
+	// read the content in the CM
+	backupCrs, err := h.extractBackupFromConfigmaps(ctx, oadpConfigmaps)
+	if err != nil {
+		return false, []*velerov1.Backup{}, err
+	}
 
-				setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
-				if err = h.Create(ctx, backup); err != nil {
-					return
-				}
-				h.Log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
-				progressingBackups = append(progressingBackups, backup.Name)
+	return len(backupCrs) > 0, backupCrs, nil
+}
 
-			} else {
-				currentBackupStatus := h.checkVeleroBackupProcessStatus(existingBackup)
+// TriggerBackup start backup or track status
+func (h *BRHandler) TriggerBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error) {
+	// track backup status
+	bt := BackupTracker{}
 
-				switch currentBackupStatus {
-				case BackupPending:
-					pendingBackups = append(pendingBackups, existingBackup.Name)
-				case BackupFailed:
-					failedBackups = append(failedBackups, existingBackup.Name)
-				case BackupCompleted:
-					succeededBackups = append(succeededBackups, existingBackup.Name)
-				case BackupInProgress:
-					progressingBackups = append(progressingBackups, existingBackup.Name)
-				case BackupFailedValidation:
-					// Re-create the failed validation backup if it has been updated
-					if !equivalentBackups(existingBackup, backup) {
-						if err = h.Delete(ctx, existingBackup); err != nil {
-							return
-						}
-
-						var clusterID string
-						clusterID, err = getClusterID(ctx, h.Client)
-						if err != nil {
-							return
-						}
-						setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
-						if err = h.Create(ctx, backup); err != nil {
-							return
-						}
-
-						progressingBackups = append(progressingBackups, existingBackup.Name)
-					} else {
-						failedValidationBackups = append(failedValidationBackups, existingBackup.Name)
-					}
-				}
-			}
+	for _, backup := range backups {
+		var existingBackup *velerov1.Backup
+		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
+		if err != nil {
+			return &bt, err
 		}
 
-		if len(succeededBackups) == len(backupGroup) {
-			// The current backup group has done, work on the next group
-			continue
-
-		} else if len(failedBackups) != 0 {
-			status.Status = BackupFailed
-			status.Message = fmt.Sprintf(
-				"Failed backups: %s",
-				strings.Join(failedBackups, ","))
-			result.Requeue = false
-			return
-
-		} else if len(progressingBackups) != 0 {
-			status.Status = BackupInProgress
-			status.Message = fmt.Sprintf(
-				"Inprogress backups: %s",
-				strings.Join(progressingBackups, ","))
-			result.RequeueAfter = 2 * time.Second
-			return
-
-		} else if len(failedValidationBackups) != 0 {
-			status.Status = BackupFailedValidation
-			status.Message = fmt.Sprintf(
-				"Failed validation backups: %s. %s",
-				strings.Join(failedValidationBackups, ","),
-				"Please update the invalid backups.")
-			result.RequeueAfter = 1 * time.Minute
-			return
+		if existingBackup == nil {
+			// Backup has not been applied. Applying backup
+			err := h.createNewBackupCr(ctx, backup)
+			if err != nil {
+				return &bt, err
+			}
+			bt.ProgressingBackups = append(bt.ProgressingBackups, backup.Name)
 
 		} else {
-			// Backup doesn't have any status, it's likely
-			// that the object storage backend is not available.
-			// Requeue to wait for the object storage backend
-			// to be ready.
-			status.Status = BackupPending
-			status.Message = fmt.Sprintf(
-				"Pending backups: %s. %s",
-				strings.Join(pendingBackups, ","),
-				"Wait for object storage backend to be available.")
-			result.RequeueAfter = 1 * time.Minute
-			return
+			h.Log.Info("Backup",
+				"name", existingBackup.Name,
+				"phase", existingBackup.Status.Phase,
+				"warnings", existingBackup.Status.Warnings,
+				"errors", existingBackup.Status.Errors,
+				"failure", existingBackup.Status.FailureReason,
+				"validation errors", existingBackup.Status.ValidationErrors,
+			)
+
+			switch existingBackup.Status.Phase {
+			case velerov1.BackupPhaseCompleted:
+				bt.SucceededBackups = append(bt.SucceededBackups, existingBackup.Name)
+			case velerov1.BackupPhasePartiallyFailed, velerov1.BackupPhaseFailed:
+				bt.FailedBackups = append(bt.FailedBackups, existingBackup.Name)
+			case velerov1.BackupPhaseFailedValidation:
+				// Re-create the failed validation backup if it has been updated
+				if !equivalentBackups(existingBackup, backup) {
+					if err := h.Delete(ctx, existingBackup); err != nil {
+						return &bt, err
+					}
+
+					err := h.createNewBackupCr(ctx, backup)
+					if err != nil {
+						return &bt, err
+					}
+					bt.ProgressingBackups = append(bt.ProgressingBackups, existingBackup.Name)
+				} else {
+					bt.FailedValidationBackups = append(bt.FailedValidationBackups, existingBackup.Name)
+				}
+			case "":
+				// Backup has no status
+				bt.PendingBackups = append(bt.PendingBackups, existingBackup.Name)
+			default:
+				bt.ProgressingBackups = append(bt.ProgressingBackups, existingBackup.Name)
+			}
+
 		}
 	}
 
-	status.Status = BackupCompleted
-	status.Message = "All Backups have completed"
-	result.Requeue = false
-	return
+	return &bt, nil
+}
+
+func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Backup) error {
+	clusterID, err := getClusterID(ctx, h.Client)
+	if err != nil {
+		return err
+	}
+
+	setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
+	if err := h.Create(ctx, backup); err != nil {
+		return err
+	}
+
+	h.Log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
+	return nil
 }
 
 func equivalentBackups(backup1, backup2 *velerov1.Backup) bool {
@@ -213,34 +152,8 @@ func equivalentBackups(backup1, backup2 *velerov1.Backup) bool {
 	return equality.Semantic.DeepEqual(backup1.Spec, backup2.Spec)
 }
 
-func (h *BRHandler) checkVeleroBackupProcessStatus(backup *velerov1.Backup) BackupPhase {
-	h.Log.Info("Backup",
-		"name", backup.Name,
-		"phase", backup.Status.Phase,
-		"warnings", backup.Status.Warnings,
-		"errors", backup.Status.Errors,
-		"failure", backup.Status.FailureReason,
-		"validation errors", backup.Status.ValidationErrors,
-	)
-
-	switch backup.Status.Phase {
-	case "":
-		// Backup has no status
-		return BackupPending
-	case velerov1.BackupPhaseCompleted:
-		return BackupCompleted
-	case velerov1.BackupPhaseFailedValidation:
-		return BackupFailedValidation
-	case velerov1.BackupPhasePartiallyFailed,
-		velerov1.BackupPhaseFailed:
-		return BackupFailed
-	default:
-		return BackupInProgress
-	}
-}
-
-// sortBackupOrRestoreCrs sorts the backups by the apply-wave annotation
-func sortBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
+// SortBackupOrRestoreCrs sorts the backups by the apply-wave annotation
+func SortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
 	var resourcesApplyWaveMap = make(map[int][]*velerov1.Backup)
 	var sortedResources [][]*velerov1.Backup
 
@@ -284,7 +197,7 @@ func sortBackupsByName(resources []*velerov1.Backup) {
 }
 
 // extractBackupFromConfigmaps extacts Backup CRs from configmaps
-func extractBackupFromConfigmaps(ctx context.Context, c client.Client, configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
+func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
 	var backups []*velerov1.Backup
 
 	for _, cm := range configmaps {
@@ -294,16 +207,18 @@ func extractBackupFromConfigmaps(ctx context.Context, c client.Client, configmap
 			if err != nil {
 				return nil, err
 			}
-
 			if resource.GroupVersionKind() != backupGvk {
 				continue
 			}
 
 			// Create the backup CR in dry-run mode to detect any validation errors in the CR
 			// i.e., missing required fields
-			err = c.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+			err = h.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
 			if err != nil {
-				return nil, err
+				if !k8serrors.IsAlreadyExists(err) {
+					return nil, err
+				}
+
 			}
 
 			backup := velerov1.Backup{}
@@ -314,7 +229,6 @@ func extractBackupFromConfigmaps(ctx context.Context, c client.Client, configmap
 			backups = append(backups, &backup)
 		}
 	}
-
 	return backups, nil
 }
 

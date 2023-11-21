@@ -161,6 +161,17 @@ rules:
 - apiGroups:
   - velero.io/v1
   resources:
+  - deletebackuprequests
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - velero.io/v1
+  resources:
   - restores
   verbs:
   - create

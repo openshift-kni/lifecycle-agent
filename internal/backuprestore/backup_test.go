@@ -199,7 +199,7 @@ func TestSortBackupCrs(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, _ := sortBackupCrs(tc.resources)
+			result, _ := SortByApplyWaveBackupCrs(tc.resources)
 			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
@@ -207,18 +207,16 @@ func TestSortBackupCrs(t *testing.T) {
 
 func TestTriggerBackup(t *testing.T) {
 	testcases := []struct {
-		name                    string
-		existingBackups         []client.Object
-		expectedReconcileResult ctrl.Result
-		expectedStatus          BackupPhase
-		expectedBackupsCount    int
+		name                  string
+		existingBackups       []client.Object
+		expectedBackupTracker []BackupTracker
 	}{
 		{
-			name:                    "No backups applied",
-			existingBackups:         []client.Object{},
-			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
-			expectedStatus:          BackupInProgress,
-			expectedBackupsCount:    4,
+			name:            "No backups applied",
+			existingBackups: []client.Object{},
+			expectedBackupTracker: []BackupTracker{{
+				ProgressingBackups: []string{"backup1", "backup2", "backup3", "backup4"},
+			}},
 		},
 		{
 			name: "Backups applied in the first group but have no status",
@@ -228,9 +226,11 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCr("backup3", "1", "fakeResource3"),
 				fakeBackupCr("backup4", "1", "fakeResource4"),
 			},
-			expectedReconcileResult: ctrl.Result{RequeueAfter: 1 * time.Minute},
-			expectedStatus:          BackupPending,
-			expectedBackupsCount:    4,
+			expectedBackupTracker: []BackupTracker{{
+				PendingBackups: []string{"backup1", "backup2", "backup3", "backup4"},
+			}, {
+				ProgressingBackups: []string{"backup5"},
+			}},
 		},
 		{
 			name: "Backups applied in the first group but have failed status",
@@ -240,21 +240,12 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseFailedValidation),
 			},
-			expectedReconcileResult: ctrl.Result{Requeue: false},
-			expectedStatus:          BackupFailed,
-			expectedBackupsCount:    4,
-		},
-		{
-			name: "Backups applied in the first group but have failed validation status",
-			existingBackups: []client.Object{
-				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseFailedValidation),
-				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
-			},
-			expectedReconcileResult: ctrl.Result{RequeueAfter: 1 * time.Minute},
-			expectedStatus:          BackupFailedValidation,
-			expectedBackupsCount:    4,
+			expectedBackupTracker: []BackupTracker{{
+				ProgressingBackups:      []string{"backup"},
+				FailedValidationBackups: []string{"backup"},
+				FailedBackups:           []string{"backup"},
+				SucceededBackups:        []string{"backup"},
+			}},
 		},
 		{
 			name: "Backup was previously failed on validation and now recreated",
@@ -264,9 +255,10 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCrWithStatus("backup3", "1", "fakeResourceOld", velerov1.BackupPhaseFailedValidation),
 				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
 			},
-			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
-			expectedStatus:          BackupInProgress,
-			expectedBackupsCount:    4,
+			expectedBackupTracker: []BackupTracker{{
+				ProgressingBackups: []string{"backup"},
+				SucceededBackups:   []string{"backup", "backup", "backup"},
+			}},
 		},
 		{
 			name: "Backups completed in the first group and in progress in the second group",
@@ -277,9 +269,11 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseInProgress),
 			},
-			expectedReconcileResult: ctrl.Result{RequeueAfter: 2 * time.Second},
-			expectedStatus:          BackupInProgress,
-			expectedBackupsCount:    5,
+			expectedBackupTracker: []BackupTracker{{
+				SucceededBackups: []string{"backup", "backup", "backup", "backup"},
+			}, {
+				ProgressingBackups: []string{"backup"},
+			}},
 		},
 		{
 			name: "Backups completed in the first group and failed in the second group",
@@ -290,9 +284,11 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseFailed),
 			},
-			expectedReconcileResult: ctrl.Result{Requeue: false},
-			expectedStatus:          BackupFailed,
-			expectedBackupsCount:    5,
+			expectedBackupTracker: []BackupTracker{{
+				SucceededBackups: []string{"backup", "backup", "backup", "backup"},
+			}, {
+				FailedBackups: []string{"backup"},
+			}},
 		},
 		{
 			name: "All backups have completed",
@@ -303,9 +299,11 @@ func TestTriggerBackup(t *testing.T) {
 				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseCompleted),
 			},
-			expectedReconcileResult: ctrl.Result{Requeue: false},
-			expectedStatus:          BackupCompleted,
-			expectedBackupsCount:    5,
+			expectedBackupTracker: []BackupTracker{{
+				SucceededBackups: []string{"", "", "", ""},
+			}, {
+				SucceededBackups: []string{""},
+			}},
 		},
 	}
 
@@ -350,26 +348,27 @@ func TestTriggerBackup(t *testing.T) {
 				Log:    ctrl.Log.WithName("BackupRestore"),
 			}
 
-			result, backupStatus, err := handler.triggerBackup(context.Background(), backups)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err.Error())
-			}
-			assert.Equal(t, tc.expectedReconcileResult, result)
-			assert.Equal(t, tc.expectedStatus, backupStatus.Status)
-
-			backupList := &velerov1.BackupList{}
-			err = fakeClient.List(context.Background(), backupList, client.InNamespace(oadpNs))
-			if err != nil {
-				t.Errorf("unexpected error: %v", err.Error())
-			}
-			assert.Equal(t, tc.expectedBackupsCount, len(backupList.Items))
-
-			if tc.name == "No backups applied" {
-				for _, backup := range backupList.Items {
-					// check if backup has the clusterID label
-					assert.Equal(t, "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36", backup.Labels[clusterIDLabel])
+			backupTracker := make([]*BackupTracker, len(backups))
+			for i, backupgroup := range backups {
+				backupTracker[i], err = handler.TriggerBackup(context.Background(), backupgroup)
+				if err != nil {
+					return
 				}
 			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err.Error())
+			}
+
+			// assert tracker values
+			for i, curTracker := range tc.expectedBackupTracker {
+				assert.Equal(t, len(curTracker.PendingBackups), len(backupTracker[i].PendingBackups))
+				assert.Equal(t, len(curTracker.ProgressingBackups), len(backupTracker[i].ProgressingBackups))
+				assert.Equal(t, len(curTracker.FailedBackups), len(backupTracker[i].FailedBackups))
+				assert.Equal(t, len(curTracker.FailedValidationBackups), len(backupTracker[i].FailedValidationBackups))
+				assert.Equal(t, len(curTracker.SucceededBackups), len(backupTracker[i].SucceededBackups))
+			}
+
 		})
 	}
 }
