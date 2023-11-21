@@ -40,13 +40,13 @@ import (
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=delete
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
-// +kubebuilder:rbac:groups=velero.io/v1,resources=backups,verbs=get;list;delete;create;update;watch
-// +kubebuilder:rbac:groups=velero.io/v1,resources=restores,verbs=get;list;delete;create;update;watch
-// +kubebuilder:rbac:groups=velero.io/v1,resources=backupstoragelocations,verbs=get;list;watch
-// +kubebuilder:rbac:groups=velero.io/v1,resources=deletebackuprequests,verbs=get;list;delete;create;update;watch
+// +kubebuilder:rbac:groups=velero.io,resources=backups,verbs=get;list;delete;create;update;watch
+// +kubebuilder:rbac:groups=velero.io,resources=restores,verbs=get;list;delete;create;update;watch
+// +kubebuilder:rbac:groups=velero.io,resources=backupstoragelocations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=velero.io,resources=deletebackuprequests,verbs=get;list;delete;create;update;watch
+// +kubebuilder:rbac:groups=operators.coreos.com,resources=subscriptions,verbs=get;list;delete;watch
+// +kubebuilder:rbac:groups=operators.coreos.com,resources=clusterserviceversions,verbs=get;list;delete;watch
 // +kubebuilder:rbac:groups=oadp.openshift.io,resources=dataprotectionapplications,verbs=get;list;create;update;watch
-// +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=subscriptions,verbs=get;list;delete;watch
-// +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=clusterserviceversions,verbs=get;list;delete;watch
 
 const (
 	applyWaveAnn     = "lca.openshift.io/apply-wave"

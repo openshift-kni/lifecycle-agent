@@ -194,7 +194,7 @@ spec:
           - update
           - watch
         - apiGroups:
-          - operators.coreos.com/v1alpha1
+          - operators.coreos.com
           resources:
           - clusterserviceversions
           verbs:
@@ -203,7 +203,7 @@ spec:
           - list
           - watch
         - apiGroups:
-          - operators.coreos.com/v1alpha1
+          - operators.coreos.com
           resources:
           - subscriptions
           verbs:
@@ -212,7 +212,7 @@ spec:
           - list
           - watch
         - apiGroups:
-          - velero.io/v1
+          - velero.io
           resources:
           - backups
           verbs:
@@ -223,7 +223,7 @@ spec:
           - update
           - watch
         - apiGroups:
-          - velero.io/v1
+          - velero.io
           resources:
           - backupstoragelocations
           verbs:
@@ -231,7 +231,7 @@ spec:
           - list
           - watch
         - apiGroups:
-          - velero.io/v1
+          - velero.io
           resources:
           - deletebackuprequests
           verbs:
@@ -242,7 +242,7 @@ spec:
           - update
           - watch
         - apiGroups:
-          - velero.io/v1
+          - velero.io
           resources:
           - restores
           verbs:
