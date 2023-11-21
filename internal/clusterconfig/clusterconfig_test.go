@@ -18,7 +18,6 @@ package clusterconfig
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -185,21 +185,12 @@ func TestClusterConfig(t *testing.T) {
 				// validate manifest json
 
 				clusterInfo := &clusterinfo.ClusterInfo{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, clusterInfoFileName), clusterInfo); err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.ClusterInfoFileName), clusterInfo); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, clusterInfo.ClusterName, "test-infra-cluster")
 				assert.Equal(t, clusterInfo.Domain, "redhat.com")
 				assert.Equal(t, clusterInfo.MasterIP, "192.168.121.10")
-
-				rConfig := &recertConfig{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, recertConfigFile), rConfig); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				assert.Equal(t, rConfig.ClusterRename, "test-infra-cluster:redhat.com")
-				assert.Equal(t, len(rConfig.CNSanReplaceRules), 4)
-				assert.Contains(t, rConfig.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedManifestData.MasterIP, clusterInfo.MasterIP))
-				assert.Contains(t, rConfig.UseKeyRules, "ingress@test /opt/openshift/certs/ingresskey-ingress@test")
 			},
 		},
 		{
@@ -338,20 +329,12 @@ func TestClusterConfig(t *testing.T) {
 				Scheme: fakeClient.Scheme(),
 			}
 
-			if err := os.MkdirAll(filepath.Join(tmpDir, filepath.Dir(clusterConfigDir)), 0o700); err != nil {
+			if err := os.MkdirAll(filepath.Join(tmpDir, common.OptOpenshift), 0o700); err != nil {
 				t.Errorf("failed to create opt dir, error: %v", err)
 			}
-			err = utils.WriteToFile(seedManifestData, filepath.Join(tmpDir, filepath.Dir(clusterConfigDir), seedManifest))
+			err = utils.WriteToFile(seedManifestData, filepath.Join(tmpDir, common.OptOpenshift, common.SeedManifest))
 			if err != nil {
 				t.Errorf("failed to create seed manifest, error: %v", err)
-			}
-
-			if err := os.MkdirAll(filepath.Join(tmpDir, certsDir), 0o700); err != nil {
-				t.Errorf("failed to create opt dir, error: %v", err)
-			}
-			_, err = os.Create(filepath.Join(tmpDir, certsDir, "ingresskey-ingress@test"))
-			if err != nil {
-				t.Errorf("failed to create ingress file, error: %v", err)
 			}
 
 			err = ucc.FetchClusterConfig(context.TODO(), tmpDir)

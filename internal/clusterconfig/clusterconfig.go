@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -29,15 +30,11 @@ const (
 	pullSecretName                = "pull-secret"
 	configNamespace               = "openshift-config"
 	upgradeConfigurationNamespace = "upgrade-configuration"
-	clusterConfigDir              = "/opt/openshift/cluster-configuration"
 	manifestDir                   = "manifests"
 	proxyFileName                 = "proxy.json"
 	clusterIDFileName             = "cluster-id-override.json"
 	pullSecretFileName            = "pullsecret.json"
-	clusterInfoFileName           = "manifest.json"
 	idmsFIlePath                  = "image-digest-mirror-set.json"
-	certsDir                      = "/opt/openshift/certs"
-	seedManifest                  = "seed_manifest.json"
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -91,7 +88,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 
 // configDirs returns the files directory for the given cluster config
 func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error) {
-	filesDir := filepath.Join(ostreeDir, clusterConfigDir)
+	filesDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
 	if err := os.MkdirAll(filepath.Join(filesDir, manifestDir), 0o700); err != nil {
 		return "", err
@@ -129,13 +126,9 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(
 	if err := r.writeProxyToFile(proxy, filepath.Join(manifestsDir, proxyFileName)); err != nil {
 		return err
 	}
-	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, clusterInfoFileName)); err != nil {
+	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, common.ClusterInfoFileName)); err != nil {
 		return err
 	}
-	if err := CreateRecertConfigFile(clusterData, clusterConfigPath, ostreeDir); err != nil {
-		return err
-	}
-
 	return nil
 }
 

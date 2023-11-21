@@ -111,3 +111,9 @@ func (m *InfoClient) getInstallConfig(ctx context.Context) (*basicInstallConfig,
 	}
 	return instConf, nil
 }
+
+func ReadClusterInfoFromFile(path string) (*ClusterInfo, error) {
+	data := &ClusterInfo{}
+	err := utils.ReadYamlOrJSONFile(path, data)
+	return data, err
+}

@@ -29,10 +29,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/common"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
 var (

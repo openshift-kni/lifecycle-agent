@@ -5,7 +5,7 @@ After=nodeip-configuration.service prepare-installation-configuration.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/installation-configuration.sh
+ExecStart=/usr/local/bin/ibu-imager post-pivot --recert-image ${RECERT_IMAGE}
 EnvironmentFile=/etc/systemd/system/installation-configuration.env
 
 [Install]
