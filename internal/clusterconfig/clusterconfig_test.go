@@ -169,10 +169,11 @@ func TestClusterConfig(t *testing.T) {
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, pullSecretFileName), secret); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+
 				testData := map[string][]byte{"aaa": []byte("bbb")}
 				assert.Equal(t, secret.Data, testData)
 				assert.Equal(t, secret.Name, pullSecretName)
-				assert.Equal(t, secret.Namespace, upgradeConfigurationNamespace)
+				assert.Equal(t, secret.Namespace, configNamespace)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
@@ -271,7 +272,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 4, len(dir))
+				assert.Equal(t, 3, len(dir))
 			},
 		},
 		{

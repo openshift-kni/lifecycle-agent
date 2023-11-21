@@ -26,15 +26,14 @@ import (
 // +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 
 const (
-	proxyName                     = "cluster"
-	pullSecretName                = "pull-secret"
-	configNamespace               = "openshift-config"
-	upgradeConfigurationNamespace = "upgrade-configuration"
-	manifestDir                   = "manifests"
-	proxyFileName                 = "proxy.json"
-	clusterIDFileName             = "cluster-id-override.json"
-	pullSecretFileName            = "pullsecret.json"
-	idmsFIlePath                  = "image-digest-mirror-set.json"
+	proxyName          = "cluster"
+	pullSecretName     = "pull-secret"
+	configNamespace    = "openshift-config"
+	manifestDir        = "manifests"
+	proxyFileName      = "proxy.json"
+	clusterIDFileName  = "cluster-id-override.json"
+	pullSecretFileName = "pullsecret.json"
+	idmsFIlePath       = "image-digest-mirror-set.json"
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -110,10 +109,6 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(
 	}
 
 	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
-
-	if err := r.writeNamespaceToFile(filepath.Join(manifestsDir, "namespace.json")); err != nil {
-		return err
-	}
 	if err := r.writeSecretToFile(pullSecret, filepath.Join(manifestsDir, pullSecretFileName)); err != nil {
 		return err
 	}
@@ -132,31 +127,22 @@ func (r *UpgradeClusterConfigGather) writeClusterConfig(
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) writeNamespaceToFile(filePath string) error {
-	r.Log.Info("Writing namespace file", "path", filePath)
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: upgradeConfigurationNamespace,
-		},
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: corev1.SchemeGroupVersion.String(),
-			Kind:       "Namespace",
-		},
-	}
-	return utils.WriteToFile(ns, filePath)
-}
-
 func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, filePath string) error {
 	// override namespace
 	r.Log.Info("Writing secret to file", "path", filePath)
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secret.Name,
-			Namespace: upgradeConfigurationNamespace,
+			Namespace: secret.Namespace,
 		},
 		Data: secret.Data,
 		Type: secret.Type,
 	}
+	typeMeta, err := r.typeMetaForObject(s)
+	if err != nil {
+		return err
+	}
+	s.TypeMeta = *typeMeta
 	return utils.WriteToFile(s, filePath)
 }
 
@@ -168,6 +154,11 @@ func (r *UpgradeClusterConfigGather) writeProxyToFile(proxy *v1.Proxy, filePath 
 		},
 		Spec: proxy.Spec,
 	}
+	typeMeta, err := r.typeMetaForObject(p)
+	if err != nil {
+		return err
+	}
+	p.TypeMeta = *typeMeta
 	return utils.WriteToFile(p, filePath)
 }
 
