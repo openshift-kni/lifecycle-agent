@@ -98,6 +98,17 @@ spec:
           - update
           - watch
         - apiGroups:
+          - batch
+          resources:
+          - jobs
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - update
+          - watch
+        - apiGroups:
           - config.openshift.io
           resources:
           - clusterversions
@@ -273,6 +284,9 @@ spec:
                 - --leader-elect
                 command:
                 - /usr/local/bin/manager
+                env:
+                - name: PRECACHE_WORKLOAD_IMG
+                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.14.0
                 image: quay.io/openshift-kni/lifecycle-agent-operator:4.14.0
                 livenessProbe:
                   httpGet:

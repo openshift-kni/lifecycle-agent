@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/generated"
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -33,8 +35,7 @@ func pathOutsideChroot(filename string) string {
 	return filepath.Join(utils.Host, filename)
 }
 
-func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
-	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -45,36 +46,111 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
+		r.Log.Error(err, "Failed to write handler script", pathOutsideChroot(scriptname))
 		return
 	}
 	r.Log.Info("Handler script written")
-	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile)
+	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile, "--image-list-file", imageListFile)
 
 	result = requeueWithShortInterval()
 
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) launchPullImages(
-	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
-	if err = os.Chdir("/"); err != nil {
-		return
-	}
-
-	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepPullImages)
-	scriptcontent, _ := generated.Asset(utils.PrepPullImages)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
-
+func readPrecachingList(imageListFile string) (imageList []string, err error) {
+	var content []byte
+	content, err = os.ReadFile(pathOutsideChroot(imageListFile))
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
 		return
 	}
-	r.Log.Info("Handler script written")
-	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile)
+
+	lines := strings.Split(string(content), "\n")
+
+	// Filter out empty lines
+	for _, line := range lines {
+		if line != "" {
+			imageList = append(imageList, line)
+		}
+	}
+
+	return imageList, nil
+}
+
+func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile, progressfile string) (result ctrl.Result, err error) {
+
+	imageList, err := readPrecachingList(imageListFile)
+	if err != nil {
+		r.Log.Error(err, "Failed to read pre-caching image file", pathOutsideChroot(imageListFile))
+		return
+	}
+
+	config := precache.NewConfig(imageList)
+	err = precache.CreateJob(ctx, r.Client, config)
+	if err != nil {
+		r.Log.Error(err, "Failed to create precaching job")
+
+		// update progress-file
+		progressContent := []byte("Failed")
+		err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700)
+		if err != nil {
+			r.Log.Error(err, "Failed to update progress file for precaching")
+			return
+		}
+
+		return
+	}
+
+	// update progress-file
+	progressContent := []byte("precaching-in-progress")
+	err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700)
+	if err != nil {
+		r.Log.Error(err, "Failed to update progress file for precaching")
+		return
+	}
+	r.Log.Info("Precaching progress status updated to in-progress")
 
 	result = requeueWithShortInterval()
+	return
+}
+
+func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context, progressfile string) (result ctrl.Result, err error) {
+	// fetch precaching status
+	status, err := precache.QueryJobStatus(ctx, r.Client)
+	if err != nil {
+		r.Log.Error(err, "Failed to get precaching job status")
+		return
+	}
+
+	result = requeueImmediately()
+
+	var progressContent []byte
+	var logMsg string
+	switch {
+	case status.Status == "Active":
+		logMsg = "Precaching in-progress"
+		result = requeueWithMediumInterval()
+	case status.Status == "Succeeded":
+		progressContent = []byte("completed-precache")
+		logMsg = "Precaching completed"
+	case status.Status == "Failed":
+		progressContent = []byte("Failed")
+		logMsg = "Precaching failed"
+	}
+
+	// Augment precaching summary data if available
+	if status.Message != "" {
+		logMsg = fmt.Sprintf("%s: %s", logMsg, status.Message)
+	}
+	r.Log.Info(logMsg)
+
+	// update progress-file
+	if len(progressContent) > 0 {
+		if err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700); err != nil {
+			r.Log.Error(err, "Failed to update progress file for precaching")
+			return
+		}
+	}
+
 	return
 }
 
@@ -143,6 +219,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 	}
 
 	progressfile := filepath.Join(utils.IBUWorkspacePath, "prep-progress")
+	imageListFile := filepath.Join(utils.IBUWorkspacePath, "image-list-file")
 
 	_, err = os.Stat(pathOutsideChroot(progressfile))
 
@@ -177,20 +254,33 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 				return
 			}
 		} else if progress == "completed-stateroot" {
-			result, err = r.launchPullImages(ibu, progressfile)
+			result, err = r.launchPrecaching(ctx, imageListFile, progressfile)
 			if err != nil {
 				r.Log.Error(err, "Failed to launch get-seed-image phase")
 				return
 			}
+		} else if progress == "precaching-in-progress" {
+			result, err = r.queryPrecachingStatus(ctx, progressfile)
+			if err != nil {
+				r.Log.Error(err, "Failed to query get-seed-image phase")
+				return
+			}
 		} else if progress == "completed-precache" {
 			r.runCleanup(ibu)
+
+			// Fetch final precaching job report summary
+			conditionMessage := "Prep completed"
+			status, err := precache.QueryJobStatus(ctx, r.Client)
+			if err == nil && status.Message != "" {
+				conditionMessage += fmt.Sprintf(": %s", status.Message)
+			}
 
 			// If completed, update conditions and return doNotRequeue
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.GetCompletedConditionType(lcav1alpha1.Stages.Prep),
 				utils.ConditionReasons.Completed,
 				metav1.ConditionTrue,
-				"Prep completed",
+				conditionMessage,
 				ibu.Generation)
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.GetInProgressConditionType(lcav1alpha1.Stages.Prep),
@@ -202,7 +292,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 			result = requeueWithShortInterval()
 		}
 	} else if os.IsNotExist(err) {
-		result, err = r.launchGetSeedImage(ibu, progressfile)
+		result, err = r.launchGetSeedImage(ibu, imageListFile, progressfile)
 		if err != nil {
 			r.Log.Error(err, "Failed to launch get-seed-image phase")
 			return
