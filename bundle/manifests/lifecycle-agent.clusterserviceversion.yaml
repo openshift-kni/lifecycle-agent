@@ -183,6 +183,16 @@ spec:
           - update
           - watch
         - apiGroups:
+          - oadp.openshift.io
+          resources:
+          - dataprotectionapplications
+          verbs:
+          - create
+          - get
+          - list
+          - update
+          - watch
+        - apiGroups:
           - operators.coreos.com/v1alpha1
           resources:
           - clusterserviceversions

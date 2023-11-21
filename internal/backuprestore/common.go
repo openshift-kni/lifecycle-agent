@@ -44,6 +44,7 @@ import (
 // +kubebuilder:rbac:groups=velero.io/v1,resources=restores,verbs=get;list;delete;create;update;watch
 // +kubebuilder:rbac:groups=velero.io/v1,resources=backupstoragelocations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=velero.io/v1,resources=deletebackuprequests,verbs=get;list;delete;create;update;watch
+// +kubebuilder:rbac:groups=oadp.openshift.io,resources=dataprotectionapplications,verbs=get;list;create;update;watch
 // +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=subscriptions,verbs=get;list;delete;watch
 // +kubebuilder:rbac:groups=operators.coreos.com/v1alpha1,resources=clusterserviceversions,verbs=get;list;delete;watch
 
