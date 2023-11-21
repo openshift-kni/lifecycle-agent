@@ -69,6 +69,10 @@ func (s *SeedCreator) CreateSeedImage() error {
 	s.log.Info("Creating seed image")
 	ctx := context.TODO()
 
+	if err := s.copyConfigurationFiles(); err != nil {
+		return fmt.Errorf("failed to add configuration files: %w", err)
+	}
+
 	// create backup dir
 	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
 		return err
@@ -133,6 +137,42 @@ func (s *SeedCreator) CreateSeedImage() error {
 	}
 
 	return nil
+}
+
+func (s *SeedCreator) copyConfigurationFiles() error {
+	// copy scripts
+	err := s.copyConfigurationScripts()
+	if err != nil {
+		return err
+	}
+
+	return s.handleServices()
+}
+
+func (s *SeedCreator) copyConfigurationScripts() error {
+	s.log.Infof("Copying installation_configuration_files/scripts to local/bin")
+	return cp.Copy(filepath.Join(common.InstallationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
+}
+
+func (s *SeedCreator) handleServices() error {
+	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() {
+			return nil
+		}
+
+		s.log.Infof("Creating service %s", info.Name())
+		errC := cp.Copy(filepath.Join(dir, info.Name()), filepath.Join("/etc/systemd/system/", info.Name()))
+		if errC != nil {
+			return errC
+		}
+
+		s.log.Infof("Enabling service %s", info.Name())
+		_, errC = s.ops.SystemctlAction("enable", info.Name())
+		return errC
+	})
+
+	return err
 }
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
