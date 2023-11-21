@@ -153,6 +153,11 @@ func (o *ops) RunRecert(recertContainerImage, authFile string, additionalArgs ..
 		"--static-dir", "/kubelet",
 		"--static-dir", "/machine-config-daemon")
 
+	// Create BackupCertsDir
+	if err := os.MkdirAll(common.BackupCertsDir, 0o700); err != nil {
+		return err
+	}
+
 	// Add additional arguments to the command
 	args = append(args, additionalArgs...)
 
