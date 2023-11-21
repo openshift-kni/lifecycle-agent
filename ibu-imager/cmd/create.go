@@ -85,7 +85,7 @@ func create() {
 
 	// 2 different logger till we will move to single one after decision which one is better
 	// just in order to use same executor
-	log.Printf("OCI image creation has started")
+	log.Info("OCI image creation has started")
 
 	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
 	op := ops.NewOps(log, hostCommandsExecutor)
@@ -113,7 +113,7 @@ func create() {
 		log.Fatal(err)
 	}
 
-	log.Printf("OCI image created successfully!")
+	log.Info("OCI image created successfully!")
 }
 
 // TODO: move those functions to seed creator and add cleanup

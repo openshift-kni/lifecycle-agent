@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -67,7 +66,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 
 // CreateSeedImage comprises the Imager workflow for creating a single OCI seed image
 func (s *SeedCreator) CreateSeedImage() error {
-	s.log.Println("Creating seed image")
+	s.log.Info("Creating seed image")
 	ctx := context.TODO()
 
 	// create backup dir
@@ -140,7 +139,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	// TODO: remove after removing usage of clusterversion.json
 	manifestPath := path.Join(s.backupDir, "manifest.json")
 	if _, err := os.Stat(manifestPath); err == nil {
-		s.log.Println("Manifest file was already created, skipping")
+		s.log.Info("Manifest file was already created, skipping")
 		return nil
 	}
 
@@ -153,13 +152,13 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		return err
 	}
 
-	s.log.Println("Creating manifest.json")
+	s.log.Info("Creating manifest.json")
 	if err := utils.WriteToFile(clusterManifest, path.Join(s.backupDir, "manifest.json")); err != nil {
 		return err
 	}
 
 	// TODO: remove when we will drop it from preparation script
-	s.log.Println("Creating clusterversion.json")
+	s.log.Info("Creating clusterversion.json")
 	if err := utils.WriteToFile(clusterVersion, path.Join(s.backupDir, "clusterversion.json")); err != nil {
 		return err
 	}
@@ -170,12 +169,12 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 
 // TODO: split function per operation
 func (s *SeedCreator) createContainerList() error {
-	s.log.Println("Saving list of running containers and catalogsources.")
+	s.log.Info("Saving list of running containers and catalogsources.")
 
 	// Check if the file /var/tmp/container_list.done does not exist
 	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
 		// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
-		s.log.Println("Save list of running containers")
+		s.log.Info("Save list of running containers")
 		args := []string{"images", "-o", "json", "|", "jq", "-r", "'.images[] | .repoDigests[], .repoTags[]'",
 			">", s.backupDir + "/containers.list"}
 
@@ -185,7 +184,7 @@ func (s *SeedCreator) createContainerList() error {
 		}
 
 		// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
-		s.log.Println("Save catalog source images")
+		s.log.Info("Save catalog source images")
 		_, err = s.ops.RunBashInHostNamespace(
 			"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
 				s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
@@ -199,38 +198,38 @@ func (s *SeedCreator) createContainerList() error {
 			return err
 		}
 
-		s.log.Println("List of containers, catalogsources, and clusterversion saved successfully.")
+		s.log.Info("List of containers, catalogsources, and clusterversion saved successfully.")
 	} else {
-		s.log.Println("Skipping list of containers, catalogsources, and clusterversion already exists.")
+		s.log.Info("Skipping list of containers, catalogsources, and clusterversion already exists.")
 	}
 	return nil
 }
 
 func (s *SeedCreator) stopServices() error {
-	s.log.Println("Stop kubelet service")
+	s.log.Info("Stop kubelet service")
 	_, err := s.ops.SystemctlAction("stop", "kubelet.service")
 	if err != nil {
 		return err
 	}
 
-	s.log.Println("Disabling kubelet service")
+	s.log.Info("Disabling kubelet service")
 	_, err = s.ops.SystemctlAction("disable", "kubelet.service")
 	if err != nil {
 		return err
 	}
 
-	s.log.Println("Stopping containers and CRI-O runtime.")
+	s.log.Info("Stopping containers and CRI-O runtime.")
 	crioSystemdStatus, err := s.ops.SystemctlAction("is-active", "crio")
 	var exitErr *exec.ExitError
 	// If ExitCode is 3, the command succeeded and told us that crio is down
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
 		return err
 	}
-	s.log.Println("crio status is", crioSystemdStatus)
+	s.log.Info("crio status is", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
 
 		// CRI-O is active, so stop running containers
-		s.log.Println("Stop running containers")
+		s.log.Info("Stop running containers")
 		args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
 		_, err = s.ops.RunBashInHostNamespace("crictl", args...)
 		if err != nil {
@@ -243,9 +242,9 @@ func (s *SeedCreator) stopServices() error {
 		if err != nil {
 			return err
 		}
-		s.log.Println("Running containers and CRI-O engine stopped successfully.")
+		s.log.Info("Running containers and CRI-O engine stopped successfully.")
 	} else {
-		s.log.Println("Skipping running containers and CRI-O engine already stopped.")
+		s.log.Info("Skipping running containers and CRI-O engine already stopped.")
 	}
 
 	return nil
@@ -324,7 +323,7 @@ func (s *SeedCreator) backupVar() error {
 }
 
 func (s *SeedCreator) backupEtc() error {
-	s.log.Println("Backing up /etc")
+	s.log.Info("Backing up /etc")
 	_, err := os.Stat(path.Join(s.backupDir, "etc.tgz"))
 	if err == nil {
 		return nil
@@ -355,14 +354,14 @@ func (s *SeedCreator) backupEtc() error {
 	if err != nil {
 		return err
 	}
-	s.log.Println("Backup of /etc created successfully.")
+	s.log.Info("Backup of /etc created successfully.")
 
 	return nil
 }
 
 func (s *SeedCreator) backupOstree() error {
 	// Check if the backup file for ostree doesn't exist
-	s.log.Println("Backing up ostree")
+	s.log.Info("Backing up ostree")
 	ostreeTar := s.backupDir + "/ostree.tgz"
 	_, err := os.Stat(ostreeTar)
 	if err == nil || !os.IsNotExist(err) {
@@ -384,7 +383,7 @@ func (s *SeedCreator) backupRPMOstree() error {
 	}
 	_, err = s.ops.RunBashInHostNamespace(
 		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJSON)...)
-	log.Println("Backup of rpm-ostree.json created successfully.")
+	s.log.Info("Backup of rpm-ostree.json created successfully.")
 	return err
 }
 
@@ -397,13 +396,13 @@ func (s *SeedCreator) backupMCOConfig() error {
 	}
 	_, err = s.ops.RunBashInHostNamespace(
 		"cp", "/etc/machine-config-daemon/currentconfig", mcoJSON)
-	log.Println("Backup of mco-currentconfig created successfully.")
+	s.log.Info("Backup of mco-currentconfig created successfully.")
 	return err
 }
 
 // Building and pushing OCI image
 func (s *SeedCreator) createAndPushSeedImage() error {
-	s.log.Println("Build and push OCI image to", s.containerRegistry)
+	s.log.Info("Build and push OCI image to", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
 	// Get the current status of rpm-ostree daemon in the host
@@ -466,7 +465,7 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	if err != nil {
 		return err
 	}
-	log.Println("Backup of .origin created successfully.")
+	s.log.Info("Backup of .origin created successfully.")
 	return nil
 }
 
@@ -490,13 +489,13 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 		return nil
 	}
 
-	s.log.Println("Deleting node")
+	s.log.Info("Deleting node")
 	node, err := utils.GetSNOMasterNode(ctx, s.client)
 	if err != nil {
 		return err
 	}
 
-	s.log.Println("Deleting node ", node.Name)
+	s.log.Info("Deleting node ", node.Name)
 	err = s.client.Delete(ctx, node)
 	if err != nil {
 		return err
