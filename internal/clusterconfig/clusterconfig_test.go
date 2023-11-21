@@ -26,6 +26,7 @@ import (
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	ocpV1 "github.com/openshift/api/config/v1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -76,11 +77,35 @@ var clusterCmData = `
 `
 
 var (
-	testscheme      = scheme.Scheme
-	validMasterNode = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
-		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
-			{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}}
+	testscheme = scheme.Scheme
+
+	validMasterNode = &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{"node-role.kubernetes.io/master": ""},
+		},
+		Status: corev1.NodeStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "192.168.121.10"},
+			},
+		},
+	}
+
 	seedManifestData = clusterinfo.ClusterInfo{Domain: "seed.com", ClusterName: "seed", MasterIP: "192.168.127.10"}
+
+	machineConfigs = []*mcv1.MachineConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "99-master-ssh",
+				Labels: map[string]string{"machineconfiguration.openshift.io/role": "master"},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "99-worker-ssh",
+				Labels: map[string]string{"machineconfiguration.openshift.io/role": "worker"},
+			},
+		},
+	}
 )
 
 func init() {
@@ -89,7 +114,8 @@ func init() {
 		&ocpV1.ClusterVersion{},
 		&ocpV1.ImageDigestMirrorSet{},
 		&ocpV1.ImageDigestMirrorSetList{},
-		&ocpV1.Proxy{})
+		&ocpV1.Proxy{},
+		&mcv1.MachineConfig{})
 	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 }
 
@@ -106,6 +132,7 @@ func TestClusterConfig(t *testing.T) {
 		idms           client.Object
 		node           client.Object
 		proxy          client.Object
+		machineConfigs []*mcv1.MachineConfig
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -141,7 +168,8 @@ func TestClusterConfig(t *testing.T) {
 					HTTPProxy: "some-http-proxy",
 				},
 			},
-			expectedErr: false,
+			machineConfigs: machineConfigs,
+			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDirs(tempDir)
 				if err != nil {
@@ -154,7 +182,7 @@ func TestClusterConfig(t *testing.T) {
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, clusterIDFileName), clusterVersion); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, clusterVersion.Spec.ClusterID, ocpV1.ClusterID("1"))
+				assert.Equal(t, ocpV1.ClusterID("1"), clusterVersion.Spec.ClusterID)
 
 				// validate proxy
 				proxy := &ocpV1.Proxy{}
@@ -171,17 +199,19 @@ func TestClusterConfig(t *testing.T) {
 				}
 
 				testData := map[string][]byte{"aaa": []byte("bbb")}
-				assert.Equal(t, secret.Data, testData)
-				assert.Equal(t, secret.Name, pullSecretName)
-				assert.Equal(t, secret.Namespace, configNamespace)
+				assert.Equal(t, testData, secret.Data)
+				assert.Equal(t, pullSecretName, secret.Name)
+				assert.Equal(t, configNamespace, secret.Namespace)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFIlePath), idms); err != nil {
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFileName), idms); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, idms.Items[0].Name, "any")
-				assert.Equal(t, idms.Items[0].Spec.ImageDigestMirrors[0].Source, "data")
+				if assert.Equal(t, 1, len(idms.Items)) {
+					assert.Equal(t, "any", idms.Items[0].Name)
+					assert.Equal(t, "data", idms.Items[0].Spec.ImageDigestMirrors[0].Source)
+				}
 
 				// validate manifest json
 
@@ -189,9 +219,9 @@ func TestClusterConfig(t *testing.T) {
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.ClusterInfoFileName), clusterInfo); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, clusterInfo.ClusterName, "test-infra-cluster")
-				assert.Equal(t, clusterInfo.Domain, "redhat.com")
-				assert.Equal(t, clusterInfo.MasterIP, "192.168.121.10")
+				assert.Equal(t, "test-infra-cluster", clusterInfo.ClusterName)
+				assert.Equal(t, "redhat.com", clusterInfo.Domain)
+				assert.Equal(t, "192.168.121.10", clusterInfo.MasterIP)
 			},
 		},
 		{
@@ -212,10 +242,11 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			expectedErr: true,
+			machineConfigs: machineConfigs,
+			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				assert.Equal(t, errors.IsNotFound(err), true)
-				assert.Equal(t, strings.Contains(err.Error(), "secret"), true)
+				assert.Equal(t, true, errors.IsNotFound(err))
+				assert.Equal(t, true, strings.Contains(err.Error(), "secret"))
 			},
 		},
 		{
@@ -233,10 +264,11 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
+			machineConfigs: machineConfigs,
 			clusterVersion: &ocpV1.ClusterVersion{},
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				assert.Equal(t, strings.Contains(err.Error(), "clusterversion"), true)
+				assert.Equal(t, true, strings.Contains(err.Error(), "clusterversion"))
 			},
 		},
 		{
@@ -262,7 +294,8 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			expectedErr: false,
+			machineConfigs: machineConfigs,
+			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				filesDir, err := ucc.configDirs(tempDir)
 				if err != nil {
@@ -272,7 +305,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 3, len(dir))
+				assert.Equal(t, 5, len(dir))
 			},
 		},
 		{
@@ -300,9 +333,10 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			expectedErr: true,
+			machineConfigs: machineConfigs,
+			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				assert.Equal(t, strings.Contains(err.Error(), "one master node in sno cluster"), true)
+				assert.Equal(t, true, strings.Contains(err.Error(), "one master node in sno cluster"))
 			},
 		},
 	}
@@ -310,14 +344,22 @@ func TestClusterConfig(t *testing.T) {
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
-			installConfig := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: clusterinfo.InstallConfigCM,
-				Namespace: clusterinfo.InstallConfigCMNamespace}, Data: map[string]string{"install-config": clusterCmData}}
+			installConfig := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      clusterinfo.InstallConfigCM,
+					Namespace: clusterinfo.InstallConfigCMNamespace,
+				},
+				Data: map[string]string{"install-config": clusterCmData},
+			}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node}
 			if tc.idms != nil {
 				objs = append(objs, tc.idms)
 			}
 			if tc.proxy != nil {
 				objs = append(objs, tc.proxy)
+			}
+			for _, mc := range tc.machineConfigs {
+				objs = append(objs, mc)
 			}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {

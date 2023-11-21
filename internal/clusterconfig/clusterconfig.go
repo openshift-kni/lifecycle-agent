@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,16 +25,29 @@ import (
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
 
 const (
-	proxyName          = "cluster"
+	manifestDir = "manifests"
+
+	proxyName     = "cluster"
+	proxyFileName = "proxy.json"
+
 	pullSecretName     = "pull-secret"
-	configNamespace    = "openshift-config"
-	manifestDir        = "manifests"
-	proxyFileName      = "proxy.json"
-	clusterIDFileName  = "cluster-id-override.json"
 	pullSecretFileName = "pullsecret.json"
-	idmsFIlePath       = "image-digest-mirror-set.json"
+
+	configNamespace = "openshift-config"
+
+	clusterIDFileName = "cluster-id-override.json"
+
+	idmsFileName = "image-digest-mirror-set.json"
+)
+
+var (
+	machineConfigNames = []string{
+		"99-master-ssh",
+		"99-worker-ssh",
+	}
 )
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -43,49 +57,188 @@ type UpgradeClusterConfigGather struct {
 	Scheme *runtime.Scheme
 }
 
-// FetchClusterConfig collect the current cluster config and write it as json files into data dir:
+// FetchClusterConfig collects the current cluster's configuration and write it as JSON files into
+// given filesystem directory.
 func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ostreeDir string) error {
 	// TODO: Add the following
-	// ssh keys
 	// Other Machine configs?
 	// additionalTrustedCA (from the images.config)
 	// Other Certificates?
 	// Catalog source
 	// ACM registration?
 	r.Log.Info("Fetching cluster configuration")
-	pullSecret := &corev1.Secret{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: pullSecretName, Namespace: configNamespace}, pullSecret); err != nil {
-		return err
-	}
-	clusterVersion := &v1.ClusterVersion{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return err
-	}
-	clusterID := clusterVersion.Spec.ClusterID
-	proxy := &v1.Proxy{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, proxy); err != nil {
-		return err
-	}
 
-	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
-	clusterData, err := cmClient.CreateClusterInfo(ctx)
+	clusterConfigPath, err := r.configDirs(ostreeDir)
 	if err != nil {
 		return err
 	}
+	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
-	idmsList, err := r.getIDMSs(ctx)
+	if err := r.fetchPullSecret(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchProxy(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchClusterVersion(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchClusterInfo(ctx, clusterConfigPath); err != nil {
+		return err
+	}
+	if err := r.fetchMachineConfigs(ctx, manifestsDir); err != nil {
+		return err
+	}
+
+	r.Log.Info("Successfully fetched cluster configuration")
+	return nil
+}
+
+func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching pull-secret", "name", pullSecretName, "namespace", configNamespace)
+
+	secret := corev1.Secret{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: pullSecretName, Namespace: configNamespace}, &secret); err != nil {
+		return err
+	}
+
+	s := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secret.Name,
+			Namespace: secret.Namespace,
+		},
+		Data: secret.Data,
+		Type: secret.Type,
+	}
+	typeMeta, err := r.typeMetaForObject(&s)
 	if err != nil {
 		return err
 	}
-	r.Log.Info("Successfully fetched cluster config")
+	s.TypeMeta = *typeMeta
 
-	if err := r.writeClusterConfig(proxy, pullSecret, clusterID, ostreeDir, clusterData, idmsList); err != nil {
+	filePath := filepath.Join(manifestsDir, pullSecretFileName)
+	r.Log.Info("Writing pull-secret to file", "path", filePath)
+	return utils.WriteToFile(s, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching cluster-wide proxy", "name", proxyName)
+
+	proxy := v1.Proxy{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, &proxy); err != nil {
 		return err
+	}
+
+	p := v1.Proxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: proxy.Name,
+		},
+		Spec: proxy.Spec,
+	}
+	typeMeta, err := r.typeMetaForObject(&p)
+	if err != nil {
+		return err
+	}
+	p.TypeMeta = *typeMeta
+
+	filePath := filepath.Join(manifestsDir, proxyFileName)
+	r.Log.Info("Writing proxy to file", "path", filePath)
+	return utils.WriteToFile(p, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, manifestsDir string) error {
+	for _, machineConfigName := range machineConfigNames {
+		r.Log.Info("Fetching MachineConfig", "name", machineConfigName)
+
+		machineConfig := mcv1.MachineConfig{}
+		if err := r.Client.Get(ctx, types.NamespacedName{Name: machineConfigName}, &machineConfig); err != nil {
+			return err
+		}
+
+		mc := mcv1.MachineConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   machineConfig.Name,
+				Labels: machineConfig.Labels,
+			},
+			Spec: machineConfig.Spec,
+		}
+		machineConfigTypeMeta, err := r.typeMetaForObject(&machineConfig)
+		if err != nil {
+			return err
+		}
+		mc.TypeMeta = *machineConfigTypeMeta
+
+		filePath := filepath.Join(manifestsDir, machineConfig.Name+".json")
+		r.Log.Info("Writing MachineConfig to file", "path", filePath)
+		if err := utils.WriteToFile(mc, filePath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// configDirs returns the files directory for the given cluster config
+func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clusterConfigPath string) error {
+	r.Log.Info("Fetching ClusterInfo")
+
+	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
+	clusterInfo, err := cmClient.CreateClusterInfo(ctx)
+	if err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(clusterConfigPath, common.ClusterInfoFileName)
+
+	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
+	return utils.WriteToFile(clusterInfo, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) fetchClusterVersion(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching ClusterVersion", "name", "version")
+	clusterVersion := &v1.ClusterVersion{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
+		return err
+	}
+
+	cv := v1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: v1.ClusterVersionSpec{
+			ClusterID: clusterVersion.Spec.ClusterID,
+		},
+	}
+	typeMeta, err := r.typeMetaForObject(&cv)
+	if err != nil {
+		return err
+	}
+	cv.TypeMeta = *typeMeta
+
+	filePath := filepath.Join(manifestsDir, clusterIDFileName)
+	r.Log.Info("Writing ClusterVersion with only the ClusterID field to file", "path", filePath)
+	return utils.WriteToFile(cv, filePath)
+}
+
+func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching IDMS")
+	idms, err := r.getIDMSs(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(idms.Items) < 1 {
+		r.Log.Info("ImageDigestMirrorSetList is empty, skipping")
+		return nil
+	}
+
+	filePath := filepath.Join(manifestsDir, idmsFileName)
+	r.Log.Info("Writing IDMS to file", "path", filePath)
+	return utils.WriteToFile(idms, filePath)
+}
+
+// configDirs creates and returns the directory for the given cluster configuration.
 func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error) {
 	filesDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
@@ -95,73 +248,7 @@ func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error
 	return filesDir, nil
 }
 
-// writeClusterConfig writes the required info based on the cluster config to the config cache dir
-func (r *UpgradeClusterConfigGather) writeClusterConfig(
-	proxy *v1.Proxy,
-	pullSecret *corev1.Secret,
-	clusterID v1.ClusterID,
-	ostreeDir string,
-	clusterData *clusterinfo.ClusterInfo,
-	idmsList *v1.ImageDigestMirrorSetList) error {
-	clusterConfigPath, err := r.configDirs(ostreeDir)
-	if err != nil {
-		return err
-	}
-
-	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
-	if err := r.writeSecretToFile(pullSecret, filepath.Join(manifestsDir, pullSecretFileName)); err != nil {
-		return err
-	}
-	if err := r.writeClusterIDToFile(clusterID, filepath.Join(manifestsDir, clusterIDFileName)); err != nil {
-		return err
-	}
-	if err := r.writeIDMSsToFile(idmsList, filepath.Join(manifestsDir, idmsFIlePath)); err != nil {
-		return err
-	}
-	if err := r.writeProxyToFile(proxy, filepath.Join(manifestsDir, proxyFileName)); err != nil {
-		return err
-	}
-	if err := utils.WriteToFile(clusterData, filepath.Join(clusterConfigPath, common.ClusterInfoFileName)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *UpgradeClusterConfigGather) writeSecretToFile(secret *corev1.Secret, filePath string) error {
-	// override namespace
-	r.Log.Info("Writing secret to file", "path", filePath)
-	s := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secret.Name,
-			Namespace: secret.Namespace,
-		},
-		Data: secret.Data,
-		Type: secret.Type,
-	}
-	typeMeta, err := r.typeMetaForObject(s)
-	if err != nil {
-		return err
-	}
-	s.TypeMeta = *typeMeta
-	return utils.WriteToFile(s, filePath)
-}
-
-func (r *UpgradeClusterConfigGather) writeProxyToFile(proxy *v1.Proxy, filePath string) error {
-	r.Log.Info("Writing proxy to file", "path", filePath)
-	p := &v1.Proxy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: proxy.Name,
-		},
-		Spec: proxy.Spec,
-	}
-	typeMeta, err := r.typeMetaForObject(p)
-	if err != nil {
-		return err
-	}
-	p.TypeMeta = *typeMeta
-	return utils.WriteToFile(p, filePath)
-}
-
+// typeMetaForObject returns the given object's TypeMeta or an error otherwise.
 func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav1.TypeMeta, error) {
 	gvks, unversioned, err := r.Scheme.ObjectKinds(o)
 	if err != nil {
@@ -178,40 +265,11 @@ func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav
 	}, nil
 }
 
-func (r *UpgradeClusterConfigGather) writeClusterIDToFile(clusterID v1.ClusterID, filePath string) error {
-	// We just want to override the clusterID
-	r.Log.Info("Writing clusterversion to file", "path", filePath)
-	clusterVersion := &v1.ClusterVersion{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "version",
-		},
-		Spec: v1.ClusterVersionSpec{
-			ClusterID: clusterID,
-		},
-	}
-	typeMeta, err := r.typeMetaForObject(clusterVersion)
-	if err != nil {
-		return err
-	}
-	clusterVersion.TypeMeta = *typeMeta
-	return utils.WriteToFile(clusterVersion, filePath)
-}
-
-func (r *UpgradeClusterConfigGather) writeIDMSsToFile(idms *v1.ImageDigestMirrorSetList, filePath string) error {
-	// We just want to override the clusterID
-	if idms == nil || len(idms.Items) < 1 {
-		r.Log.Info("ImageDigestMirrorSetList is empty, skipping")
-		return nil
-	}
-	r.Log.Info("Writing idms to file", "path", filePath)
-	return utils.WriteToFile(idms, filePath)
-}
-
-func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (*v1.ImageDigestMirrorSetList, error) {
-	idmsList := &v1.ImageDigestMirrorSetList{}
-	currentIdms := &v1.ImageDigestMirrorSetList{}
-	if err := r.Client.List(ctx, currentIdms); err != nil {
-		return nil, err
+func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDigestMirrorSetList, error) {
+	idmsList := v1.ImageDigestMirrorSetList{}
+	currentIdms := v1.ImageDigestMirrorSetList{}
+	if err := r.Client.List(ctx, &currentIdms); err != nil {
+		return v1.ImageDigestMirrorSetList{}, err
 	}
 
 	for _, idms := range currentIdms.Items {
@@ -221,17 +279,17 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (*v1.ImageDig
 			},
 			Spec: idms.Spec,
 		}
-		typeMeta, err := r.typeMetaForObject(currentIdms)
+		typeMeta, err := r.typeMetaForObject(&currentIdms)
 		if err != nil {
-			return nil, err
+			return v1.ImageDigestMirrorSetList{}, err
 		}
 		idms.TypeMeta = *typeMeta
 
 		idmsList.Items = append(idmsList.Items, obj)
 	}
-	typeMeta, err := r.typeMetaForObject(idmsList)
+	typeMeta, err := r.typeMetaForObject(&idmsList)
 	if err != nil {
-		return nil, err
+		return v1.ImageDigestMirrorSetList{}, err
 	}
 	idmsList.TypeMeta = *typeMeta
 
