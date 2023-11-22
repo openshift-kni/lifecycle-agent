@@ -17,11 +17,9 @@ limitations under the License.
 package cmd
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
 
 	v1 "github.com/openshift/api/config/v1"
-	cp "github.com/otiai10/copy"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -31,7 +29,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	seed "github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
@@ -60,7 +58,9 @@ var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create OCI image and push it to a container registry.",
 	Run: func(cmd *cobra.Command, args []string) {
-		create()
+		if err := create(); err != nil {
+			log.Fatalf("Error executing create command: %v", err)
+		}
 	},
 }
 
@@ -79,73 +79,33 @@ func init() {
 	createCmd.MarkFlagRequired("image")
 }
 
-func create() {
+func create() error {
 
 	var err error
-
-	// 2 different logger till we will move to single one after decision which one is better
-	// just in order to use same executor
 	log.Info("OCI image creation has started")
 
 	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
 	op := ops.NewOps(log, hostCommandsExecutor)
 	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
 
-	err = copyConfigurationFiles(op)
-	if err != nil {
-		log.Fatal("Failed to add configuration files", err)
-	}
-
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {
-		log.Fatal("Failed to create k8s config", err)
+		return fmt.Errorf("failed to create k8s config: %w", err)
 	}
 
 	client, err := runtimeClient.New(config, runtimeClient.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatal("Failed to create runtime client", err)
+		return fmt.Errorf("failed to create runtime client: %w", err)
 	}
 
-	seedCreator := seed.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
+	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
-	err = seedCreator.CreateSeedImage()
-	if err != nil {
-		log.Fatal(err)
+	if err = seedCreator.CreateSeedImage(); err != nil {
+		return fmt.Errorf("failed to create seed image: %w", err)
 	}
+
+	// TODO: add cleanup
 
 	log.Info("OCI image created successfully!")
-}
-
-// TODO: move those functions to seed creator and add cleanup
-func copyConfigurationFiles(ops ops.Ops) error {
-	// copy scripts
-	err := copyConfigurationScripts()
-	if err != nil {
-		return err
-	}
-
-	return handleServices(ops)
-}
-
-func copyConfigurationScripts() error {
-	log.Infof("Copying installation_configuration_files/scripts to local/bin")
-	return cp.Copy(filepath.Join(common.InstallationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
-}
-
-func handleServices(ops ops.Ops) error {
-	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
-		}
-		log.Infof("Creating service %s", info.Name())
-		errC := cp.Copy(filepath.Join(dir, info.Name()), filepath.Join("/etc/systemd/system/", info.Name()))
-		if errC != nil {
-			return errC
-		}
-		log.Infof("Enabling service %s", info.Name())
-		_, errC = ops.SystemctlAction("enable", info.Name())
-		return errC
-	})
-	return err
+	return nil
 }
