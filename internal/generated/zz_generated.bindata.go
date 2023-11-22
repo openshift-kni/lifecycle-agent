@@ -281,7 +281,10 @@ function log_it {
 
 function build_kargs {
     jq -r '.spec.kernelArguments[]' "${img_mnt}/mco-currentconfig.json" \
-        | xargs --no-run-if-empty -I% echo -n "--karg-append % "
+        | while IFS= read -r line; do
+            echo -n "--karg-append '$line' "
+        done
+
 }
 
 LONGOPTS="seed-image:,progress-file:,os-version:,os-name:"
