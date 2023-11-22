@@ -6,6 +6,7 @@ require (
 	github.com/RHsyseng/cluster-relocation-operator v0.9.9
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-logr/logr v1.2.4
+	github.com/golang/mock v1.6.0
 	github.com/openshift/api v0.0.0-20231010191030-1f9525271dda
 	github.com/openshift/build-machinery-go v0.0.0-20230824093055-6a18da01283c
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
@@ -15,7 +16,6 @@ require (
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.4
 	github.com/vmware-tanzu/velero v1.12.0
-	go.uber.org/mock v0.3.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.28.2
 	k8s.io/apimachinery v0.28.2
