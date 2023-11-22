@@ -17,10 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -30,12 +32,14 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
+	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	ocpV1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/library-go/pkg/config/leaderelection"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/sirupsen/logrus"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -47,12 +51,14 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	//+kubebuilder:scaffold:imports
 )
 
-var logr = &logrus.Logger{
+var logger = &logrus.Logger{
 	Out:   os.Stdout,
 	Level: logrus.InfoLevel,
 }
@@ -117,7 +123,7 @@ func main() {
 	// We want to remove logr.Logger first step to move to logrus
 	// in the future we will have only one of them
 	newLogger := logrus.New()
-	logr.SetFormatter(&logrus.TextFormatter{
+	logger.SetFormatter(&logrus.TextFormatter{
 		DisableColors:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 		FullTimestamp:   true,
@@ -126,6 +132,11 @@ func main() {
 
 	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
+
+	if err := restoreIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
+		setupLog.Error(err, "unable to restore IBU CR")
+		os.Exit(1)
+	}
 
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),
@@ -157,4 +168,40 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func restoreIBU(ctx context.Context, client client.Client, log *logr.Logger) error {
+	ibu := &lcav1alpha1.ImageBasedUpgrade{}
+	filePath := common.PathOutsideChroot(utils.IBUFilePath)
+	if err := lcautils.ReadYamlOrJSONFile(filePath, ibu); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	log.Info("IBU CR found, restoring ...")
+	if err := client.Delete(ctx, ibu); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+	// Save status as the ibu structure gets over-written by the create call
+	// with the result which has no status
+	status := ibu.Status
+	if err := client.Create(ctx, ibu); err != nil {
+		return err
+	}
+
+	// Put the saved status into the newly create ibu with the right resource
+	// version which is required for the update call to work
+	ibu.Status = status
+	if err := client.Status().Update(ctx, ibu); err != nil {
+		return err
+	}
+
+	if err := os.Remove(filePath); err != nil {
+		return err
+	}
+	log.Info("Restore successful and IBU CR removed")
+	return nil
 }
