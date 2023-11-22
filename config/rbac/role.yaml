@@ -143,7 +143,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - operators.coreos.com/v1alpha1
+  - operators.coreos.com
   resources:
   - clusterserviceversions
   verbs:
@@ -152,7 +152,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - operators.coreos.com/v1alpha1
+  - operators.coreos.com
   resources:
   - subscriptions
   verbs:
@@ -161,7 +161,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - velero.io/v1
+  - velero.io
   resources:
   - backups
   verbs:
@@ -172,7 +172,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - velero.io/v1
+  - velero.io
   resources:
   - backupstoragelocations
   verbs:
@@ -180,7 +180,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - velero.io/v1
+  - velero.io
   resources:
   - deletebackuprequests
   verbs:
@@ -191,7 +191,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - velero.io/v1
+  - velero.io
   resources:
   - restores
   verbs:
