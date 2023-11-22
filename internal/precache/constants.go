@@ -40,9 +40,10 @@ const StatusFile = utils.IBUWorkspacePath + "/precache_status.json"
 
 // Environment variable names
 const (
-	EnvLcaPrecacheImage string = "PRECACHE_WORKLOAD_IMG"
-	EnvPrecacheSpecFile string = "PRECACHE_SPEC_FILE"
-	EnvMaxPullThreads   string = "MAX_PULL_THREADS"
+	EnvLcaPrecacheImage   string = "PRECACHE_WORKLOAD_IMG"
+	EnvPrecacheSpecFile   string = "PRECACHE_SPEC_FILE"
+	EnvMaxPullThreads     string = "MAX_PULL_THREADS"
+	EnvPrecacheBestEffort string = "PRECACHE_BEST_EFFORT"
 )
 
 // Precaching job specs

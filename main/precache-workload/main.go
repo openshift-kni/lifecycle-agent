@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -29,18 +30,28 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Exit codes
+const (
+	Success int = 0
+	Failure int = 1
+)
+
+// terminateOnError Logs a "terminating job" + error message and terminates the pre-caching job with the given exit code
+func terminateOnError(err error, exitCode int) {
+	log.Errorf("terminating pre-caching job due to error: %v", err)
+	os.Exit(exitCode)
+}
+
 // readPrecacheSpecFile returns the list of images to be precached as specified in the precache spec file
 func readPrecacheSpecFile() (precacheSpec []string, err error) {
 	precacheSpecFile := os.Getenv(precache.EnvPrecacheSpecFile)
 	if precacheSpecFile == "" {
-		log.Errorf("Environment variable %s is not set. Exiting...", precache.EnvPrecacheSpecFile)
-		os.Exit(1)
+		return precacheSpec, fmt.Errorf("environment variable %s is not set", precache.EnvPrecacheSpecFile)
 	}
 
 	// Check if precacheSpecFile exists
 	if _, err := os.Stat(precacheSpecFile); os.IsNotExist(err) {
-		log.Errorf("Missing precache spec file.")
-		return precacheSpec, err
+		return precacheSpec, fmt.Errorf("missing precache spec file")
 	}
 	log.Info("Precache spec file found.")
 
@@ -66,32 +77,37 @@ func main() {
 
 	log.Info("Starting to execute pre-cache workload")
 
+	bestEffort := false
+	str := os.Getenv(precache.EnvPrecacheBestEffort)
+	if str == "TRUE" {
+		bestEffort = true
+		log.Info("pre-caching set to 'best-effort'")
+	}
+
 	// Load precache spec file which is outside /host filesystem
 	precacheSpec, err := readPrecacheSpecFile()
 	if err != nil {
-		os.Exit(1)
+		terminateOnError(err, Failure)
 	}
+
 	log.Info("Loaded precache spec file.")
 
 	// Change root directory to /host
 	if err := syscall.Chroot(utils.Host); err != nil {
-		log.Errorf("Failed to chroot to %s, err: %s", utils.Host, err)
-		os.Exit(1)
+		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %s", utils.Host, err), Failure)
 	}
 	log.Infof("chroot %s successful", utils.Host)
 
 	// Pre-check: Verify podman is running
 	if !workload.CheckPodman() {
-		log.Errorf("Failed to execute podman command, terminating pre-caching job!")
-		os.Exit(1)
+		terminateOnError(fmt.Errorf("failed to execute podman command"), Failure)
 	}
 	log.Info("podman is running, proceeding to pre-cache images!")
 
 	// Pre-cache images
 	status, err := workload.PullImages(precacheSpec)
 	if err != nil {
-		log.Errorf("Encountered error while pre-caching images, error: %v", err)
-		os.Exit(1)
+		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %v", err), Failure)
 	}
 	log.Info("Completed executing pre-caching, no errors encountered!")
 
@@ -101,8 +117,9 @@ func main() {
 		for _, image := range status.FailedPullList {
 			log.Info(image)
 		}
-		log.Info("Flagging pre-caching job as failed.")
-		os.Exit(1)
+		if bestEffort {
+			terminateOnError(fmt.Errorf("failed to pre-cache one or more images"), Success)
+		}
 	}
 
 	log.Info("Pre-cached images successfully.")
