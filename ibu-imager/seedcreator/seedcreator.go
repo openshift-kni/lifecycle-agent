@@ -458,6 +458,13 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	if err != nil {
 		return fmt.Errorf("failed to push seed image: %w", err)
 	}
+
+	// Remove seed image from node
+	if _, err = s.ops.RunInHostNamespace(
+		"podman", []string{"rmi", s.containerRegistry}...); err != nil {
+		return fmt.Errorf("failed to remove seed image: %w", err)
+	}
+
 	return nil
 }
 
