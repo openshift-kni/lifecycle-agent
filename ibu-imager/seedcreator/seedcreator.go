@@ -215,11 +215,11 @@ func (s *SeedCreator) createContainerList() error {
 	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
 		// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
 		s.log.Info("Save list of running containers")
-		args := []string{"images", "-o", "json", "|", "jq", "-r", "'.images[] | .repoDigests[], .repoTags[]'",
+		args := []string{"images", "-o", "json", "|", "jq", "-r",
+			"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
 			">", s.backupDir + "/containers.list"}
 
-		_, err = s.ops.RunBashInHostNamespace("crictl", args...)
-		if err != nil {
+		if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
 			return err
 		}
 
