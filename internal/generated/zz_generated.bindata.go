@@ -282,7 +282,7 @@ function log_it {
 function build_kargs {
     jq -r '.spec.kernelArguments[]' "${img_mnt}/mco-currentconfig.json" \
         | while IFS= read -r line; do
-            echo -n "--karg-append '$line' "
+            echo -n "--karg-append $line "
         done
 
 }
