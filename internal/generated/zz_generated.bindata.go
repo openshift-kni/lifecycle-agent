@@ -129,6 +129,7 @@ var _prepgetseedimageSh = []byte(`#!/bin/bash
 declare SEED_IMAGE=
 declare PROGRESS_FILE=
 declare IMAGE_LIST_FILE=
+declare PULL_SECRET=
 
 function usage {
     cat <<ENDUSAGE
@@ -136,9 +137,18 @@ Parameters:
     --seed-image <image>
     --progress-file <file>
     --image-list-file <file>
+    --pull-secret <file>
 ENDUSAGE
     exit 1
 }
+
+# Since we cannot cleanup easily from prep_handlers.go, we can do it here
+function _cleanup {
+    if [ -n "${PULL_SECRET}" ] && [ "${PULL_SECRET}" != "/var/lib/kubelet/config.json" ]; then
+        rm "${PULL_SECRET}"
+    fi
+}
+trap _cleanup exit
 
 function set_progress {
     echo "$1" > "${PROGRESS_FILE}"
@@ -162,7 +172,7 @@ function build_catalog_regex {
     fi
 }
 
-LONGOPTS="seed-image:,progress-file:,image-list-file:"
+LONGOPTS="seed-image:,progress-file:,image-list-file:,pull-secret:"
 OPTS=$(getopt -o h --long "${LONGOPTS}" --name "$0" -- "$@")
 
 eval set -- "${OPTS}"
@@ -181,6 +191,10 @@ while :; do
             IMAGE_LIST_FILE=$2
             shift 2
             ;;
+        --pull-secret)
+            PULL_SECRET=$2
+            shift 2
+            ;;
         --)
             shift
             break
@@ -195,7 +209,10 @@ done
 set_progress "started-seed-image-pull"
 
 log_it "Pulling and mounting seed image"
-podman pull "${SEED_IMAGE}" || fatal "Failed to pull image: ${SEED_IMAGE}"
+if [ -n "${PULL_SECRET}" ]; then
+    pull_secret_arg="--authfile $PULL_SECRET"
+fi
+podman pull $pull_secret_arg "${SEED_IMAGE}" || fatal "Failed to pull image: ${SEED_IMAGE}"
 
 img_mnt=$(podman image mount "${SEED_IMAGE}")
 if [ -z "${img_mnt}" ]; then

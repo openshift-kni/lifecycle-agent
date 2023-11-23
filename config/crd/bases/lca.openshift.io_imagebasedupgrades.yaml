@@ -85,6 +85,15 @@ spec:
                 properties:
                   image:
                     type: string
+                  pullSecretRef:
+                    description: PullSecretRef defines a reference to a secret with
+                      credentials for pulling container images
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
                   version:
                     type: string
                 type: object

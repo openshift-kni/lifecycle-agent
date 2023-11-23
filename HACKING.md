@@ -73,6 +73,9 @@ spec:
   seedImageRef:
     version: 4.13.9
     image: quay.io/dpenney/upgbackup:lca-test-seed-v1
+    pullSecretRef:
+      name: seed-pull-secret
+
 EOF
 
 # Set the stage to Prep

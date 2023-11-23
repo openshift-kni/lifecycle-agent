@@ -25,8 +25,10 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/generated"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -35,7 +37,7 @@ func pathOutsideChroot(filename string) string {
 	return filepath.Join(utils.Host, filename)
 }
 
-func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string) (result ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
 		return
 	}
@@ -50,8 +52,26 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ibu *lcav1alpha1.ImageB
 		return
 	}
 	r.Log.Info("Handler script written")
-	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile, "--image-list-file", imageListFile)
 
+	// Use cluster wide pull-secret by default
+	pullSecretFilename := common.ImageRegistryAuthFile
+
+	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
+		var pullSecret string
+		pullSecret, err = utils.LoadSecretData(ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, ibu.Namespace, corev1.DockerConfigJsonKey)
+		if err != nil {
+			err = fmt.Errorf("Failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
+			return
+		}
+
+		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
+		if err = os.WriteFile(pathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
+			err = fmt.Errorf("Failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
+			return
+		}
+	}
+
+	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile, "--image-list-file", imageListFile, "--pull-secret", pullSecretFilename)
 	result = requeueWithShortInterval()
 
 	return
@@ -292,7 +312,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 			result = requeueWithShortInterval()
 		}
 	} else if os.IsNotExist(err) {
-		result, err = r.launchGetSeedImage(ibu, imageListFile, progressfile)
+		result, err = r.launchGetSeedImage(ctx, ibu, imageListFile, progressfile)
 		if err != nil {
 			r.Log.Error(err, "Failed to launch get-seed-image phase")
 			return
