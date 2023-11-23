@@ -296,3 +296,29 @@ oc logs -f --tail=-1 --timestamps --prefix --selector job-name=lca-precache-job 
 ```
 
 Note that the logs are available until the user triggers a clean-up through an abort process.
+
+## Setting Pre-caching to 'best-effort'
+By default, the pre-caching job is configured to fail if it encounters any error, or it fails to pull one or more images.
+
+Should you wish to change the pre-caching mode to exit successfully even though there was a failure to pull an image, 
+you can re-configure the pre-caching to `best-effort` by running the sequence of `shell` and `oc` commands provided below.
+
+```shell
+# Get current list of env vars for the lifecycle-agent-controller-manager deployment
+ENV_VARS=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env}' | jq -c)
+
+# Append the pre-caching best-effort environment variable  
+UPDATED_ENV_VARS=$(echo "$ENV_VARS" | jq --argjson new_var '{"name":"PRECACHE_BEST_EFFORT","value":"TRUE"}' '. + [$new_var]' | jq -c)
+
+# Patch the lifecycle-agent-controller-manager deployment
+oc patch deployment lifecycle-agent-controller-manager -n openshift-lifecycle-agent --type=json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env", "value": '"$UPDATED_ENV_VARS"'}]'
+
+# Confirm the patching was successful - you should see `{"name":"PRECACHE_BEST_EFFORT","value":"TRUE"}` in the output
+oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env}'
+```
+
+Note that the patching will result in the termination of the current lifecycle-agent-controller-manager pod and the 
+creation of a new one. The leader election may take a few minutes to complete. 
+
+Once the pod is up and running (with leader election completed), you may proceed to create the IBU CR as part of the 
+normal workflow.

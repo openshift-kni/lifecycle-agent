@@ -95,13 +95,14 @@ func main() {
 	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "lca.openshift.io",
-		LeaseDuration:          &le.LeaseDuration.Duration,
-		RenewDeadline:          &le.RenewDeadline.Duration,
-		RetryPeriod:            &le.RetryPeriod.Duration,
+		Scheme:                        scheme,
+		HealthProbeBindAddress:        probeAddr,
+		LeaderElection:                enableLeaderElection,
+		LeaderElectionID:              "lca.openshift.io",
+		LeaseDuration:                 &le.LeaseDuration.Duration,
+		RenewDeadline:                 &le.RenewDeadline.Duration,
+		RetryPeriod:                   &le.RetryPeriod.Duration,
+		LeaderElectionReleaseOnCancel: true,
 		Metrics: server.Options{
 			BindAddress: metricsAddr,
 		},
