@@ -22,7 +22,6 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -91,26 +90,6 @@ type BRHandler struct {
 type RestoreStatus struct {
 	Status  RestorePhase
 	Message string
-}
-
-// getConfigMaps restrieves the configmaps from cluster
-func getConfigMaps(ctx context.Context, c client.Client, configMaps []lcav1alpha1.ConfigMapRef) ([]corev1.ConfigMap, error) {
-	var cms []corev1.ConfigMap
-
-	for _, cm := range configMaps {
-		existingCm := &corev1.ConfigMap{}
-		err := c.Get(ctx, types.NamespacedName{
-			Name:      cm.Name,
-			Namespace: cm.Namespace,
-		}, existingCm)
-
-		if err != nil {
-			return nil, err
-		}
-		cms = append(cms, *existingCm)
-	}
-
-	return cms, nil
 }
 
 func writeSecretToFile(secret *corev1.Secret, filePath string) error {

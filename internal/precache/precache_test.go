@@ -21,6 +21,11 @@ import (
 	"os"
 	"testing"
 
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	"github.com/stretchr/testify/assert"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -160,7 +165,10 @@ func TestCreateJob(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 
-				actualConfigMap, err := getConfigMap(context.TODO(), fakeClient, LcaPrecacheConfigMapName, LcaPrecacheNamespace)
+				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
+					Name:      LcaPrecacheConfigMapName,
+					Namespace: LcaPrecacheNamespace,
+				})
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
 
@@ -330,8 +338,11 @@ func TestCleanup(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 
-				actualConfigMap, err := getConfigMap(context.TODO(), fakeClient, LcaPrecacheConfigMapName, LcaPrecacheNamespace)
-				assert.NoError(t, err)
+				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
+					Name:      LcaPrecacheConfigMapName,
+					Namespace: LcaPrecacheNamespace,
+				})
+				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
 				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, LcaPrecacheNamespace)

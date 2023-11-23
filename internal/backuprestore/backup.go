@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,7 +49,7 @@ type BackupTracker struct {
 }
 
 // CheckIfBackupRequested check to know if we need backup
-func (h *BRHandler) CheckIfBackupRequested(content []lcav1alpha1.ConfigMapRef, ctx context.Context) (bool, []*velerov1.Backup, error) {
+func (h *BRHandler) CheckIfBackupRequested(ctx context.Context, content []lcav1alpha1.ConfigMapRef) (bool, []*velerov1.Backup, error) {
 	// no CM listed
 	if len(content) == 0 {
 		h.Log.Info("no configMap CR provided")
@@ -55,7 +57,7 @@ func (h *BRHandler) CheckIfBackupRequested(content []lcav1alpha1.ConfigMapRef, c
 	}
 
 	// extract CM
-	oadpConfigmaps, err := getConfigMaps(ctx, h, content)
+	oadpConfigmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		return false, []*velerov1.Backup{}, err
 	}
@@ -330,7 +332,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 // ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
 // returns: error
 func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
-	configmaps, err := getConfigMaps(ctx, h.Client, configMaps)
+	configmaps, err := common.GetConfigMaps(ctx, h.Client, configMaps)
 	if err != nil {
 		return err
 	}

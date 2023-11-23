@@ -59,7 +59,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 
 	// backup with OADP
 	r.Log.Info("Backup with Oadp operator")
-	reqBackup, backupCRs, err := r.BackupRestore.CheckIfBackupRequested(ibu.Spec.OADPContent, ctx)
+	reqBackup, backupCRs, err := r.BackupRestore.CheckIfBackupRequested(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		if k8serrors.IsInvalid(err) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
@@ -70,7 +70,6 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 				ibu.Generation)
 			return requeueWithShortInterval(), nil
 		}
-		r.Log.Error(err, "")
 		return requeueWithError(err)
 	}
 	if reqBackup {

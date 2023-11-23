@@ -37,6 +37,8 @@ COPY go.sum go.sum
 # Copy the go source
 COPY main main
 COPY utils utils
+COPY controllers/utils controllers/utils
+COPY api/v1alpha1 api/v1alpha1
 COPY internal internal
 COPY ibu-imager ibu-imager
 
@@ -56,9 +58,11 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 
 # Copy the go source
-COPY main/precache-workload/ main/precache-workload/
-COPY controllers/utils/constants.go controllers/utils/constants.go
-COPY internal/precache/ internal/precache/
+COPY api/v1alpha1 api/v1alpha1
+COPY controllers/utils controllers/utils
+COPY internal/common internal/common
+COPY internal/precache internal/precache
+COPY main/precache-workload main/precache-workload
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go

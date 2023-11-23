@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -56,7 +58,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 
 	// remove stateroot
 	sysrootPath := fmt.Sprintf("/sysroot/ostree/deploy/%s", stateroot)
-	if _, err := os.Stat(pathOutsideChroot(sysrootPath)); err == nil {
+	if _, err := os.Stat(common.PathOutsideChroot(sysrootPath)); err == nil {
 		_, err = r.Executor.Execute("unshare", "-m", "/bin/sh", "-c",
 			fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", sysrootPath))
 		if err != nil {
@@ -72,18 +74,18 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav
 	// Cleanup precaching resources
 	r.Log.Info("Cleanup precaching resources")
 	if err := precache.Cleanup(ctx, r.Client); err != nil {
-		r.Log.Error(err, "Failed to cleanup precaching resources")
-		return doNotRequeue(), err
+		r.Log.Info("Failed to cleanup precaching resources")
+		return requeueWithError(err)
 	}
 
 	stateroot := getStaterootName(ibu.Spec.SeedImageRef.Version)
 	r.Log.Info("Cleanup stateroot", "stateroot", stateroot)
 	err := r.cleanupUnbootedStateroot(stateroot)
 	if err != nil {
-		return doNotRequeue(), err
+		return requeueWithError(err)
 	}
 	err = cleanupIBUFiles()
-	return doNotRequeue(), err
+	return requeueWithError(err)
 }
 
 //nolint:unparam
@@ -111,7 +113,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context,
 }
 
 func cleanupIBUFiles() error {
-	if _, err := os.Stat(pathOutsideChroot(utils.IBUWorkspacePath)); err == nil {
+	if _, err := os.Stat(common.PathOutsideChroot(utils.IBUWorkspacePath)); err == nil {
 		if err := os.RemoveAll(filepath.Join(utils.Host, utils.IBUWorkspacePath)); err != nil {
 			return fmt.Errorf("removing %s failed: %w", utils.IBUWorkspacePath, err)
 		}
