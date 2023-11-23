@@ -23,6 +23,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -156,11 +158,11 @@ func QueryJobStatus(ctx context.Context, c client.Client) (*Status, error) {
 	}
 
 	// Get precaching progress summary from StatusFile
-	_, err = os.Stat(PathOutsideChroot(StatusFile))
+	_, err = os.Stat(common.PathOutsideChroot(StatusFile))
 	if err == nil {
 		// in progress
 		var data []byte
-		data, err = os.ReadFile(PathOutsideChroot(StatusFile))
+		data, err = os.ReadFile(common.PathOutsideChroot(StatusFile))
 		if err == nil {
 			strProgress := strings.TrimSpace(string(data))
 			err = json.Unmarshal([]byte(strProgress), &status.Progress)
@@ -191,7 +193,7 @@ func Cleanup(ctx context.Context, c client.Client) error {
 	}
 
 	// Delete precaching progress tracker file
-	statusFile := PathOutsideChroot(StatusFile)
+	statusFile := common.PathOutsideChroot(StatusFile)
 	if _, err := os.Stat(statusFile); err == nil {
 		// Progress tracker file exists, attempt to delete it
 		if err := os.Remove(statusFile); err != nil {

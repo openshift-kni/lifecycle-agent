@@ -23,19 +23,17 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/generated"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
-
-func pathOutsideChroot(filename string) string {
-	return filepath.Join(utils.Host, filename)
-}
 
 func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string) (result ctrl.Result, err error) {
 	if err = os.Chdir("/"); err != nil {
@@ -45,10 +43,10 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ib
 	// Write the script
 	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepGetSeedImage)
 	scriptcontent, _ := generated.Asset(utils.PrepGetSeedImage)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err = os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script", pathOutsideChroot(scriptname))
+		r.Log.Error(err, "Failed to write handler script", common.PathOutsideChroot(scriptname))
 		return
 	}
 	r.Log.Info("Handler script written")
@@ -65,7 +63,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ib
 		}
 
 		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
-		if err = os.WriteFile(pathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
+		if err = os.WriteFile(common.PathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
 			err = fmt.Errorf("Failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
 			return
 		}
@@ -79,7 +77,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ib
 
 func readPrecachingList(imageListFile string) (imageList []string, err error) {
 	var content []byte
-	content, err = os.ReadFile(pathOutsideChroot(imageListFile))
+	content, err = os.ReadFile(common.PathOutsideChroot(imageListFile))
 	if err != nil {
 		return
 	}
@@ -100,7 +98,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 	imageList, err := readPrecachingList(imageListFile)
 	if err != nil {
-		r.Log.Error(err, "Failed to read pre-caching image file", pathOutsideChroot(imageListFile))
+		r.Log.Error(err, "Failed to read pre-caching image file", common.PathOutsideChroot(imageListFile))
 		return
 	}
 
@@ -111,7 +109,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 		// update progress-file
 		progressContent := []byte("Failed")
-		err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700)
+		err = os.WriteFile(common.PathOutsideChroot(progressfile), progressContent, 0o700)
 		if err != nil {
 			r.Log.Error(err, "Failed to update progress file for precaching")
 			return
@@ -122,7 +120,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 	// update progress-file
 	progressContent := []byte("precaching-in-progress")
-	err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700)
+	err = os.WriteFile(common.PathOutsideChroot(progressfile), progressContent, 0o700)
 	if err != nil {
 		r.Log.Error(err, "Failed to update progress file for precaching")
 		return
@@ -165,7 +163,7 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context,
 
 	// update progress-file
 	if len(progressContent) > 0 {
-		if err = os.WriteFile(pathOutsideChroot(progressfile), progressContent, 0o700); err != nil {
+		if err = os.WriteFile(common.PathOutsideChroot(progressfile), progressContent, 0o700); err != nil {
 			r.Log.Error(err, "Failed to update progress file for precaching")
 			return
 		}
@@ -183,10 +181,10 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	// Write the script
 	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepSetupStateroot)
 	scriptcontent, _ := generated.Asset(utils.PrepSetupStateroot)
-	err = os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err = os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
+		r.Log.Error(err, "Failed to write handler script: %s", common.PathOutsideChroot(scriptname))
 		return
 	}
 
@@ -207,10 +205,10 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	// Write the script
 	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepCleanup)
 	scriptcontent, _ := generated.Asset(utils.PrepCleanup)
-	err := os.WriteFile(pathOutsideChroot(scriptname), scriptcontent, 0o700)
+	err := os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", pathOutsideChroot(scriptname))
+		r.Log.Error(err, "Failed to write handler script: %s", common.PathOutsideChroot(scriptname))
 		return
 	}
 	r.Log.Info("Handler script written")
@@ -230,8 +228,8 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 		return
 	}
 
-	if _, err = os.Stat(pathOutsideChroot(utils.IBUWorkspacePath)); os.IsNotExist(err) {
-		err = os.Mkdir(pathOutsideChroot(utils.IBUWorkspacePath), 0o700)
+	if _, err = os.Stat(common.PathOutsideChroot(utils.IBUWorkspacePath)); os.IsNotExist(err) {
+		err = os.Mkdir(common.PathOutsideChroot(utils.IBUWorkspacePath), 0o700)
 	}
 
 	if err != nil {
@@ -241,12 +239,12 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 	progressfile := filepath.Join(utils.IBUWorkspacePath, "prep-progress")
 	imageListFile := filepath.Join(utils.IBUWorkspacePath, "image-list-file")
 
-	_, err = os.Stat(pathOutsideChroot(progressfile))
+	_, err = os.Stat(common.PathOutsideChroot(progressfile))
 
 	if err == nil {
 		// in progress
 		var content []byte
-		content, err = os.ReadFile(pathOutsideChroot(progressfile))
+		content, err = os.ReadFile(common.PathOutsideChroot(progressfile))
 		if err != nil {
 			return
 		}

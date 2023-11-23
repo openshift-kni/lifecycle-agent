@@ -25,6 +25,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -35,25 +38,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-func PathOutsideChroot(filename string) string {
-	return filepath.Join(utils.Host, filename)
-}
-
-func getConfigMap(ctx context.Context, c client.Client, name, namespace string) (*corev1.ConfigMap, error) {
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
-	}, cm); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	return cm, nil
-}
 
 func getJob(ctx context.Context, c client.Client, name, namespace string) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
@@ -94,8 +78,11 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 		return errors.New("precaching job already exists, cannot create new job")
 	}
 
-	cm, err := getConfigMap(ctx, c, LcaPrecacheConfigMapName, LcaPrecacheNamespace)
-	if err != nil {
+	cm, err := common.GetConfigMap(ctx, c, v1alpha1.ConfigMapRef{
+		Name:      LcaPrecacheConfigMapName,
+		Namespace: LcaPrecacheNamespace,
+	})
+	if err != nil && !k8serrors.IsNotFound(err) {
 		return err
 	}
 	if cm != nil {
@@ -273,8 +260,14 @@ func generateDeleteOptions() *client.DeleteOptions {
 
 func deleteConfigMap(ctx context.Context, c client.Client, name, namespace string) error {
 
-	cm, err := getConfigMap(ctx, c, name, namespace)
+	cm, err := common.GetConfigMap(ctx, c, v1alpha1.ConfigMapRef{
+		Name:      name,
+		Namespace: namespace,
+	})
 	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
