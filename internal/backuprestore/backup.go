@@ -18,6 +18,7 @@ package backuprestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -269,6 +271,11 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		client.InNamespace(oadpNamespace),
 	}
 	if err := h.List(ctx, dpaList, opts...); err != nil {
+		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+		if errors.As(err, &groupDiscoveryErr) {
+			// If the CRD is not discovered, it means that OADP is not installed
+			return nil
+		}
 		return err
 	}
 
