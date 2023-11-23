@@ -88,15 +88,15 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := s.createContainerList(); err != nil {
+	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList); err != nil {
 		return err
 	}
 
-	if err := s.gatherClusterInfo(ctx); err != nil {
+	if err := utils.RunOnce("gather_cluster_info", common.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
 		return err
 	}
 
-	if err := s.deleteNode(ctx); err != nil {
+	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
 		return err
 	}
 
@@ -112,23 +112,23 @@ func (s *SeedCreator) CreateSeedImage() error {
 		}
 	}
 
-	if err := s.backupVar(); err != nil {
+	if err := utils.RunOnce("backup_var", common.BackupChecksDir, s.log, s.backupVar); err != nil {
 		return err
 	}
 
-	if err := s.backupEtc(); err != nil {
+	if err := utils.RunOnce("backup_etc", common.BackupChecksDir, s.log, s.backupEtc); err != nil {
 		return err
 	}
 
-	if err := s.backupOstree(); err != nil {
+	if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
 		return err
 	}
 
-	if err := s.backupRPMOstree(); err != nil {
+	if err := utils.RunOnce("backup_rpmostree", common.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
 		return err
 	}
 
-	if err := s.backupMCOConfig(); err != nil {
+	if err := utils.RunOnce("backup_mco_config", common.BackupChecksDir, s.log, s.backupMCOConfig); err != nil {
 		return err
 	}
 
@@ -212,50 +212,39 @@ func (s *SeedCreator) createContainerList() error {
 	s.log.Info("Saving list of running containers and catalogsources.")
 	containersListFileName := s.backupDir + "/containers.list"
 
-	// Check if the file /var/tmp/container_list.done does not exist
-	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
-		// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
-		s.log.Info("Save list of running containers")
-		args := []string{"images", "-o", "json", "|", "jq", "-r",
-			"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
-			">", containersListFileName}
+	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
+	s.log.Info("Save list of downloaded images")
+	args := []string{"images", "-o", "json", "|", "jq", "-r",
+		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
+		">", containersListFileName}
 
-		if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
-			return err
-		}
-
-		s.log.Info("Adding recert image to precache list")
-		// add recert image to containers list in order to precache it
-		f, err := os.OpenFile(containersListFileName, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("failed to open %s file", containersListFileName)
-		}
-		recertImageLine := fmt.Sprintf("%s\n", s.recertContainerImage)
-
-		if _, err := f.Write([]byte(recertImageLine)); err != nil {
-			return fmt.Errorf("failed to add recert image to %s file", containersListFileName)
-		}
-		defer f.Close()
-
-		// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
-		s.log.Info("Save catalog source images")
-		_, err = s.ops.RunBashInHostNamespace(
-			"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
-				s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
-		if err != nil {
-			return err
-		}
-
-		// Create the file /var/tmp/container_list.done
-		_, err = os.Create(common.BackupChecksDir + "/container_list.done")
-		if err != nil {
-			return err
-		}
-
-		s.log.Info("List of containers, catalogsources, and clusterversion saved successfully.")
-	} else {
-		s.log.Info("Skipping list of containers, catalogsources, and clusterversion already exists.")
+	if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
+		return err
 	}
+
+	s.log.Info("Adding recert image to precache list")
+	// add recert image to containers list in order to precache it
+	f, err := os.OpenFile(containersListFileName, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open %s file", containersListFileName)
+	}
+	recertImageLine := fmt.Sprintf("%s\n", s.recertContainerImage)
+
+	if _, err := f.Write([]byte(recertImageLine)); err != nil {
+		return fmt.Errorf("failed to add recert image to %s file", containersListFileName)
+	}
+	defer f.Close()
+
+	// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
+	s.log.Info("Save catalog source images")
+	_, err = s.ops.RunBashInHostNamespace(
+		"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
+			s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
+	if err != nil {
+		return err
+	}
+
+	s.log.Info("List of containers, catalogsources, and clusterversion saved successfully.")
 	return nil
 }
 
@@ -340,12 +329,7 @@ func (s *SeedCreator) runRecertValidation() error {
 }
 
 func (s *SeedCreator) backupVar() error {
-	// Check if the backup file for /var doesn't exist
 	varTarFile := path.Join(s.backupDir, "var.tgz")
-	_, err := os.Stat(varTarFile)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
 
 	// Define the 'exclude' patterns
 	excludePatterns := []string{
@@ -367,7 +351,7 @@ func (s *SeedCreator) backupVar() error {
 	tarArgs = append(tarArgs, "--selinux", common.VarFolder)
 
 	// Run the tar command
-	_, err = s.ops.RunBashInHostNamespace("tar", tarArgs...)
+	_, err := s.ops.RunBashInHostNamespace("tar", tarArgs...)
 	if err != nil {
 		return err
 	}
@@ -378,16 +362,9 @@ func (s *SeedCreator) backupVar() error {
 
 func (s *SeedCreator) backupEtc() error {
 	s.log.Info("Backing up /etc")
-	_, err := os.Stat(path.Join(s.backupDir, "etc.tgz"))
-	if err == nil {
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return err
-	}
 
 	// save old ip as it is required for installation process by installation-configuration.sh
-	err = cp.Copy("/var/run/nodeip-configuration/primary-ip", "/etc/default/seed-ip")
+	err := cp.Copy("/var/run/nodeip-configuration/primary-ip", "/etc/default/seed-ip")
 	if err != nil {
 		return err
 	}
@@ -414,41 +391,27 @@ func (s *SeedCreator) backupEtc() error {
 }
 
 func (s *SeedCreator) backupOstree() error {
-	// Check if the backup file for ostree doesn't exist
 	s.log.Info("Backing up ostree")
 	ostreeTar := s.backupDir + "/ostree.tgz"
-	_, err := os.Stat(ostreeTar)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
+
 	// Execute 'tar' command and backup /etc
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"tar", []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}...)
 
 	return err
 }
 
 func (s *SeedCreator) backupRPMOstree() error {
-	// Check if the backup file for rpm-ostree doesn't exist
 	rpmJSON := s.backupDir + "/rpm-ostree.json"
-	_, err := os.Stat(rpmJSON)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJSON)...)
 	s.log.Info("Backup of rpm-ostree.json created successfully.")
 	return err
 }
 
 func (s *SeedCreator) backupMCOConfig() error {
-	// Check if the backup file for mco-currentconfig doesn't exist
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	_, err := os.Stat(mcoJSON)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"cp", "/etc/machine-config-daemon/currentconfig", mcoJSON)
 	s.log.Info("Backup of mco-currentconfig created successfully.")
 	return err
@@ -537,12 +500,6 @@ func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDo
 }
 
 func (s *SeedCreator) deleteNode(ctx context.Context) error {
-	doneFile := filepath.Join(common.BackupChecksDir, "/node_deletion.done")
-	_, err := os.Stat(doneFile)
-	if err == nil {
-		return nil
-	}
-
 	s.log.Info("Deleting node")
 	node, err := utils.GetSNOMasterNode(ctx, s.client)
 	if err != nil {
@@ -555,9 +512,5 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 		return err
 	}
 
-	_, err = os.Create(doneFile)
-	if err != nil {
-		return err
-	}
 	return nil
 }
