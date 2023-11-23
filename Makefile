@@ -83,7 +83,7 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen mock-gen # generate-code
     ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-	PATH=${PATH}:${PROJECT_DIR}/bin go generate $(shell go list ./...)
+	PATH="${PROJECT_DIR}/bin:${PATH}" go generate $(shell go list ./...)
 
 generate-code: ## Generate code containing Clientset, Informers, Listers
 	@echo "Running generate-code"
