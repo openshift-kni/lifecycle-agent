@@ -14,6 +14,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -28,6 +29,23 @@ func MarshalToFile(data any, filePath string) error {
 		return err
 	}
 	return os.WriteFile(filePath, marshaled, 0o644)
+}
+
+// TypeMetaForObject returns the given object's TypeMeta or an error otherwise.
+func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMeta, error) {
+	gvks, unversioned, err := scheme.ObjectKinds(o)
+	if err != nil {
+		return nil, err
+	}
+	if unversioned || len(gvks) == 0 {
+		return nil, fmt.Errorf("unable to find API version for object")
+	}
+	// if there are multiple assume the last is the most recent
+	gvk := gvks[len(gvks)-1]
+	return &metav1.TypeMeta{
+		APIVersion: gvk.GroupVersion().String(),
+		Kind:       gvk.Kind,
+	}, nil
 }
 
 // RenderTemplateFile render template file

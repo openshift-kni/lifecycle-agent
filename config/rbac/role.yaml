@@ -29,6 +29,9 @@ rules:
   - namespaces
   verbs:
   - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -40,13 +43,28 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - create
+  - delete
   - get
   - list
   - update
   - watch
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - delete
 - apiGroups:
   - batch
   resources:
@@ -57,6 +75,15 @@ rules:
   - get
   - list
   - update
+  - watch
+- apiGroups:
+  - cluster.open-cluster-management.io
+  resources:
+  - managedclusters
+  verbs:
+  - delete
+  - get
+  - list
   - watch
 - apiGroups:
   - config.openshift.io
@@ -104,6 +131,32 @@ rules:
   - lca.openshift.io
   resources:
   - imagebasedupgrades/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - lca.openshift.io
+  resources:
+  - seedgenerators
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - lca.openshift.io
+  resources:
+  - seedgenerators/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - lca.openshift.io
+  resources:
+  - seedgenerators/status
   verbs:
   - get
   - patch
@@ -176,6 +229,18 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterrolebindings
+  verbs:
+  - delete
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterroles
+  verbs:
+  - delete
 - apiGroups:
   - velero.io
   resources:

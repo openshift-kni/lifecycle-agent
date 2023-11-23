@@ -18,6 +18,8 @@ var ConditionTypes = struct {
 	UpgradeCompleted   ConditionType
 	RollbackInProgress ConditionType
 	RollbackCompleted  ConditionType
+	SeedGenInProgress  ConditionType
+	SeedGenCompleted   ConditionType
 }{
 	Idle:               "Idle",
 	PrepInProgress:     "PrepInProgress",
@@ -26,6 +28,16 @@ var ConditionTypes = struct {
 	UpgradeCompleted:   "UpgradeCompleted",
 	RollbackInProgress: "RollbackInProgress",
 	RollbackCompleted:  "RollbackCompleted",
+	SeedGenInProgress:  "SeedGenInProgress",
+	SeedGenCompleted:   "SeedGenCompleted",
+}
+
+var SeedGenConditionTypes = struct {
+	SeedGenInProgress ConditionType
+	SeedGenCompleted  ConditionType
+}{
+	SeedGenInProgress: "SeedGenInProgress",
+	SeedGenCompleted:  "SeedGenCompleted",
 }
 
 // FinalConditionTypes defines the valid conditions for transitioning back to idle
@@ -61,6 +73,16 @@ var ConditionReasons = struct {
 	FinalizeCompleted: "FinalizeCompleted",
 	FinalizeFailed:    "FinalizeFailed",
 	InvalidTransition: "InvalidTransition",
+}
+
+var SeedGenConditionReasons = struct {
+	Completed  ConditionReason
+	Failed     ConditionReason
+	InProgress ConditionReason
+}{
+	Completed:  "Completed",
+	Failed:     "Failed",
+	InProgress: "InProgress",
 }
 
 // SetStatusCondition is a convenience wrapper for meta.SetStatusCondition that takes in the types defined here and converts them to strings
