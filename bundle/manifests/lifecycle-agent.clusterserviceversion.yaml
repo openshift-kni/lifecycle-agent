@@ -120,6 +120,14 @@ spec:
         - apiGroups:
           - config.openshift.io
           resources:
+          - imagecontentpolicies
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
           - imagedigestmirrorsets
           verbs:
           - get

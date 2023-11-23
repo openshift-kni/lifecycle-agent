@@ -80,7 +80,7 @@ func IsIpv6(provideIp string) bool {
 	if ip == nil {
 		return false
 	}
-	return ip.To4() != nil
+	return ip.To4() == nil
 }
 
 func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.Client, error) {
