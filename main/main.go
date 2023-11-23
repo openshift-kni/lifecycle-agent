@@ -48,6 +48,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -66,6 +67,7 @@ func init() {
 
 	utilruntime.Must(lcav1alpha1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
+	utilruntime.Must(mcv1.AddToScheme(scheme))
 	utilruntime.Must(velerov1.AddToScheme(scheme))
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 
