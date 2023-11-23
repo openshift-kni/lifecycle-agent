@@ -44,7 +44,6 @@ type InfoClient struct {
 	client runtimeclient.Client
 }
 
-// NewClusterInfoClient create new cluster info client
 func NewClusterInfoClient(client runtimeclient.Client) *InfoClient {
 	return &InfoClient{
 		client: client,
@@ -75,6 +74,34 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 		ClusterID:   string(clusterVersion.Spec.ClusterID),
 		MasterIP:    ip,
 	}, nil
+}
+
+func (m *InfoClient) GetSecretData(ctx context.Context, name, namespace, key string) (string, error) {
+	secret := &corev1.Secret{}
+	if err := m.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
+		return "", err
+	}
+
+	data, ok := secret.Data[key]
+	if !ok {
+		return "", fmt.Errorf("did not find key %s in Secret %s/%s", key, name, namespace)
+	}
+
+	return string(data), nil
+}
+
+func (m *InfoClient) GetConfigMapData(ctx context.Context, name, namespace, key string) (string, error) {
+	cm := &corev1.ConfigMap{}
+	if err := m.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, cm); err != nil {
+		return "", err
+	}
+
+	data, ok := cm.Data[key]
+	if !ok {
+		return "", fmt.Errorf("did not find key %s in ConfigMap", key)
+	}
+
+	return data, nil
 }
 
 // TODO: add dual stuck support

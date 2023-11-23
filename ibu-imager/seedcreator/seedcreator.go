@@ -101,7 +101,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
-		if err := s.backupSeedCertificates(); err != nil {
+		if err := s.backupSeedCertificates(ctx); err != nil {
 			return err
 		}
 	}
@@ -258,49 +258,35 @@ func (s *SeedCreator) createContainerList() error {
 	return nil
 }
 
-func (s *SeedCreator) backupSeedCertificates() error {
-	s.log.Info("Backing up seed cluster certificates for recert tool.")
+func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
+	s.log.Info("Backing up seed cluster certificates for recert tool")
 	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
-		return err
+		return fmt.Errorf("error removing %s: %v", common.BackupCertsDir, err)
 	}
 
-	args := []string{"extract", "-n", "openshift-config", "configmap/admin-kubeconfig-client-ca",
-		"--keys=ca-bundle.crt", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, "/admin-kubeconfig-client-ca.crt")}
-	_, err := s.ops.RunBashInHostNamespace("oc", args...)
+	adminKubeConfigClientCA, err := s.manifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
 	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "/admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
 		return err
 	}
 
 	for _, cert := range common.CertPrefixes {
-		args = []string{"extract", "-n", "openshift-kube-apiserver-operator", "secret/" + cert,
-			"--keys=tls.key", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, cert+".key")}
-		_, err = s.ops.RunBashInHostNamespace("oc", args...)
+		servingSignerKey, err := s.manifestClient.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
 		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path.Join(common.BackupCertsDir, cert+".key"), []byte(servingSignerKey), 0o644); err != nil {
 			return err
 		}
 	}
 
-	args = []string{"extract", "-n", "openshift-ingress-operator", "secret/router-ca",
-		"--keys=tls.crt", "--kubeconfig=" + s.kubeconfig, "--to=-"}
-	ingressCN, err := s.ops.RunBashInHostNamespace("oc", args...)
+	ingressOperatorKey, err := s.manifestClient.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
 	if err != nil {
 		return err
 	}
-
-	certRaw, _ := pem.Decode([]byte(ingressCN))
-	if certRaw == nil {
-		return fmt.Errorf("error decoding the router-ca PEM certificate")
-	}
-
-	cert, err := x509.ParseCertificate(certRaw.Bytes)
-	if err != nil {
-		return fmt.Errorf("error parsing certificate: %w", err)
-	}
-
-	args = []string{"extract", "-n", "openshift-ingress-operator", "secret/router-ca",
-		"--keys=tls.key", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, "/ingresskey-"+cert.Subject.CommonName)}
-	_, err = s.ops.RunBashInHostNamespace("oc", args...)
-	if err != nil {
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "/ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
 		return err
 	}
 
