@@ -121,7 +121,7 @@ func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context, manife
 
 	filePath := filepath.Join(manifestsDir, pullSecretFileName)
 	r.Log.Info("Writing pull-secret to file", "path", filePath)
-	return utils.WriteToFile(s, filePath)
+	return utils.MarshalToFile(s, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDir string) error {
@@ -146,7 +146,7 @@ func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDi
 
 	filePath := filepath.Join(manifestsDir, proxyFileName)
 	r.Log.Info("Writing proxy to file", "path", filePath)
-	return utils.WriteToFile(p, filePath)
+	return utils.MarshalToFile(p, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, manifestsDir string) error {
@@ -173,7 +173,7 @@ func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, ma
 
 		filePath := filepath.Join(manifestsDir, machineConfig.Name+".json")
 		r.Log.Info("Writing MachineConfig to file", "path", filePath)
-		if err := utils.WriteToFile(mc, filePath); err != nil {
+		if err := utils.MarshalToFile(mc, filePath); err != nil {
 			return err
 		}
 	}
@@ -192,7 +192,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 	filePath := filepath.Join(clusterConfigPath, common.ClusterInfoFileName)
 
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
-	return utils.WriteToFile(clusterInfo, filePath)
+	return utils.MarshalToFile(clusterInfo, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchClusterVersion(ctx context.Context, manifestsDir string) error {
@@ -218,7 +218,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterVersion(ctx context.Context, ma
 
 	filePath := filepath.Join(manifestsDir, clusterIDFileName)
 	r.Log.Info("Writing ClusterVersion with only the ClusterID field to file", "path", filePath)
-	return utils.WriteToFile(cv, filePath)
+	return utils.MarshalToFile(cv, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir string) error {
@@ -235,7 +235,7 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 
 	filePath := filepath.Join(manifestsDir, idmsFileName)
 	r.Log.Info("Writing IDMS to file", "path", filePath)
-	return utils.WriteToFile(idms, filePath)
+	return utils.MarshalToFile(idms, filePath)
 }
 
 // configDirs creates and returns the directory for the given cluster configuration.

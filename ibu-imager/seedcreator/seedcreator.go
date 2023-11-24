@@ -193,13 +193,13 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	}
 
 	s.log.Info("Creating manifest.json")
-	if err := utils.WriteToFile(clusterManifest, path.Join(s.backupDir, "manifest.json")); err != nil {
+	if err := utils.MarshalToFile(clusterManifest, path.Join(s.backupDir, "manifest.json")); err != nil {
 		return err
 	}
 
 	// TODO: remove when we will drop it from preparation script
 	s.log.Info("Creating clusterversion.json")
-	if err := utils.WriteToFile(clusterVersion, path.Join(s.backupDir, "clusterversion.json")); err != nil {
+	if err := utils.MarshalToFile(clusterVersion, path.Join(s.backupDir, "clusterversion.json")); err != nil {
 		return err
 	}
 
