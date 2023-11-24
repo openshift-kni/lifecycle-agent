@@ -25,10 +25,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/go-logr/logr"
 
+	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,7 +97,7 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 	return nil
 }
 
-func renderJob(config *Config) (*batchv1.Job, error) {
+func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 
 	var ValidIoNiceClasses = []int{IoNiceClassNone, IoNiceClassRealTime, IoNiceClassBestEffort, IoNiceClassIdle}
 

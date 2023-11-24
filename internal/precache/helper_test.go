@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"testing"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -307,7 +309,7 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			renderedJob, err := renderJob(tc.config)
+			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"))
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {

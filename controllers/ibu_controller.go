@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 
 	"github.com/go-logr/logr"
@@ -54,6 +56,7 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder        record.EventRecorder
 	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
 	NetworkConfig   *clusterconfig.UpgradeNetworkConfigGather
+	Precache        *precache.PHandler
 	BackupRestore   *backuprestore.BRHandler
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient

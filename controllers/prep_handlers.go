@@ -102,8 +102,9 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		return
 	}
 
+	// Create pre-cache config using default values
 	config := precache.NewConfig(imageList)
-	err = precache.CreateJob(ctx, r.Client, config)
+	err = r.Precache.CreateJob(ctx, config)
 	if err != nil {
 		r.Log.Error(err, "Failed to create precaching job")
 
@@ -133,7 +134,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context, progressfile string) (result ctrl.Result, err error) {
 	// fetch precaching status
-	status, err := precache.QueryJobStatus(ctx, r.Client)
+	status, err := r.Precache.QueryJobStatus(ctx)
 	if err != nil {
 		r.Log.Error(err, "Failed to get precaching job status")
 		return
@@ -288,7 +289,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 
 			// Fetch final precaching job report summary
 			conditionMessage := "Prep completed"
-			status, err := precache.QueryJobStatus(ctx, r.Client)
+			status, err := r.Precache.QueryJobStatus(ctx)
 			if err == nil && status != nil && status.Message != "" {
 				conditionMessage += fmt.Sprintf(": %s", status.Message)
 			}
