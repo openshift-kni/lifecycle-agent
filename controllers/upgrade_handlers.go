@@ -156,7 +156,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	// Temporarily empty resource version so the file can be used to restore status
 	rv := ibu.ResourceVersion
 	ibu.ResourceVersion = ""
-	if err := lcautils.WriteToFile(ibu, filePath); err != nil {
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		return doNotRequeue(), err
 	}
 	ibu.ResourceVersion = rv

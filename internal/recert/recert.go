@@ -62,14 +62,14 @@ func CreateRecertConfigFile(clusterInfo, seedClusterInfo *clusterinfo.ClusterInf
 	}
 	config.UseCertRules = []string{filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")}
 
-	return utils.WriteToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))
+	return utils.MarshalToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))
 }
 
 func CreateRecertConfigFileForSeedCreation(path string) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
-	return utils.WriteToFile(config, path)
+	return utils.MarshalToFile(config, path)
 }
 
 func createBasicEmptyRecertConfig() RecertConfig {
