@@ -65,12 +65,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
 
-	p.log.Info("Create recert configuration file")
-	if err := recert.CreateRecertConfigFile(clusterInfo, seedClusterInfo, path.Join(p.workingDir, common.CertsDir),
-		p.workingDir); err != nil {
-		return err
-	}
-
 	if err := p.recert(clusterInfo, seedClusterInfo); err != nil {
 		return err
 	}
@@ -103,6 +97,17 @@ func (p *PostPivot) recert(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo
 	if _, err := os.Stat(doneFile); err == nil {
 		p.log.Infof("Found %s file, skippin recert", doneFile)
 		return nil
+	}
+
+	if _, err := os.Stat(recert.SummaryFile); err == nil {
+		return fmt.Errorf("found %s file, returning error, it means recert previously failed. "+
+			"In case you still want to rerun it please remove the file", recert.SummaryFile)
+	}
+
+	p.log.Info("Create recert configuration file")
+	if err := recert.CreateRecertConfigFile(clusterInfo, seedClusterInfo, path.Join(p.workingDir, common.CertsDir),
+		p.workingDir); err != nil {
+		return err
 	}
 
 	if err := p.ops.RunUnauthenticatedEtcdServer(p.authFile, common.EtcdContainerName); err != nil {

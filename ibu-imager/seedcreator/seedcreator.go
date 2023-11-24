@@ -242,16 +242,7 @@ func (s *SeedCreator) createContainerList() error {
 	}
 	defer f.Close()
 
-	// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
-	s.log.Info("Save catalog source images")
-	_, err = s.ops.RunBashInHostNamespace(
-		"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
-			s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
-	if err != nil {
-		return err
-	}
-
-	s.log.Info("List of containers, catalogsources, and clusterversion saved successfully.")
+	s.log.Info("List of containers  saved successfully.")
 	return nil
 }
 

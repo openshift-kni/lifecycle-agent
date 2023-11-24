@@ -309,6 +309,7 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 }
 
 func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching ICSPs")
 	iscpsList := &v1.ImageContentPolicyList{}
 	currentIcps := &v1.ImageContentPolicyList{}
 	if err := r.Client.List(ctx, currentIcps); err != nil {
