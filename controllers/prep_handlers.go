@@ -289,7 +289,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 			// Fetch final precaching job report summary
 			conditionMessage := "Prep completed"
 			status, err := precache.QueryJobStatus(ctx, r.Client)
-			if err == nil && status.Message != "" {
+			if err == nil && status != nil && status.Message != "" {
 				conditionMessage += fmt.Sprintf(": %s", status.Message)
 			}
 
