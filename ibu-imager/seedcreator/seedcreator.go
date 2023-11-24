@@ -210,6 +210,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 // TODO: split function per operation
 func (s *SeedCreator) createContainerList() error {
 	s.log.Info("Saving list of running containers and catalogsources.")
+	containersListFileName := s.backupDir + "/containers.list"
 
 	// Check if the file /var/tmp/container_list.done does not exist
 	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
@@ -217,11 +218,24 @@ func (s *SeedCreator) createContainerList() error {
 		s.log.Info("Save list of running containers")
 		args := []string{"images", "-o", "json", "|", "jq", "-r",
 			"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
-			">", s.backupDir + "/containers.list"}
+			">", containersListFileName}
 
 		if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
 			return err
 		}
+
+		s.log.Info("Adding recert image to precache list")
+		// add recert image to containers list in order to precache it
+		f, err := os.OpenFile(containersListFileName, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("failed to open %s file", containersListFileName)
+		}
+		recertImageLine := fmt.Sprintf("%s\n", s.recertContainerImage)
+
+		if _, err := f.Write([]byte(recertImageLine)); err != nil {
+			return fmt.Errorf("failed to add recert image to %s file", containersListFileName)
+		}
+		defer f.Close()
 
 		// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
 		s.log.Info("Save catalog source images")
