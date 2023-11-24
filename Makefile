@@ -55,6 +55,7 @@ OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 MOCK_GEN = $(shell pwd)/bin/mockgen
+GO_STATICCHECK = $(shell pwd)/bin/staticcheck
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
@@ -105,6 +106,12 @@ golangci-lint: ## Run golangci-lint against code.
 	@echo "Running golangci-lint"
 	hack/golangci-lint.sh
 
+.PHONY: staticcheck
+staticcheck: ## Run staticcheck
+	@echo "Running staticcheck"
+	$(call go-get-tool,$(GO_STATICCHECK),honnef.co/go/tools/cmd/staticcheck@latest)
+	export GOCACHE=/tmp/; $(GO_STATICCHECK) ./...
+
 .PHONY: vet
 vet: ## Run go vet against code.
 	@echo "Running go vet"
@@ -130,7 +137,7 @@ bashate: ## Run bashate.
 	hack/bashate.sh
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
+ci-job: common-deps-update generate fmt vet staticcheck golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
