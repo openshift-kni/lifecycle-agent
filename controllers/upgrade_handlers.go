@@ -117,7 +117,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
 
-	r.Log.Info("Writing OadpConfiguratio CRs into new stateroot")
+	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
 	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
 		return requeueWithError(err)
 	}
