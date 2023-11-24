@@ -1,12 +1,15 @@
 [Unit]
 Description=Image base SNO configuration script
-After=nodeip-configuration.service prepare-installation-configuration.service
+After=prepare-installation-configuration.service NetworkManager-wait-online.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/ibu-imager post-pivot --recert-image ${RECERT_IMAGE}
 EnvironmentFile=/etc/systemd/system/installation-configuration.env
+
+Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
