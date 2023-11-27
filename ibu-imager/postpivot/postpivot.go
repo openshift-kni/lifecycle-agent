@@ -181,10 +181,11 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 	})
 }
 
-// TODO: add an option to validate that it was done once already
 func (p *PostPivot) approveCsrs(ctx context.Context, client runtimeclient.Client) {
-	p.approveHostCSR(ctx, client, "kube-apiserver-client-kubelet")
-	p.approveHostCSR(ctx, client, "kubelet-serving")
+	_ = utils.RunOnce("kube-apiserver-client-kubelet", p.workingDir, p.log, p.approveHostCSR,
+		ctx, client, "kube-apiserver-client-kubelet")
+	_ = utils.RunOnce("kubelet-serving", p.workingDir, p.log, p.approveHostCSR,
+		ctx, client, "kubelet-serving")
 }
 
 func (p *PostPivot) approveHostCSR(ctx context.Context, client runtimeclient.Client, signerName string) {

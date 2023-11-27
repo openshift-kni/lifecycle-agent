@@ -277,6 +277,14 @@ func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav
 	}, nil
 }
 
+func (r *UpgradeClusterConfigGather) cleanObjectMetadata(o client.Object) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:      o.GetName(),
+		Namespace: o.GetNamespace(),
+		Labels:    o.GetLabels(),
+	}
+}
+
 func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDigestMirrorSetList, error) {
 	idmsList := v1.ImageDigestMirrorSetList{}
 	currentIdms := v1.ImageDigestMirrorSetList{}
@@ -287,7 +295,8 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 	for _, idms := range currentIdms.Items {
 		obj := v1.ImageDigestMirrorSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: idms.ObjectMeta.Name,
+				Name:      idms.Name,
+				Namespace: idms.Namespace,
 			},
 			Spec: idms.Spec,
 		}
@@ -319,7 +328,8 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	for _, icp := range currentIcps.Items {
 		obj := v1.ImageContentPolicy{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: icp.ObjectMeta.Name,
+				Name:      icp.Name,
+				Namespace: icp.Namespace,
 			},
 			Spec: icp.Spec,
 		}
@@ -361,6 +371,7 @@ func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifest
 		return err
 	}
 	caBundle.TypeMeta = *typeMeta
+	caBundle.ObjectMeta = r.cleanObjectMetadata(caBundle)
 
 	if err := utils.MarshalToFile(caBundle, filepath.Join(manifestsDir, caBundleFileName)); err != nil {
 		return fmt.Errorf("failed to write user ca bundle to %s, err: %w",
