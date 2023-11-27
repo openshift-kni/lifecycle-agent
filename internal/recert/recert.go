@@ -2,6 +2,7 @@ package recert
 
 import (
 	"fmt"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,15 @@ import (
 const RecertConfigFile = "recert_config.json"
 
 var staticDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
+
+var ExtendExpirationAdditionalFlags = []string{
+	"--static-file", "/host-etc/mcs-machine-config-content.json",
+	"--use-cert", "/certs/admin-kubeconfig-client-ca.crt",
+	"--use-key", "kube-apiserver-lb-signer:/certs/loadbalancer-serving-signer.key",
+	"--use-key", "kube-apiserver-localhost-signer:/certs/localhost-serving-signer.key",
+	"--use-key", "kube-apiserver-service-network-signer:/certs/service-network-serving-signer.key",
+	"--extend-expiration",
+}
 
 type RecertConfig struct {
 	DryRun            bool     `json:"dry_run,omitempty"`
@@ -75,7 +85,7 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 func createBasicEmptyRecertConfig() RecertConfig {
 	return RecertConfig{
 		DryRun:       false,
-		EtcdEndpoint: "localhost:2379",
+		EtcdEndpoint: common.EtcdDefaultEndpoint,
 		StaticDirs:   staticDirs,
 		StaticFiles:  []string{"/host-etc/mcs-machine-config-content.json"},
 	}

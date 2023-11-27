@@ -32,6 +32,9 @@ const (
 	EtcdStaticPodContainer = "etcd"
 	EtcdDefaultEndpoint    = "localhost:2379"
 
+	OvnNodeCerts = "/var/lib/ovn-ic/etc/ovnkube-node-certs"
+	MultusCerts  = "/etc/cni/multus/certs"
+
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
 	SeedManifest                      = "seed_manifest.json"
