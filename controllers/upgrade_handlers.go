@@ -151,6 +151,11 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		return requeueWithError(err)
 	}
 
+	r.Log.Info("Writing lvm-configuration into new stateroot")
+	if err := r.ClusterConfig.FetchLvmConfig(ctx, stateRootRepo); err != nil {
+		return requeueWithError(err)
+	}
+
 	// Save the IBU CR to the new state root before pivot
 	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
 	// Temporarily empty resource version so the file can be used to restore status

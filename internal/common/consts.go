@@ -44,6 +44,8 @@ const (
 	ManifestsDir                      = "manifests"
 	ExtraManifestsDir                 = "extra-manifests"
 	EtcdContainerName                 = "recert_etcd"
+	LvmConfigDir                      = "lvm-configuration"
+	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
