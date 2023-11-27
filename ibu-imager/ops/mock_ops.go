@@ -95,6 +95,25 @@ func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
 }
 
+// RecertFullFlow mocks base method.
+func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
+	m.ctrl.T.Helper()
+	varargs := []any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}
+	for _, a := range additionalPodmanParams {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "RecertFullFlow", varargs...)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecertFullFlow indicates an expected call of RecertFullFlow.
+func (mr *MockOpsMockRecorder) RecertFullFlow(recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations any, additionalPodmanParams ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}, additionalPodmanParams...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecertFullFlow", reflect.TypeOf((*MockOps)(nil).RecertFullFlow), varargs...)
+}
+
 // RemountSysroot mocks base method.
 func (m *MockOps) RemountSysroot() error {
 	m.ctrl.T.Helper()

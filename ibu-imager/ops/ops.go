@@ -38,6 +38,8 @@ type Ops interface {
 	ImageExists(img string) (bool, error)
 	IsImageMounted(img string) (bool, error)
 	UnmountAndRemoveImage(img string) error
+	RecertFullFlow(recertContainerImage, authFile, configFile string,
+		preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error
 }
 
 type ops struct {
@@ -70,21 +72,6 @@ func (o *ops) RunInHostNamespace(command string, args ...string) (string, error)
 
 func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
 	o.log.Info("Running recert --force-expire tool and saving a summary without sensitive data")
-
-	// Run unauthenticated etcd server for the recert tool.
-	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
-	// which is required before running the recert tool.
-	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
-		return err
-	}
-
-	defer func() {
-		o.log.Info("Stopping the unauthenticated etcd server")
-		if _, err := o.RunInHostNamespace("podman", "stop", "recert_etcd"); err != nil {
-			o.log.Errorf("Failed to kill recert_etcd container: %v", err)
-		}
-	}()
-
 	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
 	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
 	// into a seed image.
@@ -93,7 +80,7 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error
 	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
 		return fmt.Errorf("failed to create %s file", recertConfigFile)
 	}
-	if err := o.RunRecert(recertContainerImage, authFile, recertConfigFile); err != nil {
+	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, nil); err != nil {
 		return err
 	}
 
@@ -103,36 +90,31 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error
 
 func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
 	o.log.Info("Running recert --extend-expiration tool to restore original seed crypto")
-
-	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
-		return err
-	}
-
-	defer func() {
-		o.log.Info("Killing the unauthenticated etcd server")
-		if _, err := o.RunInHostNamespace("podman", "kill", "recert_etcd"); err != nil {
-			o.log.Errorf("Failed to kill recert_etcd container: %v", err)
-		}
-	}()
-
 	o.log.Info("Run recert --extend-expiration tool")
 	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
 	if err := recert.CreateRecertConfigFileForSeedRestoration(recertConfigFile); err != nil {
 		return fmt.Errorf("failed to create %s file", recertConfigFile)
 	}
-	if err := o.RunRecert(recertContainerImage, authFile, recertConfigFile); err != nil {
-		return err
+
+	postRecertOp := func() error {
+		o.log.Infof("Removing %s folder", common.BackupCertsDir)
+		if err := os.RemoveAll(common.BackupCertsDir); err != nil {
+			return fmt.Errorf("error removing %s: %w", common.BackupCertsDir, err)
+		}
+		return nil
 	}
 
-	o.log.Infof("Removing %s folder", common.BackupCertsDir)
-	if err := os.RemoveAll(common.BackupCertsDir); err != nil {
-		return fmt.Errorf("error removing %s: %w", common.BackupCertsDir, err)
+	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, postRecertOp); err != nil {
+		return err
 	}
 
 	o.log.Info("Certificates in seed SNO cluster restored successfully.")
 	return nil
 }
 
+// RunUnauthenticatedEtcdServer Run unauthenticated etcd server for the recert tool.
+// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
+// which is required before running the recert tool.
 func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	// Get etcdImage available for the current release, this is needed by recert to
 	// run an unauthenticated etcd server for running successfully.
@@ -296,5 +278,38 @@ func (o *ops) UnmountAndRemoveImage(img string) error {
 	); err != nil {
 		return fmt.Errorf("failed to remove image: %w", err)
 	}
+	return nil
+}
+
+func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
+	preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error {
+	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
+		return fmt.Errorf("failed to run etcd, err: %w", err)
+	}
+
+	defer func() {
+		o.log.Info("Killing the unauthenticated etcd server")
+		if _, err := o.RunInHostNamespace("podman", "stop", common.EtcdContainerName); err != nil {
+			o.log.WithError(err).Errorf("failed to kill %s container.", common.EtcdContainerName)
+		}
+	}()
+
+	if preRecertOperations != nil {
+		if err := preRecertOperations(); err != nil {
+			return err
+		}
+	}
+
+	if err := o.RunRecert(recertContainerImage, authFile, configFile,
+		additionalPodmanParams...); err != nil {
+		return err
+	}
+
+	if postRecertOperations != nil {
+		if err := postRecertOperations(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

@@ -116,31 +116,13 @@ func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *cl
 		return err
 	}
 
-	if err := p.ops.RunUnauthenticatedEtcdServer(p.authFile, common.EtcdContainerName); err != nil {
-		return fmt.Errorf("failed to run etcd, err: %w", err)
+	additional := func() error {
+		return p.additionalCommands(ctx, clusterInfo, seedClusterInfo)
 	}
 
-	defer func() {
-		p.log.Info("Killing the unauthenticated etcd server")
-		if _, err := p.ops.RunInHostNamespace("podman", "kill", common.EtcdContainerName); err != nil {
-			p.log.WithError(err).Errorf("failed to kill %s container.", common.EtcdContainerName)
-		}
-
-		if _, err := p.ops.RunInHostNamespace("podman", "rm", common.EtcdContainerName); err != nil {
-			p.log.WithError(err).Errorf("failed to rm %s container.", common.EtcdContainerName)
-		}
-	}()
-
-	if err := p.additionalCommands(ctx, clusterInfo, seedClusterInfo); err != nil {
-		return err
-	}
-
-	if err := p.ops.RunRecert(p.recertContainerImage, p.authFile, path.Join(p.workingDir, recert.RecertConfigFile),
-		"-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir)); err != nil {
-		return err
-	}
-
-	return nil
+	err := p.ops.RecertFullFlow(p.recertContainerImage, p.authFile, path.Join(p.workingDir, recert.RecertConfigFile),
+		additional, nil, "-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
+	return err
 }
 
 func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
