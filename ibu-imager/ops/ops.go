@@ -3,14 +3,15 @@ package ops
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path"
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/sirupsen/logrus"
 )
 
 var podmanRecertArgs = []string{
@@ -24,8 +25,10 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
+	ForceExpireSeedCrypto(recertContainerImage, authFile string) error
+	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
 	RunUnauthenticatedEtcdServer(authFile, name string) error
-	GetImageFromPodDefinition(etcdStaticPodFile, containerImage string) (string, error)
+	waitForEtcd(healthzEndpoint string) error
 	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
 }
 
@@ -57,28 +60,76 @@ func (o *ops) RunInHostNamespace(command string, args ...string) (string, error)
 	return o.hostCommandsExecutor.Execute(command, args...)
 }
 
-func (o *ops) GetImageFromPodDefinition(podFile, containerName string) (string, error) {
-	o.log.Infof("Getting image from %s static pod file", podFile)
-	pod := &corev1.Pod{}
-	if err := utils.ReadYamlOrJSONFile(podFile, pod); err != nil {
-		return "", fmt.Errorf("failed to read %s pod static file, err: %w", podFile, err)
+func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
+	o.log.Info("Running recert --force-expire tool and saving a summary without sensitive data")
+
+	// Run unauthenticated etcd server for the recert tool.
+	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
+	// which is required before running the recert tool.
+	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
+		return err
 	}
 
-	var etcdImage string
-	for _, container := range pod.Spec.Containers {
-		if container.Name == containerName {
-			etcdImage = container.Image
-			return etcdImage, nil
+	defer func() {
+		o.log.Info("Killing the unauthenticated etcd server")
+		if _, err := o.RunInHostNamespace("podman", "kill", "recert_etcd"); err != nil {
+			o.log.Errorf("Failed to kill recert_etcd container: %v", err)
 		}
+	}()
+
+	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
+	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
+	// into a seed image.
+	o.log.Info("Run recert --force-expire tool")
+	recertConfigFile := path.Join(common.BackupDir, recert.RecertConfigFile)
+	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
+		return fmt.Errorf("failed to create %s file", recertConfigFile)
+	}
+	if err := o.RunRecert(recertContainerImage, authFile, recertConfigFile); err != nil {
+		return err
 	}
 
-	return "", fmt.Errorf("no '%s' container found or no image specified in %s", containerName, podFile)
+	o.log.Info("Recert --force-expire tool ran and summary created successfully.")
+	return nil
+}
+
+func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
+	o.log.Info("Running recert --extend-expiration tool to restore original seed crypto")
+
+	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
+		return err
+	}
+
+	defer func() {
+		o.log.Info("Killing the unauthenticated etcd server")
+		if _, err := o.RunInHostNamespace("podman", "kill", "recert_etcd"); err != nil {
+			o.log.Errorf("Failed to kill recert_etcd container: %v", err)
+		}
+	}()
+
+	o.log.Info("Run recert --extend-expiration tool")
+	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
+	if err := recert.CreateRecertConfigFileForSeedRestoration(recertConfigFile); err != nil {
+		return fmt.Errorf("failed to create %s file", recertConfigFile)
+	}
+	if err := o.RunRecert(recertContainerImage, authFile, recertConfigFile); err != nil {
+		return err
+	}
+
+	o.log.Infof("Removing %s folder", common.BackupCertsDir)
+	if err := os.RemoveAll(common.BackupCertsDir); err != nil {
+		return fmt.Errorf("error removing %s: %w", common.BackupCertsDir, err)
+	}
+
+	o.log.Info("Certificates in seed SNO cluster restored successfully.")
+	return nil
 }
 
 func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	// Get etcdImage available for the current release, this is needed by recert to
 	// run an unauthenticated etcd server for running successfully.
-	etcdImage, err := o.GetImageFromPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
+	o.log.Infof("Getting image from %s static pod file", common.EtcdStaticPodFile)
+	etcdImage, err := utils.ReadImageFromStaticPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
 	if err != nil {
 		return err
 	}
@@ -100,7 +151,7 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	}
 
 	o.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
-	if err := o.waitForEtcd(common.EtcdDefaultEndpoint + "/health"); err != nil {
+	if err := o.waitForEtcd("http://" + common.EtcdDefaultEndpoint + "/health"); err != nil {
 		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
 	}
 	o.log.Info("Unauthenticated etcd server for recert is up and running")

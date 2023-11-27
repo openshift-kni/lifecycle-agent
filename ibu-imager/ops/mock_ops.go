@@ -37,19 +37,32 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
-// GetImageFromPodDefinition mocks base method.
-func (m *MockOps) GetImageFromPodDefinition(etcdStaticPodFile, containerImage string) (string, error) {
+// ForceExpireSeedCrypto mocks base method.
+func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetImageFromPodDefinition", etcdStaticPodFile, containerImage)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", recertContainerImage, authFile)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// GetImageFromPodDefinition indicates an expected call of GetImageFromPodDefinition.
-func (mr *MockOpsMockRecorder) GetImageFromPodDefinition(etcdStaticPodFile, containerImage any) *gomock.Call {
+// ForceExpireSeedCrypto indicates an expected call of ForceExpireSeedCrypto.
+func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetImageFromPodDefinition", reflect.TypeOf((*MockOps)(nil).GetImageFromPodDefinition), etcdStaticPodFile, containerImage)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
+}
+
+// RestoreOriginalSeedCrypto mocks base method.
+func (m *MockOps) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RestoreOriginalSeedCrypto", recertContainerImage, authFile)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RestoreOriginalSeedCrypto indicates an expected call of RestoreOriginalSeedCrypto.
+func (mr *MockOpsMockRecorder) RestoreOriginalSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreOriginalSeedCrypto", reflect.TypeOf((*MockOps)(nil).RestoreOriginalSeedCrypto), recertContainerImage, authFile)
 }
 
 // RunBashInHostNamespace mocks base method.
@@ -143,4 +156,18 @@ func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
+}
+
+// waitForEtcd mocks base method.
+func (m *MockOps) waitForEtcd(healthzEndpoint string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "waitForEtcd", healthzEndpoint)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// waitForEtcd indicates an expected call of waitForEtcd.
+func (mr *MockOpsMockRecorder) waitForEtcd(healthzEndpoint any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "waitForEtcd", reflect.TypeOf((*MockOps)(nil).waitForEtcd), healthzEndpoint)
 }

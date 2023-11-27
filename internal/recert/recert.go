@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -72,10 +73,25 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 	return utils.MarshalToFile(config, path)
 }
 
+func CreateRecertConfigFileForSeedRestoration(path string) error {
+	config := createBasicEmptyRecertConfig()
+	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.ExtendExpiration = true
+	config.UseKeyRules = []string{
+		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("ingresskey-ingress-operator %s/ingresskey-ingress-operator.key", common.BackupCertsDir),
+	}
+	config.UseCertRules = []string{filepath.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt")}
+
+	return utils.MarshalToFile(config, path)
+}
+
 func createBasicEmptyRecertConfig() RecertConfig {
 	return RecertConfig{
 		DryRun:       false,
-		EtcdEndpoint: "localhost:2379",
+		EtcdEndpoint: common.EtcdDefaultEndpoint,
 		StaticDirs:   staticDirs,
 		StaticFiles:  []string{"/host-etc/mcs-machine-config-content.json"},
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedrestoration"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
@@ -88,6 +89,14 @@ func create() error {
 	op := ops.NewOps(log, hostCommandsExecutor)
 	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
 
+	defer func() {
+		if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
+			authFile, recertContainerImage, recertSkipValidation).CleanupSeedCluster(); err != nil {
+			log.Fatalf("Failed to restore seed cluster: %v", err)
+		}
+		log.Info("Seed cluster restored successfully!")
+	}()
+
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {
 		return fmt.Errorf("failed to create k8s config: %w", err)
@@ -103,8 +112,6 @@ func create() error {
 	if err = seedCreator.CreateSeedImage(); err != nil {
 		return fmt.Errorf("failed to create seed image: %w", err)
 	}
-
-	// TODO: add cleanup
 
 	log.Info("OCI image created successfully!")
 	return nil
