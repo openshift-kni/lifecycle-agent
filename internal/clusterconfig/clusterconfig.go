@@ -9,6 +9,7 @@ import (
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +26,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=config.openshift.io,resources=imagecontentpolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=operator.openshift.io,resources=imagecontentsourcepolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
 
@@ -319,14 +320,19 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 
 func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDir string) error {
 	r.Log.Info("Fetching ICSPs")
-	iscpsList := &v1.ImageContentPolicyList{}
-	currentIcps := &v1.ImageContentPolicyList{}
+	iscpsList := &operatorv1alpha1.ImageContentSourcePolicyList{}
+	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
 	if err := r.Client.List(ctx, currentIcps); err != nil {
 		return err
 	}
 
+	if len(currentIcps.Items) < 1 {
+		r.Log.Info("ImageContentPolicyList is empty, skipping")
+		return nil
+	}
+
 	for _, icp := range currentIcps.Items {
-		obj := v1.ImageContentPolicy{
+		obj := operatorv1alpha1.ImageContentSourcePolicy{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      icp.Name,
 				Namespace: icp.Namespace,

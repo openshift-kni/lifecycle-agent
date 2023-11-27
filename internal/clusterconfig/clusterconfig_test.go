@@ -18,12 +18,12 @@ package clusterconfig
 
 import (
 	"context"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	ocpV1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -118,7 +118,9 @@ func init() {
 		&mcv1.MachineConfig{},
 		&ocpV1.ImageContentPolicy{},
 		&ocpV1.ImageContentPolicyList{})
-	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
+	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
+		&operatorv1alpha1.ImageContentSourcePolicyList{},
+		&operatorv1alpha1.ImageContentSourcePolicy{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -139,7 +141,7 @@ func TestClusterConfig(t *testing.T) {
 		caBundleCM     client.Object
 		clusterVersion client.Object
 		idms           client.Object
-		icsp           client.Object
+		icsps          []client.Object
 		node           client.Object
 		proxy          client.Object
 		machineConfigs []*mcv1.MachineConfig
@@ -178,7 +180,7 @@ func TestClusterConfig(t *testing.T) {
 					HTTPProxy: "some-http-proxy",
 				},
 			},
-			icsp:           nil,
+			icsps:          nil,
 			caBundleCM:     nil,
 			machineConfigs: machineConfigs,
 			expectedErr:    false,
@@ -248,7 +250,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:       nil,
-			icsp:       nil,
+			icsps:      nil,
 			caBundleCM: nil,
 			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
@@ -272,7 +274,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:       nil,
-			icsp:       nil,
+			icsps:      nil,
 			caBundleCM: nil,
 			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
@@ -304,7 +306,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:       nil,
-			icsp:       nil,
+			icsps:      nil,
 			caBundleCM: nil,
 			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
@@ -323,7 +325,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 6, len(dir))
+				assert.Equal(t, 5, len(dir))
 			},
 		},
 		{
@@ -343,7 +345,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 			},
 			idms:       nil,
-			icsp:       nil,
+			icsps:      nil,
 			caBundleCM: nil,
 			node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker:": ""}},
 				Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
@@ -388,8 +390,15 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			icsp: &ocpV1.ImageContentPolicy{Spec: ocpV1.ImageContentPolicySpec{
-				RepositoryDigestMirrors: []ocpV1.RepositoryDigestMirrors{{Source: "icspData"}}}},
+			icsps: []client.Object{&operatorv1alpha1.ImageContentSourcePolicy{ObjectMeta: metav1.ObjectMeta{
+				Name: "1",
+			}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
+				RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{
+					{Source: "icspData"}}}},
+				&operatorv1alpha1.ImageContentSourcePolicy{ObjectMeta: metav1.ObjectMeta{
+					Name: "2",
+				}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
+					RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{{Source: "icspData2"}}}}},
 			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: caBundleCMName,
 				Namespace: configNamespace}, Data: map[string]string{"test": "data"}},
 			machineConfigs: machineConfigs,
@@ -412,12 +421,18 @@ func TestClusterConfig(t *testing.T) {
 				}
 
 				// validate icsp
-				icsps := &ocpV1.ImageContentPolicyList{}
+				icsps := &operatorv1alpha1.ImageContentSourcePolicyList{}
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, icspsFileName), icsps); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if assert.Equal(t, 1, len(icsps.Items)) {
-					assert.Equal(t, "icspData", icsps.Items[0].Spec.RepositoryDigestMirrors[0].Source)
+				if assert.Equal(t, 2, len(icsps.Items)) {
+					resultSourcesAsString := ""
+					for _, icsp := range icsps.Items {
+						resultSourcesAsString = resultSourcesAsString + "" + icsp.Spec.RepositoryDigestMirrors[0].Source
+					}
+
+					assert.Contains(t, resultSourcesAsString, "icspData")
+					assert.Contains(t, resultSourcesAsString, "icspData2")
 				}
 
 				// validate caBundle
@@ -442,10 +457,17 @@ func TestClusterConfig(t *testing.T) {
 				Data: map[string]string{"install-config": clusterCmData},
 			}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
-				tc.idms, tc.proxy, tc.icsp, tc.caBundleCM}
+				tc.idms, tc.proxy, tc.caBundleCM}
 			for _, mc := range tc.machineConfigs {
 				objs = append(objs, mc)
 			}
+
+			if tc.icsps != nil {
+				for _, icsp := range tc.icsps {
+					objs = append(objs, icsp)
+				}
+			}
+
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
