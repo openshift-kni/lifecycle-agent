@@ -53,6 +53,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	//+kubebuilder:scaffold:imports
@@ -144,6 +145,7 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 		NetworkConfig:   &clusterconfig.UpgradeNetworkConfigGather{Log: log},
+		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache")},
 		BackupRestore:   &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,

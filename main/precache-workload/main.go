@@ -117,9 +117,11 @@ func main() {
 		for _, image := range status.FailedPullList {
 			log.Info(image)
 		}
+		exitCode := Failure
 		if bestEffort {
-			terminateOnError(fmt.Errorf("failed to pre-cache one or more images"), Success)
+			exitCode = Success
 		}
+		terminateOnError(fmt.Errorf("failed to pre-cache one or more images"), exitCode)
 	}
 
 	log.Info("Pre-cached images successfully.")
