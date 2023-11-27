@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
+	"reflect"
 	"text/template"
 
+	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,4 +90,33 @@ func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.
 	}
 	return runtimeclient.New(config, runtimeclient.Options{Scheme: scheme,
 		WarningHandler: runtimeclient.WarningHandlerOptions{SuppressWarnings: true}})
+}
+
+func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) error {
+	doneFile := path.Join(directory, name+".done")
+	_, err := os.Stat(doneFile)
+	if err == nil || !os.IsNotExist(err) {
+		log.Info(fmt.Sprintf("%s already exists, skipping", doneFile))
+		return nil
+	}
+
+	fValue := reflect.ValueOf(f)
+
+	var fArgs []reflect.Value
+	for _, arg := range args {
+		fArgs = append(fArgs, reflect.ValueOf(arg))
+	}
+
+	resultValues := fValue.Call(fArgs)
+	errVal, ok := resultValues[0].Interface().(error)
+	if ok {
+		return errVal
+	}
+
+	_, err = os.Create(doneFile)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
