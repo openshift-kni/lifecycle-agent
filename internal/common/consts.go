@@ -30,7 +30,7 @@ const (
 	DefaultRecertImage     = "quay.io/edge-infrastructure/recert:latest"
 	EtcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
 	EtcdStaticPodContainer = "etcd"
-	EtcdDefaultEndpoint    = "http://localhost:2379"
+	EtcdDefaultEndpoint    = "localhost:2379"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
@@ -42,3 +42,11 @@ const (
 	ExtraManifestsDir                 = "extra-manifests"
 	EtcdContainerName                 = "recert_etcd"
 )
+
+// CertPrefixes is the list of certificate prefixes to be backed up
+// before creating the seed image
+var CertPrefixes = []string{
+	"loadbalancer-serving-signer",
+	"localhost-serving-signer",
+	"service-network-serving-signer",
+}

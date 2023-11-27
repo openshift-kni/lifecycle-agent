@@ -2,6 +2,8 @@ package seedcreator
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -78,7 +80,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	s.log.Println("Copy ibu-imager binary")
+	s.log.Info("Copy ibu-imager binary")
 	err := cp.Copy("/usr/local/bin/ibu-imager", "/var/usrlocal/bin/ibu-imager", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
 		return err
@@ -94,6 +96,14 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 	if err := utils.RunOnce("gather_cluster_info", common.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
 		return err
+	}
+
+	if s.recertSkipValidation {
+		s.log.Info("Skipping seed certificates backing up.")
+	} else {
+		if err := s.backupSeedCertificates(); err != nil {
+			return err
+		}
 	}
 
 	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
@@ -248,6 +258,56 @@ func (s *SeedCreator) createContainerList() error {
 	return nil
 }
 
+func (s *SeedCreator) backupSeedCertificates() error {
+	s.log.Info("Backing up seed cluster certificates for recert tool.")
+	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
+		return err
+	}
+
+	args := []string{"extract", "-n", "openshift-config", "configmap/admin-kubeconfig-client-ca",
+		"--keys=ca-bundle.crt", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, "/admin-kubeconfig-client-ca.crt")}
+	_, err := s.ops.RunBashInHostNamespace("oc", args...)
+	if err != nil {
+		return err
+	}
+
+	for _, cert := range common.CertPrefixes {
+		args = []string{"extract", "-n", "openshift-kube-apiserver-operator", "secret/" + cert,
+			"--keys=tls.key", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, cert+".key")}
+		_, err = s.ops.RunBashInHostNamespace("oc", args...)
+		if err != nil {
+			return err
+		}
+	}
+
+	args = []string{"extract", "-n", "openshift-ingress-operator", "secret/router-ca",
+		"--keys=tls.crt", "--kubeconfig=" + s.kubeconfig, "--to=-"}
+	ingressCN, err := s.ops.RunBashInHostNamespace("oc", args...)
+	if err != nil {
+		return err
+	}
+
+	certRaw, _ := pem.Decode([]byte(ingressCN))
+	if certRaw == nil {
+		return fmt.Errorf("error decoding the router-ca PEM certificate")
+	}
+
+	cert, err := x509.ParseCertificate(certRaw.Bytes)
+	if err != nil {
+		return fmt.Errorf("error parsing certificate: %w", err)
+	}
+
+	args = []string{"extract", "-n", "openshift-ingress-operator", "secret/router-ca",
+		"--keys=tls.key", "--kubeconfig=" + s.kubeconfig, "--to=-", ">", path.Join(common.BackupCertsDir, "/ingresskey-"+cert.Subject.CommonName)}
+	_, err = s.ops.RunBashInHostNamespace("oc", args...)
+	if err != nil {
+		return err
+	}
+
+	s.log.Info("Seed cluster certificates backed up successfully for recert tool")
+	return nil
+}
+
 func (s *SeedCreator) stopServices() error {
 	s.log.Info("Stop kubelet service")
 	_, err := s.ops.SystemctlAction("stop", "kubelet.service")
@@ -268,7 +328,7 @@ func (s *SeedCreator) stopServices() error {
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
 		return err
 	}
-	s.log.Info("crio status is", crioSystemdStatus)
+	s.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
 
 		// CRI-O is active, so stop running containers
@@ -419,7 +479,7 @@ func (s *SeedCreator) backupMCOConfig() error {
 
 // Building and pushing OCI image
 func (s *SeedCreator) createAndPushSeedImage() error {
-	s.log.Info("Build and push OCI image to", s.containerRegistry)
+	s.log.Info("Build and push OCI image to ", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
 	// Get the current status of rpm-ostree daemon in the host
