@@ -19,13 +19,10 @@ package seedrestoration
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/sirupsen/logrus"
 )
 
@@ -84,7 +81,7 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping restoring crypto via recert tool")
 	} else {
-		if err := s.restoreOriginalSeedCrypto(); err != nil {
+		if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
 			s.log.Errorf("Error restoring certificates: %v", err)
 			errors = append(errors, err)
 		}
@@ -152,49 +149,4 @@ func (s *SeedRestoration) cleanupScriptFiles() error {
 	})
 
 	return err
-}
-
-func (s *SeedRestoration) restoreOriginalSeedCrypto() error {
-	etcdImage, err := s.ops.GetImageFromPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
-	if err != nil {
-		return fmt.Errorf("error getting available etcd image: %w", err)
-	}
-
-	if err := s.ops.RunUnauthenticatedEtcdServer(etcdImage, s.authFile); err != nil {
-		return err
-	}
-
-	defer func() {
-		if _, err = s.ops.RunInHostNamespace(
-			"podman", []string{"kill", "recert_etcd"}...); err != nil {
-			s.log.Errorf("Failed to kill recert_etcd container: %v", err)
-		}
-		s.log.Info("Unauthenticated etcd server and recert containers removed successfully.")
-	}()
-
-	ingressKeyFiles, err := filepath.Glob(common.BackupCertsDir + "/ingresskey-*")
-	if err != nil || len(ingressKeyFiles) != 1 {
-		return fmt.Errorf("error more than one ingresskey-* file: %w", err)
-	}
-
-	ingressKey := ingressKeyFiles[0] // Assumed there's only one ingresskey-* file, so use the first one
-	parts := strings.Split(ingressKey, "-")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid ingresskey-* file name format: %w", err)
-	}
-	ingressCN := strings.Join(parts[1:], "-")
-
-	s.log.Info("Run recert --extend-expiration tool")
-	recertConfigFile := path.Join(s.backupDir, recert.RecertConfigFile)
-	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
-		return fmt.Errorf("failed to create %s file", recertConfigFile)
-	}
-	err = s.ops.RunRecert(s.recertContainerImage, s.authFile, recertConfigFile,
-		append(recert.ExtendExpirationAdditionalFlags, "--use-key", ingressCN+":/certs/ingresskey-"+ingressCN)...)
-	if err != nil {
-		return err
-	}
-
-	s.log.Info("Certificates in seed SNO cluster restored successfully.")
-	return nil
 }

@@ -2,8 +2,6 @@ package seedcreator
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +20,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -117,7 +114,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
-		if err := s.runRecertValidation(); err != nil {
+		if err := s.ops.ForceExpireSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
 			return err
 		}
 	}
@@ -261,14 +258,14 @@ func (s *SeedCreator) createContainerList() error {
 func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
 	s.log.Info("Backing up seed cluster certificates for recert tool")
 	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error removing %s: %v", common.BackupCertsDir, err)
+		return fmt.Errorf("error creating %s: %v", common.BackupCertsDir, err)
 	}
 
 	adminKubeConfigClientCA, err := s.manifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(common.BackupCertsDir, "/admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
 		return err
 	}
 
@@ -286,7 +283,7 @@ func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(common.BackupCertsDir, "/ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
 		return err
 	}
 
@@ -336,41 +333,6 @@ func (s *SeedCreator) stopServices() error {
 		s.log.Info("Skipping running containers and CRI-O engine already stopped.")
 	}
 
-	return nil
-}
-
-func (s *SeedCreator) runRecertValidation() error {
-	s.log.Info("Running recert --force-expire tool and saving a summary without sensitive data.")
-
-	// Run unauthenticated etcd server for the recert tool.
-	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
-	// which is required before running the recert tool.
-	if err := s.ops.RunUnauthenticatedEtcdServer(s.authFile, common.EtcdContainerName); err != nil {
-		return err
-	}
-
-	defer func() {
-		s.log.Info("Killing the unauthenticated etcd server")
-		_, err := s.ops.RunInHostNamespace(
-			"podman", "kill", "recert_etcd")
-		if err != nil {
-			s.log.Errorf("Failed to kill recert_etcd container: %v", err)
-		}
-	}()
-
-	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
-	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
-	// into a seed image.
-	s.log.Info("Run recert --force-expire tool")
-	recertConfigFile := path.Join(s.backupDir, recert.RecertConfigFile)
-	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
-		return fmt.Errorf("failed to create %s file", recertConfigFile)
-	}
-	if err := s.ops.RunRecert(s.recertContainerImage, s.authFile, recertConfigFile); err != nil {
-		return err
-	}
-
-	s.log.Info("Recert --force-expire tool ran and summary created successfully.")
 	return nil
 }
 

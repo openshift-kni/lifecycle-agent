@@ -120,3 +120,20 @@ func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) err
 
 	return nil
 }
+
+func ReadImageFromStaticPodDefinition(podFile, containerName string) (string, error) {
+	pod := &corev1.Pod{}
+	if err := ReadYamlOrJSONFile(podFile, pod); err != nil {
+		return "", fmt.Errorf("failed to read %s pod static file, err: %w", podFile, err)
+	}
+
+	var etcdImage string
+	for _, container := range pod.Spec.Containers {
+		if container.Name == containerName {
+			etcdImage = container.Image
+			return etcdImage, nil
+		}
+	}
+
+	return "", fmt.Errorf("no '%s' container found or no image specified in %s", containerName, podFile)
+}

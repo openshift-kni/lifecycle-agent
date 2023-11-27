@@ -2,27 +2,18 @@ package recert
 
 import (
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 const RecertConfigFile = "recert_config.json"
 
 var staticDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
-
-var ExtendExpirationAdditionalFlags = []string{
-	"--static-file", "/host-etc/mcs-machine-config-content.json",
-	"--use-cert", "/certs/admin-kubeconfig-client-ca.crt",
-	"--use-key", "kube-apiserver-lb-signer:/certs/loadbalancer-serving-signer.key",
-	"--use-key", "kube-apiserver-localhost-signer:/certs/localhost-serving-signer.key",
-	"--use-key", "kube-apiserver-service-network-signer:/certs/service-network-serving-signer.key",
-	"--extend-expiration",
-}
 
 type RecertConfig struct {
 	DryRun            bool     `json:"dry_run,omitempty"`
@@ -79,6 +70,21 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
+	return utils.MarshalToFile(config, path)
+}
+
+func CreateRecertConfigFileForSeedRestoration(path string) error {
+	config := createBasicEmptyRecertConfig()
+	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.ExtendExpiration = true
+	config.UseKeyRules = []string{
+		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("ingresskey-ingress-operator %s/ingresskey-ingress-operator.key", common.BackupCertsDir),
+	}
+	config.UseCertRules = []string{filepath.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt")}
+
 	return utils.MarshalToFile(config, path)
 }
 
