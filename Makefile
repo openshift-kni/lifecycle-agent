@@ -269,6 +269,9 @@ catalog-push: ## Push a catalog image.
 imager-run: common-deps-update fmt vet ## Run the imager tool from your host.
 	go run main/ibu-imager/main.go
 
+imager-build: common-deps-update fmt vet ## Build the imager tool from your host.
+	go build -o bin/ibu-imager main/ibu-imager/main.go
+
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
 GOTEST_FLAGS = --format=$(TEST_FORMAT)

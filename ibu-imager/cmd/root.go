@@ -22,6 +22,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
 // Create logger
@@ -38,6 +40,16 @@ var noColor bool
 
 // version is an optional command that will display the current release version
 var releaseVersion string
+
+func addCommonFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&authFile, "authfile", "a", common.ImageRegistryAuthFile, "The path to the authentication file of the container registry.")
+	cmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
+	cmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", common.DefaultRecertImage, "The full image name for the recert container tool.")
+	cmd.Flags().BoolVarP(&recertSkipValidation, "skip-recert-validation", "", false, "Skips the validations performed by the recert tool.")
+
+	// Mark flags as required
+	cmd.MarkFlagRequired("image")
+}
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Display verbose logs")
