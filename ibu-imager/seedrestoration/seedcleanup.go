@@ -68,6 +68,11 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	// but still cleanup as much as possible.
 	var errors []error
 
+	if _, err := s.ops.RunInHostNamespace("podman", []string{"rmi", s.containerRegistry}...); err != nil {
+		s.log.Errorf("failed to remove seed image: %v", err)
+		errors = append(errors, err)
+	}
+
 	if err := s.cleanupServiceUnits(); err != nil {
 		s.log.Errorf("Error cleaning up systemd service files: %v", err)
 		errors = append(errors, err)
