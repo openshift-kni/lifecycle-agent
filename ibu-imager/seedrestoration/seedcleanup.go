@@ -23,6 +23,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -134,11 +135,8 @@ func (s *SeedRestoration) cleanupServiceUnits() error {
 
 func (s *SeedRestoration) cleanupScriptFiles() error {
 	dir := filepath.Join(common.InstallationConfigurationFilesDir, "scripts")
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
-		}
-		scriptName := info.Name()
+	return utils.HandleFilesWithCallback(dir, func(path string) error {
+		scriptName := filepath.Base(path)
 
 		s.log.Infof("Removing script file %s", scriptName)
 		if err := os.Remove(filepath.Join("/var/usrlocal/bin/", scriptName)); err != nil && !os.IsNotExist(err) {
@@ -147,6 +145,4 @@ func (s *SeedRestoration) cleanupScriptFiles() error {
 
 		return nil
 	})
-
-	return err
 }

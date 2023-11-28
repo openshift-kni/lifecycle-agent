@@ -163,23 +163,18 @@ func (s *SeedCreator) copyConfigurationScripts() error {
 
 func (s *SeedCreator) handleServices() error {
 	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
+	return utils.HandleFilesWithCallback(dir, func(path string) error {
+		serviceName := filepath.Base(path)
+
+		s.log.Infof("Creating service %s", serviceName)
+		if err := cp.Copy(path, filepath.Join("/etc/systemd/system/", serviceName)); err != nil {
+			return err
 		}
 
-		s.log.Infof("Creating service %s", info.Name())
-		errC := cp.Copy(filepath.Join(dir, info.Name()), filepath.Join("/etc/systemd/system/", info.Name()))
-		if errC != nil {
-			return errC
-		}
-
-		s.log.Infof("Enabling service %s", info.Name())
-		_, errC = s.ops.SystemctlAction("enable", info.Name())
-		return errC
+		s.log.Infof("Enabling service %s", serviceName)
+		_, err := s.ops.SystemctlAction("enable", serviceName)
+		return err
 	})
-
-	return err
 }
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
