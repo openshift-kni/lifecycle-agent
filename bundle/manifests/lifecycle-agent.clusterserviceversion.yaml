@@ -202,6 +202,14 @@ spec:
           - update
           - watch
         - apiGroups:
+          - operator.openshift.io
+          resources:
+          - imagecontentsourcepolicies
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - operators.coreos.com
           resources:
           - clusterserviceversions

@@ -18,12 +18,12 @@ package clusterconfig
 
 import (
 	"context"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
 	ocpV1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -115,12 +115,22 @@ func init() {
 		&ocpV1.ImageDigestMirrorSet{},
 		&ocpV1.ImageDigestMirrorSetList{},
 		&ocpV1.Proxy{},
-		&mcv1.MachineConfig{})
-	testscheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
+		&mcv1.MachineConfig{},
+		&ocpV1.ImageContentPolicy{},
+		&ocpV1.ImageContentPolicyList{})
+	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
+		&operatorv1alpha1.ImageContentSourcePolicyList{},
+		&operatorv1alpha1.ImageContentSourcePolicy{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
-	c := fake.NewClientBuilder().WithScheme(testscheme).WithObjects(objs...).WithStatusSubresource(objs...).Build()
+	var objectsToAdd []client.Object
+	for _, obj := range objs {
+		if obj != nil {
+			objectsToAdd = append(objectsToAdd, obj)
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(testscheme).WithObjects(objectsToAdd...).WithStatusSubresource(objectsToAdd...).Build()
 	return c, nil
 }
 
@@ -128,8 +138,10 @@ func TestClusterConfig(t *testing.T) {
 	testcases := []struct {
 		name           string
 		secret         client.Object
+		caBundleCM     client.Object
 		clusterVersion client.Object
 		idms           client.Object
+		icsps          []client.Object
 		node           client.Object
 		proxy          client.Object
 		machineConfigs []*mcv1.MachineConfig
@@ -168,6 +180,8 @@ func TestClusterConfig(t *testing.T) {
 					HTTPProxy: "some-http-proxy",
 				},
 			},
+			icsps:          nil,
+			caBundleCM:     nil,
 			machineConfigs: machineConfigs,
 			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -235,8 +249,10 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			idms: nil,
-			node: validMasterNode,
+			idms:       nil,
+			icsps:      nil,
+			caBundleCM: nil,
+			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
@@ -257,8 +273,10 @@ func TestClusterConfig(t *testing.T) {
 					Namespace: configNamespace,
 				},
 			},
-			idms: nil,
-			node: validMasterNode,
+			idms:       nil,
+			icsps:      nil,
+			caBundleCM: nil,
+			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
@@ -287,8 +305,10 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			idms: nil,
-			node: validMasterNode,
+			idms:       nil,
+			icsps:      nil,
+			caBundleCM: nil,
+			node:       validMasterNode,
 			proxy: &ocpV1.Proxy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
@@ -324,7 +344,9 @@ func TestClusterConfig(t *testing.T) {
 					ClusterID: "1",
 				},
 			},
-			idms: nil,
+			idms:       nil,
+			icsps:      nil,
+			caBundleCM: nil,
 			node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker:": ""}},
 				Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
 					{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}},
@@ -339,6 +361,89 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, true, strings.Contains(err.Error(), "one master node in sno cluster"))
 			},
 		},
+		{
+			name: "Validate mirror values",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pullSecretName,
+					Namespace: configNamespace,
+				},
+				Data: map[string][]byte{"aaa": []byte("bbb")},
+			},
+			clusterVersion: &ocpV1.ClusterVersion{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "version",
+				},
+				Spec: ocpV1.ClusterVersionSpec{
+					ClusterID: "1",
+				},
+			},
+			idms: &ocpV1.ImageDigestMirrorSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "any",
+				},
+				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
+			},
+			node: validMasterNode,
+			proxy: &ocpV1.Proxy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+			},
+			icsps: []client.Object{&operatorv1alpha1.ImageContentSourcePolicy{ObjectMeta: metav1.ObjectMeta{
+				Name: "1",
+			}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
+				RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{
+					{Source: "icspData"}}}},
+				&operatorv1alpha1.ImageContentSourcePolicy{ObjectMeta: metav1.ObjectMeta{
+					Name: "2",
+				}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
+					RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{{Source: "icspData2"}}}}},
+			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: caBundleCMName,
+				Namespace: configNamespace}, Data: map[string]string{"test": "data"}},
+			machineConfigs: machineConfigs,
+			expectedErr:    false,
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				clusterConfigPath, err := ucc.configDirs(tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+
+				// validate pull idms
+				idms := &ocpV1.ImageDigestMirrorSetList{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFileName), idms); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if assert.Equal(t, 1, len(idms.Items)) {
+					assert.Equal(t, "any", idms.Items[0].Name)
+					assert.Equal(t, "data", idms.Items[0].Spec.ImageDigestMirrors[0].Source)
+				}
+
+				// validate icsp
+				icsps := &operatorv1alpha1.ImageContentSourcePolicyList{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, icspsFileName), icsps); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if assert.Equal(t, 2, len(icsps.Items)) {
+					resultSourcesAsString := ""
+					for _, icsp := range icsps.Items {
+						resultSourcesAsString = resultSourcesAsString + "" + icsp.Spec.RepositoryDigestMirrors[0].Source
+					}
+
+					assert.Contains(t, resultSourcesAsString, "icspData")
+					assert.Contains(t, resultSourcesAsString, "icspData2")
+				}
+
+				// validate caBundle
+				caBundle := &corev1.ConfigMap{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, caBundleFileName), caBundle); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, caBundleCMName, caBundle.Name)
+				assert.Equal(t, caBundle.Data, map[string]string{"test": "data"})
+			},
+		},
 	}
 
 	for _, tc := range testcases {
@@ -351,16 +456,18 @@ func TestClusterConfig(t *testing.T) {
 				},
 				Data: map[string]string{"install-config": clusterCmData},
 			}
-			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node}
-			if tc.idms != nil {
-				objs = append(objs, tc.idms)
-			}
-			if tc.proxy != nil {
-				objs = append(objs, tc.proxy)
-			}
+			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
+				tc.idms, tc.proxy, tc.caBundleCM}
 			for _, mc := range tc.machineConfigs {
 				objs = append(objs, mc)
 			}
+
+			if tc.icsps != nil {
+				for _, icsp := range tc.icsps {
+					objs = append(objs, icsp)
+				}
+			}
+
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")

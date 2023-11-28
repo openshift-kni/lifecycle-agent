@@ -35,6 +35,7 @@ import (
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	ocpV1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/library-go/pkg/config/leaderelection"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/sirupsen/logrus"
@@ -71,12 +72,12 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
 	utilruntime.Must(lcav1alpha1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
 	utilruntime.Must(mcv1.AddToScheme(scheme))
 	utilruntime.Must(velerov1.AddToScheme(scheme))
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }

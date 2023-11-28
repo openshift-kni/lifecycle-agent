@@ -80,7 +80,7 @@ func IsIpv6(provideIp string) bool {
 	if ip == nil {
 		return false
 	}
-	return ip.To4() != nil
+	return ip.To4() == nil
 }
 
 func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.Client, error) {
@@ -108,9 +108,11 @@ func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) err
 	}
 
 	resultValues := fValue.Call(fArgs)
-	errVal, ok := resultValues[0].Interface().(error)
-	if ok {
-		return errVal
+	if len(resultValues) > 0 {
+		errVal, ok := resultValues[0].Interface().(error)
+		if ok {
+			return errVal
+		}
 	}
 
 	_, err = os.Create(doneFile)

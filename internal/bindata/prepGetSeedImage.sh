@@ -98,12 +98,8 @@ fi
 
 # Extract list of images to be pre-cached
 log_it "Extracting precaching image list of non-catalog images"
-grep -vE "$(build_catalog_regex)" "${img_mnt}/containers.list" > "${IMAGE_LIST_FILE}"
+cat "${img_mnt}/containers.list" > "${IMAGE_LIST_FILE}"
 
-log_it "Extracting precaching image list of catalog images"
-if grep -q . "${img_mnt}/catalogimages.list"; then
-    cat "${img_mnt}/catalogimages.list"  >> "${IMAGE_LIST_FILE}"
-fi
 
 log_it "Finished preparing image list for pre-caching"
 

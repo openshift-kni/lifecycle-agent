@@ -9,7 +9,9 @@ import (
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -24,6 +26,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=imagedigestmirrorsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=operator.openshift.io,resources=imagecontentsourcepolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
 
@@ -40,7 +43,11 @@ const (
 
 	clusterIDFileName = "cluster-id-override.json"
 
-	idmsFileName = "image-digest-mirror-set.json"
+	idmsFileName  = "image-digest-mirror-set.json"
+	icspsFileName = "image-content-policy-list.json"
+
+	caBundleCMName   = "user-ca-bundle"
+	caBundleFileName = caBundleCMName + ".json"
 )
 
 var (
@@ -90,6 +97,12 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 	if err := r.fetchMachineConfigs(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchCABundle(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchICSPs(ctx, manifestsDir); err != nil {
 		return err
 	}
 
@@ -265,6 +278,14 @@ func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav
 	}, nil
 }
 
+func (r *UpgradeClusterConfigGather) cleanObjectMetadata(o client.Object) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:      o.GetName(),
+		Namespace: o.GetNamespace(),
+		Labels:    o.GetLabels(),
+	}
+}
+
 func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDigestMirrorSetList, error) {
 	idmsList := v1.ImageDigestMirrorSetList{}
 	currentIdms := v1.ImageDigestMirrorSetList{}
@@ -275,7 +296,8 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 	for _, idms := range currentIdms.Items {
 		obj := v1.ImageDigestMirrorSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: idms.ObjectMeta.Name,
+				Name:      idms.Name,
+				Namespace: idms.Namespace,
 			},
 			Spec: idms.Spec,
 		}
@@ -294,4 +316,73 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 	idmsList.TypeMeta = *typeMeta
 
 	return idmsList, nil
+}
+
+func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching ICSPs")
+	iscpsList := &operatorv1alpha1.ImageContentSourcePolicyList{}
+	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
+	if err := r.Client.List(ctx, currentIcps); err != nil {
+		return err
+	}
+
+	if len(currentIcps.Items) < 1 {
+		r.Log.Info("ImageContentPolicyList is empty, skipping")
+		return nil
+	}
+
+	for _, icp := range currentIcps.Items {
+		obj := operatorv1alpha1.ImageContentSourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      icp.Name,
+				Namespace: icp.Namespace,
+			},
+			Spec: icp.Spec,
+		}
+		typeMeta, err := r.typeMetaForObject(&icp)
+		if err != nil {
+			return err
+		}
+		icp.TypeMeta = *typeMeta
+		iscpsList.Items = append(iscpsList.Items, obj)
+	}
+	typeMeta, err := r.typeMetaForObject(iscpsList)
+	if err != nil {
+		return err
+	}
+	iscpsList.TypeMeta = *typeMeta
+
+	if err := utils.MarshalToFile(iscpsList, filepath.Join(manifestsDir, icspsFileName)); err != nil {
+		return fmt.Errorf("failed to write icsps to %s, err: %w",
+			filepath.Join(manifestsDir, icspsFileName), err)
+	}
+
+	return nil
+}
+
+func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifestsDir string) error {
+	r.Log.Info("Fetching user ca bundle")
+	caBundle := &corev1.ConfigMap{}
+	err := r.Client.Get(ctx, types.NamespacedName{Name: caBundleCMName,
+		Namespace: configNamespace}, caBundle)
+	if err != nil && errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get ca bundle cm, err: %w", err)
+	}
+
+	typeMeta, err := r.typeMetaForObject(caBundle)
+	if err != nil {
+		return err
+	}
+	caBundle.TypeMeta = *typeMeta
+	caBundle.ObjectMeta = r.cleanObjectMetadata(caBundle)
+
+	if err := utils.MarshalToFile(caBundle, filepath.Join(manifestsDir, caBundleFileName)); err != nil {
+		return fmt.Errorf("failed to write user ca bundle to %s, err: %w",
+			filepath.Join(manifestsDir, caBundleFileName), err)
+	}
+
+	return nil
 }
