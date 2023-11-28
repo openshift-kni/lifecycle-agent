@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"text/template"
 
@@ -138,4 +139,18 @@ func ReadImageFromStaticPodDefinition(podFile, containerName string) (string, er
 	}
 
 	return "", fmt.Errorf("no '%s' container found or no image specified in %s", containerName, podFile)
+}
+
+func HandleFilesWithCallback(folder string, action func(string) error) error {
+	return filepath.Walk(folder, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		return action(path)
+	})
 }
