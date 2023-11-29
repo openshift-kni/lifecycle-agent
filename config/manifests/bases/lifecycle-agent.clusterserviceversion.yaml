@@ -44,6 +44,20 @@ spec:
       - displayName: Status
         path: observedGeneration
       version: v1alpha1
+    - description: SeedGenerator is the Schema for the seedgenerators API
+      displayName: Seed Generator
+      kind: SeedGenerator
+      name: seedgenerators.lca.openshift.io
+      resources:
+      - kind: Namespace
+        name: ""
+        version: v1
+      statusDescriptors:
+      - displayName: Conditions
+        path: conditions
+      - displayName: Status
+        path: observedGeneration
+      version: v1alpha1
   description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
     provides local lifecycle management services \nfor Single Node Openshift (SNO)
     clusters.\n\n## Where to find more information\nYou can find additional guidance

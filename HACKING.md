@@ -11,9 +11,8 @@ To see all `make` targets, run `make help`
 
 ## Linter tests
 
-As of this writing, four linters are run by the `make ci-job` command:
+As of this writing, three linters are run by the `make ci-job` command:
 
-* golint
 * golangci-lint
 * shellcheck
 * bashate
@@ -325,3 +324,45 @@ creation of a new one. The leader election may take a few minutes to complete.
 
 Once the pod is up and running (with leader election completed), you may proceed to create the IBU CR as part of the 
 normal workflow.
+
+## Generating Seed Image via LCA Orchestration
+
+Generation of the seed image can be triggered by creating a `SeedGenerator` CR named `seedimage`. The CR requires the
+following data to be set:
+
+- `seedImage`: The pullspec (ie. registry/repo:tag) for the generated image
+- `recertImage`: (Optional) Allows user to specify the recert tool image to pass to ibu-imager
+
+In addition, a `Secret` named `seedgen` is required in the `openshift-lifecycle-agent` namespace. This allows the user
+to provide the following information in the `Data` section:
+
+- `seedAuth`: base64-encoded auth file for write-access to the registry for pushing the generated seed image
+- `hubKubeconfig`: (Optional) base64-encoded kubeconfig for admin access to the hub, in order to deregister the seed
+  cluster from ACM. If this is not present in the secret, the ACM cleanup will be skipped.
+
+If the `hubKubeconfig` is provided, LCA will deregister the cluster from ACM and cleanup the node prior to generating
+the seed image. The `ManagedCluster` resource is saved prior to deletion from the hub in order to restore it after the
+seed image has been generated, reregistering the cluster with ACM.
+
+NOTE: Automatic restore of the `ManagedCluster` has not yet been implemented.
+
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seedgen
+  namespace: openshift-lifecycle-agent
+type: Opaque
+data:
+  seedAuth: <encoded authfile>
+  hubKubeconfig: <encoded kubeconfig>
+---
+apiVersion: lca.openshift.io/v1alpha1
+kind: SeedGenerator
+metadata:
+  name: seedimage
+spec:
+  seedImage: quay.io/dpenney/upgbackup:orchestrated-seed-image
+  recertImage: quay.io/edge-infrastructure/recert:latest
+```
