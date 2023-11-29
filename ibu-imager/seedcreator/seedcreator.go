@@ -208,6 +208,12 @@ func (s *SeedCreator) createContainerList() error {
 	s.log.Info("Saving list of running containers and catalogsources.")
 	containersListFileName := s.backupDir + "/containers.list"
 
+	// purge all unknown image if exists
+	s.log.Info("Cleaning image list")
+	if _, err := s.ops.RunBashInHostNamespace("podman", "system", "prune", "-f"); err != nil {
+		return err
+	}
+
 	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
 	s.log.Info("Save list of downloaded images")
 	args := []string{"images", "-o", "json", "|", "jq", "-r",
