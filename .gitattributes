@@ -1,4 +1,5 @@
-vendor/* linguist-generated=true
-bundle/* linguist-generated=true
-config/* linguist-generated=true
-internal/generated/* linguist-generated=true
+vendor/** linguist-generated=true
+bundle/** linguist-generated=true
+config/** linguist-generated=true
+internal/generated/** linguist-generated=true
+PROJECT linguist-generated=true
