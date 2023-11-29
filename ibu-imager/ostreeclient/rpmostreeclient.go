@@ -63,6 +63,7 @@ type IClient interface {
 	QueryStatus() (*Status, error)
 	IsStaterootBooted(stateroot string) (bool, error)
 	GetCurrentStaterootName() (string, error)
+	GetDeploymentID(osname string) (string, error)
 }
 
 // Client is a handle for interacting with a rpm-ostree based system.
@@ -120,6 +121,20 @@ func (c *Client) QueryStatus() (*Status, error) {
 	}
 
 	return &q, nil
+}
+
+func (c *Client) GetDeploymentID(osname string) (string, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return "", err
+	}
+
+	for _, deployment := range status.Deployments {
+		if deployment.OSName == osname {
+			return deployment.ID, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find deployment with osname %s", osname)
 }
 
 // IsStaterootBooted returns whether the specified stateroot is booted
