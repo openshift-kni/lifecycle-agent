@@ -2,18 +2,24 @@ package postpivot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	v1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/sirupsen/logrus"
+	etcdClient "go.etcd.io/etcd/client/v3"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -66,7 +72,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
 
-	if err := p.recert(clusterInfo, seedClusterInfo); err != nil {
+	if err := p.recert(ctx, clusterInfo, seedClusterInfo); err != nil {
+		return err
+	}
+
+	if err := p.copyClusterConfigFiles(); err != nil {
 		return err
 	}
 
@@ -80,6 +90,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 	p.waitForApi(ctx, client)
 	p.approveCsrs(ctx, client)
+
+	if err := p.deleteAllOldMirrorResources(ctx, client, clusterInfo); err != nil {
+		return err
+	}
 
 	if err := p.applyManifests(); err != nil {
 		return err
@@ -98,7 +112,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	return os.RemoveAll(p.workingDir)
 }
 
-func (p *PostPivot) recert(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
 	doneFile := path.Join(p.workingDir, recertDone)
 	if _, err := os.Stat(doneFile); err == nil {
 		p.log.Infof("Found %s file, skippin recert", doneFile)
@@ -131,7 +145,7 @@ func (p *PostPivot) recert(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo
 		}
 	}()
 
-	if err := p.additionalCommands(clusterInfo, seedClusterInfo, common.EtcdContainerName); err != nil {
+	if err := p.additionalCommands(ctx, clusterInfo, seedClusterInfo); err != nil {
 		return err
 	}
 
@@ -144,28 +158,50 @@ func (p *PostPivot) recert(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo
 	return err
 }
 
-func (p *PostPivot) additionalCommands(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo, etcdImage string) error {
-	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
+func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
+	p.log.Info("Start running etcd post pivot operations")
+	cli, err := etcdClient.New(etcdClient.Config{
+		Endpoints:   []string{common.EtcdDefaultEndpoint},
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	// removing etcd endpoints configmap
+	key := "/kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"
+	p.log.Infof("Deleting %s key in etcd", key)
+	_, err = cli.Delete(ctx, key, etcdClient.WithPrefix())
+	if err != nil {
+		return err
+	}
+
 	newEtcdIp := clusterInfo.MasterIP
 	if utils.IsIpv6(newEtcdIp) {
 		newEtcdIp = fmt.Sprintf("[%s]", newEtcdIp)
 	}
-	// TODO: move to etcd client?
-	_, err := p.ops.RunInHostNamespace("podman", "exec", "-it", etcdImage, "bash", "-c",
-		fmt.Sprintf("/usr/bin/etcdctl member list | cut -d',' -f1 | xargs -i etcdctl member update \"{}\" --peer-urls=http://%s:2380", newEtcdIp))
+
+	members, err := cli.MemberList(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get etcd members list")
+	}
+	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("http://%s:2380", newEtcdIp)})
 	if err != nil {
 		return fmt.Errorf("failed to change etcd peer url, err: %w", err)
 	}
 
-	// removing etcd endpoints configmap
-	_, err = p.ops.RunInHostNamespace("podman", "exec", "-it", etcdImage, "bash", "-c",
-		"/usr/bin/etcdctl del /kubernetes.io/configmaps/openshift-etcd/etcd-endpoints")
-	if err != nil {
-		return fmt.Errorf("failed to remove etcd-endpoints configmap, err: %w", err)
+	return nil
+}
+
+func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
+	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
+	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
+		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
 	}
 
 	// changing seed ip to new ip in all static pod files
-	_, err = p.ops.RunInHostNamespace("bash", "-c",
+	_, err := p.ops.RunInHostNamespace("bash", "-c",
 		fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
 			seedClusterInfo.MasterIP, clusterInfo.MasterIP))
 	if err != nil {
@@ -275,5 +311,88 @@ func (p *PostPivot) recoverLvmDevices() error {
 	if err != nil {
 		return fmt.Errorf("failed to scan and active lvm devices, err: %w", err)
 	}
+
+	return nil
+}
+
+func (p *PostPivot) copyClusterConfigFiles() error {
+	return utils.CopyFileIfExists(path.Join(p.workingDir, common.ClusterConfigDir, path.Base(common.CABundleFilePath)),
+		common.CABundleFilePath)
+}
+
+func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client, clusterInfoObj *clusterinfo.ClusterInfo) error {
+	p.log.Info("Deleting ImageContentSourcePolicy and ImageDigestMirrorSet if they exist")
+	icsp := &operatorv1alpha1.ImageContentSourcePolicy{}
+	if err := client.DeleteAllOf(ctx, icsp); err != nil {
+		return fmt.Errorf("failed to delete all icsps %w", err)
+	}
+
+	idms := &v1.ImageDigestMirrorSet{}
+	if err := client.DeleteAllOf(ctx, idms); err != nil {
+		return fmt.Errorf("failed to delete all idms %w", err)
+	}
+
+	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfoObj); err != nil {
+		return err
+	}
+
+	return p.deleteCatalogSources(ctx, client)
+}
+
+func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclient.Client) error {
+	p.log.Info("Deleting default catalog sources")
+	catalogSources := &operatorsv1alpha1.CatalogSourceList{}
+	allNamespaces := runtimeclient.ListOptions{Namespace: metav1.NamespaceAll}
+	if err := client.List(ctx, catalogSources, &allNamespaces); err != nil {
+		return fmt.Errorf("failed to list all catalogueSources %w", err)
+	}
+
+	for _, catalogSource := range catalogSources.Items {
+		if err := client.Delete(ctx, &catalogSource); err != nil {
+			return fmt.Errorf("failed to delete all catalogueSources %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
+	clusterInfoObj *clusterinfo.ClusterInfo) error {
+
+	p.log.Info("Changing release registry in csv deployment")
+	cmClient := clusterinfo.NewClusterInfoClient(client)
+	csvD, err := cmClient.GetCSVDeployment(ctx)
+	if err != nil {
+		return err
+	}
+	splitted := strings.SplitN(csvD.Spec.Template.Spec.Containers[0].Image, "/", 2)
+	if splitted[0] == clusterInfoObj.ReleaseRegistry {
+		p.log.Infof("No registry change occurred, skipping")
+		return nil
+	}
+	p.log.Infof("Changing release regitry from %s to %s", splitted[0], clusterInfoObj.ReleaseRegistry)
+	splitted[0] = clusterInfoObj.ReleaseRegistry
+	newImage := strings.Join(splitted, "/")
+
+	var newArgs []string
+	for _, arg := range csvD.Spec.Template.Spec.Containers[0].Args {
+		if strings.HasPrefix(arg, "--release-image") {
+			arg = fmt.Sprintf("--release-image=%s", newImage)
+		}
+		newArgs = append(newArgs, arg)
+	}
+	newArgsStr, err := json.Marshal(newArgs)
+	if err != nil {
+		return err
+	}
+	patch := []byte(fmt.Sprintf(`{"spec":{"template":{"spec": {"containers": [{"name": "%s", "image":"%s", "args": %s}]}}}}`,
+		csvD.Spec.Template.Spec.Containers[0].Name, newImage, newArgsStr))
+
+	p.log.Infof("Applying csv deploymet patch %s", string(patch))
+	err = client.Patch(ctx, csvD, runtimeclient.RawPatch(types.StrategicMergePatchType, patch))
+	if err != nil {
+		return fmt.Errorf("failed to patch csv deployment, err: %w", err)
+	}
+	p.log.Infof("Done changing csv deployment")
 	return nil
 }

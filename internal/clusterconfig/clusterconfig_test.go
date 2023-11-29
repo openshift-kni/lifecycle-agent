@@ -19,6 +19,7 @@ package clusterconfig
 import (
 	"context"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,12 @@ var (
 			},
 		},
 	}
+	csvDeployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+		Name: clusterinfo.CsvDeploymentName, Namespace: clusterinfo.CsvDeploymentNamespace},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:  "cluster-version-operator",
+			Image: "mirror.redhat.com:5005/openshift-release-dev/ocp-release@sha256:d6a7e20a8929a3ad985373f05472ea64bada8ff46f0beb89e1b6d04919affde3"}}}},
+		}}
 )
 
 func init() {
@@ -236,6 +243,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "test-infra-cluster", clusterInfo.ClusterName)
 				assert.Equal(t, "redhat.com", clusterInfo.Domain)
 				assert.Equal(t, "192.168.121.10", clusterInfo.MasterIP)
+				assert.Equal(t, "mirror.redhat.com:5005", clusterInfo.ReleaseRegistry)
 			},
 		},
 		{
@@ -442,6 +450,9 @@ func TestClusterConfig(t *testing.T) {
 				}
 				assert.Equal(t, caBundleCMName, caBundle.Name)
 				assert.Equal(t, caBundle.Data, map[string]string{"test": "data"})
+
+				_, err = os.Stat(filepath.Join(clusterConfigPath, filepath.Base(common.CABundleFilePath)))
+				assert.Nil(t, err)
 			},
 		},
 	}
@@ -457,7 +468,7 @@ func TestClusterConfig(t *testing.T) {
 				Data: map[string]string{"install-config": clusterCmData},
 			}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
-				tc.idms, tc.proxy, tc.caBundleCM}
+				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment}
 			for _, mc := range tc.machineConfigs {
 				objs = append(objs, mc)
 			}
@@ -466,6 +477,20 @@ func TestClusterConfig(t *testing.T) {
 				for _, icsp := range tc.icsps {
 					objs = append(objs, icsp)
 				}
+			}
+
+			if tc.caBundleCM != nil {
+				hostPath = tmpDir
+				dir := filepath.Join(tmpDir, filepath.Dir(common.CABundleFilePath))
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				newPath := filepath.Join(dir, filepath.Base(common.CABundleFilePath))
+				f, err := os.Create(newPath)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				_ = f.Close()
 			}
 
 			fakeClient, err := getFakeClientFromObjects(objs...)

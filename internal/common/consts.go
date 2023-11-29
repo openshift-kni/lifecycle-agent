@@ -46,6 +46,7 @@ const (
 	EtcdContainerName                 = "recert_etcd"
 	LvmConfigDir                      = "lvm-configuration"
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
+	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up

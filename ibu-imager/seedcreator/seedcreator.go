@@ -210,7 +210,8 @@ func (s *SeedCreator) createContainerList() error {
 
 	// purge all unknown image if exists
 	s.log.Info("Cleaning image list")
-	if _, err := s.ops.RunBashInHostNamespace("podman", "system", "prune", "-f"); err != nil {
+	// Don't ever add -a option as we don't want to delete unused images
+	if _, err := s.ops.RunBashInHostNamespace("podman", "image", "prune", "-f"); err != nil {
 		return err
 	}
 
