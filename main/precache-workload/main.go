@@ -94,7 +94,7 @@ func main() {
 
 	// Change root directory to /host
 	if err := syscall.Chroot(utils.Host); err != nil {
-		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %s", utils.Host, err), Failure)
+		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %w", utils.Host, err), Failure)
 	}
 	log.Infof("chroot %s successful", utils.Host)
 
@@ -107,7 +107,7 @@ func main() {
 	// Pre-cache images
 	status, err := workload.PullImages(precacheSpec)
 	if err != nil {
-		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %v", err), Failure)
+		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %w", err), Failure)
 	}
 	log.Info("Completed executing pre-caching, no errors encountered!")
 

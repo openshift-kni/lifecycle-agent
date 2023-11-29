@@ -244,7 +244,7 @@ func (s *SeedCreator) createContainerList() error {
 func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
 	s.log.Info("Backing up seed cluster certificates for recert tool")
 	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error creating %s: %v", common.BackupCertsDir, err)
+		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
 	}
 
 	adminKubeConfigClientCA, err := s.manifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")

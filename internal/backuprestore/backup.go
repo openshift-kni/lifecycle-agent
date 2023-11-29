@@ -172,7 +172,7 @@ func SortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backu
 
 		applyWaveInt, err := strconv.Atoi(applyWave)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to convert %s in Backup CR %s to interger: %s", applyWave, resource.GetName(), err)
+			return nil, fmt.Errorf("failed to convert %s in Backup CR %s to interger: %w", applyWave, resource.GetName(), err)
 		}
 		resourcesApplyWaveMap[applyWaveInt] = append(resourcesApplyWaveMap[applyWaveInt], resource)
 	}
@@ -439,7 +439,7 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 			return false, nil
 		})
 	if err != nil {
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			h.Log.Error(err, "Timeout waiting for backups to be deleted")
 			return false, nil
 		}

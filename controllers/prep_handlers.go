@@ -46,7 +46,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ib
 	err = os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script", common.PathOutsideChroot(scriptname))
+		err = fmt.Errorf("failed to write handler script: %s, %w", common.PathOutsideChroot(scriptname), err)
 		return
 	}
 	r.Log.Info("Handler script written")
@@ -58,13 +58,13 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ib
 		var pullSecret string
 		pullSecret, err = utils.LoadSecretData(ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, ibu.Namespace, corev1.DockerConfigJsonKey)
 		if err != nil {
-			err = fmt.Errorf("Failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
+			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
 			return
 		}
 
 		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
 		if err = os.WriteFile(common.PathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
-			err = fmt.Errorf("Failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
+			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
 			return
 		}
 	}
@@ -98,7 +98,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 	imageList, err := readPrecachingList(imageListFile)
 	if err != nil {
-		r.Log.Error(err, "Failed to read pre-caching image file", common.PathOutsideChroot(imageListFile))
+		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return
 	}
 
@@ -185,7 +185,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	err = os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", common.PathOutsideChroot(scriptname))
+		err = fmt.Errorf("failed to write handler script: %s, %w", common.PathOutsideChroot(scriptname), err)
 		return
 	}
 
@@ -209,7 +209,7 @@ func (r *ImageBasedUpgradeReconciler) runCleanup(
 	err := os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
 
 	if err != nil {
-		r.Log.Error(err, "Failed to write handler script: %s", common.PathOutsideChroot(scriptname))
+		r.Log.Error(err, fmt.Sprintf("failed to write handler script: %s", common.PathOutsideChroot(scriptname)))
 		return
 	}
 	r.Log.Info("Handler script written")

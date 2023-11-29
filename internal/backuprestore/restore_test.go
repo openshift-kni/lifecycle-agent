@@ -506,7 +506,7 @@ func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorag
 	}
 }
 
-func TestEnsureStorageBackendAvaialble(t *testing.T) {
+func TestEnsureStorageBackendAvailable(t *testing.T) {
 	testcases := []struct {
 		name     string
 		bsl      []client.Object
@@ -554,7 +554,7 @@ func TestEnsureStorageBackendAvaialble(t *testing.T) {
 				Log:    ctrl.Log.WithName("BackupRestore"),
 			}
 
-			ok, err := handler.ensureStorageBackendAvaialble(context.Background(), OadpNs)
+			ok, err := handler.ensureStorageBackendAvailable(context.Background(), OadpNs)
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
