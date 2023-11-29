@@ -22,6 +22,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	cp "github.com/otiai10/copy"
 )
 
 const (
@@ -81,6 +82,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	p.approveCsrs(ctx, client)
 
 	if err := p.applyManifests(); err != nil {
+		return err
+	}
+
+	// Restore lvm devices
+	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
 		return err
 	}
 
@@ -249,6 +255,25 @@ func (p *PostPivot) applyManifests() error {
 		if err != nil {
 			return fmt.Errorf("failed to apply extra manifests, err: %w", err)
 		}
+	}
+	return nil
+}
+
+func (p *PostPivot) recoverLvmDevices() error {
+	lvmConfigPath := path.Join(p.workingDir, common.LvmConfigDir)
+	lvmDevicesPath := path.Join(lvmConfigPath, path.Base(common.LvmDevicesPath))
+
+	p.log.Infof("Recovering lvm devices from %s", lvmDevicesPath)
+	if err := cp.Copy(lvmDevicesPath, common.LvmDevicesPath); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	// Update the online record of PVs and activate all lvm devices in the VGs
+	_, err := p.ops.RunInHostNamespace("pvscan", "--cache", "--activate", "ay")
+	if err != nil {
+		return fmt.Errorf("failed to scan and active lvm devices, err: %w", err)
 	}
 	return nil
 }
