@@ -18,6 +18,7 @@ package backuprestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -220,7 +221,7 @@ func sortRestoreCrs(resources []*velerov1.Restore) ([][]*velerov1.Restore, error
 
 		applyWaveInt, err := strconv.Atoi(applyWave)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to convert %s in Backup CR %s to interger: %s", applyWave, resource.GetName(), err)
+			return nil, fmt.Errorf("failed to convert %s in Backup CR %s to interger: %w", applyWave, resource.GetName(), err)
 		}
 		resourcesApplyWaveMap[applyWaveInt] = append(resourcesApplyWaveMap[applyWaveInt], resource)
 	}
@@ -444,14 +445,14 @@ func (h *BRHandler) restoreDataProtectionApplications(ctx context.Context, fromD
 
 	// Ensure the storage backends are created and available
 	// after the restore of DataProtectionApplications
-	return h.ensureStorageBackendAvaialble(ctx, oadpNs)
+	return h.ensureStorageBackendAvailable(ctx, oadpNs)
 }
 
-// ensureStorageBackendAvaialble ensures the storage backend is available.
+// ensureStorageBackendAvailable ensures the storage backend is available.
 // It returns false if the storage backend is not available because of an error,
 // no storage backend is created after a minute, or it's timed out waiting for
 // the storage backend to be available due to unknown reasons
-func (h *BRHandler) ensureStorageBackendAvaialble(ctx context.Context, lookupNs string) (bool, error) {
+func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs string) (bool, error) {
 	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 1*time.Minute, true,
 		func(ctx context.Context) (done bool, err error) {
 			var succeededBsls []string
@@ -463,7 +464,7 @@ func (h *BRHandler) ensureStorageBackendAvaialble(ctx context.Context, lookupNs 
 
 			for _, bsl := range backupStorageLocation.Items {
 				if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseUnavailable {
-					err := fmt.Errorf("BackupStorageLocation is unavailable. Name: %s, Error: %s", bsl.Name, bsl.Status.Message)
+					err := fmt.Errorf("backupStorageLocation is unavailable. Name: %s, Error: %s", bsl.Name, bsl.Status.Message)
 					return false, err
 				} else if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseAvailable {
 					succeededBsls = append(succeededBsls, bsl.Name)
@@ -477,7 +478,7 @@ func (h *BRHandler) ensureStorageBackendAvaialble(ctx context.Context, lookupNs 
 			return false, nil
 		})
 	if err != nil {
-		if err == context.DeadlineExceeded || strings.Contains(err.Error(), "BackupStorageLocation is unavailable") {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "backupStorageLocation is unavailable") {
 			h.Log.Error(err, "Backup storage locations are not available")
 			return false, nil
 		}

@@ -145,7 +145,7 @@ func (s *SeedRestoration) cleanupScriptFiles() error {
 
 		s.log.Infof("Removing script file %s", scriptName)
 		if err := os.Remove(filepath.Join("/var/usrlocal/bin/", scriptName)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("error removing %s file: %v", scriptName, err)
+			return fmt.Errorf("error removing %s file: %w", scriptName, err)
 		}
 
 		return nil

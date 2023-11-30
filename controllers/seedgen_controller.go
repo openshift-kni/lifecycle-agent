@@ -163,7 +163,7 @@ func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubC
 	managedcluster := &clusterv1.ManagedCluster{}
 	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
 		if client.IgnoreNotFound(err) != nil {
-			r.Log.Info("Error when checking managedcluster existence:", err.Error())
+			r.Log.Info(fmt.Sprintf("Error when checking managedcluster existence: %s", err.Error()))
 		}
 		return false
 	}
@@ -175,7 +175,7 @@ func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acm
 	namespaces := &corev1.NamespaceList{}
 	if err := r.Client.List(ctx, namespaces); err != nil {
 		if client.IgnoreNotFound(err) != nil {
-			r.Log.Info("Error when checking namespaces: %w", err)
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
 		}
 		return
 	}
@@ -425,7 +425,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 			r.Log.Info("ManagedCluster does not exist on hub. Skipping cleanup")
 		}
 	} else {
-		r.Log.Info("No hubKubeconfig found in secret %s, skipping ACM", utils.SeedGenSecretName)
+		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s, skipping ACM", utils.SeedGenSecretName))
 	}
 
 	// TODO: Can this be done cleanly via client? The client.DeleteAllOf seems to require a specified namespace, so maybe loop over the namespaces
