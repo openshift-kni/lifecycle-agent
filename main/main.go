@@ -41,6 +41,7 @@ import (
 	"github.com/sirupsen/logrus"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -143,8 +144,8 @@ func main() {
 	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 
-	if err := restoreIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
-		setupLog.Error(err, "unable to restore IBU CR")
+	if err := initIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
+		setupLog.Error(err, "unable to initialize IBU CR")
 		os.Exit(1)
 	}
 
@@ -193,21 +194,39 @@ func main() {
 	}
 }
 
-func restoreIBU(ctx context.Context, client client.Client, log *logr.Logger) error {
+func initIBU(ctx context.Context, client client.Client, log *logr.Logger) error {
 	ibu := &lcav1alpha1.ImageBasedUpgrade{}
 	filePath := common.PathOutsideChroot(utils.IBUFilePath)
 	if err := lcautils.ReadYamlOrJSONFile(filePath, ibu); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			ibu = &lcav1alpha1.ImageBasedUpgrade{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: utils.IBUName,
+					// will be removed after changing IBU to cluster scoped
+					Namespace: "openshift-lifecycle-agent",
+				},
+				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+					Stage: lcav1alpha1.Stages.Idle,
+				},
+			}
+			if err := client.Create(ctx, ibu); err != nil {
+				if errors.IsAlreadyExists(err) {
+					return nil
+				}
+				return err
+			}
+			log.Info("Initial IBU created")
 		}
 		return err
 	}
-	log.Info("IBU CR found, restoring ...")
+
+	log.Info("Saved IBU CR found, restoring ...")
 	if err := client.Delete(ctx, ibu); err != nil {
 		if !errors.IsNotFound(err) {
 			return err
 		}
 	}
+
 	// Save status as the ibu structure gets over-written by the create call
 	// with the result which has no status
 	status := ibu.Status
@@ -225,6 +244,6 @@ func restoreIBU(ctx context.Context, client client.Client, log *logr.Logger) err
 	if err := os.Remove(filePath); err != nil {
 		return err
 	}
-	log.Info("Restore successful and IBU CR removed")
+	log.Info("Restore successful and saved IBU CR removed")
 	return nil
 }
