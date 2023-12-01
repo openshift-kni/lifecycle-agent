@@ -1,4 +1,4 @@
-package controllers
+package prep
 
 import (
 	"log"
@@ -49,6 +49,7 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
+			// create fixture
 			f, err := os.CreateTemp("", "tmp")
 			if err != nil {
 				log.Fatal(err)
@@ -60,51 +61,9 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 			if err := f.Close(); err != nil {
 				log.Fatal(err)
 			}
-			res, err := buildKernelArgumentsFromMCOFile(f.Name())
-			assert.Equal(t, tc.expect, res)
-			assert.NoError(t, err)
-		})
-	}
-}
 
-func TestGetSeedImageMountpoint(t *testing.T) {
-	testcases := []struct {
-		name      string
-		expect    string
-		seedImage string
-		output    string
-	}{
-		{
-			name:      "",
-			expect:    "/var/lib/containers/storage/overlay/56ea997c7c7aaf65c5faf125cac71933d4ad1aba1dfe5e1315d644495247f77a/merged",
-			seedImage: "quay.io/saskari/seed:latest",
-			output: `[
- {
-  "id": "31ad66060775bf186a527f4fd1516e5b51fa3a6ac35590e3a6e7d1dfbfad0969",
-  "Names": [
-   "sha256:a9294c403e721dfc98d5b39f17cec0f195b62e8633ddd9814a13bd7dee0326e5"
-  ],
-  "Repositories": [],
-  "mountpoint": "/var/lib/containers/storage/overlay/4fb5a0e4cd60f06dcbe801b492d9063fc6c8385b62632085d4477d89361f313a/merged"
- },
- {
-  "id": "6959a6d0e5778a869b06e83edcb134747c4273f6dc916a3ba06289337dca675f",
-  "Names": [
-   "sha256:774346d4d3ecced8d31a512ec0f49c818c6b57854b694a5e68f72c7343cc95f3"
-  ],
-  "Repositories": [
-   "quay.io/saskari/seed:latest"
-  ],
-  "mountpoint": "/var/lib/containers/storage/overlay/56ea997c7c7aaf65c5faf125cac71933d4ad1aba1dfe5e1315d644495247f77a/merged"
- }
-]
-`,
-		},
-	}
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, err := getSeedImageMountpoint(tc.seedImage, tc.output)
-			assert.Equal(t, tc.expect, out)
+			res, err := BuildKernelArgumentsFromMCOFile(f.Name())
+			assert.Equal(t, tc.expect, res)
 			assert.NoError(t, err)
 		})
 	}

@@ -18,6 +18,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -60,4 +61,8 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
 	return filepath.Join(utils.Host, filename)
+}
+
+func GetStaterootPath(osname string) string {
+	return fmt.Sprintf("/ostree/deploy/%s", osname)
 }

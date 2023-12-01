@@ -17,19 +17,14 @@ limitations under the License.
 package controllers
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
-	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
-
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -174,164 +169,6 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context,
 	return
 }
 
-func getSeedImageMountpoint(seedImage, output string) (string, error) {
-	var data []interface{}
-	if err := json.Unmarshal([]byte(output), &data); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-	for _, img := range data {
-		v := img.(map[string]interface{})
-		repos := v["Repositories"].([]interface{})
-		if len(repos) == 0 {
-			continue
-		}
-		repoName := repos[0].(string)
-		if repoName == seedImage {
-			return v["mountpoint"].(string), nil
-		}
-	}
-	return "", fmt.Errorf("failed to find seedImage mountpoint")
-}
-
-var osReadFile = os.ReadFile
-
-func getBootedStaterootID(path string) (string, error) {
-	data, err := osReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("failed reading %s: %w", path, err)
-	}
-	var status rpmostreeclient.Status
-	if err := json.Unmarshal(data, &status); err != nil {
-		return "", fmt.Errorf("failed unmarshalling %s: %w", path, err)
-	}
-	for _, deploy := range status.Deployments {
-		if deploy.Booted {
-			return deploy.ID, nil
-		}
-	}
-	return "", fmt.Errorf("failed finding booted stateroot")
-}
-
-func getVersionFromManifest(path string) (string, error) {
-	data, err := osReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("failed reading %s: %w", path, err)
-	}
-	var v map[string]interface{}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("failed to unmarshal %s: %w", path, err)
-	}
-	version, ok := v["version"].(string)
-	if !ok {
-		return "", fmt.Errorf("failed to get version from %s: %w", path, err)
-	}
-	return version, nil
-}
-
-func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
-	mcJSON, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer mcJSON.Close()
-	mc := &mcfgv1.MachineConfig{}
-	if err := json.NewDecoder(bufio.NewReader(mcJSON)).Decode(mc); err != nil {
-		return nil, fmt.Errorf("failed to read and decode machine config json file: %w", err)
-	}
-
-	args := make([]string, len(mc.Spec.KernelArguments)*2)
-	for i, karg := range mc.Spec.KernelArguments {
-		args[2*i] = "--karg-append"
-		args[2*i+1] = karg
-	}
-	return args, nil
-}
-
-func getStaterootPath(osname string) string {
-	return fmt.Sprintf("/ostree/deploy/%s", osname)
-}
-
-func getDeploymentDirPath(osname, deploymentID string) string {
-	deployDirName := strings.Split(deploymentID, "-")[1]
-	return filepath.Join(getStaterootPath(osname), fmt.Sprintf("deploy/%s", deployDirName))
-}
-
-func getDeploymentOriginPath(osname, deploymentID string) string {
-	originName := fmt.Sprintf("%s.origin", strings.Split(deploymentID, "-")[1])
-	return filepath.Join(getStaterootPath(osname), fmt.Sprintf("deploy/%s", originName))
-}
-
-func (r *ImageBasedUpgradeReconciler) restoreETC(mountpoint, osname, deploymentID string) error {
-
-	_, err := r.Executor.Execute(
-		"tar", "xzf",
-		filepath.Join(mountpoint, "etc.tgz"),
-		"-C", getDeploymentDirPath(osname, deploymentID), "--selinux",
-	)
-	if err != nil {
-		return fmt.Errorf("failed to extract seed etc: %w", err)
-	}
-
-	file, err := os.Open(filepath.Join(common.PathOutsideChroot(mountpoint), "etc.deletions"))
-	if err != nil {
-		return fmt.Errorf("failed to open etc.deletions: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fileToRemove := strings.Trim(scanner.Text(), " ")
-		filePath := common.PathOutsideChroot(filepath.Join(getDeploymentDirPath(osname, deploymentID), fileToRemove))
-		r.Log.Info("removing file: " + filePath)
-		err = os.Remove(filePath)
-		if err != nil {
-			return fmt.Errorf("failed to remove %s: %w", filePath, err)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error while reading %s: %w", file.Name(), err)
-	}
-
-	return nil
-}
-
-func (r *ImageBasedUpgradeReconciler) backupCertificates(ctx context.Context, osname string) error {
-	r.Log.Info("Backing up certificates")
-	certsDir := filepath.Join(getStaterootPath(osname), "/var/opt/openshift/certs")
-	if err := os.MkdirAll(common.PathOutsideChroot(certsDir), os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create cert directory %s: %w", certsDir, err)
-	}
-
-	adminKubeConfigClientCA, err := r.ManifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(common.PathOutsideChroot(filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")), []byte(adminKubeConfigClientCA), 0o644); err != nil {
-		return err
-	}
-
-	for _, cert := range common.CertPrefixes {
-		servingSignerKey, err := r.ManifestClient.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(common.PathOutsideChroot(path.Join(certsDir, cert+".key")), []byte(servingSignerKey), 0o644); err != nil {
-			return err
-		}
-	}
-
-	ingressOperatorKey, err := r.ManifestClient.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(common.PathOutsideChroot(filepath.Join(certsDir, "ingresskey-ingress-operator.key")), []byte(ingressOperatorKey), 0o644); err != nil {
-		return err
-	}
-
-	r.Log.Info("Certificates backed up successfully")
-	return nil
-}
-
 func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	r.Log.Info("Start setupstateroot")
 
@@ -343,6 +180,9 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	defer func() {
 		if err := os.RemoveAll(workspaceOutsideChroot); err != nil {
 			r.Log.Error(err, "failed to clean up "+workspaceOutsideChroot)
+		}
+		if _, err := r.Executor.Execute("podman", "rmi", ibu.Spec.SeedImageRef.Image); err != nil {
+			r.Log.Error(err, "failed to remove image"+ibu.Spec.SeedImageRef.Image)
 		}
 	}()
 
@@ -356,14 +196,16 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to remount /sysroot: %w", err)
 	}
 
-	if _, err := r.Executor.Execute("podman", "pull", ibu.Spec.SeedImageRef.Image); err != nil {
-		return fmt.Errorf("failed to pull seed image: %w", err)
-	}
-
 	mountpoint, err := r.Executor.Execute("podman", "image", "mount", ibu.Spec.SeedImageRef.Image)
 	if err != nil {
 		return fmt.Errorf("failed to mount seed image: %w", err)
 	}
+
+	defer func() {
+		if _, err := r.Executor.Execute("podman", "image", "umount", ibu.Spec.SeedImageRef.Image); err != nil {
+			r.Log.Error(err, "failed to umount"+ibu.Spec.SeedImageRef.Image)
+		}
+	}()
 
 	ostreeRepo := filepath.Join(workspace, "ostree")
 	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o755); err != nil {
@@ -380,16 +222,16 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	// seedBootedId: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedDeployment: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedRef: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c
-	seedBootedId, err := getBootedStaterootID(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
+	seedBootedId, err := prep.GetBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
 	if err != nil {
 		return fmt.Errorf("failed to get booted stateroot id: %w", err)
 	}
 	seedBootedDeployment := strings.Split(seedBootedId, "-")[1]
 	seedBootedRef := strings.Split(seedBootedDeployment, ".")[0]
 
-	version, err := getVersionFromManifest(filepath.Join(common.PathOutsideChroot(mountpoint), "manifest.json"))
+	version, err := prep.GetVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
 	if err != nil {
-		return fmt.Errorf("failed to get version from manifest.json: %w", err)
+		return fmt.Errorf("failed to get version from ClusterInfo: %w", err)
 	}
 
 	if version != ibu.Spec.SeedImageRef.Version {
@@ -407,7 +249,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed ostree admin os-init: %w", err)
 	}
 
-	kargs, err := buildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
+	kargs, err := prep.BuildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
 	if err != nil {
 		return fmt.Errorf("failed to build kargs: %w", err)
 	}
@@ -424,7 +266,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	if _, err = r.Executor.Execute(
 		"cp",
 		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
-		getDeploymentOriginPath(osname, deploymentID),
+		prep.GetDeploymentOriginPath(osname, deploymentID),
 	); err != nil {
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
@@ -432,29 +274,37 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	if _, err = r.Executor.Execute(
 		"tar", "xzf",
 		filepath.Join(mountpoint, "var.tgz"),
-		"-C", getStaterootPath(osname), "--selinux",
+		"-C", common.GetStaterootPath(osname), "--selinux",
 	); err != nil {
 		return fmt.Errorf("failed to restore var directory: %w", err)
 	}
 
-	if err = r.restoreETC(mountpoint, osname, deploymentID); err != nil {
+	if _, err := r.Executor.Execute(
+		"tar", "xzf",
+		filepath.Join(mountpoint, "etc.tgz"),
+		"-C", prep.GetDeploymentDirPath(osname, deploymentID), "--selinux",
+	); err != nil {
+		return fmt.Errorf("failed to extract seed etc: %w", err)
+	}
+
+	if err = prep.RemoveETCDeletions(mountpoint, osname, deploymentID, r.Log); err != nil {
 		return fmt.Errorf("failed to restore etc directory: %w", err)
 	}
 
 	// Why we need this?
 	// TODO: WAIT FOR API
 
-	r.backupCertificates(ctx, osname)
+	prep.BackupCertificates(ctx, osname, r.ManifestClient)
 
 	if _, err = r.Executor.Execute(
 		"cp",
-		filepath.Join(mountpoint, "manifest.json"),
+		filepath.Join(mountpoint, common.ClusterInfoFileName),
 		filepath.Join(
-			getStaterootPath(osname),
-			"/var/opt/openshift/seed_manifest.json",
+			common.GetStaterootPath(osname),
+			filepath.Join("/var/opt/openshift/", common.SeedManifest),
 		),
 	); err != nil {
-		return fmt.Errorf("failed to copy manifest.json: %w", err)
+		return fmt.Errorf("failed to copy ClusterInfo file: %w", err)
 	}
 
 	return nil
@@ -467,6 +317,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(ctx context.Context,
 		return
 	}
 	if err = r.SetupStateroot(ctx, ibu); err != nil {
+		result = doNotRequeue()
 		if err = updateProgressFile(progressfile, "Failed"); err != nil {
 			r.Log.Error(err, "failed to update progress file")
 			return
@@ -482,29 +333,6 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(ctx context.Context,
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) runCleanup(
-	ibu *lcav1alpha1.ImageBasedUpgrade) {
-	if err := os.Chdir("/"); err != nil {
-		return
-	}
-
-	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepCleanup)
-	scriptcontent, _ := generated.Asset(utils.PrepCleanup)
-	err := os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
-
-	if err != nil {
-		r.Log.Error(err, fmt.Sprintf("failed to write handler script: %s", common.PathOutsideChroot(scriptname)))
-		return
-	}
-	r.Log.Info("Handler script written")
-	// This should be a quick operation, so we can run it within the handler thread
-	r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image)
-
-	return
-}
-
-//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
 	result = doNotRequeue()
 
@@ -570,8 +398,6 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 				return
 			}
 		} else if progress == "completed-precache" {
-			r.runCleanup(ibu)
-
 			// Fetch final precaching job report summary
 			conditionMessage := "Prep completed"
 			status, err := r.Precache.QueryJobStatus(ctx)
