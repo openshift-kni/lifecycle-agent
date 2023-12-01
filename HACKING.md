@@ -57,25 +57,22 @@ oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-
 ## Creating CR and Updating Stage
 
 ```console
-# Generate the IBU CR, specifying the seed image
-oc create -f - <<EOF
-apiVersion: lca.openshift.io/v1alpha1
-kind: ImageBasedUpgrade
-metadata:
-  name: upgrade
-  namespace: openshift-lifecycle-agent
-spec:
-  oadpContent:
-    - name: oadp-cm
-      namespace: openshift-adp
-  stage: Idle
-  seedImageRef:
-    version: 4.13.9
-    image: quay.io/dpenney/upgbackup:lca-test-seed-v1
-    pullSecretRef:
-      name: seed-pull-secret
-
-EOF
+# Update the IBU CR, specifying the seed image
+oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p='[
+  {
+    "op": "replace",
+    "path": "/spec",
+    "value": {
+      "oadpContent": [{"name": "oadp-cm", "namespace": "openshift-adp"}],
+      "stage": "Idle",
+      "seedImageRef": {
+        "version": "4.13.10",
+        "image": "quay.io/dpenney/upgbackup:lca-test-seed-v1",
+        "pullSecretRef": {"name": "seed-pull-secret"}
+      }
+    }
+  }
+]'
 
 # Set the stage to Prep
 oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Prep"}}' --type=merge

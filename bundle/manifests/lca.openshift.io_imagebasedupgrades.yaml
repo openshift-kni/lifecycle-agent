@@ -14,7 +14,7 @@ spec:
     shortNames:
     - ibu
     singular: imagebasedupgrade
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .metadata.creationTimestamp
