@@ -8,8 +8,7 @@ metadata:
           "apiVersion": "lca.openshift.io/v1alpha1",
           "kind": "ImageBasedUpgrade",
           "metadata": {
-            "name": "upgrade",
-            "namespace": "openshift-lifecycle-agent"
+            "name": "upgrade"
           },
           "spec": {
             "seedImageRef": {

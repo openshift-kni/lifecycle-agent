@@ -26,7 +26,6 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,8 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
-
-const lcaNs = "openshift-lifecycle-agent"
 
 var (
 	testscheme = scheme.Scheme
@@ -306,8 +303,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var ibu = &lcav1alpha1.ImageBasedUpgrade{
 				ObjectMeta: v1.ObjectMeta{
-					Name:      utils.IBUName,
-					Namespace: lcaNs,
+					Name: utils.IBUName,
 				},
 			}
 			ibu.Spec.Stage = tc.desiredStage
@@ -591,8 +587,7 @@ func TestValidateStageTransisions(t *testing.T) {
 
 		var ibu = &lcav1alpha1.ImageBasedUpgrade{
 			ObjectMeta: v1.ObjectMeta{
-				Name:      utils.IBUName,
-				Namespace: lcaNs,
+				Name: utils.IBUName,
 			},
 			Spec: lcav1alpha1.ImageBasedUpgradeSpec{
 				Stage: tc.stage,
@@ -633,8 +628,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			name: "idle IBU",
 			ibu: &lcav1alpha1.ImageBasedUpgrade{
 				ObjectMeta: v1.ObjectMeta{
-					Name:      utils.IBUName,
-					Namespace: lcaNs,
+					Name: utils.IBUName,
 				},
 				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
 					Stage: lcav1alpha1.Stages.Idle,
@@ -642,8 +636,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			},
 			request: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      utils.IBUName,
-					Namespace: lcaNs,
+					Name: utils.IBUName,
 				},
 			},
 			validateFunc: func(t *testing.T, result ctrl.Result, ibu *lcav1alpha1.ImageBasedUpgrade) {
@@ -655,15 +648,10 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			},
 		},
 	}
-	ns := &corev1.Namespace{
-		ObjectMeta: v1.ObjectMeta{
-			Name: lcaNs,
-		},
-	}
 	for _, tc := range testcases {
 		t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{ns, tc.ibu}
+			objs := []client.Object{tc.ibu}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
@@ -684,7 +672,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 			ibu := &lcav1alpha1.ImageBasedUpgrade{}
-			if err := fakeClient.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName, Namespace: lcaNs}, ibu); err != nil {
+			if err := fakeClient.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu); err != nil {
 				t.Errorf("unexcepted error: %v", err.Error())
 			}
 			tc.validateFunc(t, result, ibu)

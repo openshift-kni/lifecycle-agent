@@ -202,8 +202,6 @@ func initIBU(ctx context.Context, client client.Client, log *logr.Logger) error 
 			ibu = &lcav1alpha1.ImageBasedUpgrade{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: utils.IBUName,
-					// will be removed after changing IBU to cluster scoped
-					Namespace: "openshift-lifecycle-agent",
 				},
 				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
 					Stage: lcav1alpha1.Stages.Idle,
