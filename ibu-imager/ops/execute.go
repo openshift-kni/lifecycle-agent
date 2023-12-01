@@ -103,9 +103,17 @@ func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute
 	return &chrootExecutor{executor: executor{logger, verbose}, root: root}
 }
 
-func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
+func (e *chrootExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
 	commandBase := "/usr/bin/env"
 	args = append([]string{command}, args...)
 	arguments := []string{"--", "bash", "-c", strings.Join(args, " ")}
-	return e.executor.execute(e.executor.log.Writer(), e.root, commandBase, arguments...)
+	return e.executor.execute(writer, e.root, commandBase, arguments...)
+}
+
+func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
+	return e.baseExecute(nil, command, args...)
+}
+
+func (e *chrootExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
+	return e.baseExecute(e.executor.log.Writer(), command, args...)
 }
