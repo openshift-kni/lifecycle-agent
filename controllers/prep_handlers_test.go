@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"log"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +15,7 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 		expect []string
 	}{
 		{
-			name: "",
+			name: "multiple args",
 			data: `{"spec":{"kernelArguments":[    "tsc=nowatchdog",
 			"nosoftlockup",                                                                                                                     
 			"nmi_watchdog=0",                                                                                                                   
@@ -47,10 +49,18 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			osReadFile = func(name string) ([]byte, error) {
-				return []byte(tc.data), nil
+			f, err := os.CreateTemp("", "tmp")
+			if err != nil {
+				log.Fatal(err)
 			}
-			res, err := getKernelArgumentsFromMCOFile("")
+			defer os.Remove(f.Name())
+			if _, err := f.Write([]byte(tc.data)); err != nil {
+				log.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				log.Fatal(err)
+			}
+			res, err := buildKernelArgumentsFromMCOFile(f.Name())
 			assert.Equal(t, tc.expect, res)
 			assert.NoError(t, err)
 		})

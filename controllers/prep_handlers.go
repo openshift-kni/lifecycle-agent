@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
+
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
@@ -226,27 +228,21 @@ func getVersionFromManifest(path string) (string, error) {
 	return version, nil
 }
 
-func getKernelArgumentsFromMCOFile(path string) ([]string, error) {
-	data, err := osReadFile(path)
+func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
+	mcJSON, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading %s: %w", path, err)
+		return nil, err
 	}
-	var v map[string]interface{}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("failed to unsmarshal %s: %w", path, err)
+	defer mcJSON.Close()
+	mc := &mcfgv1.MachineConfig{}
+	if err := json.NewDecoder(bufio.NewReader(mcJSON)).Decode(mc); err != nil {
+		return nil, fmt.Errorf("failed to read and decode machine config json file: %w", err)
 	}
-	spec, ok := v["spec"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("failed getting spec in %s", path)
-	}
-	kargs, ok := spec["kernelArguments"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("failed getting kernelArguments in %s", path)
-	}
-	args := make([]string, len(kargs)*2)
-	for i, karg := range kargs {
+
+	args := make([]string, len(mc.Spec.KernelArguments)*2)
+	for i, karg := range mc.Spec.KernelArguments {
 		args[2*i] = "--karg-append"
-		args[2*i+1] = karg.(string)
+		args[2*i+1] = karg
 	}
 	return args, nil
 }
@@ -369,15 +365,6 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to mount seed image: %w", err)
 	}
 
-	// podmanOutput, err := r.Executor.Execute("podman", "image", "mount", "--format", "json")
-	// if err != nil {
-	// return fmt.Errorf("failed get mounted images: %w", err)
-	// }
-	// mountpoint, err := getSeedImageMountpoint(ibu.Spec.SeedImageRef.Image, podmanOutput)
-	// if err != nil {
-	// return err
-	// }
-
 	ostreeRepo := filepath.Join(workspace, "ostree")
 	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o755); err != nil {
 		return fmt.Errorf("failed to create ostree repo directory: %w", err)
@@ -420,7 +407,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed ostree admin os-init: %w", err)
 	}
 
-	kargs, err := getKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
+	kargs, err := buildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
 	if err != nil {
 		return fmt.Errorf("failed to build kargs: %w", err)
 	}
