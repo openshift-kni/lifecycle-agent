@@ -11,8 +11,11 @@ import (
 	"strings"
 
 	v1 "github.com/openshift/api/config/v1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
+	"github.com/thoas/go-funk"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -87,7 +90,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList); err != nil {
+	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
 		return err
 	}
 
@@ -204,7 +207,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 }
 
 // TODO: split function per operation
-func (s *SeedCreator) createContainerList() error {
+func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Saving list of running containers and catalogsources.")
 	containersListFileName := s.backupDir + "/containers.list"
 
@@ -218,25 +221,29 @@ func (s *SeedCreator) createContainerList() error {
 	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
 	s.log.Info("Save list of downloaded images")
 	args := []string{"images", "-o", "json", "|", "jq", "-r",
-		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
-		">", containersListFileName}
+		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'"}
 
-	if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
+	output, err := s.ops.RunBashInHostNamespace("crictl", args...)
+	if err != nil {
 		return err
 	}
-
-	s.log.Info("Adding recert image to precache list")
-	// add recert image to containers list in order to precache it
-	f, err := os.OpenFile(containersListFileName, os.O_APPEND|os.O_WRONLY, 0o644)
+	images := strings.Split(output, "\n")
+	catalogImages, err := s.getCatalogImages(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to open %s file", containersListFileName)
+		return err
 	}
-	recertImageLine := fmt.Sprintf("%s\n", s.recertContainerImage)
+	s.log.Infof("Removing list of catalog images from full image list, catalog images to remove %s", catalogImages)
+	images = funk.FilterString(images, func(image string) bool {
+		return !funk.ContainsString(catalogImages, image)
+	})
 
-	if _, err := f.Write([]byte(recertImageLine)); err != nil {
-		return fmt.Errorf("failed to add recert image to %s file", containersListFileName)
+	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
+	images = append(images, s.recertContainerImage)
+
+	s.log.Infof("Creating %s file", containersListFileName)
+	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o644); err != nil {
+		return fmt.Errorf("failed to write container list file %s, err %w", containersListFileName, err)
 	}
-	defer f.Close()
 
 	s.log.Info("List of containers  saved successfully.")
 	return nil
@@ -509,4 +516,20 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {
+	s.log.Info("Searching for catalog sources")
+	var images []string
+	catalogSources := &operatorsv1alpha1.CatalogSourceList{}
+	allNamespaces := runtime.ListOptions{Namespace: metav1.NamespaceAll}
+	if err := s.client.List(ctx, catalogSources, &allNamespaces); err != nil {
+		return nil, fmt.Errorf("failed to list all catalogueSources %w", err)
+	}
+
+	for _, catalogSource := range catalogSources.Items {
+		images = append(images, catalogSource.Spec.Image)
+	}
+
+	return images, nil
 }
