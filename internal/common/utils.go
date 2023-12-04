@@ -19,7 +19,11 @@ package common
 import (
 	"context"
 	"fmt"
+
 	"path/filepath"
+	"time"
+
+	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	cp "github.com/otiai10/copy"
@@ -70,4 +74,10 @@ func CopyOutsideChroot(src, dest string) error {
 
 func GetStaterootPath(osname string) string {
 	return fmt.Sprintf("/ostree/deploy/%s", osname)
+}
+
+// FuncTimer check execution time
+func FuncTimer(start time.Time, name string, r logr.Logger) {
+	elapsed := time.Since(start)
+	r.Info(fmt.Sprintf("%s took %s", name, elapsed))
 }

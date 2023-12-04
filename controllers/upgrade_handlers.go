@@ -23,20 +23,19 @@ import (
 	"strings"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 
 	"path/filepath"
+
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	v1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
-
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -105,21 +104,17 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		}
 	} else {
 		r.Log.Info("Pivot successful, starting post pivot steps")
-		// TODO: Post-pivot steps
-		/*
-				1. oadp restore
-				    - platform
-				    - acm recovery
+		ctrlResult, err := r.postPivot(ctx, ibu)
+		if err != nil {
+			//todo: abort handler? e.g delete desired stateroot
+			upgradeFailedStatus(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
 
-			   2. ApplyExtraManifestsFromDir
-
-			   3. health check? readiness check /readyz endpoint?
-					- mcp
-					- clusteroperator
-					- all csv
-
-				4. restore application manifests
-		*/
+		// postPivot requested a requeue
+		if ctrlResult != doNotRequeue() {
+			return ctrlResult, nil
+		}
 
 		r.Log.Info("Done handleUpgrade")
 
@@ -296,6 +291,18 @@ func (r *ImageBasedUpgradeReconciler) startBackup(ctx context.Context, backupCRs
 			r.Log.Info(fmt.Sprintf("Pending backups: %s. %s", strings.Join(backupTracker.PendingBackups, ","), "Wait for object storage backend to be available."))
 			return requeueWithMediumInterval(), nil
 		}
+	}
+
+	return doNotRequeue(), nil
+}
+
+// nolint:unparam
+func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	r.Log.Info("Starting health check for different components")
+	err := healthcheck.HealthChecks(r.Client, r.Log)
+	if err != nil {
+		upgradeFailedStatus(ibu, err.Error())
+		return doNotRequeue(), nil
 	}
 
 	return doNotRequeue(), nil
