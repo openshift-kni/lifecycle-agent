@@ -179,7 +179,7 @@ func (s *SeedCreator) handleServices() error {
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	// TODO: remove after removing usage of clusterversion.json
-	manifestPath := path.Join(s.backupDir, "manifest.json")
+	manifestPath := path.Join(s.backupDir, common.ClusterInfoFileName)
 	if _, err := os.Stat(manifestPath); err == nil {
 		s.log.Info("Manifest file was already created, skipping")
 		return nil
@@ -195,13 +195,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	}
 
 	s.log.Info("Creating manifest.json")
-	if err := utils.MarshalToFile(clusterManifest, path.Join(s.backupDir, "manifest.json")); err != nil {
-		return err
-	}
-
-	// TODO: remove when we will drop it from preparation script
-	s.log.Info("Creating clusterversion.json")
-	if err := utils.MarshalToFile(clusterVersion, path.Join(s.backupDir, "clusterversion.json")); err != nil {
+	if err := utils.MarshalToFile(clusterManifest, path.Join(s.backupDir, common.ClusterInfoFileName)); err != nil {
 		return err
 	}
 
