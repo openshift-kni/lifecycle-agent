@@ -263,8 +263,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to get deploymentID: %w", err)
 	}
 
-	if _, err = r.Executor.Execute(
-		"cp",
+	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
 		prep.GetDeploymentOriginPath(osname, deploymentID),
 	); err != nil {
@@ -291,8 +290,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 
 	prep.BackupCertificates(ctx, osname, r.ManifestClient)
 
-	if _, err = r.Executor.Execute(
-		"cp",
+	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, common.ClusterInfoFileName),
 		filepath.Join(
 			common.GetStaterootPath(osname),

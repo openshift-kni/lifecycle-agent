@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	cp "github.com/otiai10/copy"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -61,6 +62,10 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
 	return filepath.Join(utils.Host, filename)
+}
+
+func CopyOutsideChroot(src, dest string) error {
+	return cp.Copy(PathOutsideChroot(src), PathOutsideChroot(dest))
 }
 
 func GetStaterootPath(osname string) string {
