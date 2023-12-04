@@ -30,7 +30,6 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
-	"k8s.io/client-go/tools/clientcmd"
 
 	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	"github.com/go-logr/logr"
@@ -65,7 +64,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
-	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -146,23 +144,12 @@ func main() {
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
+	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor)
 
 	if err := initIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
-		os.Exit(1)
-	}
-
-	config, err := clientcmd.BuildConfigFromFlags("", common.PathOutsideChroot(common.KubeconfigFile))
-	if err != nil {
-		setupLog.Error(err, "failed to create k8s config")
-		os.Exit(1)
-	}
-
-	client, err := runtimeClient.New(config, runtimeClient.Options{Scheme: scheme})
-	if err != nil {
-		setupLog.Error(err, "failed to create runtime client")
 		os.Exit(1)
 	}
 
@@ -177,8 +164,9 @@ func main() {
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,
 		Executor:        executor,
-		ManifestClient:  clusterinfo.NewClusterInfoClient(client),
+		ManifestClient:  clusterinfo.NewClusterInfoClient(mgr.GetClient()),
 		OstreeClient:    ostreeClient,
+		Ops:             op,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

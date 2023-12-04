@@ -30,6 +30,8 @@ type Ops interface {
 	RunUnauthenticatedEtcdServer(authFile, name string) error
 	waitForEtcd(healthzEndpoint string) error
 	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
+	ExtractTarWithSELinux(srcPath, destPath string) error
+	RemountSysroot() error
 }
 
 type ops struct {
@@ -208,4 +210,16 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 	}
 
 	return nil
+}
+
+func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
+	_, err := o.hostCommandsExecutor.Execute(
+		"tar", "xzf", srcPath, "-C", destPath, "--selinux",
+	)
+	return err
+}
+
+func (o *ops) RemountSysroot() error {
+	_, err := o.hostCommandsExecutor.Execute("mount", "/sysroot", "-o", "remount,rw")
+	return err
 }

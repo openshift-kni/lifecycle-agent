@@ -15,7 +15,7 @@ type Client struct {
 	executor ops.Execute
 }
 
-func NewClient(executor ops.Execute) *Client {
+func NewClient(executor ops.Execute) IClient {
 	return &Client{
 		executor: executor,
 	}

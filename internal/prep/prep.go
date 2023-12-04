@@ -10,17 +10,19 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/go-logr/logr"
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 // need this for unit tests
 var osReadFile = os.ReadFile
 
+// GetBootedStaterootIDFromRPMOstreeJson reads rpm-ostree.json file from the seed image
+// and returns the deployment.ID of the booted stateroot
 func GetBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
 	data, err := osReadFile(path)
 	if err != nil {
@@ -38,30 +40,21 @@ func GetBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
 	return "", fmt.Errorf("failed finding booted stateroot")
 }
 
+// GetVersionFromClusterInfoFile reads ClusterInfo file and returns the ocp version
 func GetVersionFromClusterInfoFile(path string) (string, error) {
-	data, err := osReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("failed reading %s: %w", path, err)
+	ci := &clusterinfo.ClusterInfo{}
+	if err := utils.ReadYamlOrJSONFile(path, ci); err != nil {
+		return "", fmt.Errorf("failed to read and decode ClusterInfo file: %w", err)
 	}
-	var v map[string]interface{}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("failed to unmarshal %s: %w", path, err)
-	}
-	version, ok := v["version"].(string)
-	if !ok {
-		return "", fmt.Errorf("failed to get version from %s: %w", path, err)
-	}
-	return version, nil
+	return ci.Version, nil
 }
 
+// BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
+// and builds the string arguments that ostree admin deploy requires e.g:
+// ["--karg-append", "tsc=nowatchdog", "--karg-append", "nosoftlockup"]
 func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
-	mcJSON, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer mcJSON.Close()
 	mc := &mcfgv1.MachineConfig{}
-	if err := json.NewDecoder(bufio.NewReader(mcJSON)).Decode(mc); err != nil {
+	if err := utils.ReadYamlOrJSONFile(path, mc); err != nil {
 		return nil, fmt.Errorf("failed to read and decode machine config json file: %w", err)
 	}
 
@@ -73,17 +66,22 @@ func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 	return args, nil
 }
 
+// GetDeploymentDirPath return the path to ostree deploy directory e.g:
+// /ostree/deploy/<osname>/deploy/<deployment.id>
 func GetDeploymentDirPath(osname, deploymentID string) string {
 	deployDirName := strings.Split(deploymentID, "-")[1]
 	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", deployDirName))
 }
 
+// GetDeploymentOriginPath return the path to .orign file e.g:
+// /ostree/deploy/<osname>/deploy/<deployment.id>.origin
 func GetDeploymentOriginPath(osname, deploymentID string) string {
 	originName := fmt.Sprintf("%s.origin", strings.Split(deploymentID, "-")[1])
 	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", originName))
 }
 
-func RemoveETCDeletions(mountpoint, osname, deploymentID string, log logr.Logger) error {
+// RemoveETCDeletions remove the files that are listed in etc.deletions
+func RemoveETCDeletions(mountpoint, osname, deploymentID string) error {
 	file, err := os.Open(filepath.Join(common.PathOutsideChroot(mountpoint), "etc.deletions"))
 	if err != nil {
 		return fmt.Errorf("failed to open etc.deletions: %w", err)
@@ -94,7 +92,6 @@ func RemoveETCDeletions(mountpoint, osname, deploymentID string, log logr.Logger
 	for scanner.Scan() {
 		fileToRemove := strings.Trim(scanner.Text(), " ")
 		filePath := common.PathOutsideChroot(filepath.Join(GetDeploymentDirPath(osname, deploymentID), fileToRemove))
-		log.Info("removing file: " + filePath)
 		err = os.Remove(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to remove %s: %w", filePath, err)

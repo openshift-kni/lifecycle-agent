@@ -192,7 +192,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	}
 	r.Log.Info("workspace:" + workspace)
 
-	if _, err = r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+	if err = r.Ops.RemountSysroot(); err != nil {
 		return fmt.Errorf("failed to remount /sysroot: %w", err)
 	}
 
@@ -212,8 +212,8 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to create ostree repo directory: %w", err)
 	}
 
-	if _, err = r.Executor.Execute(
-		"tar", "xzf", fmt.Sprintf("%s/ostree.tgz", mountpoint), "--selinux", "-C", ostreeRepo,
+	if err := r.Ops.ExtractTarWithSELinux(
+		fmt.Sprintf("%s/ostree.tgz", mountpoint), ostreeRepo,
 	); err != nil {
 		return fmt.Errorf("failed to extract ostree.tgz: %w", err)
 	}
@@ -271,28 +271,23 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
 
-	if _, err = r.Executor.Execute(
-		"tar", "xzf",
+	if err = r.Ops.ExtractTarWithSELinux(
 		filepath.Join(mountpoint, "var.tgz"),
-		"-C", common.GetStaterootPath(osname), "--selinux",
+		common.GetStaterootPath(osname),
 	); err != nil {
 		return fmt.Errorf("failed to restore var directory: %w", err)
 	}
 
-	if _, err := r.Executor.Execute(
-		"tar", "xzf",
+	if err := r.Ops.ExtractTarWithSELinux(
 		filepath.Join(mountpoint, "etc.tgz"),
-		"-C", prep.GetDeploymentDirPath(osname, deploymentID), "--selinux",
+		prep.GetDeploymentDirPath(osname, deploymentID),
 	); err != nil {
 		return fmt.Errorf("failed to extract seed etc: %w", err)
 	}
 
-	if err = prep.RemoveETCDeletions(mountpoint, osname, deploymentID, r.Log); err != nil {
+	if err = prep.RemoveETCDeletions(mountpoint, osname, deploymentID); err != nil {
 		return fmt.Errorf("failed to restore etc directory: %w", err)
 	}
-
-	// Why we need this?
-	// TODO: WAIT FOR API
 
 	prep.BackupCertificates(ctx, osname, r.ManifestClient)
 

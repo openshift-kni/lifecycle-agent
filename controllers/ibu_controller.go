@@ -65,6 +65,7 @@ type ImageBasedUpgradeReconciler struct {
 	Executor        ops.Execute
 	ManifestClient  *clusterinfo.InfoClient
 	OstreeClient    ostreeclient.IClient
+	Ops             ops.Ops
 }
 
 func doNotRequeue() ctrl.Result {

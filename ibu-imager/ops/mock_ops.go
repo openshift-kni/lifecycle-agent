@@ -37,6 +37,20 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
+// ExtractTarWithSELinux mocks base method.
+func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExtractTarWithSELinux", srcPath, destPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExtractTarWithSELinux indicates an expected call of ExtractTarWithSELinux.
+func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), srcPath, destPath)
+}
+
 // ForceExpireSeedCrypto mocks base method.
 func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
 	m.ctrl.T.Helper()
@@ -49,6 +63,20 @@ func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) e
 func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
+}
+
+// RemountSysroot mocks base method.
+func (m *MockOps) RemountSysroot() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemountSysroot")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemountSysroot indicates an expected call of RemountSysroot.
+func (mr *MockOpsMockRecorder) RemountSysroot() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountSysroot", reflect.TypeOf((*MockOps)(nil).RemountSysroot))
 }
 
 // RestoreOriginalSeedCrypto mocks base method.
