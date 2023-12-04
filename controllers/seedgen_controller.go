@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
@@ -85,7 +86,7 @@ var (
 //+kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
-//+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=delete
+//+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch;delete
 
 // Create an API client for hub requests (ACM)
@@ -105,8 +106,8 @@ func (r *SeedGeneratorReconciler) createHubClient(hubKubeconfig []byte) (hubClie
 	return
 }
 
-// Collect and save the data needed to restore the ACM registration
-func (r *SeedGeneratorReconciler) collectAcmImportData(ctx context.Context, hubClient client.Client) error {
+// Collect and save the data needed to restore the ACM registration, then delete the managedcluster from the hub
+func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClient client.Client) error {
 	//nolint:gocritic // TODO: Cleanup when we definitely don't need the importsecret
 	// // Save ACM import data
 	// importSecretName := fmt.Sprintf("%s-import", clusterName)
@@ -155,57 +156,12 @@ func (r *SeedGeneratorReconciler) collectAcmImportData(ctx context.Context, hubC
 		return fmt.Errorf("failed to write managedcluster to %s: %w", storedManagedClusterCR, err)
 	}
 
-	return nil
-}
-
-// Check whether the managedcluster resource exists on the hub
-func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubClient client.Client) bool {
-	managedcluster := &clusterv1.ManagedCluster{}
-	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			r.Log.Info(fmt.Sprintf("Error when checking managedcluster existence: %s", err.Error()))
-		}
-		return false
-	}
-	return true
-}
-
-// Get a list of existing ACM namespaces on the cluster
-func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acmNsList []string) {
-	namespaces := &corev1.NamespaceList{}
-	if err := r.Client.List(ctx, namespaces); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
-		}
-		return
-	}
-
-	re := regexp.MustCompile(`^(open-cluster-management-agent|open-cluster-management-addon)`)
-	for _, ns := range namespaces.Items {
-		if re.MatchString(ns.ObjectMeta.Name) {
-			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
-		}
-	}
-	return
-}
-
-// Clean up ACM and other resources on the cluster
-func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context, hubClient client.Client) error {
-	if !r.managedClusterExists(ctx, hubClient) {
-		r.Log.Info("ManagedCluster does not exist on hub. Skipping cleanup")
-		return nil
-	}
-
 	// Ensure that the dependent resources are deleted
 	deleteOpts := []client.DeleteOption{
 		client.PropagationPolicy(metav1.DeletePropagationForeground),
 	}
 
 	// Deregister from ACM on the hub
-	managedcluster := &clusterv1.ManagedCluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterName,
-		}}
 	if err := hubClient.Delete(ctx, managedcluster, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete managedcluster from hub: %w", err)
 	}
@@ -226,27 +182,148 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context, h
 		}
 	}
 
-	// Trigger deletion for any remaining ACM namespaces
-	for _, nsName := range r.currentAcmNamespaces(ctx) {
-		ns := &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nsName,
-			}}
-		if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
+	return nil
+}
+
+// Check whether the managedcluster resource exists on the hub
+func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubClient client.Client) bool {
+	managedcluster := &clusterv1.ManagedCluster{}
+	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking managedcluster existence: %s", err.Error()))
 		}
+		return false
+	}
+	return true
+}
+
+// Get a list of ACM addon namespaces present on the cluster
+func (r *SeedGeneratorReconciler) currentAcmAddonNamespaces(ctx context.Context) (acmNsList []string) {
+	namespaces := &corev1.NamespaceList{}
+	if err := r.Client.List(ctx, namespaces); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
+		}
+		return
 	}
 
-	// Verify ACM namespaces have been deleted
-	current = 0
-	r.Log.Info("Waiting until ACM namespaces are deleted")
-	for len(r.currentAcmNamespaces(ctx)) > 0 {
-		if current < maxRetries {
-			time.Sleep(interval)
-			current += 1
-		} else {
-			return fmt.Errorf("timed out waiting for ACM namespace deletion")
+	// Find all namespaces that start with "open-cluster-management-addon-" prefix
+	re := regexp.MustCompile(`^open-cluster-management-addon-`)
+	for _, ns := range namespaces.Items {
+		if re.MatchString(ns.ObjectMeta.Name) {
+			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
 		}
+	}
+	return
+}
+
+// Get a list of existing ACM namespaces on the cluster
+func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acmNsList []string) {
+	namespaces := &corev1.NamespaceList{}
+	if err := r.Client.List(ctx, namespaces); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
+		}
+		return
+	}
+
+	re := regexp.MustCompile(`^open-cluster-management-agent`)
+	for _, ns := range namespaces.Items {
+		if re.MatchString(ns.ObjectMeta.Name) {
+			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
+		}
+	}
+	return
+}
+
+// Get a list of existing ACM CRDs on the cluster
+func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdList []string) {
+	crds := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := r.Client.List(ctx, crds); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
+		}
+		return
+	}
+
+	re := regexp.MustCompile(`\.open-cluster-management\.io$`)
+	for _, crd := range crds.Items {
+		if re.MatchString(crd.ObjectMeta.Name) {
+			acmCrdList = append(acmCrdList, crd.ObjectMeta.Name)
+		}
+	}
+	return
+}
+
+// Clean up ACM and other resources on the cluster
+func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) error {
+	// Ensure that the dependent resources are deleted
+	deleteOpts := []client.DeleteOption{
+		client.PropagationPolicy(metav1.DeletePropagationForeground),
+	}
+
+	interval := 10 * time.Second
+	maxRetries := 90 // ~15 minutes
+
+	// Trigger deletion for any remaining ACM namespaces
+	acmNamespaces := r.currentAcmNamespaces(ctx)
+	if len(acmNamespaces) > 0 {
+		r.Log.Info("Deleting ACM namespaces")
+		for _, nsName := range r.currentAcmNamespaces(ctx) {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+				}}
+			r.Log.Info(fmt.Sprintf("Deleting namespace %s", nsName))
+			if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
+			}
+		}
+
+		// Verify ACM namespaces have been deleted
+		current := 0
+		r.Log.Info("Waiting until ACM namespaces are deleted")
+		for len(r.currentAcmNamespaces(ctx)) > 0 {
+			if current < maxRetries {
+				time.Sleep(interval)
+				current += 1
+			} else {
+				return fmt.Errorf("timed out waiting for ACM namespace deletion")
+			}
+		}
+	} else {
+		r.Log.Info("No ACM namespaces found")
+	}
+
+	// Trigger deletion for any remaining ACM CRDs
+	acmCrds := r.currentAcmCrds(ctx)
+	if len(acmCrds) > 0 {
+		r.Log.Info("Deleting ACM CRDs")
+
+		for _, crdName := range r.currentAcmCrds(ctx) {
+			crd := &apiextensionsv1.CustomResourceDefinition{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: crdName,
+				}}
+			r.Log.Info(fmt.Sprintf("Deleting CRD %s", crdName))
+			if err := r.Client.Delete(ctx, crd, deleteOpts...); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete CRD %s: %w", crdName, err)
+			}
+		}
+
+		// Verify ACM CRDs have been deleted
+		current := 0
+		r.Log.Info("Waiting until ACM CRDs are deleted")
+		for len(r.currentAcmCrds(ctx)) > 0 {
+			if current < maxRetries {
+				time.Sleep(interval)
+				current += 1
+			} else {
+				return fmt.Errorf("timed out waiting for ACM CRD deletion")
+			}
+		}
+	} else {
+		r.Log.Info("No ACM CRDs found")
 	}
 
 	// Delete remaining cluster resources leftover from ACM (or install)
@@ -257,23 +334,6 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context, h
 		}}
 	if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete assisted-installer namespace: %w", err)
-	}
-
-	// TODO: We could do a query similar to the namespace query above to look for all remaining open-cluster-management.io CRDs
-	crds := []string{
-		"appliedmanifestworks.work.open-cluster-management.io",
-		"configurationpolicies.policy.open-cluster-management.io",
-		"observabilityaddons.observability.open-cluster-management.io",
-		"policies.policy.open-cluster-management.io",
-	}
-	for _, crd := range crds {
-		crdStruct := &apiextensionsv1.CustomResourceDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: crd,
-			}}
-		if err := r.Client.Delete(ctx, crdStruct, deleteOpts...); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to delete crd %s: %w", crd, err)
-		}
 	}
 
 	roles := []string{
@@ -363,6 +423,24 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 	return nil
 }
 
+// Check whether the system can be used for seed generation
+func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg string) {
+	// Ensure there are no ACM addons enabled on the seed SNO
+	if acmNsList := r.currentAcmAddonNamespaces(ctx); len(acmNsList) > 0 {
+		msg = fmt.Sprintf("Rejected due to presence of ACM addon(s): %s", strings.Join(acmNsList, ", "))
+		return
+	}
+
+	// TODO: Remove this dnsmasq check once ACM includes it? Or should we just keep it regardless, for dev systems not installed via ACM?
+	dnsmasqConfigScript := "/usr/local/bin/dnsmasq_config.sh"
+	if _, err := os.Stat(common.PathOutsideChroot(dnsmasqConfigScript)); os.IsNotExist(err) {
+		msg = "Rejected due to system missing dnsmasq config required for IBU"
+		return
+	}
+
+	return
+}
+
 // Generate the seed image
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
 	workdir := common.PathOutsideChroot(seedgenWorkingDir)
@@ -402,7 +480,6 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
-
 		// Create client for access to hub
 		hubClient, err := r.createHubClient(hubKubeconfig)
 		if err != nil {
@@ -412,20 +489,21 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		if r.managedClusterExists(ctx, hubClient) {
 			// Save the ACM resources from hub needed for re-import
 			r.Log.Info("Collecting ACM import data")
-			if err := r.collectAcmImportData(ctx, hubClient); err != nil {
+			if err := r.deregisterFromHub(ctx, hubClient); err != nil {
 				return err
 			}
 
-			// Clean up cluster resources
-			r.Log.Info("Cleaning cluster resources")
-			if err := r.cleanupClusterResources(ctx, hubClient); err != nil {
-				return err
-			}
 		} else {
-			r.Log.Info("ManagedCluster does not exist on hub. Skipping cleanup")
+			r.Log.Info("ManagedCluster does not exist on hub")
 		}
 	} else {
-		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s, skipping ACM", utils.SeedGenSecretName))
+		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
+	}
+
+	// Clean up cluster resources
+	r.Log.Info("Cleaning cluster resources")
+	if err := r.cleanupClusterResources(ctx); err != nil {
+		return err
 	}
 
 	// TODO: Can this be done cleanly via client? The client.DeleteAllOf seems to require a specified namespace, so maybe loop over the namespaces
@@ -501,8 +579,17 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return
 	}
 
+	if rejection := r.validateSystem(ctx); len(rejection) > 0 {
+		setSeedGenStatusFailedWithMessage(seedgen, rejection)
+		r.Log.Info(fmt.Sprintf("Seed generation rejected: system validation failed: %s", rejection))
+
+		// Update status
+		err = r.updateStatus(ctx, seedgen)
+		return
+	}
+
 	// TODO: Handle restoring the CR from file and completing processing
-	if isSeedGenStartAllowed(seedgen) {
+	if firstReconcile(seedgen) {
 		setSeedGenStatusInProgress(seedgen)
 		if err = r.updateStatus(ctx, seedgen); err != nil {
 			err = fmt.Errorf("failed to update status: %w", err)
@@ -529,19 +616,23 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return
 }
 
-func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator) {
+func setSeedGenStatusFailedWithMessage(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenCompleted,
 		utils.SeedGenConditionReasons.Failed,
 		metav1.ConditionFalse,
-		"Seed Generation failed",
+		msg,
 		seedgen.Generation)
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
 		utils.SeedGenConditionReasons.Failed,
 		metav1.ConditionFalse,
-		"Seed Generation failed",
+		msg,
 		seedgen.Generation)
+}
+
+func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator) {
+	setSeedGenStatusFailedWithMessage(seedgen, "Seed Generation failed")
 }
 
 func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator) {
@@ -590,7 +681,7 @@ func isSeedGenCompleted(seedgen *seedgenv1alpha1.SeedGenerator) bool {
 	return seedgenCompletedCondition != nil && seedgenCompletedCondition.Status == metav1.ConditionTrue
 }
 
-func isSeedGenStartAllowed(seedgen *seedgenv1alpha1.SeedGenerator) bool {
+func firstReconcile(seedgen *seedgenv1alpha1.SeedGenerator) bool {
 	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
 	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
 
