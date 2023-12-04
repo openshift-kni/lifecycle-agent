@@ -31,10 +31,6 @@ import (
 	cp "github.com/otiai10/copy"
 )
 
-const (
-	recertDone = "recert.done"
-)
-
 type PostPivot struct {
 	scheme               *runtime.Scheme
 	log                  *logrus.Logger
@@ -72,7 +68,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
 
-	if err := p.recert(ctx, clusterInfo, seedClusterInfo); err != nil {
+	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, clusterInfo, seedClusterInfo); err != nil {
 		return err
 	}
 
@@ -113,12 +109,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 }
 
 func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
-	doneFile := path.Join(p.workingDir, recertDone)
-	if _, err := os.Stat(doneFile); err == nil {
-		p.log.Infof("Found %s file, skippin recert", doneFile)
-		return nil
-	}
-
 	if _, err := os.Stat(recert.SummaryFile); err == nil {
 		return fmt.Errorf("found %s file, returning error, it means recert previously failed. "+
 			"In case you still want to rerun it please remove the file", recert.SummaryFile)
@@ -154,8 +144,7 @@ func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *cl
 		return err
 	}
 
-	_, err := os.Create(doneFile)
-	return err
+	return nil
 }
 
 func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
@@ -201,9 +190,8 @@ func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClu
 	}
 
 	// changing seed ip to new ip in all static pod files
-	_, err := p.ops.RunInHostNamespace("bash", "-c",
-		fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
-			seedClusterInfo.MasterIP, clusterInfo.MasterIP))
+	_, err := p.ops.RunBashInHostNamespace(fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
+		seedClusterInfo.MasterIP, clusterInfo.MasterIP))
 	if err != nil {
 		return fmt.Errorf("failed to change seed ip to new ip in /etc/kubernetes, err: %w", err)
 	}
