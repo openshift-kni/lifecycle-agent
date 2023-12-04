@@ -18,26 +18,53 @@ package extramanifest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-const extraManifestPath = "extra-manifests/"
+const ExtraManifestPath = "/opt/extra-manifests"
 
 // EMHandler handles the extra manifests
 type EMHandler struct {
 	Client client.Client
 	Log    logr.Logger
+}
+
+// EMStatusError type
+type EMStatusError struct {
+	Reason     string
+	ErrMessage string
+}
+
+func (e *EMStatusError) Error() string {
+	return fmt.Sprintf(e.ErrMessage)
+}
+
+func NewEMFailedError(msg string) *EMStatusError {
+	return &EMStatusError{
+		Reason:     "Failed",
+		ErrMessage: msg,
+	}
+}
+
+func IsEMFailedError(err error) bool {
+	var emErr *EMStatusError
+	if errors.As(err, &emErr) {
+		return emErr.Reason == "Failed"
+	}
+	return false
 }
 
 // ExportExtraManifestToDir extracts the extra manifests from configmaps
@@ -48,13 +75,13 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		return nil
 	}
 
-	configmaps, err := getManifestConfigmaps(ctx, h.Client, extraManifestCMs)
+	configmaps, err := common.GetConfigMaps(ctx, h.Client, extraManifestCMs)
 	if err != nil {
 		return err
 	}
 
 	// Create the directory for the extra manifests
-	if err := os.MkdirAll(filepath.Join(toDir, extraManifestPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(toDir, ExtraManifestPath), 0o700); err != nil {
 		return err
 	}
 
@@ -66,8 +93,12 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 				return err
 			}
 
+			// In case it contains the UID and ResourceVersion, remove them
+			manifest.SetUID("")
+			manifest.SetResourceVersion("")
+
 			fileName := strconv.Itoa(i) + "_" + manifest.GetName() + "_" + manifest.GetNamespace() + ".yaml"
-			filePath := filepath.Join(toDir, extraManifestPath, fileName)
+			filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
 			err = writeManifestToFile(&manifest, filePath)
 			if err != nil {
 				return err
@@ -79,22 +110,35 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	return nil
 }
 
-// ApplyExtraManifestsFromDir applies the extra manifests from the given directory
-func (h *EMHandler) ApplyExtraManifestsFromDir(ctx context.Context, fromDir string) error {
-	manifestDir := filepath.Join(fromDir, extraManifestPath)
-	manifestYamls, err := os.ReadDir(manifestDir)
+// ApplyExtraManifests applies the extra manifests from the preserved extra manifests directory
+func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) error {
+	manifestYamls, err := os.ReadDir(fromDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			h.Log.Info("No extra manifests directory found, skipping", "path", fromDir)
+			return nil
+		}
+		return err
+	}
+
+	if len(manifestYamls) == 0 {
+		h.Log.Info("No extra manifests found", "path", fromDir)
+		return nil
+	}
+
+	c, mapper, err := common.NewDynamicClientAndRESTMapper()
 	if err != nil {
 		return err
 	}
 
 	for _, manifestYaml := range manifestYamls {
+		manifestYamlPath := filepath.Join(fromDir, manifestYaml.Name())
 		if manifestYaml.IsDir() {
-			h.Log.Info("Unexpected directory found, skipping...", "directory",
-				filepath.Join(manifestDir, manifestYaml.Name()))
+			h.Log.Info("Unexpected directory found, skipping", "directory", manifestYamlPath)
 			continue
 		}
 
-		manifestBytes, err := os.ReadFile(filepath.Join(manifestDir, manifestYaml.Name()))
+		manifestBytes, err := os.ReadFile(manifestYamlPath)
 		if err != nil {
 			return err
 		}
@@ -103,54 +147,56 @@ func (h *EMHandler) ApplyExtraManifestsFromDir(ctx context.Context, fromDir stri
 		if err := yaml.Unmarshal(manifestBytes, manifest); err != nil {
 			return err
 		}
-
-		manifest.SetUID("")
-		manifest.SetResourceVersion("")
-		if err := h.Client.Create(ctx, manifest); err != nil {
-			if !k8serrors.IsAlreadyExists(err) {
-				return err
-			}
-
-			// Update if it already exists
-			existingManifest := &unstructured.Unstructured{}
-			existingManifest.SetGroupVersionKind(manifest.GroupVersionKind())
-			if err := h.Client.Get(ctx, types.NamespacedName{
-				Name:      manifest.GetName(),
-				Namespace: manifest.GetNamespace(),
-			}, existingManifest); err != nil {
-				return err
-			}
-
-			manifest.SetResourceVersion(existingManifest.GetResourceVersion())
-			manifest.SetUID(existingManifest.GetUID())
-			if err := h.Client.Update(ctx, manifest); err != nil {
-				return err
-			}
-			h.Log.Info("Updated manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
-		} else {
-			h.Log.Info("Created manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
-		}
-	}
-
-	return nil
-}
-
-func getManifestConfigmaps(ctx context.Context, c client.Client, configMaps []lcav1alpha1.ConfigMapRef) ([]*corev1.ConfigMap, error) {
-	var cms []*corev1.ConfigMap
-
-	for _, cm := range configMaps {
-		existingCm := &corev1.ConfigMap{}
-		err := c.Get(ctx, types.NamespacedName{
-			Name:      cm.Name,
-			Namespace: cm.Namespace,
-		}, existingCm)
+		// Mapping resource GVK to CVR
+		mapping, err := mapper.RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		cms = append(cms, existingCm)
+
+		h.Log.Info("Applying manifest from file", "path", manifestYamlPath)
+		// Check if the resource exists
+		existingManifest := &unstructured.Unstructured{}
+		existingManifest.SetGroupVersionKind(manifest.GroupVersionKind())
+		resource := c.Resource(mapping.Resource).Namespace(manifest.GetNamespace())
+		existingManifest, err = resource.Get(ctx, manifest.GetName(), metav1.GetOptions{})
+		if err != nil {
+			if !k8serrors.IsNotFound(err) {
+				return err
+			}
+			// Create if it doesn't exist
+			if _, err := resource.Create(ctx, manifest, metav1.CreateOptions{}); err != nil {
+				// Capture both invalid syntax and webhook validation errors
+				if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
+					errMsg := fmt.Sprintf("Failed to create manifest %s %s: %s",
+						manifest.GetKind(), manifest.GetName(), err.Error())
+					h.Log.Error(nil, errMsg)
+					return NewEMFailedError(errMsg)
+				}
+				return err
+			}
+			h.Log.Info("Created manifest", "manifest", manifest.GetName())
+		} else {
+			manifest.SetResourceVersion(existingManifest.GetResourceVersion())
+			if _, err := resource.Update(ctx, manifest, metav1.UpdateOptions{}); err != nil {
+				// Capture both invalid syntax and webhook validation errors
+				if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
+					errMsg := fmt.Sprintf("Failed to update manifest %s %s: %s",
+						manifest.GetKind(), manifest.GetName(), err.Error())
+					h.Log.Error(nil, errMsg)
+					return NewEMFailedError(errMsg)
+				}
+				return err
+			}
+			h.Log.Info("Updated manifest", "manifest", manifest.GetName())
+		}
 	}
 
-	return cms, nil
+	// Remove the extra manifests directory
+	if err := os.RemoveAll(fromDir); err != nil {
+		return err
+	}
+	h.Log.Info("Extra manifests path removed", "path", fromDir)
+	return nil
 }
 
 func writeManifestToFile(manifest *unstructured.Unstructured, filePath string) error {
