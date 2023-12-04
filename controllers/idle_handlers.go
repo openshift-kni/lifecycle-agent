@@ -76,7 +76,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav
 		return requeueWithError(err)
 	}
 
-	stateroot := getStaterootName(ibu.Spec.SeedImageRef.Version)
+	stateroot := getDesiredStaterootName(ibu)
 	r.Log.Info("Cleanup stateroot", "stateroot", stateroot)
 	err := r.cleanupUnbootedStateroot(stateroot)
 	if err != nil {

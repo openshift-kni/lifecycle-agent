@@ -153,10 +153,11 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if isTransitionRequested(ibu) {
 		var isAfterPivot bool
-		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getStaterootName(ibu.Spec.SeedImageRef.Version))
+		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getDesiredStaterootName(ibu))
 		if err != nil {
 			return
 		}
+
 		if validateStageTransition(ibu, isAfterPivot) {
 			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
@@ -380,6 +381,6 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func getStaterootName(seedImageVersion string) string {
-	return fmt.Sprintf("rhcos_%s", seedImageVersion)
+func getDesiredStaterootName(ibu *lcav1alpha1.ImageBasedUpgrade) string {
+	return fmt.Sprintf("rhcos_%s", ibu.Spec.SeedImageRef.Version)
 }

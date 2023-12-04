@@ -190,7 +190,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(
 	}
 
 	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile,
-		"--os-version", ibu.Spec.SeedImageRef.Version, "--os-name", getStaterootName(ibu.Spec.SeedImageRef.Version))
+		"--os-version", ibu.Spec.SeedImageRef.Version, "--os-name", getDesiredStaterootName(ibu))
 
 	result = requeueWithShortInterval()
 

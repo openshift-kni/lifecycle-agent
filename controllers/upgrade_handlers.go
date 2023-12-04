@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
+
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +38,11 @@ import (
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+)
+
+var (
+	// todo: this value might need adjusting later
+	defaultRebootTimeout = 60 * time.Minute
 )
 
 // simple custom error types to handle backup cases
@@ -52,11 +59,104 @@ func (b BackupValidationError) Error() string {
 	return string(b)
 }
 
+var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+	currentStaterootName, err := r.RPMOstreeClient.GetCurrentStaterootName()
+	if err != nil {
+		return false, err
+	}
+	r.Log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", getDesiredStaterootName(ibu))
+	return currentStaterootName != getDesiredStaterootName(ibu), nil
+}
+
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-
 	r.Log.Info("Starting handleUpgrade")
 
+	prePivot, err := isPrePivot(r, ibu)
+	if err != nil {
+		//todo: abort handler? e.g delete desired stateroot
+		upgradeFailedStatus(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	// WARNING: the pod may not know if we are boot loop (for now)
+	if prePivot {
+		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
+		ctrlResult, err := r.prePivot(ctx, ibu)
+		if err != nil {
+			//todo: abort handler? e.g delete desired stateroot
+			upgradeFailedStatus(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+
+		// prePivot requested a requeue
+		if ctrlResult != doNotRequeue() {
+			return ctrlResult, nil
+		}
+
+		// Write an event to indicate reboot attempt
+		r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System wil now reboot")
+		err = r.rebootToNewStateRoot()
+		if err != nil {
+			//todo: abort handler? e.g delete desired stateroot
+			r.Log.Error(err, "")
+			upgradeFailedStatus(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+	} else {
+		r.Log.Info("Pivot successful, starting post pivot steps")
+		// TODO: Post-pivot steps
+		/*
+				1. oadp restore
+				    - platform
+				    - acm recovery
+
+			   2. ApplyExtraManifestsFromDir
+
+			   3. health check? readiness check /readyz endpoint?
+					- mcp
+					- clusteroperator
+					- all csv
+
+				4. restore application manifests
+		*/
+
+		r.Log.Info("Done handleUpgrade")
+
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+			utils.ConditionReasons.Completed,
+			metav1.ConditionTrue,
+			"Upgrade completed",
+			ibu.Generation)
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+			utils.ConditionReasons.Completed,
+			metav1.ConditionFalse,
+			"Upgrade completed",
+			ibu.Generation)
+		return doNotRequeue(), nil
+	}
+
+	return doNotRequeue(), fmt.Errorf("something we went wrong. upgrade failed")
+}
+
+func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot() error {
+	r.Log.Info("rebooting to a new stateroot")
+
+	_, err := r.Executor.Execute("systemctl", "--message=\"Image Based Upgrade\"", "reboot")
+	if err != nil {
+		return err
+	}
+
+	r.Log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
+	time.Sleep(defaultRebootTimeout)
+
+	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
+}
+
+// prePivot all the funcs needed to be called before a pivot
+func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	// backup with OADP
 	r.Log.Info("Backup with Oadp operator")
 	reqBackup, backupCRs, err := r.BackupRestore.CheckIfBackupRequested(ctx, ibu.Spec.OADPContent)
@@ -82,18 +182,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 			)
 			switch {
 			case errors.As(err, &backupFailedError):
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-					utils.ConditionReasons.Failed,
-					metav1.ConditionFalse,
-					backupFailedError.Error(),
-					ibu.Generation)
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
-					utils.ConditionReasons.Failed,
-					metav1.ConditionFalse,
-					"Upgrade failed",
-					ibu.Generation)
+				upgradeFailedStatus(ibu, backupFailedError.Error())
 				return ctrlResult, nil
 			case errors.As(err, &backupValidationError):
 				utils.SetStatusCondition(&ibu.Status.Conditions,
@@ -156,39 +245,18 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		return requeueWithError(err)
 	}
 
-	// Save the IBU CR to the new state root before pivot
+	r.Log.Info("Save the IBU CR to the new state root before pivot")
 	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
 	// Temporarily empty resource version so the file can be used to restore status
 	rv := ibu.ResourceVersion
 	ibu.ResourceVersion = ""
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		return doNotRequeue(), err
+		return requeueWithError(err)
 	}
 	ibu.ResourceVersion = rv
-	// TODO: Pivot to new stateroot
 
-	// TODO: Post-pivot steps
-	//
-	// err = r.ExtraManifest.ApplyExtraManifestsFromDir(ctx, stateRootRepo)
-	// if err != nil {
-	// 	 r.Log.Error(err, "Failed to apply extra manifests")
-	//	 return ctrl.Result{}, err
-	// }
-	r.Log.Info("Done handleUpgrade")
-
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Upgrade completed",
-		ibu.Generation)
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionFalse,
-		"Upgrade completed",
-		ibu.Generation)
-	return doNotRequeue(), nil
+	r.Log.Info("PrePivot done")
+	return ctrl.Result{}, nil
 }
 
 // startBackup manages backup flow and returns with possible requeue
@@ -231,4 +299,20 @@ func (r *ImageBasedUpgradeReconciler) startBackup(ctx context.Context, backupCRs
 	}
 
 	return doNotRequeue(), nil
+}
+
+// upgradeFailedStatus call this when upgrade fails
+func upgradeFailedStatus(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+	utils.SetStatusCondition(&ibu.Status.Conditions,
+		utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		utils.ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ibu.Generation)
+	utils.SetStatusCondition(&ibu.Status.Conditions,
+		utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		utils.ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		"Upgrade failed",
+		ibu.Generation)
 }
