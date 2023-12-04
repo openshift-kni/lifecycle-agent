@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"text/template"
 
+	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -171,4 +172,13 @@ func HandleFilesWithCallback(folder string, action func(string) error) error {
 
 		return action(path)
 	})
+}
+
+func CopyFileIfExists(source, dest string) error {
+	return cp.Copy(source, dest, cp.Options{OnError: func(src, dest string, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}})
 }

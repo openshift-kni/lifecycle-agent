@@ -20,6 +20,8 @@ import (
 	"fmt"
 
 	v1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -51,6 +53,8 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
+	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -104,7 +108,9 @@ func create() error {
 	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
 	if err = seedCreator.CreateSeedImage(); err != nil {
-		return fmt.Errorf("failed to create seed image: %w", err)
+		err = fmt.Errorf("failed to create seed image: %w", err)
+		log.Errorf(err.Error())
+		return err
 	}
 
 	log.Info("OCI image created successfully!")

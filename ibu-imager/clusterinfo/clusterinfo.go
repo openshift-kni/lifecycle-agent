@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	v1 "github.com/openshift/api/config/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -19,15 +21,19 @@ const (
 	InstallConfigCM = "cluster-config-v1"
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
+
+	CsvDeploymentName      = "cluster-version-operator"
+	CsvDeploymentNamespace = "openshift-cluster-version"
 )
 
 // ClusterInfo struct that describe current cluster critical info
 type ClusterInfo struct {
-	Version     string `json:"version,omitempty"`
-	Domain      string `json:"domain,omitempty"`
-	ClusterName string `json:"cluster_name,omitempty"`
-	ClusterID   string `json:"cluster_id,omitempty"`
-	MasterIP    string `json:"master_ip,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Domain          string `json:"domain,omitempty"`
+	ClusterName     string `json:"cluster_name,omitempty"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	MasterIP        string `json:"master_ip,omitempty"`
+	ReleaseRegistry string `json:"release_registry,omitempty"`
 }
 
 type installConfigMetadata struct {
@@ -67,12 +73,18 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 		return nil, err
 	}
 
+	releaseRegistry, err := m.getReleaseRegistry(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ClusterInfo{
-		ClusterName: installConfig.Metadata.Name,
-		Domain:      installConfig.BaseDomain,
-		Version:     clusterVersion.Status.Desired.Version,
-		ClusterID:   string(clusterVersion.Spec.ClusterID),
-		MasterIP:    ip,
+		ClusterName:     installConfig.Metadata.Name,
+		Domain:          installConfig.BaseDomain,
+		Version:         clusterVersion.Status.Desired.Version,
+		ClusterID:       string(clusterVersion.Spec.ClusterID),
+		MasterIP:        ip,
+		ReleaseRegistry: releaseRegistry,
 	}, nil
 }
 
@@ -137,6 +149,28 @@ func (m *InfoClient) getInstallConfig(ctx context.Context) (*basicInstallConfig,
 		return nil, fmt.Errorf("failed to decode install config, err: %w", err)
 	}
 	return instConf, nil
+}
+
+func (m *InfoClient) GetCSVDeployment(ctx context.Context) (*appsv1.Deployment, error) {
+	deployment := &appsv1.Deployment{}
+	if err := m.client.Get(ctx,
+		types.NamespacedName{
+			Name:      CsvDeploymentName,
+			Namespace: CsvDeploymentNamespace},
+		deployment); err != nil {
+		return nil, fmt.Errorf("failed to get cluster version deployment, err: %w", err)
+	}
+
+	return deployment, nil
+}
+
+func (m *InfoClient) getReleaseRegistry(ctx context.Context) (string, error) {
+	deployment, err := m.GetCSVDeployment(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Split(deployment.Spec.Template.Spec.Containers[0].Image, "/")[0], nil
 }
 
 func ReadClusterInfoFromFile(path string) (*ClusterInfo, error) {
