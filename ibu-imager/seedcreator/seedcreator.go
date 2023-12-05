@@ -9,14 +9,17 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	v1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	"github.com/thoas/go-funk"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
@@ -109,6 +112,8 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
 		return err
 	}
+
+	_ = utils.RunOnce("wait_for_ovn_to_go_down", common.BackupChecksDir, s.log, s.waitTillOvnKubeNodeIsDown, ctx)
 
 	if err := s.stopServices(); err != nil {
 		return err
@@ -307,14 +312,16 @@ func (s *SeedCreator) stopServices() error {
 	}
 	s.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
-
-		// CRI-O is active, so stop running containers
-		s.log.Info("Stop running containers")
-		args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-		_, err = s.ops.RunBashInHostNamespace("crictl", args...)
-		if err != nil {
-			return err
-		}
+		// CRI-O is active, so stop running containers with retry
+		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
+			s.log.Info("Stop running containers")
+			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
+			_, err = s.ops.RunBashInHostNamespace("crictl", args...)
+			if err != nil {
+				return false, err
+			}
+			return true, nil
+		})
 
 		// Execute a D-Bus call to stop the CRI-O runtime
 		s.log.Debug("Stopping CRI-O engine")
@@ -365,16 +372,10 @@ func (s *SeedCreator) backupVar() error {
 func (s *SeedCreator) backupEtc() error {
 	s.log.Info("Backing up /etc")
 
-	// save old ip as it is required for installation process by installation-configuration.sh
-	err := cp.Copy("/var/run/nodeip-configuration/primary-ip", "/etc/default/seed-ip")
-	if err != nil {
-		return err
-	}
-
 	// Execute 'ostree admin config-diff' command and backup etc.deletions
 	args := []string{"admin", "config-diff", "|", "awk", `'$1 == "D" {print "/etc/" $2}'`, ">",
 		path.Join(s.backupDir, "/etc.deletions")}
-	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
+	_, err := s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
 		return err
 	}
@@ -514,8 +515,30 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	return nil
+}
+
+func (s *SeedCreator) waitTillOvnKubeNodeIsDown(ctx context.Context) {
+	ovnKubeNode := "ovnkube-node"
+	s.log.Infof("Waiting for %s to stop in order to give ovn to cleanup network", ovnKubeNode)
+	// we will wait for 5 minutes and exit, we don't want to fail as it is not critical
+	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 5*time.Minute)
+	_ = wait.PollUntilContextCancel(deadlineCtx, 10*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		s.log.Infof("waiting for %s to stop", ovnKubeNode)
+		pods := &corev1.PodList{}
+		err = s.client.List(ctx, pods, &runtime.ListOptions{Namespace: "openshift-ovn-kubernetes"})
+		if err != nil {
+			return false, nil
+		}
+		for _, pod := range pods.Items {
+			if strings.HasPrefix(pod.Name, "ovnkube-node") {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	defer deadlineCancel()
 }
 
 func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {

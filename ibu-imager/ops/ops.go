@@ -71,8 +71,8 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error
 	}
 
 	defer func() {
-		o.log.Info("Killing the unauthenticated etcd server")
-		if _, err := o.RunInHostNamespace("podman", "kill", "recert_etcd"); err != nil {
+		o.log.Info("Stopping the unauthenticated etcd server")
+		if _, err := o.RunInHostNamespace("podman", "stop", "recert_etcd"); err != nil {
 			o.log.Errorf("Failed to kill recert_etcd container: %v", err)
 		}
 	}()
