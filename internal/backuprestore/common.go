@@ -279,6 +279,12 @@ func (h *BRHandler) DeleteOadpOperator(ctx context.Context, namespace string) er
 		}
 	}
 
-	h.Log.Info("OADP operator has deleted", "name", oadpSub.Items[0].Name, "namespace", namespace)
+	if len(oadpSub.Items) == 0 {
+		h.Log.Info("Found no OADP operator to delete")
+	} else if len(oadpSub.Items) == 1 {
+		h.Log.Info("OADP operator has been deleted", "name", oadpSub.Items[0].Name, "namespace", namespace)
+	} else {
+		h.Log.Info("WARN: Found more than 1 OADP operator. Deleted all OADP operators.")
+	}
 	return nil
 }

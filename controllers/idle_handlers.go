@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,9 +81,12 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		successful = false
 		r.Log.Error(err, "failed to cleanup precaching resources")
 	}
-	if _, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
+	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
 		successful = false
 		r.Log.Error(err, "failed to cleanup backups")
+	} else if !allRemoved {
+		successful = false
+		r.Log.Error(errors.New("failed to delete all the backup CRs"), "")
 	}
 	if err := r.BackupRestore.DeleteOadpOperator(ctx, backuprestore.OadpNs); err != nil {
 		successful = false
