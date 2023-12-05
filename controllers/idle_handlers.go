@@ -126,10 +126,12 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 		return err
 	}
 
+	bootedStateroot := ""
 	undeployIndices := make([]int, 0)
 	undeployStateroots := make([]string, 0)
 	for index, deployment := range status.Deployments {
 		if deployment.Booted {
+			bootedStateroot = deployment.OSName
 			continue
 		}
 		undeployIndices = append(undeployIndices, index)
@@ -137,7 +139,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 	}
 	// since undeploy shifts the order, undeploy in the reverse order
 	for i := len(undeployIndices) - 1; i >= 0; i-- {
-		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(i))
+		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(undeployIndices[i]))
 		if err != nil {
 			return fmt.Errorf("ostree undeploy %d failed: %w", i, err)
 		}
@@ -145,6 +147,9 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 
 	failures := 0
 	for _, stateroot := range undeployStateroots {
+		if stateroot == bootedStateroot {
+			continue
+		}
 		if err = removeStateroot(r.Executor, stateroot); err != nil {
 			r.Log.Error(err, "failed to remove stateroot", "stateroot", stateroot)
 			failures += 1
@@ -176,7 +181,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 	}
 	// since undeploy shifts the order, undeploy in the reverse order
 	for i := len(undeployIndices) - 1; i >= 0; i-- {
-		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(i))
+		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(undeployIndices[i]))
 		if err != nil {
 			return fmt.Errorf("ostree undeploy %d failed: %w", i, err)
 		}
