@@ -214,6 +214,7 @@ func initIBU(ctx context.Context, client client.Client, log *logr.Logger) error 
 				return err
 			}
 			log.Info("Initial IBU created")
+			return nil
 		}
 		return err
 	}
