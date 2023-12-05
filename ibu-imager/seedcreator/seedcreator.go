@@ -380,8 +380,8 @@ func (s *SeedCreator) backupEtc() error {
 	}
 
 	args = []string{"admin", "config-diff", "|", "grep", "-v", "'cni/multus'",
-		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "xargs", "tar", "czf",
-		path.Join(s.backupDir + "/etc.tgz"), "--selinux"}
+		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "tar", "czf",
+		path.Join(s.backupDir + "/etc.tgz"), "--selinux", "-T", "-"}
 
 	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
