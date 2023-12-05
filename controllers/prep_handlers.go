@@ -172,6 +172,8 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context,
 func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	r.Log.Info("Start setupstateroot")
 
+	defer r.Ops.UnmountAndRemoveImage(ibu.Spec.SeedImageRef.Image)
+
 	workspaceOutsideChroot, err := os.MkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory %w", err)
@@ -179,10 +181,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 
 	defer func() {
 		if err := os.RemoveAll(workspaceOutsideChroot); err != nil {
-			r.Log.Error(err, "failed to clean up "+workspaceOutsideChroot)
-		}
-		if _, err := r.Executor.Execute("podman", "rmi", ibu.Spec.SeedImageRef.Image); err != nil {
-			r.Log.Error(err, "failed to remove image"+ibu.Spec.SeedImageRef.Image)
+			r.Log.Error(err, "failed to cleanup workspace")
 		}
 	}()
 
@@ -200,12 +199,6 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	if err != nil {
 		return fmt.Errorf("failed to mount seed image: %w", err)
 	}
-
-	defer func() {
-		if _, err := r.Executor.Execute("podman", "image", "umount", ibu.Spec.SeedImageRef.Image); err != nil {
-			r.Log.Error(err, "failed to umount"+ibu.Spec.SeedImageRef.Image)
-		}
-	}()
 
 	ostreeRepo := filepath.Join(workspace, "ostree")
 	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o755); err != nil {
@@ -285,7 +278,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	}
 
 	if err = prep.RemoveETCDeletions(mountpoint, osname, deploymentID); err != nil {
-		return fmt.Errorf("failed to restore etc directory: %w", err)
+		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 
 	prep.BackupCertificates(ctx, osname, r.ManifestClient)
@@ -304,26 +297,25 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 }
 
 func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(ctx context.Context,
-	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (result ctrl.Result, err error) {
-	if err = updateProgressFile(progressfile, "started-stateroot"); err != nil {
+	ibu *lcav1alpha1.ImageBasedUpgrade, progressfile string) (ctrl.Result, error) {
+	result := requeueImmediately()
+	if err := updateProgressFile(progressfile, "started-stateroot"); err != nil {
 		r.Log.Error(err, "failed to update progress file")
-		return
+		return result, err
 	}
-	if err = r.SetupStateroot(ctx, ibu); err != nil {
-		result = doNotRequeue()
-		if err = updateProgressFile(progressfile, "Failed"); err != nil {
+	if err := r.SetupStateroot(ctx, ibu); err != nil {
+		r.Log.Error(err, "failed to setup stateroot")
+		if err := updateProgressFile(progressfile, "Failed"); err != nil {
 			r.Log.Error(err, "failed to update progress file")
-			return
+			return result, err
 		}
-		return
+		return result, err
 	}
-	if err = updateProgressFile(progressfile, "completed-stateroot"); err != nil {
+	if err := updateProgressFile(progressfile, "completed-stateroot"); err != nil {
 		r.Log.Error(err, "failed to update progress file")
-		return
+		return result, err
 	}
-
-	result = requeueWithShortInterval()
-	return
+	return result, nil
 }
 
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
@@ -375,7 +367,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 		} else if progress == "completed-seed-image-pull" {
 			result, err = r.launchSetupStateroot(ctx, ibu, progressfile)
 			if err != nil {
-				r.Log.Error(err, "Failed to launch get-seed-image phase")
+				r.Log.Error(err, "Failed to setupStateroot")
 				return
 			}
 		} else if progress == "completed-stateroot" {

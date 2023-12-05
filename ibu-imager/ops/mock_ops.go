@@ -65,6 +65,36 @@ func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authF
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
 }
 
+// ImageExists mocks base method.
+func (m *MockOps) ImageExists(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImageExists", img)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ImageExists indicates an expected call of ImageExists.
+func (mr *MockOpsMockRecorder) ImageExists(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImageExists", reflect.TypeOf((*MockOps)(nil).ImageExists), img)
+}
+
+// IsImageMounted mocks base method.
+func (m *MockOps) IsImageMounted(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsImageMounted", img)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsImageMounted indicates an expected call of IsImageMounted.
+func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
+}
+
 // RemountSysroot mocks base method.
 func (m *MockOps) RemountSysroot() error {
 	m.ctrl.T.Helper()
@@ -184,6 +214,20 @@ func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
+}
+
+// UnmountAndRemoveImage mocks base method.
+func (m *MockOps) UnmountAndRemoveImage(img string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnmountAndRemoveImage", img)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnmountAndRemoveImage indicates an expected call of UnmountAndRemoveImage.
+func (mr *MockOpsMockRecorder) UnmountAndRemoveImage(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnmountAndRemoveImage", reflect.TypeOf((*MockOps)(nil).UnmountAndRemoveImage), img)
 }
 
 // waitForEtcd mocks base method.
