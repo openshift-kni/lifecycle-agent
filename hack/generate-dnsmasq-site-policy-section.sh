@@ -23,7 +23,7 @@ Summary:
     Generates a subsection of site-policy to include dnsmasq config for an SNO.
 
 Example:
-    ${PROG} --name cnfde8 --domain sno.ptp.lab.eng.bos.redhat.com --ip 10.16.231.8
+    ${PROG} --name mysno --domain sno.cluster-domain.com --ip 10.20.30.5
 EOF
     exit 1
 }
