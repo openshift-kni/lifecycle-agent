@@ -130,7 +130,7 @@ bashate: ## Run bashate.
 	hack/bashate.sh
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check imager-unittest
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)

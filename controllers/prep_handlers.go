@@ -29,51 +29,73 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 
-	"github.com/openshift-kni/lifecycle-agent/internal/generated"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string) (result ctrl.Result, err error) {
-	if err = os.Chdir("/"); err != nil {
-		return
+func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
+	ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile, progressfile string,
+) (ctrl.Result, error) {
+	result := requeueImmediately()
+	if err := updateProgressFile(progressfile, "started-seed-image-pull"); err != nil {
+		r.Log.Error(err, "failed to update progress file")
+		return result, err
 	}
-
-	// Write the script
-	scriptname := filepath.Join(utils.IBUWorkspacePath, utils.PrepGetSeedImage)
-	scriptcontent, _ := generated.Asset(utils.PrepGetSeedImage)
-	err = os.WriteFile(common.PathOutsideChroot(scriptname), scriptcontent, 0o700)
-
-	if err != nil {
-		err = fmt.Errorf("failed to write handler script: %s, %w", common.PathOutsideChroot(scriptname), err)
-		return
+	if err := r.getSeedImage(ctx, ibu, imageListFile); err != nil {
+		r.Log.Error(err, "failed to setup stateroot")
+		if err := updateProgressFile(progressfile, "Failed"); err != nil {
+			r.Log.Error(err, "failed to update progress file")
+			return result, err
+		}
+		return result, err
 	}
-	r.Log.Info("Handler script written")
+	if err := updateProgressFile(progressfile, "completed-seed-image-pull"); err != nil {
+		r.Log.Error(err, "failed to update progress file")
+		return result, err
+	}
+	return result, nil
+}
 
+func (r *ImageBasedUpgradeReconciler) getSeedImage(
+	ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string,
+) error {
 	// Use cluster wide pull-secret by default
 	pullSecretFilename := common.ImageRegistryAuthFile
 
 	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
 		var pullSecret string
-		pullSecret, err = utils.LoadSecretData(ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, ibu.Namespace, corev1.DockerConfigJsonKey)
+		pullSecret, err := utils.LoadSecretData(ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, ibu.Namespace, corev1.DockerConfigJsonKey)
 		if err != nil {
 			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
-			return
+			return err
 		}
 
 		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
 		if err = os.WriteFile(common.PathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
 			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
-			return
+			return err
 		}
+		defer os.Remove(common.PathOutsideChroot(pullSecretFilename))
 	}
 
-	go r.Executor.Execute(scriptname, "--seed-image", ibu.Spec.SeedImageRef.Image, "--progress-file", progressfile, "--image-list-file", imageListFile, "--pull-secret", pullSecretFilename)
-	result = requeueWithShortInterval()
+	r.Log.Info("Pulling seed image")
+	if _, err := r.Executor.Execute("podman", "pull", "--authfile", pullSecretFilename, ibu.Spec.SeedImageRef.Image); err != nil {
+		return fmt.Errorf("failed to pull image: %w", err)
+	}
 
-	return
+	mountpoint, err := r.Executor.Execute("podman", "image", "mount", ibu.Spec.SeedImageRef.Image)
+	if err != nil {
+		return fmt.Errorf("failed to mount seed image: %w", err)
+	}
+
+	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
+		return fmt.Errorf("failed to copy image list file: %w", err)
+	}
+
+	return nil
+
 }
 
 func readPrecachingList(imageListFile string) (imageList []string, err error) {
