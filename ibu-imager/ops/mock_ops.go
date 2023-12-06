@@ -37,6 +37,20 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
+// ExtractTarWithSELinux mocks base method.
+func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExtractTarWithSELinux", srcPath, destPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExtractTarWithSELinux indicates an expected call of ExtractTarWithSELinux.
+func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), srcPath, destPath)
+}
+
 // ForceExpireSeedCrypto mocks base method.
 func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
 	m.ctrl.T.Helper()
@@ -49,6 +63,50 @@ func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) e
 func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
+}
+
+// ImageExists mocks base method.
+func (m *MockOps) ImageExists(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImageExists", img)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ImageExists indicates an expected call of ImageExists.
+func (mr *MockOpsMockRecorder) ImageExists(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImageExists", reflect.TypeOf((*MockOps)(nil).ImageExists), img)
+}
+
+// IsImageMounted mocks base method.
+func (m *MockOps) IsImageMounted(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsImageMounted", img)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsImageMounted indicates an expected call of IsImageMounted.
+func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
+}
+
+// RemountSysroot mocks base method.
+func (m *MockOps) RemountSysroot() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemountSysroot")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemountSysroot indicates an expected call of RemountSysroot.
+func (mr *MockOpsMockRecorder) RemountSysroot() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountSysroot", reflect.TypeOf((*MockOps)(nil).RemountSysroot))
 }
 
 // RestoreOriginalSeedCrypto mocks base method.
@@ -156,6 +214,20 @@ func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
+}
+
+// UnmountAndRemoveImage mocks base method.
+func (m *MockOps) UnmountAndRemoveImage(img string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnmountAndRemoveImage", img)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnmountAndRemoveImage indicates an expected call of UnmountAndRemoveImage.
+func (mr *MockOpsMockRecorder) UnmountAndRemoveImage(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnmountAndRemoveImage", reflect.TypeOf((*MockOps)(nil).UnmountAndRemoveImage), img)
 }
 
 // waitForEtcd mocks base method.

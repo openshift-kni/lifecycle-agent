@@ -50,12 +50,14 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -142,7 +144,9 @@ func main() {
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
+	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
+	ostreeClient := ostreeclient.NewClient(executor)
 
 	if err := initIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
@@ -160,6 +164,9 @@ func main() {
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,
 		Executor:        executor,
+		ManifestClient:  clusterinfo.NewClusterInfoClient(mgr.GetClient()),
+		OstreeClient:    ostreeClient,
+		Ops:             op,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

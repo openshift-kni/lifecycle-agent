@@ -1,9 +1,12 @@
 package ops
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -30,6 +33,11 @@ type Ops interface {
 	RunUnauthenticatedEtcdServer(authFile, name string) error
 	waitForEtcd(healthzEndpoint string) error
 	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
+	ExtractTarWithSELinux(srcPath, destPath string) error
+	RemountSysroot() error
+	ImageExists(img string) (bool, error)
+	IsImageMounted(img string) (bool, error)
+	UnmountAndRemoveImage(img string) error
 }
 
 type ops struct {
@@ -207,5 +215,86 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 		return fmt.Errorf("failed to run recert tool container: %w", err)
 	}
 
+	return nil
+}
+
+func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
+	_, err := o.hostCommandsExecutor.Execute(
+		"tar", "xzf", srcPath, "-C", destPath, "--selinux",
+	)
+	return err
+}
+
+func (o *ops) RemountSysroot() error {
+	_, err := o.hostCommandsExecutor.Execute("mount", "/sysroot", "-o", "remount,rw")
+	return err
+}
+
+func (o *ops) ImageExists(img string) (bool, error) {
+	_, err := o.hostCommandsExecutor.Execute("podman", "image", "exists", img)
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			if exitError.ExitCode() == 1 {
+				return false, nil
+			}
+			return false, err
+		} else {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+type PodmanImage struct {
+	Repositories []string `json:"Repositories"`
+}
+
+// IsImageMounted checkes whether certain image is mounted
+// pass in the full address with tag e.g: quay.io/openshift/lifecycle-agent-operator:latest
+func (o *ops) IsImageMounted(imgName string) (bool, error) {
+	output, err := o.hostCommandsExecutor.Execute("podman", "image", "mount", "--format", "json")
+	if err != nil {
+		return false, err
+	}
+	var images []PodmanImage
+	if err := json.Unmarshal([]byte(output), &images); err != nil {
+		return false, err
+	}
+	for _, img := range images {
+		for _, tag := range img.Repositories {
+			if tag == imgName {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (o *ops) UnmountAndRemoveImage(img string) error {
+	mounted, err := o.IsImageMounted(img)
+	if err != nil {
+		return fmt.Errorf("failed to check if image is mounted: %w", err)
+	}
+	if !mounted {
+		return nil
+	}
+	if _, err := o.hostCommandsExecutor.Execute(
+		"podman", "image", "umount", img,
+	); err != nil {
+		return fmt.Errorf("failed to unmount image: %w", err)
+	}
+	exist, err := o.ImageExists(img)
+	if err != nil {
+		return fmt.Errorf("failed to check if image exist: %w", err)
+	}
+	if !exist {
+		return nil
+	}
+	if _, err := o.hostCommandsExecutor.Execute(
+		"podman", "rmi", img,
+	); err != nil {
+		return fmt.Errorf("failed to remove image: %w", err)
+	}
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -44,6 +45,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 )
@@ -61,6 +63,9 @@ type ImageBasedUpgradeReconciler struct {
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
+	ManifestClient  *clusterinfo.InfoClient
+	OstreeClient    ostreeclient.IClient
+	Ops             ops.Ops
 }
 
 func doNotRequeue() ctrl.Result {
