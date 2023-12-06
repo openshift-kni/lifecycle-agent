@@ -4,10 +4,8 @@ go 1.20
 
 require (
 	github.com/RHsyseng/cluster-relocation-operator v0.9.9
-	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-logr/logr v1.2.4
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
-	github.com/openshift/build-machinery-go v0.0.0-20230824093055-6a18da01283c
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
 	github.com/operator-framework/api v0.17.6
 	github.com/otiai10/copy v1.14.0

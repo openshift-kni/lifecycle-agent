@@ -44,7 +44,7 @@ func (r *ImageBasedUpgradeReconciler) launchGetSeedImage(
 		return result, err
 	}
 	if err := r.getSeedImage(ctx, ibu, imageListFile); err != nil {
-		r.Log.Error(err, "failed to setup stateroot")
+		r.Log.Error(err, "failed to get seed image")
 		if err := updateProgressFile(progressfile, "Failed"); err != nil {
 			r.Log.Error(err, "failed to update progress file")
 			return result, err
