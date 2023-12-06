@@ -14,10 +14,7 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
-	certificatesv1 "k8s.io/api/certificates/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -85,7 +82,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return err
 	}
 	p.waitForApi(ctx, client)
-	p.approveCsrs(ctx, client)
 
 	if err := p.deleteAllOldMirrorResources(ctx, client, clusterInfo); err != nil {
 		return err
@@ -209,59 +205,6 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 		}
 		return false, nil
 	})
-}
-
-func (p *PostPivot) approveCsrs(ctx context.Context, client runtimeclient.Client) {
-	_ = utils.RunOnce("kube-apiserver-client-kubelet", p.workingDir, p.log, p.approveHostCSR,
-		ctx, client, "kube-apiserver-client-kubelet")
-	_ = utils.RunOnce("kubelet-serving", p.workingDir, p.log, p.approveHostCSR,
-		ctx, client, "kubelet-serving")
-}
-
-func (p *PostPivot) approveHostCSR(ctx context.Context, client runtimeclient.Client, signerName string) {
-	p.log.Infof("waiting to approve %s csr", signerName)
-	_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
-		csrList := &certificatesv1.CertificateSigningRequestList{}
-		opts := &runtimeclient.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.signerName",
-			fmt.Sprintf("kubernetes.io/%s", signerName))}
-		if err = client.List(ctx, csrList, opts); err != nil {
-			return false, nil
-		}
-		oneCSRWasApproved := false
-
-		for _, csr := range csrList.Items {
-			if isCsrApproved(&csr) {
-				p.log.Infof("Found approved csr %s, skipping it", csr.Name)
-				continue
-			}
-			p.log.Infof("Found not approved csr %s with %s signer name, going to approve it", csr.Name, signerName)
-			csr.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-				Type:           certificatesv1.CertificateApproved,
-				Reason:         "NodeCSRApprove",
-				Message:        "This CSR was approved by the post pivot operation",
-				Status:         corev1.ConditionTrue,
-				LastUpdateTime: metav1.Now(),
-			})
-			err = client.SubResource("approval").Update(ctx, &csr)
-			if err != nil {
-				p.log.WithError(err).Errorf("Failed to approve CSR %s", csr.Name)
-				continue
-			}
-			p.log.Infof("csr %s with %s signer name, was approved", csr.Name, signerName)
-			oneCSRWasApproved = true
-		}
-		return oneCSRWasApproved, nil
-	})
-
-}
-
-func isCsrApproved(csr *certificatesv1.CertificateSigningRequest) bool {
-	for _, c := range csr.Status.Conditions {
-		if c.Type == certificatesv1.CertificateApproved {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *PostPivot) applyManifests() error {

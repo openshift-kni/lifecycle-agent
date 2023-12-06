@@ -44,6 +44,8 @@ func CreateRecertConfigFile(clusterInfo, seedClusterInfo *clusterinfo.ClusterInf
 	clusterFullDomain := fmt.Sprintf("%s.%s", clusterInfo.ClusterName, clusterInfo.Domain)
 	config.ExtendExpiration = true
 	config.CNSanReplaceRules = []string{
+		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
 		fmt.Sprintf("%s,%s", seedClusterInfo.MasterIP, clusterInfo.MasterIP),
 		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),

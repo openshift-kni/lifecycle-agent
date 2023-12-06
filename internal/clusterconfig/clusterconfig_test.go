@@ -18,12 +18,13 @@ package clusterconfig
 
 import (
 	"context"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	appsv1 "k8s.io/api/apps/v1"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 
 	"github.com/go-logr/logr"
 	ocpV1 "github.com/openshift/api/config/v1"
@@ -87,11 +88,12 @@ var (
 		Status: corev1.NodeStatus{
 			Addresses: []corev1.NodeAddress{
 				{Type: corev1.NodeInternalIP, Address: "192.168.121.10"},
+				{Type: corev1.NodeHostName, Address: "seed"},
 			},
 		},
 	}
 
-	seedManifestData = clusterinfo.ClusterInfo{Domain: "seed.com", ClusterName: "seed", MasterIP: "192.168.127.10"}
+	seedManifestData = clusterinfo.ClusterInfo{Domain: "seed.com", ClusterName: "seed", MasterIP: "192.168.127.10", Hostname: "seed"}
 
 	machineConfigs = []*mcv1.MachineConfig{
 		{

@@ -34,6 +34,7 @@ type ClusterInfo struct {
 	ClusterID       string `json:"cluster_id,omitempty"`
 	MasterIP        string `json:"master_ip,omitempty"`
 	ReleaseRegistry string `json:"release_registry,omitempty"`
+	Hostname        string `json:"hostname,omitempty"`
 }
 
 type installConfigMetadata struct {
@@ -68,7 +69,15 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 		return nil, err
 	}
 
-	ip, err := m.getNodeInternalIP(ctx)
+	node, err := utils.GetSNOMasterNode(ctx, m.client)
+	if err != nil {
+		return nil, err
+	}
+	ip, err := m.getNodeInternalIP(*node)
+	if err != nil {
+		return nil, err
+	}
+	hostname, err := m.getNodeHostname(*node)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +94,7 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 		ClusterID:       string(clusterVersion.Spec.ClusterID),
 		MasterIP:        ip,
 		ReleaseRegistry: releaseRegistry,
+		Hostname:        hostname,
 	}, nil
 }
 
@@ -117,18 +127,22 @@ func (m *InfoClient) GetConfigMapData(ctx context.Context, name, namespace, key 
 }
 
 // TODO: add dual stuck support
-func (m *InfoClient) getNodeInternalIP(ctx context.Context) (string, error) {
-	node, err := utils.GetSNOMasterNode(ctx, m.client)
-	if err != nil {
-		return "", err
-	}
+func (m *InfoClient) getNodeInternalIP(node corev1.Node) (string, error) {
 	for _, addr := range node.Status.Addresses {
 		if addr.Type == corev1.NodeInternalIP {
 			return addr.Address, nil
 		}
 	}
-
 	return "", fmt.Errorf("failed to find node internal ip address")
+}
+
+func (m *InfoClient) getNodeHostname(node corev1.Node) (string, error) {
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeHostName {
+			return addr.Address, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find node hostname")
 }
 
 func (m *InfoClient) getInstallConfig(ctx context.Context) (*basicInstallConfig, error) {
