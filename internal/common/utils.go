@@ -30,12 +30,16 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -114,4 +118,12 @@ func NewDynamicClientAndRESTMapper() (dynamic.Interface, meta.RESTMapper, error)
 	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
 
 	return client, mapper, nil
+}
+
+func isConflictOrRetriable(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
+}
+
+func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
+	return retry.OnError(backoff, isConflictOrRetriable, fn)
 }
