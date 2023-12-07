@@ -26,12 +26,14 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
@@ -39,7 +41,15 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav
 		r.Log.Info("Finished handleAbort")
 		return doNotRequeue(), nil
 	}
-	return requeueWithError(fmt.Errorf("failed handelAbort"))
+
+	utils.SetStatusCondition(&ibu.Status.Conditions,
+		utils.ConditionTypes.Idle,
+		utils.ConditionReasons.AbortFailed,
+		metav1.ConditionFalse,
+		"Unable to cleanup successfully",
+		ibu.Generation,
+	)
+	return doNotRequeue(), nil
 }
 
 //nolint:unparam
@@ -47,6 +57,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 	return doNotRequeue(), nil
 }
 
+//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleFinalize")
 
@@ -54,7 +65,14 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 		r.Log.Info("Finished handleFinalize")
 		return doNotRequeue(), nil
 	}
-	return requeueWithError(fmt.Errorf("failed handleFinalize"))
+	utils.SetStatusCondition(&ibu.Status.Conditions,
+		utils.ConditionTypes.Idle,
+		utils.ConditionReasons.FinalizeFailed,
+		metav1.ConditionFalse,
+		"Unable to cleanup successfully",
+		ibu.Generation,
+	)
+	return doNotRequeue(), nil
 }
 
 //nolint:unparam

@@ -205,28 +205,10 @@ func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context,
 		switch idleCondition.Reason {
 		case string(utils.ConditionReasons.Aborting):
 			nextReconcile, err = r.handleAbort(ctx, ibu)
-			if err != nil {
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.ConditionTypes.Idle,
-					utils.ConditionReasons.AbortFailed,
-					metav1.ConditionFalse,
-					"Error occurred during abort",
-					ibu.Generation,
-				)
-			}
 		case string(utils.ConditionReasons.AbortFailed):
 			nextReconcile, err = r.handleAbortFailure(ctx, ibu)
 		case string(utils.ConditionReasons.Finalizing):
 			nextReconcile, err = r.handleFinalize(ctx, ibu)
-			if err != nil {
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.ConditionTypes.Idle,
-					utils.ConditionReasons.FinalizeFailed,
-					metav1.ConditionFalse,
-					"Error occurred during finalize",
-					ibu.Generation,
-				)
-			}
 		case string(utils.ConditionReasons.FinalizeFailed):
 			nextReconcile, err = r.handleFinalizeFailure(ctx, ibu)
 		}
