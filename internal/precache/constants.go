@@ -23,7 +23,6 @@ import (
 
 // LCA Resources
 const (
-	LcaPrecacheNamespace      string = "openshift-lifecycle-agent"
 	LcaPrecacheServiceAccount string = "lifecycle-agent-controller-manager"
 	LcaPrecacheJobName        string = "lca-precache-job"
 	LcaPrecacheConfigMapName  string = "lca-precache-cm"

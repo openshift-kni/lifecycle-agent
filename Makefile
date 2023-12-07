@@ -60,20 +60,6 @@ CRD_OPTIONS ?= "crd"
 
 default: help
 
-# Include the bindata makefile
-include ./vendor/github.com/openshift/build-machinery-go/make/targets/openshift/bindata.mk
-
-# This will call a macro called "add-bindata" which will generate bindata specific targets based on the parameters:
-# $0 - macro name
-# $1 - target suffix
-# $2 - input dirs
-# $3 - prefix
-# $4 - pkg
-# $5 - output
-# It will generate targets {update,verify}-bindata-$(1) logically grouping them in unsuffixed versions of these targets
-# and also hooked into {update,verify}-generated for broader integration.
-$(call add-bindata,internal,./internal/bindata/...,internal/bindata,generated,internal/generated/zz_generated.bindata.go)
-
 test:
 	@echo "Stub test target"
 
@@ -130,7 +116,7 @@ bashate: ## Run bashate.
 	hack/bashate.sh
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate update-bindata bundle-check imager-unittest
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check imager-unittest
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
