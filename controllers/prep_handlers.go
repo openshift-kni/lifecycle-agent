@@ -66,7 +66,9 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 
 	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
 		var pullSecret string
-		pullSecret, err := utils.LoadSecretData(ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, ibu.Namespace, corev1.DockerConfigJsonKey)
+		pullSecret, err := utils.LoadSecretData(
+			ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, common.LcaNamespace, corev1.DockerConfigJsonKey,
+		)
 		if err != nil {
 			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
 			return err
@@ -93,7 +95,6 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
 		return fmt.Errorf("failed to copy image list file: %w", err)
 	}
-
 	return nil
 
 }

@@ -47,6 +47,8 @@ const (
 	LvmConfigDir                      = "lvm-configuration"
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
 	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+
+	LcaNamespace = "openshift-lifecycle-agent"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
