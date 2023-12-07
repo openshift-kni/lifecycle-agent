@@ -109,7 +109,7 @@ func TestCreateJob(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: imageListStr,
@@ -118,7 +118,7 @@ func TestCreateJob(t *testing.T) {
 			expectedJob: &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheJobName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Spec: batchv1.JobSpec{
 					Template: corev1.PodTemplateSpec{
@@ -176,12 +176,12 @@ func TestCreateJob(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				})
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, LcaPrecacheNamespace)
+				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
 				assert.NoError(t, err)
 				assert.NotNil(t, actualJob)
 
@@ -362,12 +362,12 @@ func TestCleanup(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				})
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, LcaPrecacheNamespace)
+				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
 				assert.NoError(t, err)
 				assert.Nil(t, actualJob)
 			}

@@ -139,7 +139,7 @@ func (h *PHandler) CreateJob(ctx context.Context, config *Config) error {
 // QueryJobStatus retrieves the status of the precache job.
 func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
 
-	job, err := getJob(ctx, h.Client, LcaPrecacheJobName, LcaPrecacheNamespace)
+	job, err := getJob(ctx, h.Client, LcaPrecacheJobName, common.LcaNamespace)
 	if err != nil {
 		h.Log.Info("Unable to get job for status", "jobName", LcaPrecacheJobName)
 		return nil, err
@@ -188,12 +188,12 @@ func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
 // Cleanup deletes the ConfigMap and Job precaching resources
 func (h *PHandler) Cleanup(ctx context.Context) error {
 	// Delete Job
-	if err := deleteJob(ctx, h.Client, LcaPrecacheJobName, LcaPrecacheNamespace); err != nil {
+	if err := deleteJob(ctx, h.Client, LcaPrecacheJobName, common.LcaNamespace); err != nil {
 		h.Log.Info("Failed to delete precaching job", "name", LcaPrecacheJobName)
 		return err
 	}
 	// Delete ConfigMap
-	if err := deleteConfigMap(ctx, h.Client, LcaPrecacheConfigMapName, LcaPrecacheNamespace); err != nil {
+	if err := deleteConfigMap(ctx, h.Client, LcaPrecacheConfigMapName, common.LcaNamespace); err != nil {
 		h.Log.Info("Failed to delete precaching configmap", "name", LcaPrecacheConfigMapName)
 		return err
 	}
