@@ -212,14 +212,17 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	}
 
 	// example:
-	// seedBootedId: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
+	// seedBootedID: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedDeployment: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedRef: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c
-	seedBootedId, err := prep.GetBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
+	seedBootedID, err := prep.GetBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
 	if err != nil {
 		return fmt.Errorf("failed to get booted stateroot id: %w", err)
 	}
-	seedBootedDeployment := strings.Split(seedBootedId, "-")[1]
+	seedBootedDeployment, err := prep.GetDeploymentFromDeploymentID(seedBootedID)
+	if err != nil {
+		return err
+	}
 	seedBootedRef := strings.Split(seedBootedDeployment, ".")[0]
 
 	version, err := prep.GetVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
@@ -255,10 +258,14 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	if err != nil {
 		return fmt.Errorf("failed to get deploymentID: %w", err)
 	}
+	deployment, err := prep.GetDeploymentFromDeploymentID(deploymentID)
+	if err != nil {
+		return err
+	}
 
 	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
-		prep.GetDeploymentOriginPath(osname, deploymentID),
+		prep.GetDeploymentOriginPath(osname, deployment),
 	); err != nil {
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
@@ -272,12 +279,12 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 
 	if err := r.Ops.ExtractTarWithSELinux(
 		filepath.Join(mountpoint, "etc.tgz"),
-		prep.GetDeploymentDirPath(osname, deploymentID),
+		prep.GetDeploymentDirPath(osname, deployment),
 	); err != nil {
 		return fmt.Errorf("failed to extract seed etc: %w", err)
 	}
 
-	if err = prep.RemoveETCDeletions(mountpoint, osname, deploymentID); err != nil {
+	if err = prep.RemoveETCDeletions(mountpoint, osname, deployment); err != nil {
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 

@@ -68,20 +68,19 @@ func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 
 // GetDeploymentDirPath return the path to ostree deploy directory e.g:
 // /ostree/deploy/<osname>/deploy/<deployment.id>
-func GetDeploymentDirPath(osname, deploymentID string) string {
-	deployDirName := strings.Split(deploymentID, "-")[1]
-	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", deployDirName))
+func GetDeploymentDirPath(osname, deployment string) string {
+	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", deployment))
 }
 
 // GetDeploymentOriginPath return the path to .orign file e.g:
 // /ostree/deploy/<osname>/deploy/<deployment.id>.origin
-func GetDeploymentOriginPath(osname, deploymentID string) string {
-	originName := fmt.Sprintf("%s.origin", strings.Split(deploymentID, "-")[1])
+func GetDeploymentOriginPath(osname, deployment string) string {
+	originName := fmt.Sprintf("%s.origin", deployment)
 	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", originName))
 }
 
 // RemoveETCDeletions remove the files that are listed in etc.deletions
-func RemoveETCDeletions(mountpoint, osname, deploymentID string) error {
+func RemoveETCDeletions(mountpoint, osname, deployment string) error {
 	file, err := os.Open(filepath.Join(common.PathOutsideChroot(mountpoint), "etc.deletions"))
 	if err != nil {
 		return fmt.Errorf("failed to open etc.deletions: %w", err)
@@ -91,7 +90,7 @@ func RemoveETCDeletions(mountpoint, osname, deploymentID string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fileToRemove := strings.Trim(scanner.Text(), " ")
-		filePath := common.PathOutsideChroot(filepath.Join(GetDeploymentDirPath(osname, deploymentID), fileToRemove))
+		filePath := common.PathOutsideChroot(filepath.Join(GetDeploymentDirPath(osname, deployment), fileToRemove))
 		err = os.Remove(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to remove %s: %w", filePath, err)
@@ -136,4 +135,16 @@ func BackupCertificates(ctx context.Context, osname string, client *clusterinfo.
 	}
 
 	return nil
+}
+
+// split the deploymentID by '-' and return the last item
+// there should be at least one '-' in the deploymentID
+func GetDeploymentFromDeploymentID(deploymentID string) (string, error) {
+	splitted := strings.Split(deploymentID, "-")
+	if len(splitted) < 2 {
+		return "", fmt.Errorf(
+			"failed to get deployment from deploymentID, there should be a '-' in deploymentID %s",
+			deploymentID)
+	}
+	return splitted[len(splitted)-1], nil
 }
