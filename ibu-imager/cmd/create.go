@@ -48,6 +48,8 @@ var (
 	// recertContainerImage is the container image for the recert tool
 	recertContainerImage string
 	recertSkipValidation bool
+
+	skipCleanup bool
 )
 
 func init() {
@@ -87,13 +89,15 @@ func create() error {
 	op := ops.NewOps(log, hostCommandsExecutor)
 	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
 
-	defer func() {
-		if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
-			authFile, recertContainerImage, recertSkipValidation).CleanupSeedCluster(); err != nil {
-			log.Fatalf("Failed to restore seed cluster: %v", err)
-		}
-		log.Info("Seed cluster restored successfully!")
-	}()
+	if !skipCleanup {
+		defer func() {
+			if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
+				authFile, recertContainerImage, recertSkipValidation).CleanupSeedCluster(); err != nil {
+				log.Fatalf("Failed to restore seed cluster: %v", err)
+			}
+			log.Info("Seed cluster restored successfully!")
+		}()
+	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {

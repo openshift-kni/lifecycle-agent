@@ -46,6 +46,7 @@ func addCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
 	cmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", common.DefaultRecertImage, "The full image name for the recert container tool.")
 	cmd.Flags().BoolVarP(&recertSkipValidation, "skip-recert-validation", "", false, "Skips the validations performed by the recert tool.")
+	cmd.Flags().BoolVarP(&skipCleanup, "skip-cleanup", "", false, "Skips cleanup.")
 
 	// Mark flags as required
 	cmd.MarkFlagRequired("image")
