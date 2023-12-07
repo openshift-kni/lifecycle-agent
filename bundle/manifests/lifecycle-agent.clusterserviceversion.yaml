@@ -184,6 +184,13 @@ spec:
         - apiGroups:
           - config.openshift.io
           resources:
+          - clusteroperators
+          verbs:
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
           - clusterversions
           verbs:
           - get
@@ -257,6 +264,13 @@ spec:
           - get
           - patch
           - update
+        - apiGroups:
+          - machineconfiguration.openshift.io
+          resources:
+          - machineconfigpools
+          verbs:
+          - list
+          - watch
         - apiGroups:
           - machineconfiguration.openshift.io
           resources:
