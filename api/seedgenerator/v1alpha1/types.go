@@ -23,7 +23,7 @@ import (
 // +genclient
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:path=seedgenerators,shortName=seedgen
+//+kubebuilder:resource:path=seedgenerators,scope=Cluster,shortName=seedgen
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // SeedGenerator is the Schema for the seedgenerators API

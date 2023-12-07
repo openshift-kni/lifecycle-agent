@@ -14,7 +14,7 @@ spec:
     shortNames:
     - seedgen
     singular: seedgenerator
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .metadata.creationTimestamp
