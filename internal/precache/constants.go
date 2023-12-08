@@ -17,6 +17,8 @@
 package precache
 
 import (
+	"fmt"
+
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -87,3 +89,12 @@ const (
 	DefaultIoNiceClass            = IoNiceClassBestEffort
 	DefaultIoNicePriority     int = 4
 )
+
+// Precache status
+const (
+	Active    string = "Active"
+	Failed    string = "Failed"
+	Succeeded string = "Succeeded"
+)
+
+var ErrFailed = fmt.Errorf("precaching failed")

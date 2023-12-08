@@ -282,3 +282,35 @@ func SetUpgradeStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
 		"Upgrade completed",
 		ibu.Generation)
 }
+
+// SetPrepFailedStatus updates the IBU CR status for a failure to complete the Prep stage
+func SetPrepFailedStatus(ibu *lcav1alpha1.ImageBasedUpgrade) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		"Prep failed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		"Prep failed",
+		ibu.Generation)
+}
+
+// SetPrepSucceededStatus updates the IBU CR status for a successful execution of the Prep stage
+func SetPrepSucceededStatus(ibu *lcav1alpha1.ImageBasedUpgrade, conditionMessage string) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		conditionMessage,
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		"Prep completed",
+		ibu.Generation)
+}
