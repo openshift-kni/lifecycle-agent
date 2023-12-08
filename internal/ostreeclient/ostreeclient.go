@@ -1,6 +1,8 @@
 package ostreeclient
 
 import (
+	"fmt"
+
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 )
 
@@ -9,6 +11,7 @@ type IClient interface {
 	PullLocal(repoPath string) error
 	OSInit(osname string) error
 	Deploy(osname, refsepc string, kargs []string) error
+	Undeploy(ostreeIndex int) error
 }
 
 type Client struct {
@@ -36,5 +39,10 @@ func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
 	args = append(args, kargs...)
 	args = append(args, refsepc)
 	_, err := c.executor.Execute("ostree", args...)
+	return err
+}
+
+func (c *Client) Undeploy(ostreeIndex int) error {
+	_, err := c.executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(ostreeIndex))
 	return err
 }

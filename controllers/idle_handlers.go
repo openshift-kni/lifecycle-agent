@@ -21,9 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,22 +31,24 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+var osStat = os.Stat
+
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
-	if r.cleanup(ctx, false, ibu) {
+	if successful, errMsg := r.cleanup(ctx, false, ibu); successful {
 		r.Log.Info("Finished handleAbort")
-		return doNotRequeue(), nil
-	}
+	} else {
 
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.ConditionTypes.Idle,
-		utils.ConditionReasons.AbortFailed,
-		metav1.ConditionFalse,
-		"Unable to cleanup successfully",
-		ibu.Generation,
-	)
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.ConditionTypes.Idle,
+			utils.ConditionReasons.AbortFailed,
+			metav1.ConditionFalse,
+			errMsg,
+			ibu.Generation,
+		)
+	}
 	return doNotRequeue(), nil
 }
 
@@ -61,17 +61,17 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleFinalize")
 
-	if r.cleanup(ctx, true, ibu) {
+	if successful, errMsg := r.cleanup(ctx, true, ibu); successful {
 		r.Log.Info("Finished handleFinalize")
-		return doNotRequeue(), nil
+	} else {
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.ConditionTypes.Idle,
+			utils.ConditionReasons.FinalizeFailed,
+			metav1.ConditionFalse,
+			errMsg,
+			ibu.Generation,
+		)
 	}
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.ConditionTypes.Idle,
-		utils.ConditionReasons.FinalizeFailed,
-		metav1.ConditionFalse,
-		"Unable to cleanup successfully",
-		ibu.Generation,
-	)
 	return doNotRequeue(), nil
 }
 
@@ -86,40 +86,43 @@ func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context,
 // cleanup cleans stateroots, precache, backup, ibu files and OADP operator
 // returns true if all cleanup tasks were successful
 func (r *ImageBasedUpgradeReconciler) cleanup(
-	ctx context.Context, allUnbootedStateroots bool, ibu *lcav1alpha1.ImageBasedUpgrade) bool {
+	ctx context.Context, allUnbootedStateroots bool,
+	ibu *lcav1alpha1.ImageBasedUpgrade) (bool, string) {
 	// try to clean up as much as possible and avoid returning when one of the cleanup tasks fails
 	// successful means that all the cleanup tasks completed without any error
 	successful := true
+	errorMessage := ""
+
+	var handleError = func(err error, msg string) {
+		successful = false
+		r.Log.Error(err, msg)
+		errorMessage += msg + " "
+	}
 
 	if err := r.cleanupStateroots(allUnbootedStateroots, ibu); err != nil {
-		successful = false
-		r.Log.Error(err, "failed to cleanup stateroots")
+		handleError(err, "failed to cleanup stateroots.")
 	}
 	if err := r.Precache.Cleanup(ctx); err != nil {
-		successful = false
-		r.Log.Error(err, "failed to cleanup precaching resources")
+		handleError(err, "failed to cleanup precaching resources.")
 	}
 	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
-		successful = false
-		r.Log.Error(err, "failed to cleanup backups")
+		handleError(err, "failed to cleanup backups.")
 	} else if !allRemoved {
-		successful = false
-		r.Log.Error(errors.New("failed to delete all the backup CRs"), "")
+		err := errors.New("failed to delete all the backup CRs.")
+		handleError(err, err.Error())
 	}
 	if err := r.BackupRestore.DeleteOadpOperator(ctx, backuprestore.OadpNs); err != nil {
-		successful = false
-		r.Log.Error(err, "failed to delete OADP operator")
+		handleError(err, "failed to delete OADP operator.")
 	}
 	if err := cleanupIBUFiles(); err != nil {
-		successful = false
-		r.Log.Error(err, "failed to cleanup ibu files")
+		handleError(err, "failed to cleanup ibu files.")
 	}
 
-	return successful
+	return successful, errorMessage
 }
 
 // cleanupStateroot cleans all unbooted stateroots or desired stateroot
-// depending on allUnbootedStateroots argumennt
+// depending on allUnbootedStateroots argument
 func (r *ImageBasedUpgradeReconciler) cleanupStateroots(
 	allUnbootedStateroots bool, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	if allUnbootedStateroots {
@@ -132,7 +135,7 @@ func cleanupIBUFiles() error {
 	if _, err := os.Stat(common.PathOutsideChroot(utils.IBUWorkspacePath)); err != nil {
 		return nil
 	}
-	if err := os.RemoveAll(filepath.Join(utils.Host, utils.IBUWorkspacePath)); err != nil {
+	if err := os.RemoveAll(common.PathOutsideChroot(utils.IBUWorkspacePath)); err != nil {
 		return fmt.Errorf("removing %s failed: %w", utils.IBUWorkspacePath, err)
 	}
 	return nil
@@ -145,35 +148,27 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 	}
 
 	bootedStateroot := ""
-	undeployIndices := make([]int, 0)
-	undeployStateroots := make([]string, 0)
-	for index, deployment := range status.Deployments {
+	staterootsToRemove := make([]string, 0)
+	// since undeploy shifts the order, undeploy in the reverse order
+	for i := len(status.Deployments) - 1; i >= 0; i-- {
+		deployment := &status.Deployments[i]
 		if deployment.Booted {
 			bootedStateroot = deployment.OSName
 			continue
 		}
-		undeployIndices = append(undeployIndices, index)
-		undeployStateroots = append(undeployStateroots, deployment.OSName)
-	}
-	// since undeploy shifts the order, undeploy in the reverse order
-	for i := len(undeployIndices) - 1; i >= 0; i-- {
-		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(undeployIndices[i]))
-		if err != nil {
-			return fmt.Errorf("ostree undeploy %d failed: %w", i, err)
-		}
+		staterootsToRemove = append(staterootsToRemove, deployment.OSName)
 	}
 
 	failures := 0
-	for _, stateroot := range undeployStateroots {
+	for _, stateroot := range staterootsToRemove {
 		if stateroot == bootedStateroot {
 			continue
 		}
-		if err = removeStateroot(r.Executor, stateroot); err != nil {
+		if err := r.cleanupUnbootedStateroot(stateroot); err != nil {
 			r.Log.Error(err, "failed to remove stateroot", "stateroot", stateroot)
 			failures += 1
 		}
 	}
-
 	if failures == 0 {
 		return nil
 	}
@@ -186,35 +181,28 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 		return err
 	}
 
-	undeployIndices := make([]int, 0)
-	for index, deployment := range status.Deployments {
+	// since undeploy shifts the order, undeploy in the reverse order
+	indicesToUndeploy := make([]int, 0)
+	for i := len(status.Deployments) - 1; i >= 0; i-- {
+		deployment := &status.Deployments[i]
 		if deployment.OSName != stateroot {
 			continue
 		}
-		// make sure none of the deployments in the stateroot is booted
 		if deployment.Booted {
-			return fmt.Errorf("failed abort: deployment %d in stateroot %s is booted", index, stateroot)
+			return fmt.Errorf("failed abort: deployment %d in stateroot %s is booted", i, stateroot)
 		}
-		undeployIndices = append(undeployIndices, index)
+		indicesToUndeploy = append(indicesToUndeploy, i)
 	}
-	// since undeploy shifts the order, undeploy in the reverse order
-	for i := len(undeployIndices) - 1; i >= 0; i-- {
-		_, err = r.Executor.Execute("ostree", "admin", "undeploy", fmt.Sprint(undeployIndices[i]))
-		if err != nil {
-			return fmt.Errorf("ostree undeploy %d failed: %w", i, err)
+	for _, idx := range indicesToUndeploy {
+		if err := r.OstreeClient.Undeploy(idx); err != nil {
+			return fmt.Errorf("failed to undeploy %s with index %d: %w", stateroot, idx, err)
 		}
 	}
-
-	return removeStateroot(r.Executor, stateroot)
-}
-
-func removeStateroot(executor ops.Execute, stateroot string) error {
-	staterootPath := fmt.Sprintf("/sysroot/ostree/deploy/%s", stateroot)
-	if _, err := os.Stat(common.PathOutsideChroot(staterootPath)); err != nil {
+	staterootPath := common.GetStaterootPath(stateroot)
+	if _, err := osStat(common.PathOutsideChroot(staterootPath)); err != nil {
 		return nil
 	}
-
-	if _, err := executor.Execute("unshare", "-m", "/bin/sh", "-c",
+	if _, err := r.Executor.Execute("unshare", "-m", "/bin/sh", "-c",
 		fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", staterootPath)); err != nil {
 		return fmt.Errorf("removing stateroot %s failed: %w", stateroot, err)
 	}
