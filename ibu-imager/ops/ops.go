@@ -177,7 +177,7 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 }
 
 func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
-
+	o.log.Info("Start running recert")
 	command := "podman"
 	args := append(podmanRecertArgs, "--name", "recert",
 		"-v", "/etc:/host-etc",

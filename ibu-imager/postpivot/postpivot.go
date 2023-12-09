@@ -13,6 +13,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/sirupsen/logrus"
+	"github.com/thoas/go-funk"
 	etcdClient "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -121,11 +122,11 @@ func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *cl
 	}
 
 	err := p.ops.RecertFullFlow(p.recertContainerImage, p.authFile, path.Join(p.workingDir, recert.RecertConfigFile),
-		additional, nil, "-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
+		nil, additional, "-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
 	return err
 }
 
-func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
 	p.log.Info("Start running etcd post pivot operations")
 	cli, err := etcdClient.New(etcdClient.Config{
 		Endpoints:   []string{common.EtcdDefaultEndpoint},
@@ -136,12 +137,25 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *cl
 	}
 	defer cli.Close()
 
-	// removing etcd endpoints configmap
-	key := "/kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"
-	p.log.Infof("Deleting %s key in etcd", key)
-	_, err = cli.Delete(ctx, key, etcdClient.WithPrefix())
+	// cleanup etcd keys
+	p.log.Info("Cleaning up etcd keys from seed data")
+	keysToDelete := []string{"/kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"}
+	kvs, err := cli.Get(ctx, "/", etcdClient.WithPrefix())
 	if err != nil {
 		return err
+	}
+
+	for _, kv := range kvs.Kvs {
+		if strings.Contains(string(kv.Key), seedInfo.Hostname) ||
+			strings.Contains(string(kv.Value), seedInfo.Hostname) ||
+			funk.Contains(keysToDelete, string(kv.Key)) {
+
+			p.log.Infof("Deleting etcd key %s", string(kv.Key))
+			_, err = cli.Delete(ctx, string(kv.Key))
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	newEtcdIp := clusterInfo.MasterIP
@@ -163,7 +177,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *cl
 
 func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
 	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
-	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
+	if err := p.etcdPostPivotOperations(ctx, clusterInfo, seedClusterInfo); err != nil {
 		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
 	}
 
