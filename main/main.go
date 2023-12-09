@@ -67,11 +67,6 @@ import (
 	//+kubebuilder:scaffold:imports
 )
 
-var logger = &logrus.Logger{
-	Out:   os.Stdout,
-	Level: logrus.InfoLevel,
-}
-
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -136,11 +131,6 @@ func main() {
 	// We want to remove logr.Logger first step to move to logrus
 	// in the future we will have only one of them
 	newLogger := logrus.New()
-	logger.SetFormatter(&logrus.TextFormatter{
-		DisableColors:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-		FullTimestamp:   true,
-	})
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
