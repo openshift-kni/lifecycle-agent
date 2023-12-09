@@ -199,7 +199,7 @@ func TestSortBackupCrs(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, _ := SortByApplyWaveBackupCrs(tc.resources)
+			result, _ := sortByApplyWaveBackupCrs(tc.resources)
 			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
@@ -209,101 +209,52 @@ func TestTriggerBackup(t *testing.T) {
 	testcases := []struct {
 		name                  string
 		existingBackups       []client.Object
-		expectedBackupTracker []BackupTracker
+		expectedBackupTracker BackupTracker
 	}{
 		{
 			name:            "No backups applied",
 			existingBackups: []client.Object{},
-			expectedBackupTracker: []BackupTracker{{
+			expectedBackupTracker: BackupTracker{
 				ProgressingBackups: []string{"backup1", "backup2", "backup3", "backup4"},
-			}},
+			},
 		},
 		{
-			name: "Backups applied in the first group but have no status",
+			name: "Backups applied but have no status",
 			existingBackups: []client.Object{
 				fakeBackupCr("backup1", "1", "fakeResource1"),
 				fakeBackupCr("backup2", "1", "fakeResource2"),
 				fakeBackupCr("backup3", "1", "fakeResource3"),
 				fakeBackupCr("backup4", "1", "fakeResource4"),
 			},
-			expectedBackupTracker: []BackupTracker{{
+			expectedBackupTracker: BackupTracker{
 				PendingBackups: []string{"backup1", "backup2", "backup3", "backup4"},
-			}, {
-				ProgressingBackups: []string{"backup5"},
-			}},
+			},
 		},
 		{
-			name: "Backups applied in the first group but have failed status",
+			name: "Backups applied but have failed status",
 			existingBackups: []client.Object{
 				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseFailed),
 				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseInProgress),
 				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseFailedValidation),
 			},
-			expectedBackupTracker: []BackupTracker{{
-				ProgressingBackups:      []string{"backup"},
-				FailedValidationBackups: []string{"backup"},
-				FailedBackups:           []string{"backup"},
-				SucceededBackups:        []string{"backup"},
-			}},
-		},
-		{
-			name: "Backup was previously failed on validation and now recreated",
-			existingBackups: []client.Object{
-				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup3", "1", "fakeResourceOld", velerov1.BackupPhaseFailedValidation),
-				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
+			expectedBackupTracker: BackupTracker{
+				ProgressingBackups: []string{"backup2"},
+				FailedBackups:      []string{"backup1", "backup4"},
+				SucceededBackups:   []string{"backup3"},
 			},
-			expectedBackupTracker: []BackupTracker{{
-				ProgressingBackups: []string{"backup"},
-				SucceededBackups:   []string{"backup", "backup", "backup"},
-			}},
-		},
-		{
-			name: "Backups completed in the first group and in progress in the second group",
-			existingBackups: []client.Object{
-				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseInProgress),
-			},
-			expectedBackupTracker: []BackupTracker{{
-				SucceededBackups: []string{"backup", "backup", "backup", "backup"},
-			}, {
-				ProgressingBackups: []string{"backup"},
-			}},
-		},
-		{
-			name: "Backups completed in the first group and failed in the second group",
-			existingBackups: []client.Object{
-				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseFailed),
-			},
-			expectedBackupTracker: []BackupTracker{{
-				SucceededBackups: []string{"backup", "backup", "backup", "backup"},
-			}, {
-				FailedBackups: []string{"backup"},
-			}},
 		},
 		{
 			name: "All backups have completed",
 			existingBackups: []client.Object{
 				fakeBackupCrWithStatus("backup1", "1", "fakeResource1", velerov1.BackupPhaseCompleted),
 				fakeBackupCrWithStatus("backup2", "1", "fakeResource2", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup3", "2", "fakeResource3", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup4", "2", "fakeResource4", velerov1.BackupPhaseCompleted),
-				fakeBackupCrWithStatus("backup5", "2", "fakeResource5", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup3", "1", "fakeResource3", velerov1.BackupPhaseCompleted),
+				fakeBackupCrWithStatus("backup4", "1", "fakeResource4", velerov1.BackupPhaseCompleted),
 			},
-			expectedBackupTracker: []BackupTracker{{
-				SucceededBackups: []string{"", "", "", ""},
-			}, {
-				SucceededBackups: []string{""},
-			}},
+			expectedBackupTracker: BackupTracker{
+				SucceededBackups: []string{"backup1", "backup2", "backup3", "backup4"},
+			},
 		},
 	}
 
@@ -332,15 +283,11 @@ func TestTriggerBackup(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 
-			backups := [][]*velerov1.Backup{
-				{
-					fakeBackupCr("backup1", "1", "fakeResource1"),
-					fakeBackupCr("backup2", "1", "fakeResource2"),
-					fakeBackupCr("backup3", "1", "fakeResource3"),
-					fakeBackupCr("backup4", "1", "fakeResource4"),
-				}, {
-					fakeBackupCr("backup5", "2", "fakeResource5"),
-				},
+			backups := []*velerov1.Backup{
+				fakeBackupCr("backup1", "1", "fakeResource1"),
+				fakeBackupCr("backup2", "1", "fakeResource2"),
+				fakeBackupCr("backup3", "1", "fakeResource3"),
+				fakeBackupCr("backup4", "1", "fakeResource4"),
 			}
 
 			handler := &BRHandler{
@@ -348,27 +295,16 @@ func TestTriggerBackup(t *testing.T) {
 				Log:    ctrl.Log.WithName("BackupRestore"),
 			}
 
-			backupTracker := make([]*BackupTracker, len(backups))
-			for i, backupgroup := range backups {
-				backupTracker[i], err = handler.TriggerBackup(context.Background(), backupgroup)
-				if err != nil {
-					return
-				}
-			}
-
+			backupTracker, err := handler.StartOrTrackBackup(context.Background(), backups)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err.Error())
 			}
 
 			// assert tracker values
-			for i, curTracker := range tc.expectedBackupTracker {
-				assert.Equal(t, len(curTracker.PendingBackups), len(backupTracker[i].PendingBackups))
-				assert.Equal(t, len(curTracker.ProgressingBackups), len(backupTracker[i].ProgressingBackups))
-				assert.Equal(t, len(curTracker.FailedBackups), len(backupTracker[i].FailedBackups))
-				assert.Equal(t, len(curTracker.FailedValidationBackups), len(backupTracker[i].FailedValidationBackups))
-				assert.Equal(t, len(curTracker.SucceededBackups), len(backupTracker[i].SucceededBackups))
-			}
-
+			assert.Equal(t, len(tc.expectedBackupTracker.PendingBackups), len(backupTracker.PendingBackups))
+			assert.Equal(t, len(tc.expectedBackupTracker.ProgressingBackups), len(backupTracker.ProgressingBackups))
+			assert.Equal(t, len(tc.expectedBackupTracker.FailedBackups), len(backupTracker.FailedBackups))
+			assert.Equal(t, len(tc.expectedBackupTracker.SucceededBackups), len(backupTracker.SucceededBackups))
 		})
 	}
 }
@@ -411,15 +347,15 @@ func TestExportRestoresToDir(t *testing.T) {
 	}
 
 	// Check the output
-	expectedDir1 := filepath.Join(toDir, oadpRestorePath, "restore1")
-	expectedDir2 := filepath.Join(toDir, oadpRestorePath, "restore2")
+	expectedDir1 := filepath.Join(toDir, OadpRestorePath, "restore1")
+	expectedDir2 := filepath.Join(toDir, OadpRestorePath, "restore2")
 	expectedDirs := []string{expectedDir1, expectedDir2}
 
 	expectedFiles := []string{
-		filepath.Join(expectedDir1, "restore1.yaml"),
-		filepath.Join(expectedDir1, "restore2.yaml"),
-		filepath.Join(expectedDir2, "restore1.yaml"),
-		filepath.Join(expectedDir2, "restore2.yaml"),
+		filepath.Join(expectedDir1, "1_restore1_openshift-adp.yaml"),
+		filepath.Join(expectedDir1, "2_restore2_openshift-adp.yaml"),
+		filepath.Join(expectedDir2, "1_restore3_openshift-adp.yaml"),
+		filepath.Join(expectedDir2, "2_restore4_openshift-adp.yaml"),
 	}
 	for _, dir := range expectedDirs {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -450,20 +386,7 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
 	assert.NoError(t, err)
 
-	// Test case 2: storage secret found
-	storageSecret := fakeSecret(defaultStorageSecret)
-	err = c.Create(context.Background(), storageSecret)
-	assert.NoError(t, err)
-
-	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
-	assert.NoError(t, err)
-
-	// Check that the storage secret was written to file
-	storageSecretFilePath := filepath.Join(toDir, oadpSecretPath, defaultStorageSecret+".yaml")
-	_, err = os.Stat(storageSecretFilePath)
-	assert.NoError(t, err)
-
-	// Test case 3: DPA with velero credential found
+	// Test case 2: DPA with velero credentials found
 	dpa := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       dpaGvk.Kind,
@@ -481,6 +404,13 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 							},
 						},
 					},
+					map[string]interface{}{
+						"velero": map[string]interface{}{
+							"credential": map[string]interface{}{
+								"name": "cloud-credentials",
+							},
+						},
+					},
 				},
 			},
 		},
@@ -492,6 +422,10 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	err = c.Create(context.Background(), veleroCreds)
 	assert.NoError(t, err)
 
+	storageSecret := fakeSecret("cloud-credentials")
+	err = c.Create(context.Background(), storageSecret)
+	assert.NoError(t, err)
+
 	// Test oadp configurations are exported to files
 	err = handler.ExportOadpConfigurationToDir(context.Background(), toDir, oadpNs)
 	assert.NoError(t, err)
@@ -501,9 +435,13 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	_, err = os.Stat(dpaFilePath)
 	assert.NoError(t, err)
 
-	// Check that the velero credential secret was written to file
+	// Check that the secrets was written to file
 	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretPath, "velero-cred.yaml")
 	_, err = os.Stat(veleroCredSecretFilePath)
+	assert.NoError(t, err)
+
+	storageSecretFilePath := filepath.Join(toDir, oadpSecretPath, "cloud-credentials.yaml")
+	_, err = os.Stat(storageSecretFilePath)
 	assert.NoError(t, err)
 }
 

@@ -31,7 +31,6 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -50,31 +49,41 @@ type BackupTracker struct {
 	FailedValidationBackups []string
 }
 
-// CheckIfBackupRequested check to know if we need backup
-func (h *BRHandler) CheckIfBackupRequested(ctx context.Context, content []lcav1alpha1.ConfigMapRef) (bool, []*velerov1.Backup, error) {
+// GetSortedBackupsFromConfigmap returns a list of sorted backup CRs extracted from configmap
+func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error) {
 	// no CM listed
 	if len(content) == 0 {
 		h.Log.Info("no configMap CR provided")
-		return false, []*velerov1.Backup{}, nil
+		return nil, nil
 	}
 
-	// extract CM
 	oadpConfigmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
-		return false, []*velerov1.Backup{}, err
+		if k8serrors.IsNotFound(err) {
+			errMsg := fmt.Sprintf("OADP configmap not found, error: %s. Please create the configmap.", err.Error())
+			h.Log.Error(nil, errMsg)
+			return nil, NewBRNotFoundError(errMsg)
+		}
+		return nil, err
 	}
 
-	// read the content in the CM
-	backupCrs, err := h.extractBackupFromConfigmaps(ctx, oadpConfigmaps)
+	// extract backup CRs from configmaps
+	backupCRs, err := h.extractBackupFromConfigmaps(ctx, oadpConfigmaps)
 	if err != nil {
-		return false, []*velerov1.Backup{}, err
+		return nil, err
 	}
 
-	return len(backupCrs) > 0, backupCrs, nil
+	// sort backup CRs by wave-apply
+	sortedBackupGroups, err := sortByApplyWaveBackupCrs(backupCRs)
+	if err != nil {
+		return nil, err
+	}
+
+	return sortedBackupGroups, nil
 }
 
-// TriggerBackup start backup or track status
-func (h *BRHandler) TriggerBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error) {
+// StartOrTrackBackup start backup or track backup status
+func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error) {
 	// track backup status
 	bt := BackupTracker{}
 
@@ -94,7 +103,7 @@ func (h *BRHandler) TriggerBackup(ctx context.Context, backups []*velerov1.Backu
 			bt.ProgressingBackups = append(bt.ProgressingBackups, backup.Name)
 
 		} else {
-			h.Log.Info("Backup",
+			h.Log.Info("Backup CR status",
 				"name", existingBackup.Name,
 				"phase", existingBackup.Status.Phase,
 				"warnings", existingBackup.Status.Warnings,
@@ -106,23 +115,10 @@ func (h *BRHandler) TriggerBackup(ctx context.Context, backups []*velerov1.Backu
 			switch existingBackup.Status.Phase {
 			case velerov1.BackupPhaseCompleted:
 				bt.SucceededBackups = append(bt.SucceededBackups, existingBackup.Name)
-			case velerov1.BackupPhasePartiallyFailed, velerov1.BackupPhaseFailed:
+			case velerov1.BackupPhaseFailedValidation,
+				velerov1.BackupPhasePartiallyFailed,
+				velerov1.BackupPhaseFailed:
 				bt.FailedBackups = append(bt.FailedBackups, existingBackup.Name)
-			case velerov1.BackupPhaseFailedValidation:
-				// Re-create the failed validation backup if it has been updated
-				if !equivalentBackups(existingBackup, backup) {
-					if err := h.Delete(ctx, existingBackup); err != nil {
-						return &bt, err
-					}
-
-					err := h.createNewBackupCr(ctx, backup)
-					if err != nil {
-						return &bt, err
-					}
-					bt.ProgressingBackups = append(bt.ProgressingBackups, existingBackup.Name)
-				} else {
-					bt.FailedValidationBackups = append(bt.FailedValidationBackups, existingBackup.Name)
-				}
 			case "":
 				// Backup has no status
 				bt.PendingBackups = append(bt.PendingBackups, existingBackup.Name)
@@ -133,6 +129,12 @@ func (h *BRHandler) TriggerBackup(ctx context.Context, backups []*velerov1.Backu
 		}
 	}
 
+	h.Log.Info("Backups status",
+		"pending backups", bt.PendingBackups,
+		"progressing backups", bt.ProgressingBackups,
+		"succeeded backups", bt.SucceededBackups,
+		"failed backups", bt.FailedBackups,
+	)
 	return &bt, nil
 }
 
@@ -151,13 +153,8 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 	return nil
 }
 
-func equivalentBackups(backup1, backup2 *velerov1.Backup) bool {
-	// Compare the specs only
-	return equality.Semantic.DeepEqual(backup1.Spec, backup2.Spec)
-}
-
-// SortBackupOrRestoreCrs sorts the backups by the apply-wave annotation
-func SortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
+// sortByApplyWaveBackupCrs sorts the backups by the apply-wave annotation
+func sortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
 	var resourcesApplyWaveMap = make(map[int][]*velerov1.Backup)
 	var sortedResources [][]*velerov1.Backup
 
@@ -219,6 +216,13 @@ func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps 
 			// i.e., missing required fields
 			err = h.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
 			if err != nil {
+				if k8serrors.IsInvalid(err) {
+					errMsg := fmt.Sprintf("Invalid backup %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
+						resource.GetName(), cm.GetName(), err.Error())
+					h.Log.Error(err, errMsg)
+					return nil, NewBRFailedValidationError("Backup", errMsg)
+				}
+
 				if !k8serrors.IsAlreadyExists(err) {
 					return nil, err
 				}
@@ -238,35 +242,6 @@ func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps 
 
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CRs and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
-	// Create the directories for OADP and secret
-	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretPath), 0o700); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaPath), 0o700); err != nil {
-		return err
-	}
-
-	// Write the object storage secret to a given directory if found
-	storageSecret := &corev1.Secret{}
-	if err := h.Get(ctx, types.NamespacedName{
-		Name:      defaultStorageSecret,
-		Namespace: oadpNamespace,
-	}, storageSecret); err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return err
-		}
-	} else {
-		// Unset uid and resource version
-		storageSecret.SetUID("")
-		storageSecret.SetResourceVersion("")
-
-		filePath := filepath.Join(toDir, oadpSecretPath, defaultStorageSecret+".yaml")
-		if err := writeSecretToFile(storageSecret, filePath); err != nil {
-			return err
-		}
-	}
-
 	dpaList := &unstructured.UnstructuredList{}
 	dpaList.SetGroupVersionKind(dpaGvkList)
 	opts := []client.ListOption{
@@ -280,7 +255,16 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		}
 		return err
 	}
+	if len(dpaList.Items) == 0 {
+		return nil
+	}
 
+	// Create the directory for DPAs
+	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaPath), 0o700); err != nil {
+		return err
+	}
+
+	var secrets []string
 	// Write DPAs to a given directory
 	for _, dpa := range dpaList.Items {
 		// Unset uid and resource version
@@ -291,6 +275,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		if err := writeDpaToFile(&dpa, filePath); err != nil {
 			return err
 		}
+		h.Log.Info("Exported DPA CR to file", "path", filePath)
 
 		// Make sure the required storage creds are exported
 		dpaSpec := dpa.Object["spec"].(map[string]interface{})
@@ -310,29 +295,37 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 			}
 
 			secretName := creds["name"].(string)
-			if secretName == defaultStorageSecret {
-				// default storage secret has been exported already, continue
-				continue
-			}
-
-			storageSecret := &corev1.Secret{}
-			if err := h.Get(ctx, types.NamespacedName{
-				Name:      secretName,
-				Namespace: oadpNamespace,
-			}, storageSecret); err != nil {
-				return err
-			}
-
-			storageSecret.SetUID("")
-			storageSecret.SetResourceVersion("")
-
-			filePath := filepath.Join(toDir, oadpSecretPath, secretName+".yaml")
-			if err := writeSecretToFile(storageSecret, filePath); err != nil {
-				return err
-			}
+			secrets = append(secrets, secretName)
 		}
 	}
 
+	if len(secrets) == 0 {
+		return nil
+	}
+	// Create the directory for secrets
+	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretPath), 0o700); err != nil {
+		return err
+	}
+
+	// Write secrets
+	for _, secretName := range secrets {
+		storageSecret := &corev1.Secret{}
+		if err := h.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: oadpNamespace,
+		}, storageSecret); err != nil {
+			return err
+		}
+
+		storageSecret.SetUID("")
+		storageSecret.SetResourceVersion("")
+
+		filePath := filepath.Join(toDir, oadpSecretPath, secretName+".yaml")
+		if err := writeSecretToFile(storageSecret, filePath); err != nil {
+			return err
+		}
+		h.Log.Info("Exported secret to file", "path", filePath)
+	}
 	return nil
 }
 
@@ -349,24 +342,26 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		return err
 	}
 
-	sortedRestores, err := sortRestoreCrs(restores)
+	sortedRestores, err := sortByApplyWaveRestoreCrs(restores)
 	if err != nil {
 		return err
 	}
 
 	for i, restoreGroup := range sortedRestores {
 		// Create a directory for each group
-		group := filepath.Join(toDir, oadpRestorePath, "restore"+strconv.Itoa(i+1))
+		group := filepath.Join(toDir, OadpRestorePath, "restore"+strconv.Itoa(i+1))
 		// If the directory already exists, it does nothing
 		if err := os.MkdirAll(group, 0o700); err != nil {
 			return err
 		}
 
 		for j, restore := range restoreGroup {
-			filePath := filepath.Join(group, "restore"+strconv.Itoa(j+1)+".yaml")
+			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + ".yaml"
+			filePath := filepath.Join(group, restoreFileName)
 			if err := writeRestoreToFile(restore, filePath); err != nil {
 				return err
 			}
+			h.Log.Info("Exported restore CR to file", "path", filePath)
 		}
 	}
 
