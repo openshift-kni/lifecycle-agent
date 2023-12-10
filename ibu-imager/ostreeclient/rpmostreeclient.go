@@ -62,6 +62,8 @@ type IClient interface {
 	RpmOstreeVersion() (*VersionData, error)
 	QueryStatus() (*Status, error)
 	IsStaterootBooted(stateroot string) (bool, error)
+	GetCurrentStaterootName() (string, error)
+	GetDeploymentID(osname string) (string, error)
 }
 
 // Client is a handle for interacting with a rpm-ostree based system.
@@ -121,6 +123,20 @@ func (c *Client) QueryStatus() (*Status, error) {
 	return &q, nil
 }
 
+func (c *Client) GetDeploymentID(osname string) (string, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return "", err
+	}
+
+	for _, deployment := range status.Deployments {
+		if deployment.OSName == osname {
+			return deployment.ID, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find deployment with osname %s", osname)
+}
+
 // IsStaterootBooted returns whether the specified stateroot is booted
 func (c *Client) IsStaterootBooted(stateroot string) (bool, error) {
 	status, err := c.QueryStatus()
@@ -134,4 +150,20 @@ func (c *Client) IsStaterootBooted(stateroot string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// GetCurrentStaterootName returns current stateroot name (a.k.a OSName)
+func (c *Client) GetCurrentStaterootName() (string, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return "", err
+	}
+
+	for _, deployment := range status.Deployments {
+		if deployment.Booted {
+			return deployment.OSName, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find a booted stateroot name")
 }

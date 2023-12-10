@@ -18,98 +18,125 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
-
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"path/filepath"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+	v1 "k8s.io/api/core/v1"
 
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// simple custom error types to handle backup cases
-type (
-	BackupFailedError     string
-	BackupValidationError string
+var (
+	// todo: this value might need adjusting later
+	defaultRebootTimeout = 60 * time.Minute
 )
 
-func (b BackupFailedError) Error() string {
-	return string(b)
-}
-
-func (b BackupValidationError) Error() string {
-	return string(b)
+var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+	currentStaterootName, err := r.RPMOstreeClient.GetCurrentStaterootName()
+	if err != nil {
+		return false, err
+	}
+	r.Log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", getDesiredStaterootName(ibu))
+	return currentStaterootName != getDesiredStaterootName(ibu), nil
 }
 
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-
 	r.Log.Info("Starting handleUpgrade")
 
-	// backup with OADP
-	r.Log.Info("Backup with Oadp operator")
-	reqBackup, backupCRs, err := r.BackupRestore.CheckIfBackupRequested(ctx, ibu.Spec.OADPContent)
+	prePivot, err := isPrePivot(r, ibu)
 	if err != nil {
-		if k8serrors.IsInvalid(err) {
-			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-				utils.ConditionReasons.InProgress,
-				metav1.ConditionTrue,
-				fmt.Sprintf("Invalid backup resource detected in configMap, please update"),
-				ibu.Generation)
-			return requeueWithShortInterval(), nil
+		//todo: abort handler? e.g delete desired stateroot
+		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	// WARNING: the pod may not know if we are boot loop (for now)
+	if prePivot {
+		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
+		ctrlResult, err := r.prePivot(ctx, ibu)
+		if err != nil {
+			//todo: abort handler? e.g delete desired stateroot
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+
+		// prePivot requested a requeue
+		if ctrlResult != doNotRequeue() {
+			return ctrlResult, nil
+		}
+
+		// Write an event to indicate reboot attempt
+		r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System wil now reboot")
+		err = r.rebootToNewStateRoot()
+		if err != nil {
+			//todo: abort handler? e.g delete desired stateroot
+			r.Log.Error(err, "")
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+	} else {
+		r.Log.Info("Pivot successful, starting post pivot steps")
+		ctrlResult, err := r.postPivot(ctx, ibu)
+		if err != nil {
+			return requeueWithError(err)
+		}
+
+		// postPivot requested a requeue
+		if ctrlResult != doNotRequeue() {
+			return ctrlResult, nil
+		}
+
+		r.Log.Info("Done handleUpgrade")
+		utils.SetUpgradeStatusCompleted(ibu)
+		return doNotRequeue(), nil
+	}
+
+	return doNotRequeue(), fmt.Errorf("something we went wrong. upgrade failed")
+}
+
+func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot() error {
+	r.Log.Info("rebooting to a new stateroot")
+
+	_, err := r.Executor.Execute("systemctl", "--message=\"Image Based Upgrade\"", "reboot")
+	if err != nil {
+		return err
+	}
+
+	r.Log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
+	time.Sleep(defaultRebootTimeout)
+
+	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
+}
+
+// prePivot all the funcs needed to be called before a pivot
+func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	// backup with OADP
+	r.Log.Info("Handling backups with OADP operator")
+	ctrlResult, err := r.handleBackup(ctx, ibu)
+	if err != nil {
+		if backuprestore.IsBRFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+		if backuprestore.IsBRFailedValidationError(err) || backuprestore.IsBRNotFoundError(err) {
+			utils.SetUpgradeStatusInProgress(ibu, err.Error())
+			return requeueWithMediumInterval(), nil
 		}
 		return requeueWithError(err)
 	}
-	if reqBackup {
-		r.Log.Info("Backup requested")
-		ctrlResult, err := r.startBackup(ctx, backupCRs)
-		if err != nil {
-			var (
-				backupFailedError     *BackupFailedError
-				backupValidationError *BackupValidationError
-			)
-			switch {
-			case errors.As(err, &backupFailedError):
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-					utils.ConditionReasons.Failed,
-					metav1.ConditionFalse,
-					backupFailedError.Error(),
-					ibu.Generation)
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
-					utils.ConditionReasons.Failed,
-					metav1.ConditionFalse,
-					"Upgrade failed",
-					ibu.Generation)
-				return ctrlResult, nil
-			case errors.As(err, &backupValidationError):
-				utils.SetStatusCondition(&ibu.Status.Conditions,
-					utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-					utils.ConditionReasons.InProgress,
-					metav1.ConditionTrue,
-					backupValidationError.Error(),
-					ibu.Generation)
-				return ctrlResult, nil
-			default:
-				return requeueWithError(err)
-			}
-		}
-		if !ctrlResult.IsZero() {
-			return ctrlResult, nil
-		}
+	if !ctrlResult.IsZero() {
+		return ctrlResult, nil
 	}
 
 	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
@@ -124,14 +151,9 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 
 	r.Log.Info("Writing Restore CRs into new stateroot")
 	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, stateRootRepo); err != nil {
-		if k8serrors.IsInvalid(err) {
-			utils.SetStatusCondition(&ibu.Status.Conditions,
-				utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-				utils.ConditionReasons.InProgress,
-				metav1.ConditionTrue,
-				fmt.Sprintf("Invalid restore resource detected in configMap, please update"),
-				ibu.Generation)
-			return requeueWithShortInterval(), nil
+		if backuprestore.IsBRFailedValidationError(err) {
+			utils.SetUpgradeStatusInProgress(ibu, err.Error())
+			return requeueWithMediumInterval(), nil
 		}
 		return requeueWithError(err)
 	}
@@ -151,79 +173,154 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		return requeueWithError(err)
 	}
 
-	// Save the IBU CR to the new state root before pivot
+	r.Log.Info("Writing lvm-configuration into new stateroot")
+	if err := r.ClusterConfig.FetchLvmConfig(ctx, stateRootRepo); err != nil {
+		return requeueWithError(err)
+	}
+
+	r.Log.Info("Save the IBU CR to the new state root before pivot")
 	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
 	// Temporarily empty resource version so the file can be used to restore status
 	rv := ibu.ResourceVersion
 	ibu.ResourceVersion = ""
-	if err := lcautils.WriteToFile(ibu, filePath); err != nil {
-		return doNotRequeue(), err
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
+		return requeueWithError(err)
 	}
 	ibu.ResourceVersion = rv
-	// TODO: Pivot to new stateroot
 
-	// TODO: Post-pivot steps
-	//
-	// err = r.ExtraManifest.ApplyExtraManifestsFromDir(ctx, stateRootRepo)
-	// if err != nil {
-	// 	 r.Log.Error(err, "Failed to apply extra manifests")
-	//	 return ctrl.Result{}, err
-	// }
-	r.Log.Info("Done handleUpgrade")
-
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Upgrade completed",
-		ibu.Generation)
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionFalse,
-		"Upgrade completed",
-		ibu.Generation)
-	return doNotRequeue(), nil
+	r.Log.Info("PrePivot done")
+	return ctrl.Result{}, nil
 }
 
-// startBackup manages backup flow and returns with possible requeue
-func (r *ImageBasedUpgradeReconciler) startBackup(ctx context.Context, backupCRs []*velerov1.Backup) (ctrl.Result, error) {
-	// sort backupCRs by wave-apply
-	sortedBackupGroups, err := backuprestore.SortByApplyWaveBackupCrs(backupCRs)
+func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	r.Log.Info("Starting health check for different components")
+	err := healthcheck.HealthChecks(r.Client, r.Log)
+	if err != nil {
+		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	r.Log.Info("Applying extra manifests")
+	err = r.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
+	if err != nil {
+		if extramanifest.IsEMFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+		return requeueWithError(err)
+	}
+
+	r.Log.Info("Recovering OADP configuration")
+	err = r.BackupRestore.RestoreOadpConfigurations(ctx)
+	if err != nil {
+		if backuprestore.IsBRStorageBackendUnavailableError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+		return requeueWithError(err)
+	}
+
+	r.Log.Info("Handling restores with OADP operator")
+	result, err := r.handleRestore(ctx)
+	if err != nil {
+		// Restore failed
+		if backuprestore.IsBRFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+		return requeueWithError(err)
+	}
+
+	return result, nil
+}
+
+// handleBackup manages backup flow and returns with possible requeue
+func (r *ImageBasedUpgradeReconciler) handleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	sortedBackupGroups, err := r.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		return requeueWithError(err)
 	}
 
+	if len(sortedBackupGroups) == 0 {
+		r.Log.Info("No backup requests, skipping")
+		return doNotRequeue(), nil
+	}
+
 	// trigger and track each group
-	for _, backups := range sortedBackupGroups {
-		backupTracker, err := r.BackupRestore.TriggerBackup(ctx, backups)
+	for index, backups := range sortedBackupGroups {
+		r.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
+		backupTracker, err := r.BackupRestore.StartOrTrackBackup(ctx, backups)
 		if err != nil {
 			return requeueWithError(err)
 		}
+
+		// The current backup group has done, work on the next group
 		if len(backupTracker.SucceededBackups) == len(backups) {
-			// The current backup group has done, work on the next group
 			continue
-		} else if len(backupTracker.FailedBackups) != 0 {
-			// not recoverable
-			msg := fmt.Sprintf("Failed backups: %s", strings.Join(backupTracker.FailedBackups, ","))
-			err := BackupFailedError(msg)
-			return doNotRequeue(), &err
-		} else if len(backupTracker.FailedValidationBackups) != 0 {
-			msg := fmt.Sprintf("Failed validation backups reported by Oadp: %s. %s", strings.Join(backupTracker.FailedValidationBackups, ","), "Please update the invalid backups.")
-			err := BackupValidationError(msg)
-			return requeueWithShortInterval(), &err
-		} else if len(backupTracker.ProgressingBackups) != 0 {
-			r.Log.Info(fmt.Sprintf("Inprogress backups: %s", strings.Join(backupTracker.ProgressingBackups, ",")))
-			return requeueWithCustomInterval(2 * time.Second), nil
-		} else {
-			// Backup doesn't have any status, it's likely
-			// that the object storage backend is not available.
-			// Requeue to wait for the object storage backend
-			// to be ready.
-			r.Log.Info(fmt.Sprintf("Pending backups: %s. %s", strings.Join(backupTracker.PendingBackups, ","), "Wait for object storage backend to be available."))
-			return requeueWithMediumInterval(), nil
 		}
+
+		// Backup CRs failed
+		if len(backupTracker.FailedBackups) > 0 {
+			errMsg := fmt.Sprintf("Failed backup CRs: %s", strings.Join(backupTracker.FailedBackups, ","))
+			return requeueWithError(backuprestore.NewBRFailedError("Backup", errMsg))
+		}
+
+		// Backups are in progress
+		if len(backupTracker.ProgressingBackups) > 0 {
+			return requeueWithCustomInterval(5 * time.Second), nil
+		}
+
+		// Backups are waiting for condition
+		return requeueWithMediumInterval(), nil
 	}
 
+	r.Log.Info("All backups succeeded")
+	return doNotRequeue(), nil
+}
+
+func (r *ImageBasedUpgradeReconciler) handleRestore(ctx context.Context) (ctrl.Result, error) {
+	// Load restore CRs from files
+	sortedRestoreGroups, err := r.BackupRestore.LoadRestoresFromOadpRestorePath()
+	if err != nil {
+		return requeueWithError(err)
+	}
+
+	if len(sortedRestoreGroups) == 0 {
+		r.Log.Info("No restore requests, skipping")
+		return doNotRequeue(), nil
+	}
+
+	for index, restores := range sortedRestoreGroups {
+		r.Log.Info("Processing restore", "groupIndex", index+1, "totalGroups", len(sortedRestoreGroups))
+		restoreTracker, err := r.BackupRestore.StartOrTrackRestore(ctx, restores)
+		if err != nil {
+			return requeueWithError(err)
+		}
+
+		// The current restore group has done, work on the next group
+		if len(restoreTracker.SucceededRestores) == len(restores) {
+			continue
+		}
+
+		// Restore CRs failed
+		if len(restoreTracker.FailedRestores) > 0 {
+			errMsg := fmt.Sprintf("Failed restore CRs: %s", strings.Join(restoreTracker.FailedRestores, ","))
+			return requeueWithError(backuprestore.NewBRFailedError("Restore", errMsg))
+		}
+
+		// Restores CRs are in progress
+		if len(restoreTracker.ProgressingRestores) > 0 {
+			return requeueWithShortInterval(), nil
+		}
+
+		// Restores are waiting for condition
+		return requeueWithMediumInterval(), nil
+	}
+
+	r.Log.Info("All restores succeeded")
+	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpRestorePath)); err != nil {
+		return requeueWithError(err)
+	}
+	r.Log.Info("OADP restore path removed", "path", backuprestore.OadpRestorePath)
 	return doNotRequeue(), nil
 }

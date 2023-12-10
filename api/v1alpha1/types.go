@@ -23,7 +23,7 @@ import (
 // +genclient
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:path=imagebasedupgrades,shortName=ibu
+//+kubebuilder:resource:path=imagebasedupgrades,scope=Cluster,shortName=ibu
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API

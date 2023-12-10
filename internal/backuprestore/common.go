@@ -18,6 +18,8 @@ package backuprestore
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math"
 	"os"
 
@@ -52,28 +54,17 @@ const (
 	clusterIDLabel   = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
 	defaultApplyWave = math.MaxInt32                   // 2147483647, an enough large number
 
-	defaultStorageSecret = "cloud-credentials"
-
-	oadpRestorePath = "OADP/veleroRestore"
-	oadpDpaPath     = "OADP/dpa"
-	oadpSecretPath  = "OADP/secret"
+	OadpRestorePath = "/opt/OADP/veleroRestore"
+	oadpDpaPath     = "/opt/OADP/dpa"
+	oadpSecretPath  = "/opt/OADP/secret"
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
 	OadpNs = "openshift-adp"
 )
 
-// RestorePhase defines the phase of restore
-type RestorePhase string
-
-// Constants for restore phase
-const (
-	RestorePending    RestorePhase = "RestorePending"
-	RestoreFailed     RestorePhase = "RestoreFailed"
-	RestoreCompleted  RestorePhase = "RestoreCompleted"
-	RestoreInProgress RestorePhase = "RestoreInProgress"
-)
-
 var (
+	hostDir = "/host"
+
 	dpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
 	dpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
 	backupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
@@ -86,10 +77,87 @@ type BRHandler struct {
 	Log logr.Logger
 }
 
-// RestoreStatus defines the status of restore
-type RestoreStatus struct {
-	Status  RestorePhase
-	Message string
+// BRStatusError type
+type BRStatusError struct {
+	Type       string
+	Reason     string
+	ErrMessage string
+}
+
+func (e *BRStatusError) Error() string {
+	return fmt.Sprintf(e.ErrMessage)
+}
+
+func NewBRNotFoundError(msg string) *BRStatusError {
+	return &BRStatusError{
+		Type:       "configmap",
+		Reason:     "NotFound",
+		ErrMessage: msg,
+	}
+}
+
+func NewBRFailedError(brType, msg string) *BRStatusError {
+	return &BRStatusError{
+		Type:       brType,
+		Reason:     "Failed",
+		ErrMessage: msg,
+	}
+}
+
+func NewBRFailedValidationError(brType, msg string) *BRStatusError {
+	return &BRStatusError{
+		Type:       brType,
+		Reason:     "FailedValidation",
+		ErrMessage: msg,
+	}
+}
+
+func NewBRStorageBackendUnavailableError(msg string) *BRStatusError {
+	return &BRStatusError{
+		Type:       "StorageBackend",
+		Reason:     "Unavailable",
+		ErrMessage: msg,
+	}
+}
+
+func IsBRNotFoundError(err error) bool {
+	var brErr *BRStatusError
+	if errors.As(err, &brErr) {
+		if brErr.Type == "configmap" {
+			return brErr.Reason == "NotFound"
+		}
+	}
+	return false
+}
+
+func IsBRFailedError(err error) bool {
+	var brErr *BRStatusError
+	if errors.As(err, &brErr) {
+		if brErr.Type == "Backup" || brErr.Type == "Restore" {
+			return brErr.Reason == "Failed"
+		}
+	}
+	return false
+}
+
+func IsBRFailedValidationError(err error) bool {
+	var brErr *BRStatusError
+	if errors.As(err, &brErr) {
+		if brErr.Type == "Backup" || brErr.Type == "Restore" {
+			return brErr.Reason == "FailedValidation"
+		}
+	}
+	return false
+}
+
+func IsBRStorageBackendUnavailableError(err error) bool {
+	var brErr *BRStatusError
+	if errors.As(err, &brErr) {
+		if brErr.Type == "StorageBackend" {
+			return brErr.Reason == "Unavailable"
+		}
+	}
+	return false
 }
 
 func writeSecretToFile(secret *corev1.Secret, filePath string) error {

@@ -25,10 +25,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/go-logr/logr"
 
+	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -61,7 +62,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheConfigMapName,
-			Namespace: LcaPrecacheNamespace,
+			Namespace: common.LcaNamespace,
 		},
 		Data: data,
 	}
@@ -70,7 +71,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 }
 
 func validateJobConfig(ctx context.Context, c client.Client, imageList []string) error {
-	job, err := getJob(ctx, c, LcaPrecacheJobName, LcaPrecacheNamespace)
+	job, err := getJob(ctx, c, LcaPrecacheJobName, common.LcaNamespace)
 	if err != nil {
 		return err
 	}
@@ -80,7 +81,7 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 
 	cm, err := common.GetConfigMap(ctx, c, v1alpha1.ConfigMapRef{
 		Name:      LcaPrecacheConfigMapName,
-		Namespace: LcaPrecacheNamespace,
+		Namespace: common.LcaNamespace,
 	})
 	if err != nil && !k8serrors.IsNotFound(err) {
 		return err
@@ -96,7 +97,7 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 	return nil
 }
 
-func renderJob(config *Config) (*batchv1.Job, error) {
+func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 
 	var ValidIoNiceClasses = []int{IoNiceClassNone, IoNiceClassRealTime, IoNiceClassBestEffort, IoNiceClassIdle}
 
@@ -178,7 +179,7 @@ func renderJob(config *Config) (*batchv1.Job, error) {
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheJobName,
-			Namespace: LcaPrecacheNamespace,
+			Namespace: common.LcaNamespace,
 			Annotations: map[string]string{
 				"app.kubernetes.io/name": "lifecyle-agent-precache",
 			},

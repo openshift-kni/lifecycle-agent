@@ -20,6 +20,8 @@ import (
 	"fmt"
 
 	v1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -30,6 +32,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedrestoration"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
@@ -45,11 +48,15 @@ var (
 	// recertContainerImage is the container image for the recert tool
 	recertContainerImage string
 	recertSkipValidation bool
+
+	skipCleanup bool
 )
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
+	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -69,14 +76,8 @@ func init() {
 	// Add create command
 	rootCmd.AddCommand(createCmd)
 
-	// Add flags to imager command
-	createCmd.Flags().StringVarP(&authFile, "authfile", "a", common.ImageRegistryAuthFile, "The path to the authentication file of the container registry.")
-	createCmd.Flags().StringVarP(&containerRegistry, "image", "i", "", "The full image name with the container registry to push the OCI image.")
-	createCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", common.DefaultRecertImage, "The full image name for the recert container tool.")
-	createCmd.Flags().BoolVarP(&recertSkipValidation, "skip-recert-validation", "", false, "Skips the validations performed by the recert tool.")
-
-	// Mark flags as required
-	createCmd.MarkFlagRequired("image")
+	// Add flags to create command
+	addCommonFlags(createCmd)
 }
 
 func create() error {
@@ -87,6 +88,16 @@ func create() error {
 	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
 	op := ops.NewOps(log, hostCommandsExecutor)
 	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
+
+	if !skipCleanup {
+		defer func() {
+			if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
+				authFile, recertContainerImage, recertSkipValidation).CleanupSeedCluster(); err != nil {
+				log.Fatalf("Failed to restore seed cluster: %v", err)
+			}
+			log.Info("Seed cluster restored successfully!")
+		}()
+	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeconfigFile)
 	if err != nil {
@@ -101,10 +112,10 @@ func create() error {
 	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
 	if err = seedCreator.CreateSeedImage(); err != nil {
-		return fmt.Errorf("failed to create seed image: %w", err)
+		err = fmt.Errorf("failed to create seed image: %w", err)
+		log.Errorf(err.Error())
+		return err
 	}
-
-	// TODO: add cleanup
 
 	log.Info("OCI image created successfully!")
 	return nil

@@ -37,6 +37,36 @@ func (m *MockIClient) EXPECT() *MockIClientMockRecorder {
 	return m.recorder
 }
 
+// GetCurrentStaterootName mocks base method.
+func (m *MockIClient) GetCurrentStaterootName() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCurrentStaterootName")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCurrentStaterootName indicates an expected call of GetCurrentStaterootName.
+func (mr *MockIClientMockRecorder) GetCurrentStaterootName() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentStaterootName", reflect.TypeOf((*MockIClient)(nil).GetCurrentStaterootName))
+}
+
+// GetDeploymentID mocks base method.
+func (m *MockIClient) GetDeploymentID(osname string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDeploymentID", osname)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDeploymentID indicates an expected call of GetDeploymentID.
+func (mr *MockIClientMockRecorder) GetDeploymentID(osname any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentID", reflect.TypeOf((*MockIClient)(nil).GetDeploymentID), osname)
+}
+
 // IsStaterootBooted mocks base method.
 func (m *MockIClient) IsStaterootBooted(stateroot string) (bool, error) {
 	m.ctrl.T.Helper()

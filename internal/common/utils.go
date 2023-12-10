@@ -18,13 +18,24 @@ package common
 
 import (
 	"context"
+	"fmt"
+
 	"path/filepath"
+	"time"
+
+	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	cp "github.com/otiai10/copy"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -60,4 +71,47 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
 	return filepath.Join(utils.Host, filename)
+}
+
+func CopyOutsideChroot(src, dest string) error {
+	return cp.Copy(PathOutsideChroot(src), PathOutsideChroot(dest))
+}
+
+func GetStaterootPath(osname string) string {
+	return fmt.Sprintf("/ostree/deploy/%s", osname)
+}
+
+// FuncTimer check execution time
+func FuncTimer(start time.Time, name string, r logr.Logger) {
+	elapsed := time.Since(start)
+	r.Info(fmt.Sprintf("%s took %s", name, elapsed))
+}
+
+// NewDynamicClientAndRESTMapper returns a dynamic kube client and a REST mapper
+// to process unstructured resources
+func NewDynamicClientAndRESTMapper() (dynamic.Interface, meta.RESTMapper, error) {
+	// Read kubeconfig
+	config, err := clientcmd.BuildConfigFromFlags("", PathOutsideChroot(KubeconfigFile))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create dynamic client
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create dynamic REST mapper
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	groupResources, err := restmapper.GetAPIGroupResources(discoveryClient)
+	if err != nil {
+		return nil, nil, err
+	}
+	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+
+	return client, mapper, nil
 }

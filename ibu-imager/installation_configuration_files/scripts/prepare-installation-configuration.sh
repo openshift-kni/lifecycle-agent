@@ -5,8 +5,11 @@ set -x ## Be more verbose
 echo "Reconfiguring single node OpenShift"
 
 # remove this part
-mkdir -p /opt/openshift
-cd /opt/openshift
+
+OPT_OPENSHIFT=/opt/openshift
+
+mkdir -p ${OPT_OPENSHIFT}
+cd ${OPT_OPENSHIFT}
 
 function mount_config {
     echo "Mounting config iso"
@@ -23,8 +26,9 @@ function umount_config {
     rm -rf /mnt/config
 }
 
-CONFIG_PATH=/opt/openshift/cluster-configuration
-NETWORK_CONFIG_PATH=/opt/openshift/network-configuration
+
+CONFIG_PATH=${OPT_OPENSHIFT}/cluster-configuration
+NETWORK_CONFIG_PATH=${OPT_OPENSHIFT}/network-configuration
 
 echo "Waiting for ${CONFIG_PATH}"
 while [[ ! $(lsblk -f --json | jq -r '.blockdevices[] | select(.label == "relocation-config") | .name') && ! -d "${CONFIG_PATH}" ]]; do
@@ -33,17 +37,17 @@ while [[ ! $(lsblk -f --json | jq -r '.blockdevices[] | select(.label == "reloca
 done
 
 DEVICE=$(lsblk -f --json | jq -r '.blockdevices[] | select(.label == "relocation-config") | .name')
-if [[ -n "${DEVICE}" && ! -d "${CONFIG_PATH}" ]]; then
+if [[ -n "${DEVICE}" && ! -d "${OPT_OPENSHIFT}" ]]; then
     mount_config "${DEVICE}"
-    cp -r /mnt/config/* ${CONFIG_PATH}
+    cp -r /mnt/config/* ${OPT_OPENSHIFT}
 fi
 
-if [ ! -d "${CONFIG_PATH}" ]; then
+if [ ! -d "${OPT_OPENSHIFT}" ]; then
     echo "Failed to find cluster configuration at ${CONFIG_PATH}"
     exit 1
 fi
 
-echo "${CONFIG_PATH} has been created"
+echo "${OPT_OPENSHIFT} has been created"
 # Replace this with a function that loads values from yaml file
 set +o allexport
 
@@ -58,8 +62,7 @@ if [[ -f "${NETWORK_CONFIG_PATH}"/hostname ]]; then
     cp "${NETWORK_CONFIG_PATH}"/hostname /etc/hostname
 fi
 
-RELOCATION_CONFIG_PATH=/opt/openshift/cluster-configuration
-CLUSTER_CONFIG_FILE="${RELOCATION_CONFIG_PATH}"/manifest.json
+CLUSTER_CONFIG_FILE="${CONFIG_PATH}"/manifest.json
 NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${CLUSTER_CONFIG_FILE}")
 NEW_BASE_DOMAIN=$(jq -r '.domain' "${CLUSTER_CONFIG_FILE}")
 NEW_HOST_IP=$(jq -r '.master_ip' "${CLUSTER_CONFIG_FILE}")

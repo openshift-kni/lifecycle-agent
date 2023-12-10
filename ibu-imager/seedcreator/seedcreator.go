@@ -9,18 +9,23 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	v1 "github.com/openshift/api/config/v1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
+	"github.com/thoas/go-funk"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -78,7 +83,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	s.log.Println("Copy ibu-imager binary")
+	s.log.Info("Copy ibu-imager binary")
 	err := cp.Copy("/usr/local/bin/ibu-imager", "/var/usrlocal/bin/ibu-imager", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
 		return err
@@ -88,17 +93,27 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	if err := s.createContainerList(); err != nil {
+	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
 		return err
 	}
 
-	if err := s.gatherClusterInfo(ctx); err != nil {
+	if err := utils.RunOnce("gather_cluster_info", common.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
 		return err
 	}
 
-	if err := s.deleteNode(ctx); err != nil {
+	if s.recertSkipValidation {
+		s.log.Info("Skipping seed certificates backing up.")
+	} else {
+		if err := s.backupSeedCertificates(ctx); err != nil {
+			return err
+		}
+	}
+
+	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
 		return err
 	}
+
+	_ = utils.RunOnce("wait_for_ovn_to_go_down", common.BackupChecksDir, s.log, s.waitTillOvnKubeNodeIsDown, ctx)
 
 	if err := s.stopServices(); err != nil {
 		return err
@@ -107,28 +122,28 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
-		if err := s.runRecertValidation(); err != nil {
+		if err := s.ops.ForceExpireSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
 			return err
 		}
 	}
 
-	if err := s.backupVar(); err != nil {
+	if err := utils.RunOnce("backup_var", common.BackupChecksDir, s.log, s.backupVar); err != nil {
 		return err
 	}
 
-	if err := s.backupEtc(); err != nil {
+	if err := utils.RunOnce("backup_etc", common.BackupChecksDir, s.log, s.backupEtc); err != nil {
 		return err
 	}
 
-	if err := s.backupOstree(); err != nil {
+	if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
 		return err
 	}
 
-	if err := s.backupRPMOstree(); err != nil {
+	if err := utils.RunOnce("backup_rpmostree", common.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
 		return err
 	}
 
-	if err := s.backupMCOConfig(); err != nil {
+	if err := utils.RunOnce("backup_mco_config", common.BackupChecksDir, s.log, s.backupMCOConfig); err != nil {
 		return err
 	}
 
@@ -156,28 +171,23 @@ func (s *SeedCreator) copyConfigurationScripts() error {
 
 func (s *SeedCreator) handleServices() error {
 	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
+	return utils.HandleFilesWithCallback(dir, func(path string) error {
+		serviceName := filepath.Base(path)
+
+		s.log.Infof("Creating service %s", serviceName)
+		if err := cp.Copy(path, filepath.Join("/etc/systemd/system/", serviceName)); err != nil {
+			return err
 		}
 
-		s.log.Infof("Creating service %s", info.Name())
-		errC := cp.Copy(filepath.Join(dir, info.Name()), filepath.Join("/etc/systemd/system/", info.Name()))
-		if errC != nil {
-			return errC
-		}
-
-		s.log.Infof("Enabling service %s", info.Name())
-		_, errC = s.ops.SystemctlAction("enable", info.Name())
-		return errC
+		s.log.Infof("Enabling service %s", serviceName)
+		_, err := s.ops.SystemctlAction("enable", serviceName)
+		return err
 	})
-
-	return err
 }
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	// TODO: remove after removing usage of clusterversion.json
-	manifestPath := path.Join(s.backupDir, "manifest.json")
+	manifestPath := path.Join(s.backupDir, common.ClusterInfoFileName)
 	if _, err := os.Stat(manifestPath); err == nil {
 		s.log.Info("Manifest file was already created, skipping")
 		return nil
@@ -193,13 +203,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	}
 
 	s.log.Info("Creating manifest.json")
-	if err := utils.WriteToFile(clusterManifest, path.Join(s.backupDir, "manifest.json")); err != nil {
-		return err
-	}
-
-	// TODO: remove when we will drop it from preparation script
-	s.log.Info("Creating clusterversion.json")
-	if err := utils.WriteToFile(clusterVersion, path.Join(s.backupDir, "clusterversion.json")); err != nil {
+	if err := utils.MarshalToFile(clusterManifest, path.Join(s.backupDir, common.ClusterInfoFileName)); err != nil {
 		return err
 	}
 
@@ -208,40 +212,81 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 }
 
 // TODO: split function per operation
-func (s *SeedCreator) createContainerList() error {
+func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Saving list of running containers and catalogsources.")
+	containersListFileName := s.backupDir + "/containers.list"
 
-	// Check if the file /var/tmp/container_list.done does not exist
-	if _, err := os.Stat(common.BackupChecksDir + "/container_list.done"); os.IsNotExist(err) {
-		// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
-		s.log.Info("Save list of running containers")
-		args := []string{"images", "-o", "json", "|", "jq", "-r",
-			"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'",
-			">", s.backupDir + "/containers.list"}
-
-		if _, err := s.ops.RunBashInHostNamespace("crictl", args...); err != nil {
-			return err
-		}
-
-		// Execute 'oc get catalogsource' command, parse the JSON output and extract image references using 'jq'
-		s.log.Info("Save catalog source images")
-		_, err = s.ops.RunBashInHostNamespace(
-			"oc", append([]string{"get", "catalogsource", "-A", "-o", "json", "--kubeconfig",
-				s.kubeconfig, "|", "jq", "-r", "'.items[].spec.image'"}, ">", s.backupDir+"/catalogimages.list")...)
-		if err != nil {
-			return err
-		}
-
-		// Create the file /var/tmp/container_list.done
-		_, err = os.Create(common.BackupChecksDir + "/container_list.done")
-		if err != nil {
-			return err
-		}
-
-		s.log.Info("List of containers, catalogsources, and clusterversion saved successfully.")
-	} else {
-		s.log.Info("Skipping list of containers, catalogsources, and clusterversion already exists.")
+	// purge all unknown image if exists
+	s.log.Info("Cleaning image list")
+	// Don't ever add -a option as we don't want to delete unused images
+	if _, err := s.ops.RunBashInHostNamespace("podman", "image", "prune", "-f"); err != nil {
+		return err
 	}
+
+	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
+	s.log.Info("Save list of downloaded images")
+	args := []string{"images", "-o", "json", "|", "jq", "-r",
+		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'"}
+
+	output, err := s.ops.RunBashInHostNamespace("crictl", args...)
+	if err != nil {
+		return err
+	}
+	images := strings.Split(output, "\n")
+	catalogImages, err := s.getCatalogImages(ctx)
+	if err != nil {
+		return err
+	}
+	s.log.Infof("Removing list of catalog images from full image list, catalog images to remove %s", catalogImages)
+	images = funk.FilterString(images, func(image string) bool {
+		return !funk.ContainsString(catalogImages, image)
+	})
+
+	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
+	images = append(images, s.recertContainerImage)
+
+	s.log.Infof("Creating %s file", containersListFileName)
+	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o644); err != nil {
+		return fmt.Errorf("failed to write container list file %s, err %w", containersListFileName, err)
+	}
+
+	s.log.Info("List of containers  saved successfully.")
+	return nil
+}
+
+func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
+	s.log.Info("Backing up seed cluster certificates for recert tool")
+	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
+		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
+	}
+
+	adminKubeConfigClientCA, err := s.manifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
+		return err
+	}
+
+	for _, cert := range common.CertPrefixes {
+		servingSignerKey, err := s.manifestClient.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path.Join(common.BackupCertsDir, cert+".key"), []byte(servingSignerKey), 0o644); err != nil {
+			return err
+		}
+	}
+
+	ingressOperatorKey, err := s.manifestClient.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path.Join(common.BackupCertsDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
+		return err
+	}
+
+	s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	return nil
 }
 
@@ -265,16 +310,18 @@ func (s *SeedCreator) stopServices() error {
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
 		return err
 	}
-	s.log.Info("crio status is", crioSystemdStatus)
+	s.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
-
-		// CRI-O is active, so stop running containers
-		s.log.Info("Stop running containers")
-		args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-		_, err = s.ops.RunBashInHostNamespace("crictl", args...)
-		if err != nil {
-			return err
-		}
+		// CRI-O is active, so stop running containers with retry
+		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
+			s.log.Info("Stop running containers")
+			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
+			_, err = s.ops.RunBashInHostNamespace("crictl", args...)
+			if err != nil {
+				return false, err
+			}
+			return true, nil
+		})
 
 		// Execute a D-Bus call to stop the CRI-O runtime
 		s.log.Debug("Stopping CRI-O engine")
@@ -290,48 +337,8 @@ func (s *SeedCreator) stopServices() error {
 	return nil
 }
 
-func (s *SeedCreator) runRecertValidation() error {
-	s.log.Info("Running recert --force-expire tool and saving a summary without sensitive data.")
-
-	// Run unauthenticated etcd server for the recert tool.
-	// This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
-	// which is required before running the recert tool.
-	if err := s.ops.RunUnauthenticatedEtcdServer(s.authFile, common.EtcdContainerName); err != nil {
-		return err
-	}
-
-	defer func() {
-		s.log.Info("Killing the unauthenticated etcd server")
-		_, err := s.ops.RunInHostNamespace(
-			"podman", "kill", "recert_etcd")
-		if err != nil {
-			s.log.Errorf("Failed to kill recert_etcd container: %v", err)
-		}
-	}()
-
-	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
-	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
-	// into a seed image.
-	s.log.Info("Run recert --force-expire tool")
-	recertConfigFile := path.Join(s.backupDir, recert.RecertConfigFile)
-	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
-		return fmt.Errorf("failed to create %s file", recertConfigFile)
-	}
-	if err := s.ops.RunRecert(s.recertContainerImage, s.authFile, recertConfigFile); err != nil {
-		return err
-	}
-
-	s.log.Info("Recert --force-expire tool ran and summary created successfully.")
-	return nil
-}
-
 func (s *SeedCreator) backupVar() error {
-	// Check if the backup file for /var doesn't exist
 	varTarFile := path.Join(s.backupDir, "var.tgz")
-	_, err := os.Stat(varTarFile)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
 
 	// Define the 'exclude' patterns
 	excludePatterns := []string{
@@ -353,7 +360,7 @@ func (s *SeedCreator) backupVar() error {
 	tarArgs = append(tarArgs, "--selinux", common.VarFolder)
 
 	// Run the tar command
-	_, err = s.ops.RunBashInHostNamespace("tar", tarArgs...)
+	_, err := s.ops.RunBashInHostNamespace("tar", tarArgs...)
 	if err != nil {
 		return err
 	}
@@ -364,31 +371,18 @@ func (s *SeedCreator) backupVar() error {
 
 func (s *SeedCreator) backupEtc() error {
 	s.log.Info("Backing up /etc")
-	_, err := os.Stat(path.Join(s.backupDir, "etc.tgz"))
-	if err == nil {
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return err
-	}
-
-	// save old ip as it is required for installation process by installation-configuration.sh
-	err = cp.Copy("/var/run/nodeip-configuration/primary-ip", "/etc/default/seed-ip")
-	if err != nil {
-		return err
-	}
 
 	// Execute 'ostree admin config-diff' command and backup etc.deletions
 	args := []string{"admin", "config-diff", "|", "awk", `'$1 == "D" {print "/etc/" $2}'`, ">",
 		path.Join(s.backupDir, "/etc.deletions")}
-	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
+	_, err := s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
 		return err
 	}
 
 	args = []string{"admin", "config-diff", "|", "grep", "-v", "'cni/multus'",
-		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "xargs", "tar", "czf",
-		path.Join(s.backupDir + "/etc.tgz"), "--selinux"}
+		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "tar", "czf",
+		path.Join(s.backupDir + "/etc.tgz"), "--selinux", "-T", "-"}
 
 	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
@@ -400,41 +394,27 @@ func (s *SeedCreator) backupEtc() error {
 }
 
 func (s *SeedCreator) backupOstree() error {
-	// Check if the backup file for ostree doesn't exist
 	s.log.Info("Backing up ostree")
 	ostreeTar := s.backupDir + "/ostree.tgz"
-	_, err := os.Stat(ostreeTar)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
+
 	// Execute 'tar' command and backup /etc
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"tar", []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}...)
 
 	return err
 }
 
 func (s *SeedCreator) backupRPMOstree() error {
-	// Check if the backup file for rpm-ostree doesn't exist
 	rpmJSON := s.backupDir + "/rpm-ostree.json"
-	_, err := os.Stat(rpmJSON)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJSON)...)
 	s.log.Info("Backup of rpm-ostree.json created successfully.")
 	return err
 }
 
 func (s *SeedCreator) backupMCOConfig() error {
-	// Check if the backup file for mco-currentconfig doesn't exist
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	_, err := os.Stat(mcoJSON)
-	if err == nil || !os.IsNotExist(err) {
-		return err
-	}
-	_, err = s.ops.RunBashInHostNamespace(
+	_, err := s.ops.RunBashInHostNamespace(
 		"cp", "/etc/machine-config-daemon/currentconfig", mcoJSON)
 	s.log.Info("Backup of mco-currentconfig created successfully.")
 	return err
@@ -442,7 +422,7 @@ func (s *SeedCreator) backupMCOConfig() error {
 
 // Building and pushing OCI image
 func (s *SeedCreator) createAndPushSeedImage() error {
-	s.log.Info("Build and push OCI image to", s.containerRegistry)
+	s.log.Info("Build and push OCI image to ", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
 	// Get the current status of rpm-ostree daemon in the host
@@ -481,6 +461,7 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	if err != nil {
 		return fmt.Errorf("failed to push seed image: %w", err)
 	}
+
 	return nil
 }
 
@@ -523,12 +504,6 @@ func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDo
 }
 
 func (s *SeedCreator) deleteNode(ctx context.Context) error {
-	doneFile := filepath.Join(common.BackupChecksDir, "/node_deletion.done")
-	_, err := os.Stat(doneFile)
-	if err == nil {
-		return nil
-	}
-
 	s.log.Info("Deleting node")
 	node, err := utils.GetSNOMasterNode(ctx, s.client)
 	if err != nil {
@@ -540,10 +515,44 @@ func (s *SeedCreator) deleteNode(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	_, err = os.Create(doneFile)
-	if err != nil {
-		return err
-	}
 	return nil
+}
+
+func (s *SeedCreator) waitTillOvnKubeNodeIsDown(ctx context.Context) {
+	ovnKubeNode := "ovnkube-node"
+	s.log.Infof("Waiting for %s to stop in order to give ovn to cleanup network", ovnKubeNode)
+	// we will wait for 5 minutes and exit, we don't want to fail as it is not critical
+	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 5*time.Minute)
+	_ = wait.PollUntilContextCancel(deadlineCtx, 10*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		s.log.Infof("waiting for %s to stop", ovnKubeNode)
+		pods := &corev1.PodList{}
+		err = s.client.List(ctx, pods, &runtime.ListOptions{Namespace: "openshift-ovn-kubernetes"})
+		if err != nil {
+			return false, nil
+		}
+		for _, pod := range pods.Items {
+			if strings.HasPrefix(pod.Name, "ovnkube-node") {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	defer deadlineCancel()
+}
+
+func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {
+	s.log.Info("Searching for catalog sources")
+	var images []string
+	catalogSources := &operatorsv1alpha1.CatalogSourceList{}
+	allNamespaces := runtime.ListOptions{Namespace: metav1.NamespaceAll}
+	if err := s.client.List(ctx, catalogSources, &allNamespaces); err != nil {
+		return nil, fmt.Errorf("failed to list all catalogueSources %w", err)
+	}
+
+	for _, catalogSource := range catalogSources.Items {
+		images = append(images, catalogSource.Spec.Image)
+	}
+
+	return images, nil
 }

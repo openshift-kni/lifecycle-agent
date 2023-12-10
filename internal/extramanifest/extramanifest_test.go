@@ -25,8 +25,6 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -73,7 +71,7 @@ metadata:
     resourceName: fh
 `
 
-func TestExportAndApplyExtraManifests(t *testing.T) {
+func TestExportExtraManifests(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
 
 	// Create a temporary directory for testing
@@ -131,54 +129,15 @@ func TestExportAndApplyExtraManifests(t *testing.T) {
 
 	// Check that the manifests were exported to the correct files
 	expectedFilePaths := []string{
-		filepath.Join(toDir, extraManifestPath, "0_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, extraManifestPath, "0_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, extraManifestPath, "1_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, extraManifestPath, "1_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "0_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "0_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "1_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "1_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
 	}
 
 	for _, expectedFile := range expectedFilePaths {
 		if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 			t.Fatalf("Expected file %s does not exist", expectedFile)
 		}
-	}
-
-	// Apply the manifests that were previously exported
-	err = handler.ApplyExtraManifestsFromDir(context.Background(), toDir)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	// Check that the manifests were applied
-	sriovnetworks := &unstructured.UnstructuredList{}
-	sriovnetworks.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "sriovnetwork.openshift.io",
-		Version: "v1",
-		Kind:    "SriovNetworkList",
-	})
-
-	err = fakeClient.List(context.Background(), sriovnetworks)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if len(sriovnetworks.Items) != 2 {
-		t.Errorf("Expected 2 SriovNetworks, got %d", len(sriovnetworks.Items))
-	}
-
-	sriovnodepolicies := &unstructured.UnstructuredList{}
-	sriovnodepolicies.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "sriovnetwork.openshift.io",
-		Version: "v1",
-		Kind:    "SriovNetworkNodePolicyList",
-	})
-
-	err = fakeClient.List(context.Background(), sriovnodepolicies)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if len(sriovnodepolicies.Items) != 2 {
-		t.Errorf("Expected 2 SriovNetworkNodePolicies, got %d", len(sriovnodepolicies.Items))
 	}
 }

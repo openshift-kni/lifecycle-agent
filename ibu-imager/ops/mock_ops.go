@@ -37,19 +37,109 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
-// GetImageFromPodDefinition mocks base method.
-func (m *MockOps) GetImageFromPodDefinition(etcdStaticPodFile, containerImage string) (string, error) {
+// ExtractTarWithSELinux mocks base method.
+func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetImageFromPodDefinition", etcdStaticPodFile, containerImage)
-	ret0, _ := ret[0].(string)
+	ret := m.ctrl.Call(m, "ExtractTarWithSELinux", srcPath, destPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExtractTarWithSELinux indicates an expected call of ExtractTarWithSELinux.
+func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), srcPath, destPath)
+}
+
+// ForceExpireSeedCrypto mocks base method.
+func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", recertContainerImage, authFile)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ForceExpireSeedCrypto indicates an expected call of ForceExpireSeedCrypto.
+func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
+}
+
+// ImageExists mocks base method.
+func (m *MockOps) ImageExists(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImageExists", img)
+	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetImageFromPodDefinition indicates an expected call of GetImageFromPodDefinition.
-func (mr *MockOpsMockRecorder) GetImageFromPodDefinition(etcdStaticPodFile, containerImage any) *gomock.Call {
+// ImageExists indicates an expected call of ImageExists.
+func (mr *MockOpsMockRecorder) ImageExists(img any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetImageFromPodDefinition", reflect.TypeOf((*MockOps)(nil).GetImageFromPodDefinition), etcdStaticPodFile, containerImage)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImageExists", reflect.TypeOf((*MockOps)(nil).ImageExists), img)
+}
+
+// IsImageMounted mocks base method.
+func (m *MockOps) IsImageMounted(img string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsImageMounted", img)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsImageMounted indicates an expected call of IsImageMounted.
+func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
+}
+
+// RecertFullFlow mocks base method.
+func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
+	m.ctrl.T.Helper()
+	varargs := []any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}
+	for _, a := range additionalPodmanParams {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "RecertFullFlow", varargs...)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecertFullFlow indicates an expected call of RecertFullFlow.
+func (mr *MockOpsMockRecorder) RecertFullFlow(recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations any, additionalPodmanParams ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}, additionalPodmanParams...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecertFullFlow", reflect.TypeOf((*MockOps)(nil).RecertFullFlow), varargs...)
+}
+
+// RemountSysroot mocks base method.
+func (m *MockOps) RemountSysroot() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemountSysroot")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemountSysroot indicates an expected call of RemountSysroot.
+func (mr *MockOpsMockRecorder) RemountSysroot() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountSysroot", reflect.TypeOf((*MockOps)(nil).RemountSysroot))
+}
+
+// RestoreOriginalSeedCrypto mocks base method.
+func (m *MockOps) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RestoreOriginalSeedCrypto", recertContainerImage, authFile)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RestoreOriginalSeedCrypto indicates an expected call of RestoreOriginalSeedCrypto.
+func (mr *MockOpsMockRecorder) RestoreOriginalSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreOriginalSeedCrypto", reflect.TypeOf((*MockOps)(nil).RestoreOriginalSeedCrypto), recertContainerImage, authFile)
 }
 
 // RunBashInHostNamespace mocks base method.
@@ -143,4 +233,32 @@ func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
+}
+
+// UnmountAndRemoveImage mocks base method.
+func (m *MockOps) UnmountAndRemoveImage(img string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnmountAndRemoveImage", img)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnmountAndRemoveImage indicates an expected call of UnmountAndRemoveImage.
+func (mr *MockOpsMockRecorder) UnmountAndRemoveImage(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnmountAndRemoveImage", reflect.TypeOf((*MockOps)(nil).UnmountAndRemoveImage), img)
+}
+
+// waitForEtcd mocks base method.
+func (m *MockOps) waitForEtcd(healthzEndpoint string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "waitForEtcd", healthzEndpoint)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// waitForEtcd indicates an expected call of waitForEtcd.
+func (mr *MockOpsMockRecorder) waitForEtcd(healthzEndpoint any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "waitForEtcd", reflect.TypeOf((*MockOps)(nil).waitForEtcd), healthzEndpoint)
 }

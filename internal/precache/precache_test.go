@@ -21,6 +21,8 @@ import (
 	"os"
 	"testing"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -107,7 +109,7 @@ func TestCreateJob(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: imageListStr,
@@ -116,7 +118,7 @@ func TestCreateJob(t *testing.T) {
 			expectedJob: &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheJobName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Spec: batchv1.JobSpec{
 					Template: corev1.PodTemplateSpec{
@@ -143,13 +145,15 @@ func TestCreateJob(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{}
 
+			Log := ctrl.Log.WithName("Precache")
+
 			// Inject ConfigMap, Job
 			if tc.inputConfigMapName != "" {
 				cm := renderConfigMap(tc.config.ImageList)
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(tc.config)
+				job, err := renderJob(tc.config, Log)
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -159,7 +163,12 @@ func TestCreateJob(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 
-			err = CreateJob(context.TODO(), fakeClient, tc.config)
+			handler := &PHandler{
+				Client: fakeClient,
+				Log:    Log,
+			}
+
+			err = handler.CreateJob(context.TODO(), tc.config)
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {
@@ -167,12 +176,12 @@ func TestCreateJob(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				})
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, LcaPrecacheNamespace)
+				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
 				assert.NoError(t, err)
 				assert.NotNil(t, actualJob)
 
@@ -253,8 +262,9 @@ func TestQueryJobStatus(t *testing.T) {
 			cm := renderConfigMap(config.ImageList)
 			objs = append(objs, cm)
 
+			Log := ctrl.Log.WithName("Precache")
 			if tc.inputJobName != "" {
-				job, err := renderJob(config)
+				job, err := renderJob(config, Log)
 				assert.NoError(t, err)
 				job.Status = *tc.jobStatus
 				objs = append(objs, job)
@@ -265,7 +275,12 @@ func TestQueryJobStatus(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 
-			status, err := QueryJobStatus(context.TODO(), fakeClient)
+			handler := &PHandler{
+				Client: fakeClient,
+				Log:    Log,
+			}
+
+			status, err := handler.QueryJobStatus(context.TODO())
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 				assert.Nil(t, status)
@@ -316,13 +331,15 @@ func TestCleanup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{}
 
+			Log := ctrl.Log.WithName("Precache")
+
 			// Inject ConfigMap, Job
 			if tc.inputConfigMapName != "" {
 				cm := renderConfigMap(config.ImageList)
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(config)
+				job, err := renderJob(config, Log)
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -332,7 +349,12 @@ func TestCleanup(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 
-			err = Cleanup(context.TODO(), fakeClient)
+			handler := &PHandler{
+				Client: fakeClient,
+				Log:    Log,
+			}
+
+			err = handler.Cleanup(context.TODO())
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {
@@ -340,12 +362,12 @@ func TestCleanup(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				})
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, LcaPrecacheNamespace)
+				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
 				assert.NoError(t, err)
 				assert.Nil(t, actualJob)
 			}

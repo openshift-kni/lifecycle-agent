@@ -26,7 +26,10 @@ import (
 	"strconv"
 	"testing"
 
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"github.com/stretchr/testify/assert"
 	batchv1 "k8s.io/api/batch/v1"
@@ -66,7 +69,7 @@ func TestRenderConfigMap(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: "\n",
@@ -80,7 +83,7 @@ func TestRenderConfigMap(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheConfigMapName,
-					Namespace: LcaPrecacheNamespace,
+					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: imageListStr,
@@ -145,11 +148,11 @@ func TestValidateJobConfig(t *testing.T) {
 
 			// Inject ConfigMap, Job
 			if tc.inputConfigMapName != "" {
-				cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheConfigMapName, Namespace: LcaPrecacheNamespace}}
+				cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheConfigMapName, Namespace: common.LcaNamespace}}
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheJobName, Namespace: LcaPrecacheNamespace}}
+				job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheJobName, Namespace: common.LcaNamespace}}
 				objs = append(objs, job)
 			}
 
@@ -188,7 +191,7 @@ func getExpectedBaseJob() *batchv1.Job {
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheJobName,
-			Namespace: LcaPrecacheNamespace,
+			Namespace: common.LcaNamespace,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backOffLimit,
@@ -307,7 +310,7 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			renderedJob, err := renderJob(tc.config)
+			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"))
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {

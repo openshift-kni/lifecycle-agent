@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
-const RecertConfigFile = "recert_config.json"
+const (
+	RecertConfigFile = "recert_config.json"
+	SummaryFile      = "/var/tmp/recert-summary.yaml"
+)
 
 var staticDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
 
@@ -35,47 +39,62 @@ type RecertConfig struct {
 func CreateRecertConfigFile(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo, certsDir, recertConfigFolder string) error {
 	config := createBasicEmptyRecertConfig()
 	config.ClusterRename = fmt.Sprintf("%s:%s", clusterInfo.ClusterName, clusterInfo.Domain)
-	config.SummaryFile = "/var/tmp/recert-summary.yaml"
+	config.SummaryFile = SummaryFile
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.Domain)
 	clusterFullDomain := fmt.Sprintf("%s.%s", clusterInfo.ClusterName, clusterInfo.Domain)
 	config.ExtendExpiration = true
 	config.CNSanReplaceRules = []string{
+		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
 		fmt.Sprintf("%s,%s", seedClusterInfo.MasterIP, clusterInfo.MasterIP),
 		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
 	}
 
-	if _, err := os.Stat(certsDir); err != nil {
-		return fmt.Errorf("failed to find certs directory %s, err: %w", certsDir, err)
+	if _, err := os.Stat(certsDir); err == nil {
+		ingressFile, ingressCN, err := getIngressCNAndFile(certsDir)
+		if err != nil {
+			return err
+		}
+		config.UseKeyRules = []string{
+			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
+			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
+			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
+			fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
+		}
+		config.UseCertRules = []string{filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")}
 	}
 
-	ingressFile, ingressCN, err := getIngressCNAndFile(certsDir)
-	if err != nil {
-		return err
-	}
-	config.UseKeyRules = []string{
-		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
-		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
-		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
-		fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
-	}
-	config.UseCertRules = []string{filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")}
-
-	return utils.WriteToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))
+	return utils.MarshalToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))
 }
 
 func CreateRecertConfigFileForSeedCreation(path string) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
-	return utils.WriteToFile(config, path)
+	return utils.MarshalToFile(config, path)
+}
+
+func CreateRecertConfigFileForSeedRestoration(path string) error {
+	config := createBasicEmptyRecertConfig()
+	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.ExtendExpiration = true
+	config.UseKeyRules = []string{
+		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", common.BackupCertsDir),
+		fmt.Sprintf("ingresskey-ingress-operator %s/ingresskey-ingress-operator.key", common.BackupCertsDir),
+	}
+	config.UseCertRules = []string{filepath.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt")}
+
+	return utils.MarshalToFile(config, path)
 }
 
 func createBasicEmptyRecertConfig() RecertConfig {
 	return RecertConfig{
 		DryRun:       false,
-		EtcdEndpoint: "localhost:2379",
+		EtcdEndpoint: common.EtcdDefaultEndpoint,
 		StaticDirs:   staticDirs,
 		StaticFiles:  []string{"/host-etc/mcs-machine-config-content.json"},
 	}
@@ -92,7 +111,6 @@ func getIngressCNAndFile(certsFolder string) (string, string, error) {
 		if strings.HasPrefix(path.Name(), "ingresskey-") {
 			return path.Name(), strings.Replace(path.Name(), "ingresskey-", "", 1), nil
 		}
-
 	}
 	return "", "", fmt.Errorf("failed to find ingress key file")
 }

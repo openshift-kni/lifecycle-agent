@@ -30,7 +30,10 @@ const (
 	DefaultRecertImage     = "quay.io/edge-infrastructure/recert:latest"
 	EtcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
 	EtcdStaticPodContainer = "etcd"
-	EtcdDefaultEndpoint    = "http://localhost:2379"
+	EtcdDefaultEndpoint    = "localhost:2379"
+
+	OvnNodeCerts = "/var/lib/ovn-ic/etc/ovnkube-node-certs"
+	MultusCerts  = "/etc/cni/multus/certs"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
@@ -41,4 +44,17 @@ const (
 	ManifestsDir                      = "manifests"
 	ExtraManifestsDir                 = "extra-manifests"
 	EtcdContainerName                 = "recert_etcd"
+	LvmConfigDir                      = "lvm-configuration"
+	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
+	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+
+	LcaNamespace = "openshift-lifecycle-agent"
 )
+
+// CertPrefixes is the list of certificate prefixes to be backed up
+// before creating the seed image
+var CertPrefixes = []string{
+	"loadbalancer-serving-signer",
+	"localhost-serving-signer",
+	"service-network-serving-signer",
+}

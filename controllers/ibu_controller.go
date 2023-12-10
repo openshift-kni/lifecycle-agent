@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 
 	"github.com/go-logr/logr"
@@ -42,6 +45,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 )
@@ -54,10 +58,14 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder        record.EventRecorder
 	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
 	NetworkConfig   *clusterconfig.UpgradeNetworkConfigGather
+	Precache        *precache.PHandler
 	BackupRestore   *backuprestore.BRHandler
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
+	ManifestClient  *clusterinfo.InfoClient
+	OstreeClient    ostreeclient.IClient
+	Ops             ops.Ops
 }
 
 func doNotRequeue() ctrl.Result {
@@ -150,10 +158,11 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if isTransitionRequested(ibu) {
 		var isAfterPivot bool
-		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getStaterootName(ibu.Spec.SeedImageRef.Version))
+		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getDesiredStaterootName(ibu))
 		if err != nil {
 			return
 		}
+
 		if validateStageTransition(ibu, isAfterPivot) {
 			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
@@ -377,6 +386,6 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func getStaterootName(seedImageVersion string) string {
-	return fmt.Sprintf("rhcos_%s", seedImageVersion)
+func getDesiredStaterootName(ibu *lcav1alpha1.ImageBasedUpgrade) string {
+	return fmt.Sprintf("rhcos_%s", ibu.Spec.SeedImageRef.Version)
 }

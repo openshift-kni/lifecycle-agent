@@ -18,6 +18,8 @@ var ConditionTypes = struct {
 	UpgradeCompleted   ConditionType
 	RollbackInProgress ConditionType
 	RollbackCompleted  ConditionType
+	SeedGenInProgress  ConditionType
+	SeedGenCompleted   ConditionType
 }{
 	Idle:               "Idle",
 	PrepInProgress:     "PrepInProgress",
@@ -26,6 +28,16 @@ var ConditionTypes = struct {
 	UpgradeCompleted:   "UpgradeCompleted",
 	RollbackInProgress: "RollbackInProgress",
 	RollbackCompleted:  "RollbackCompleted",
+	SeedGenInProgress:  "SeedGenInProgress",
+	SeedGenCompleted:   "SeedGenCompleted",
+}
+
+var SeedGenConditionTypes = struct {
+	SeedGenInProgress ConditionType
+	SeedGenCompleted  ConditionType
+}{
+	SeedGenInProgress: "SeedGenInProgress",
+	SeedGenCompleted:  "SeedGenCompleted",
 }
 
 // FinalConditionTypes defines the valid conditions for transitioning back to idle
@@ -61,6 +73,16 @@ var ConditionReasons = struct {
 	FinalizeCompleted: "FinalizeCompleted",
 	FinalizeFailed:    "FinalizeFailed",
 	InvalidTransition: "InvalidTransition",
+}
+
+var SeedGenConditionReasons = struct {
+	Completed  ConditionReason
+	Failed     ConditionReason
+	InProgress ConditionReason
+}{
+	Completed:  "Completed",
+	Failed:     "Failed",
+	InProgress: "InProgress",
 }
 
 // SetStatusCondition is a convenience wrapper for meta.SetStatusCondition that takes in the types defined here and converts them to strings
@@ -217,4 +239,46 @@ func GetPreviousStage(stage lcav1alpha1.ImageBasedUpgradeStage) lcav1alpha1.Imag
 		return lcav1alpha1.Stages.Upgrade
 	}
 	return ""
+}
+
+// SetUpgradeStatusFailed updates the upgrade status to failed with message
+func SetUpgradeStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		"Upgrade failed",
+		ibu.Generation)
+}
+
+// SetUpgradeStatusInProgress updates the upgrade status to in progress with message
+func SetUpgradeStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.InProgress,
+		metav1.ConditionTrue,
+		msg,
+		ibu.Generation)
+}
+
+// SetUpgradeStatusCompleted updates the upgrade status to completed
+func SetUpgradeStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		"Upgrade completed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		"Upgrade completed",
+		ibu.Generation)
 }
