@@ -4,6 +4,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +76,37 @@ func TestCopyFileIfExists(t *testing.T) {
 
 			err := CopyFileIfExists(source, filepath.Join(dst, "test"))
 			assert.Equal(t, err != nil, tc.expectedError)
+		})
+	}
+}
+
+func TestCopyReplaceMirrorRegistry(t *testing.T) {
+	image := "quay.io/openshift-kni/lifecycle-agent-operator:4.14.0 "
+	testcases := []struct {
+		name            string
+		seedRegistry    string
+		clusterRegistry string
+		shouldChange    bool
+	}{
+		{
+			name:            "shouldn't change",
+			seedRegistry:    "aaa.io",
+			clusterRegistry: "bbb.io",
+			shouldChange:    false,
+		},
+		{
+			name:            "should change",
+			seedRegistry:    "quay.io",
+			clusterRegistry: "bbb.io",
+			shouldChange:    true,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			newImage, err := ReplaceImageRegistry(image, tc.clusterRegistry, tc.seedRegistry)
+			assert.Equal(t, err, nil)
+			assert.Equal(t, strings.HasPrefix(newImage, tc.clusterRegistry), tc.shouldChange)
 		})
 	}
 }
