@@ -64,45 +64,11 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	// WARNING: the pod may not know if we are boot loop (for now)
 	if prePivot {
 		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
-		ctrlResult, err := r.prePivot(ctx, ibu)
-		if err != nil {
-			//todo: abort handler? e.g delete desired stateroot
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			return doNotRequeue(), nil
-		}
-
-		// prePivot requested a requeue
-		if ctrlResult != doNotRequeue() {
-			return ctrlResult, nil
-		}
-
-		// Write an event to indicate reboot attempt
-		r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System wil now reboot")
-		err = r.rebootToNewStateRoot()
-		if err != nil {
-			//todo: abort handler? e.g delete desired stateroot
-			r.Log.Error(err, "")
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			return doNotRequeue(), nil
-		}
+		return r.prePivot(ctx, ibu)
 	} else {
 		r.Log.Info("Pivot successful, starting post pivot steps")
-		ctrlResult, err := r.postPivot(ctx, ibu)
-		if err != nil {
-			return requeueWithError(err)
-		}
-
-		// postPivot requested a requeue
-		if ctrlResult != doNotRequeue() {
-			return ctrlResult, nil
-		}
-
-		r.Log.Info("Done handleUpgrade")
-		utils.SetUpgradeStatusCompleted(ibu)
-		return doNotRequeue(), nil
+		return r.postPivot(ctx, ibu)
 	}
-
-	return doNotRequeue(), fmt.Errorf("something we went wrong. upgrade failed")
 }
 
 func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot() error {
@@ -188,8 +154,16 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 	ibu.ResourceVersion = rv
 
-	r.Log.Info("PrePivot done")
-	return ctrl.Result{}, nil
+	// Write an event to indicate reboot attempt
+	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot")
+	err = r.rebootToNewStateRoot()
+	if err != nil {
+		//todo: abort handler? e.g delete desired stateroot
+		r.Log.Error(err, "")
+		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+	return doNotRequeue(), nil
 }
 
 func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
@@ -230,8 +204,13 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		}
 		return requeueWithError(err)
 	}
+	if !result.IsZero() {
+		return result, nil
+	}
 
-	return result, nil
+	r.Log.Info("Done handleUpgrade")
+	utils.SetUpgradeStatusCompleted(ibu)
+	return doNotRequeue(), nil
 }
 
 // handleBackup manages backup flow and returns with possible requeue
