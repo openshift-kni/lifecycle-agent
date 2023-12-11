@@ -28,6 +28,8 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	corev1 "k8s.io/api/core/v1"
@@ -99,7 +101,7 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 
 }
 
-func readPrecachingList(imageListFile string) (imageList []string, err error) {
+func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string) (imageList []string, err error) {
 	var content []byte
 	content, err = os.ReadFile(common.PathOutsideChroot(imageListFile))
 	if err != nil {
@@ -110,9 +112,14 @@ func readPrecachingList(imageListFile string) (imageList []string, err error) {
 
 	// Filter out empty lines
 	for _, line := range lines {
-		if line != "" {
-			imageList = append(imageList, line)
+		if line == "" {
+			continue
 		}
+		image, err := commonUtils.ReplaceImageRegistry(line, clusterRegistry, seedRegistry)
+		if err != nil {
+			return nil, err
+		}
+		imageList = append(imageList, image)
 	}
 
 	return imageList, nil
@@ -122,9 +129,21 @@ func updateProgressFile(path, progress string) error {
 	return os.WriteFile(common.PathOutsideChroot(path), []byte(progress), 0o700)
 }
 
-func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile, progressfile string) (result ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile, progressfile string, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
+	clusterRegistry, err := clusterinfo.NewClusterInfoClient(r.Client).GetReleaseRegistry(ctx)
+	if err != nil {
+		r.Log.Error(err, "Failed to get cluster registry")
+		return
+	}
 
-	imageList, err := readPrecachingList(imageListFile)
+	seedInfo, err := clusterinfo.ReadClusterInfoFromFile(
+		common.PathOutsideChroot(getSeedManifestPath(getDesiredStaterootName(ibu))))
+	if err != nil {
+		r.Log.Error(err, "Failed to read seed info")
+		return
+	}
+
+	imageList, err := readPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry)
 	if err != nil {
 		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return
@@ -315,10 +334,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 
 	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, common.ClusterInfoFileName),
-		filepath.Join(
-			common.GetStaterootPath(osname),
-			filepath.Join("/var/opt/openshift/", common.SeedManifest),
-		),
+		getSeedManifestPath(osname),
 	); err != nil {
 		return fmt.Errorf("failed to copy ClusterInfo file: %w", err)
 	}
@@ -401,7 +417,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 				return
 			}
 		} else if progress == "completed-stateroot" {
-			result, err = r.launchPrecaching(ctx, imageListFile, progressfile)
+			result, err = r.launchPrecaching(ctx, imageListFile, progressfile, ibu)
 			if err != nil {
 				r.Log.Error(err, "Failed to launch get-seed-image phase")
 				return
@@ -445,4 +461,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 	}
 
 	return
+}
+
+func getSeedManifestPath(osname string) string {
+	return filepath.Join(
+		common.GetStaterootPath(osname),
+		filepath.Join("/var/", common.OptOpenshift, common.SeedManifest),
+	)
 }

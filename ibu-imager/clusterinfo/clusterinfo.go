@@ -82,7 +82,7 @@ func (m *InfoClient) CreateClusterInfo(ctx context.Context) (*ClusterInfo, error
 		return nil, err
 	}
 
-	releaseRegistry, err := m.getReleaseRegistry(ctx)
+	releaseRegistry, err := m.GetReleaseRegistry(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (m *InfoClient) GetCSVDeployment(ctx context.Context) (*appsv1.Deployment, 
 	return deployment, nil
 }
 
-func (m *InfoClient) getReleaseRegistry(ctx context.Context) (string, error) {
+func (m *InfoClient) GetReleaseRegistry(ctx context.Context) (string, error) {
 	deployment, err := m.GetCSVDeployment(ctx)
 	if err != nil {
 		return "", err

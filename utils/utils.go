@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"text/template"
 
 	cp "github.com/otiai10/copy"
@@ -181,4 +182,15 @@ func CopyFileIfExists(source, dest string) error {
 		}
 		return err
 	}})
+}
+
+func ReplaceImageRegistry(image, targetRegistry, sourceRegistry string) (string, error) {
+	if targetRegistry == sourceRegistry {
+		return image, nil
+	}
+	re, err := regexp.Compile(fmt.Sprintf("^%s", sourceRegistry))
+	if err != nil {
+		return "", fmt.Errorf("failed to create regex for registry replacement, err: %w", err)
+	}
+	return re.ReplaceAllString(image, targetRegistry), nil
 }

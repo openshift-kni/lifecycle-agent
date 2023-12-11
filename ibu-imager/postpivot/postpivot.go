@@ -84,7 +84,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 	p.waitForApi(ctx, client)
 
-	if err := p.deleteAllOldMirrorResources(ctx, client, clusterInfo); err != nil {
+	if err := p.deleteAllOldMirrorResources(ctx, client, clusterInfo, seedClusterInfo); err != nil {
 		return err
 	}
 
@@ -247,7 +247,7 @@ func (p *PostPivot) copyClusterConfigFiles() error {
 		common.CABundleFilePath)
 }
 
-func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client, clusterInfoObj *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client, clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
 	p.log.Info("Deleting ImageContentSourcePolicy and ImageDigestMirrorSet if they exist")
 	icsp := &operatorv1alpha1.ImageContentSourcePolicy{}
 	if err := client.DeleteAllOf(ctx, icsp); err != nil {
@@ -259,7 +259,7 @@ func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runt
 		return fmt.Errorf("failed to delete all idms %w", err)
 	}
 
-	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfoObj); err != nil {
+	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfo, seedInfo); err != nil {
 		return err
 	}
 
@@ -284,7 +284,7 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 }
 
 func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
-	clusterInfoObj *clusterinfo.ClusterInfo) error {
+	clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
 
 	p.log.Info("Changing release registry in csv deployment")
 	cmClient := clusterinfo.NewClusterInfoClient(client)
@@ -292,14 +292,18 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	if err != nil {
 		return err
 	}
-	splitted := strings.SplitN(csvD.Spec.Template.Spec.Containers[0].Image, "/", 2)
-	if splitted[0] == clusterInfoObj.ReleaseRegistry {
+
+	if clusterInfo.ReleaseRegistry == seedInfo.ReleaseRegistry {
 		p.log.Infof("No registry change occurred, skipping")
 		return nil
 	}
-	p.log.Infof("Changing release regitry from %s to %s", splitted[0], clusterInfoObj.ReleaseRegistry)
-	splitted[0] = clusterInfoObj.ReleaseRegistry
-	newImage := strings.Join(splitted, "/")
+
+	p.log.Infof("Changing release registry from %s to %s", seedInfo.ReleaseRegistry, clusterInfo.ReleaseRegistry)
+	newImage, err := utils.ReplaceImageRegistry(csvD.Spec.Template.Spec.Containers[0].Image,
+		clusterInfo.ReleaseRegistry, seedInfo.ReleaseRegistry)
+	if err != nil {
+		return err
+	}
 
 	var newArgs []string
 	for _, arg := range csvD.Spec.Template.Spec.Containers[0].Args {
