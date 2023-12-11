@@ -525,3 +525,70 @@ func TestClusterConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestNetworkConfig(t *testing.T) {
+	testcases := []struct {
+		name          string
+		filesToCreate []string
+		expectedErr   bool
+		validateFunc  func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeClusterConfigGather)
+	}{
+		{
+			name: "Validate success flow",
+			filesToCreate: []string{"/etc/hostname", "/etc/NetworkManager/system-connections/test1.txt",
+				"/etc/NetworkManager/system-connections/scripts/test1.txt"},
+			expectedErr: false,
+			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeClusterConfigGather) {
+				dir := filepath.Join(tmpDir, networkDir)
+				counter := 0
+				for _, file := range files {
+					err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+						if err == nil && info.Name() == filepath.Base(file) {
+							counter++
+						}
+						return nil
+					})
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+				assert.Equal(t, len(files), counter)
+			},
+		},
+	}
+
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			listOfNetworkFilesPaths = []string{}
+			hostPath = tmpDir
+			// create list of files to copy
+			for _, path := range tc.filesToCreate {
+				dir := filepath.Join(tmpDir, filepath.Dir(path))
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				newPath := filepath.Join(dir, filepath.Base(path))
+				f, err := os.Create(newPath)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+
+				_ = f.Close()
+				listOfNetworkFilesPaths = append(listOfNetworkFilesPaths, path)
+			}
+
+			unc := UpgradeClusterConfigGather{
+				Log: logr.Discard(),
+			}
+			err := unc.fetchNetworkConfig(tmpDir)
+			if !tc.expectedErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tc.expectedErr && err == nil {
+				t.Errorf("expected error but it didn't happened")
+			}
+			tc.validateFunc(t, tmpDir, err, tc.filesToCreate, unc)
+		})
+	}
+}

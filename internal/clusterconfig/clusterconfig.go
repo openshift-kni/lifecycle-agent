@@ -47,16 +47,23 @@ const (
 	idmsFileName  = "image-digest-mirror-set.json"
 	icspsFileName = "image-content-source-policy-list.json"
 
-	caBundleCMName            = "user-ca-bundle"
-	caBundleFileName          = caBundleCMName + ".json"
-	catalogueSourcesNamespace = "openshift-marketplace"
-	catalogueSourcesFileName  = "catalogue-sources-list.json"
+	caBundleCMName   = "user-ca-bundle"
+	caBundleFileName = caBundleCMName + ".json"
+
+	networkDir = "/opt/openshift/network-configuration"
 )
 
 var (
 	machineConfigNames = []string{
 		"99-master-ssh",
 		"99-worker-ssh",
+	}
+
+	hostPath = common.Host
+
+	listOfNetworkFilesPaths = []string{
+		"/etc/hostname",
+		"/etc/NetworkManager/system-connections",
 	}
 )
 
@@ -70,12 +77,6 @@ type UpgradeClusterConfigGather struct {
 // FetchClusterConfig collects the current cluster's configuration and write it as JSON files into
 // given filesystem directory.
 func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ostreeDir string) error {
-	// TODO: Add the following
-	// Other Machine configs?
-	// additionalTrustedCA (from the images.config)
-	// Other Certificates?
-	// Catalog source
-	// ACM registration?
 	r.Log.Info("Fetching cluster configuration")
 
 	clusterConfigPath, err := r.configDirs(ostreeDir)
@@ -106,6 +107,9 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 	if err := r.fetchICSPs(ctx, manifestsDir); err != nil {
+		return err
+	}
+	if err := r.fetchNetworkConfig(ostreeDir); err != nil {
 		return err
 	}
 
@@ -395,5 +399,24 @@ func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifest
 		return fmt.Errorf("failed to copy ca-bundle file %s to %s, err %w", caBundleFilePath, clusterConfigPath, err)
 	}
 
+	return nil
+}
+
+// gather network files and copy them
+func (r *UpgradeClusterConfigGather) fetchNetworkConfig(ostreeDir string) error {
+	r.Log.Info("Fetching node network files")
+	dir := filepath.Join(ostreeDir, networkDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("failed to create network folder %s, err %w", dir, err)
+	}
+
+	for _, path := range listOfNetworkFilesPaths {
+		r.Log.Info("Copying network files", "file", path, "to", dir)
+		err := utils.CopyFileIfExists(filepath.Join(hostPath, path), filepath.Join(dir, filepath.Base(path)))
+		if err != nil {
+			return fmt.Errorf("failed to copy %s to %s, err %w", path, dir, err)
+		}
+	}
+	r.Log.Info("Done fetching node network files")
 	return nil
 }

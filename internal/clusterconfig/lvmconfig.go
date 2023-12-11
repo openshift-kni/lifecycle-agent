@@ -25,26 +25,24 @@ import (
 	cp "github.com/otiai10/copy"
 )
 
-var hostDir = "/host"
-
-func (u *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeDir string) error {
-	u.Log.Info("Fetching node lvm files")
+func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeDir string) error {
+	r.Log.Info("Fetching node lvm files")
 	lvmConfigPath := filepath.Join(ostreeDir, common.OptOpenshift, common.LvmConfigDir)
 	if err := os.MkdirAll(lvmConfigPath, 0o700); err != nil {
 		return err
 	}
 
-	u.Log.Info("Copying lvm devices file", "file", common.LvmDevicesPath, "to", lvmConfigPath)
+	r.Log.Info("Copying lvm devices file", "file", common.LvmDevicesPath, "to", lvmConfigPath)
 	err := cp.Copy(
-		filepath.Join(hostDir, common.LvmDevicesPath),
+		filepath.Join(hostPath, common.LvmDevicesPath),
 		filepath.Join(lvmConfigPath, filepath.Base(common.LvmDevicesPath)))
 	if err != nil {
 		if os.IsNotExist(err) {
-			u.Log.Info("lvm devices file does not exist")
+			r.Log.Info("lvm devices file does not exist")
 			return nil
 		}
 		return err
 	}
-	u.Log.Info("Done fetching node lvm files")
+	r.Log.Info("Done fetching node lvm files")
 	return nil
 }

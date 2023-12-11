@@ -53,9 +53,9 @@ func TestFetchLvmConfig(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Create the original files
-			hostDir = filepath.Join(tmpDir, "host")
+			hostPath = filepath.Join(tmpDir, "host")
 			for _, file := range tc.lvmFilesToCopy {
-				lvmFilePath := filepath.Join(hostDir, file)
+				lvmFilePath := filepath.Join(hostPath, file)
 				if err := os.MkdirAll(filepath.Dir(lvmFilePath), 0o700); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}

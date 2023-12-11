@@ -28,7 +28,6 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"github.com/stretchr/testify/assert"
@@ -216,7 +215,7 @@ func getExpectedBaseJob() *batchv1.Job {
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "host",
-									MountPath: utils.Host,
+									MountPath: common.Host,
 								},
 								{
 									Name:      "image-list-cm",

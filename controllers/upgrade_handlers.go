@@ -134,11 +134,6 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Writing network-configuration into new stateroot")
-	if err := r.NetworkConfig.FetchNetworkConfig(ctx, stateRootRepo); err != nil {
-		return requeueWithError(err)
-	}
-
 	r.Log.Info("Writing lvm-configuration into new stateroot")
 	if err := r.ClusterConfig.FetchLvmConfig(ctx, stateRootRepo); err != nil {
 		return requeueWithError(err)

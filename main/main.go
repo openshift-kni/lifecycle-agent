@@ -136,7 +136,7 @@ func main() {
 	newLogger := logrus.New()
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
-	executor := ops.NewChrootExecutor(newLogger, true, utils.Host)
+	executor := ops.NewChrootExecutor(newLogger, true, common.Host)
 	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor)
@@ -156,7 +156,6 @@ func main() {
 		Log:             log,
 		Scheme:          mgr.GetScheme(),
 		ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
-		NetworkConfig:   &clusterconfig.UpgradeNetworkConfigGather{Log: log},
 		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache")},
 		BackupRestore:   &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
