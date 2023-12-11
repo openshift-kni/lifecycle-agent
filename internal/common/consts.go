@@ -48,8 +48,15 @@ const (
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
 	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 
-	LcaNamespace        = "openshift-lifecycle-agent"
-	Host         string = "/host"
+	LcaNamespace = "openshift-lifecycle-agent"
+	Host         = "/host"
+
+	CsvDeploymentName      = "cluster-version-operator"
+	CsvDeploymentNamespace = "openshift-cluster-version"
+	// InstallConfigCM cm name
+	InstallConfigCM = "cluster-config-v1"
+	// InstallConfigCMNamespace cm namespace
+	InstallConfigCMNamespace = "kube-system"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up

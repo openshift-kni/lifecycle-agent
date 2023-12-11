@@ -57,7 +57,6 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -161,7 +160,6 @@ func main() {
 		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,
 		Executor:        executor,
-		ManifestClient:  clusterinfo.NewClusterInfoClient(mgr.GetClient()),
 		OstreeClient:    ostreeClient,
 		Ops:             op,
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},

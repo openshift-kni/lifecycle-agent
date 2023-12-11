@@ -2,11 +2,9 @@ package prep
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -103,41 +101,6 @@ func RemoveETCDeletions(mountpoint, osname, deployment string) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error while reading %s: %w", file.Name(), err)
 	}
-	return nil
-}
-
-func BackupCertificates(ctx context.Context, osname string, client *clusterinfo.InfoClient) error {
-	certsDir := filepath.Join(common.GetStaterootPath(osname), "/var/opt/openshift/certs")
-	if err := os.MkdirAll(common.PathOutsideChroot(certsDir), os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create cert directory %s: %w", certsDir, err)
-	}
-
-	adminKubeConfigClientCA, err := client.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(common.PathOutsideChroot(filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")), []byte(adminKubeConfigClientCA), 0o644); err != nil {
-		return err
-	}
-
-	for _, cert := range common.CertPrefixes {
-		servingSignerKey, err := client.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(common.PathOutsideChroot(path.Join(certsDir, cert+".key")), []byte(servingSignerKey), 0o644); err != nil {
-			return err
-		}
-	}
-
-	ingressOperatorKey, err := client.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(common.PathOutsideChroot(filepath.Join(certsDir, "ingresskey-ingress-operator.key")), []byte(ingressOperatorKey), 0o644); err != nil {
-		return err
-	}
-
 	return nil
 }
 

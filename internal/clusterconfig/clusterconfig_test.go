@@ -110,7 +110,7 @@ var (
 		},
 	}
 	csvDeployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
-		Name: clusterinfo.CsvDeploymentName, Namespace: clusterinfo.CsvDeploymentNamespace},
+		Name: common.CsvDeploymentName, Namespace: common.CsvDeploymentNamespace},
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name:  "cluster-version-operator",
 			Image: "mirror.redhat.com:5005/openshift-release-dev/ocp-release@sha256:d6a7e20a8929a3ad985373f05472ea64bada8ff46f0beb89e1b6d04919affde3"}}}},
@@ -464,8 +464,8 @@ func TestClusterConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			installConfig := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      clusterinfo.InstallConfigCM,
-					Namespace: clusterinfo.InstallConfigCMNamespace,
+					Name:      common.InstallConfigCM,
+					Namespace: common.InstallConfigCMNamespace,
 				},
 				Data: map[string]string{"install-config": clusterCmData},
 			}

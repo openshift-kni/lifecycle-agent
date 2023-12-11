@@ -105,7 +105,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
 		s.log.Info("Backing up seed cluster certificates for recert tool")
-		if err := BackupCertificates(ctx, s.manifestClient, common.BackupCertsDir); err != nil {
+		if err := utils.BackupCertificates(ctx, s.client, common.BackupCertsDir); err != nil {
 			return err
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
@@ -199,7 +199,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return err
 	}
-	clusterManifest, err := s.manifestClient.CreateClusterInfo(ctx)
+	clusterManifest, err := utils.CreateClusterInfo(ctx, s.client)
 	if err != nil {
 		return err
 	}
@@ -253,39 +253,6 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	}
 
 	s.log.Info("List of containers  saved successfully.")
-	return nil
-}
-
-func BackupCertificates(ctx context.Context, client *clusterinfo.InfoClient, certDir string) error {
-	if err := os.MkdirAll(certDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error creating %s: %w", certDir, err)
-	}
-
-	adminKubeConfigClientCA, err := client.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(certDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
-		return err
-	}
-
-	for _, cert := range common.CertPrefixes {
-		servingSignerKey, err := client.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(path.Join(certDir, cert+".key"), []byte(servingSignerKey), 0o644); err != nil {
-			return err
-		}
-	}
-
-	ingressOperatorKey, err := client.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(certDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
-		return err
-	}
 	return nil
 }
 

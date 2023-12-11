@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
@@ -700,8 +699,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Get the cluster name
-	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
-	clusterData, err := cmClient.CreateClusterInfo(ctx)
+	clusterData, err := commonUtils.CreateClusterInfo(ctx, r.Client)
 	if err != nil {
 		return
 	}
