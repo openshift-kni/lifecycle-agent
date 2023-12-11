@@ -50,8 +50,7 @@ func GetVersionFromClusterInfoFile(path string) (string, error) {
 }
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
-// and builds the string arguments that ostree admin deploy requires e.g:
-// ["--karg-append", "tsc=nowatchdog", "--karg-append", "nosoftlockup"]
+// and builds the string arguments that ostree admin deploy requires
 func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 	mc := &mcfgv1.MachineConfig{}
 	if err := utils.ReadYamlOrJSONFile(path, mc); err != nil {
@@ -60,8 +59,13 @@ func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 
 	args := make([]string, len(mc.Spec.KernelArguments)*2)
 	for i, karg := range mc.Spec.KernelArguments {
-		args[2*i] = "--karg-append"
-		args[2*i+1] = karg
+		// if we don't marshal the karg, `"` won't appear in the kernel arguments after reboot
+		if val, err := json.Marshal(karg); err != nil {
+			return nil, fmt.Errorf("failed to marshal karg %s: %w", karg, err)
+		} else {
+			args[2*i] = "--karg-append"
+			args[2*i+1] = string(val)
+		}
 	}
 	return args, nil
 }
