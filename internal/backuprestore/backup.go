@@ -382,6 +382,11 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 	if err := h.List(ctx, backupList, client.MatchingLabels{
 		clusterIDLabel: clusterID,
 	}); err != nil {
+		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+		if errors.As(err, &groupDiscoveryErr) {
+			h.Log.Info("Backup CR is not installed, nothing to cleanup")
+			return true, nil
+		}
 		return false, err
 	}
 

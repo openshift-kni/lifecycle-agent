@@ -78,3 +78,17 @@ func (mr *MockIClientMockRecorder) PullLocal(repoPath any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PullLocal", reflect.TypeOf((*MockIClient)(nil).PullLocal), repoPath)
 }
+
+// Undeploy mocks base method.
+func (m *MockIClient) Undeploy(ostreeIndex int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Undeploy", ostreeIndex)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Undeploy indicates an expected call of Undeploy.
+func (mr *MockIClientMockRecorder) Undeploy(ostreeIndex any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Undeploy", reflect.TypeOf((*MockIClient)(nil).Undeploy), ostreeIndex)
+}
