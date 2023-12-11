@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,15 +26,17 @@ import (
 	"strings"
 	"time"
 
-	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
@@ -47,13 +50,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
-
-	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "open-cluster-management.io/api/cluster/v1"
 )
 
 // SeedGeneratorReconciler reconciles a SeedGenerator object
@@ -68,11 +69,9 @@ type SeedGeneratorReconciler struct {
 var (
 	clusterName            string
 	lcaImage               string
-	seedgenWorkingDir      = "/tmp/ibu-seedgen-orch"
-	seedgenAuthFile        = filepath.Join(seedgenWorkingDir, "auth.json")
-	storedSeedgenCR        = filepath.Join(seedgenWorkingDir, "seedgen-cr.json")
-	storedSeedgenSecret    = filepath.Join(seedgenWorkingDir, "seedgen-secret.json")
-	storedManagedClusterCR = filepath.Join(seedgenWorkingDir, "managedcluster.json")
+	seedgenAuthFile        = filepath.Join(utils.SeedgenWorkspacePath, "auth.json")
+	storedManagedClusterCR = filepath.Join(utils.SeedgenWorkspacePath, "managedcluster.json")
+	imagerContainerName    = "ibu_imager"
 )
 
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators,verbs=get;list;watch;create;update;patch;delete
@@ -80,7 +79,7 @@ var (
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
@@ -108,34 +107,6 @@ func (r *SeedGeneratorReconciler) createHubClient(hubKubeconfig []byte) (hubClie
 
 // Collect and save the data needed to restore the ACM registration, then delete the managedcluster from the hub
 func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClient client.Client) error {
-	//nolint:gocritic // TODO: Cleanup when we definitely don't need the importsecret
-	// // Save ACM import data
-	// importSecretName := fmt.Sprintf("%s-import", clusterName)
-	// importSecret := &corev1.Secret{}
-	// if err := hubClient.Get(ctx, types.NamespacedName{Name: importSecretName, Namespace: clusterName}, importSecret); err != nil {
-	// 	// If not found, do nothing.
-	// 	return client.IgnoreNotFound(err)
-	// }
-	//
-	// savedfile := filepath.Join(seedgenWorkingDir, "importsecret.json")
-	// if err := commonUtils.MarshalToFile(importSecret, common.PathOutsideChroot(savedfile)); err != nil {
-	// 	return fmt.Errorf("failed to write importsecret to %s: %w", savedfile, err)
-	// }
-	//
-	// if importYaml, exists := importSecret.Data["import.yaml"]; exists {
-	// 	filename := filepath.Join(seedgenWorkingDir, "acm-import.yaml")
-	// 	if err := r.stringToFile(filename, string(importYaml)); err != nil {
-	// 		return fmt.Errorf("failed to write %s: %w", filename, err)
-	// 	}
-	// }
-	//
-	// if crdsYaml, exists := importSecret.Data["crds.yaml"]; exists {
-	// 	filename := filepath.Join(seedgenWorkingDir, "acm-crds.yaml")
-	// 	if err := r.stringToFile(filename, string(crdsYaml)); err != nil {
-	// 		return fmt.Errorf("failed to write %s: %w", filename, err)
-	// 	}
-	// }
-
 	// Save the managedcluster
 	managedcluster := &clusterv1.ManagedCluster{}
 	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
@@ -152,9 +123,14 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 	}
 	managedcluster.TypeMeta = *typeMeta
 
+	rv := managedcluster.ResourceVersion
+	managedcluster.ResourceVersion = ""
+
 	if err := commonUtils.MarshalToFile(managedcluster, common.PathOutsideChroot(storedManagedClusterCR)); err != nil {
 		return fmt.Errorf("failed to write managedcluster to %s: %w", storedManagedClusterCR, err)
 	}
+
+	managedcluster.ResourceVersion = rv
 
 	// Ensure that the dependent resources are deleted
 	deleteOpts := []client.DeleteOption{
@@ -180,6 +156,28 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 		} else {
 			return fmt.Errorf("timed out waiting for managedcluster deletion")
 		}
+	}
+
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) reregisterWithHub(ctx context.Context, hubClient client.Client, filePath string) error {
+	// Restore the managedcluster
+	managedcluster := &clusterv1.ManagedCluster{}
+
+	if err := lcautils.ReadYamlOrJSONFile(filePath, managedcluster); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("unable to read stored managedcluster file (%s): %w", filePath, err)
+	}
+
+	if err := hubClient.Create(ctx, managedcluster); err != nil {
+		return fmt.Errorf("failed to create ManagedCluster: %w", err)
+	}
+
+	if err := os.Rename(filePath, filePath+".bak"); err != nil {
+		return err
 	}
 
 	return nil
@@ -376,7 +374,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 // TODO: Is there a better way to access the image ref?
 func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: os.Getenv("MY_POD_NAMESPACE")}, pod); err != nil {
+	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}
@@ -392,16 +390,46 @@ func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string
 	return
 }
 
+// Delete the previous imager container, if it exists
+func (r *SeedGeneratorReconciler) rmPreviousImagerContainer() error {
+	_, err := r.Executor.Execute("podman", "rm", "-i", "-f", imagerContainerName)
+	if err != nil {
+		return fmt.Errorf("failed to run podman rm command: %w", err)
+	}
+
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) (recertImage string) {
+	if seedgen.Spec.RecertImage == "" {
+		recertImage = common.DefaultRecertImage
+	} else {
+		recertImage = seedgen.Spec.RecertImage
+	}
+
+	return
+}
+
+func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) error {
+	recertImage := r.getRecertImagePullSpec(seedgen)
+
+	_, err := r.Executor.Execute("podman", "pull", recertImage)
+	if err != nil {
+		return fmt.Errorf("failed to pull recertImage (%s): %w", recertImage, err)
+	}
+
+	return nil
+}
+
 // Launch a container to run the ibu-imager
 func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGenerator) error {
 	r.Log.Info("Launching ibu-imager")
-	recertImage := seedgen.Spec.RecertImage
-	if recertImage == "" {
-		recertImage = common.DefaultRecertImage
-	}
+	recertImage := r.getRecertImagePullSpec(seedgen)
 
 	imagerCmdArgs := []string{
-		"podman", "run", "--privileged", "--pid=host", "--name=ibu_imager", "--replace", "--net=host",
+		"podman", "run", "--privileged", "--pid=host",
+		fmt.Sprintf("--name=%s", imagerContainerName),
+		"--replace", "--net=host",
 		"-v", "/etc:/etc", "-v", "/var:/var", "-v", "/var/run:/var/run", "-v", "/run/systemd/journal/socket:/run/systemd/journal/socket",
 		"-v", fmt.Sprintf("%s:%s", seedgenAuthFile, seedgenAuthFile),
 		"--entrypoint", "ibu-imager",
@@ -420,6 +448,49 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 	}
 
 	// We should never get here, as the ibu-imager will shutdown this pod
+	return nil
+}
+
+// checkImagerStatus examines the ibu_imager container, returning nil if it exited successfully
+func (r *SeedGeneratorReconciler) checkImagerStatus() error {
+	type ContainerState struct {
+		Status   string `json:"Status"`
+		ExitCode int    `json:"ExitCode"`
+	}
+
+	type ContainerInfo struct {
+		State ContainerState `json:"State"`
+	}
+
+	expectedStatus := "exited"
+	expectedExitCode := 0
+
+	r.Log.Info("Checking status of ibu_imager container")
+
+	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", imagerContainerName)
+	if err != nil {
+		return fmt.Errorf("failed to run podman inspect command: %w", err)
+	}
+
+	var containers []ContainerInfo
+
+	if err := json.Unmarshal([]byte(output), &containers); err != nil {
+		return fmt.Errorf("unable to parse podman inspect command output: %w", err)
+	}
+
+	if len(containers) != 1 {
+		return fmt.Errorf("expected 1 item in podman inspect output, got %d", len(containers))
+	}
+
+	if containers[0].State.Status != expectedStatus {
+		return fmt.Errorf("expected container status %s, found: %s", expectedStatus, containers[0].State.Status)
+	}
+
+	if containers[0].State.ExitCode != expectedExitCode {
+		return fmt.Errorf("expected container status %d, found: %d", expectedExitCode, containers[0].State.ExitCode)
+	}
+
+	r.Log.Info("Seed image generation was successful")
 	return nil
 }
 
@@ -443,28 +514,40 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 
 // Generate the seed image
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
-	workdir := common.PathOutsideChroot(seedgenWorkingDir)
+	workdir := common.PathOutsideChroot(utils.SeedgenWorkspacePath)
 	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
 		if err = os.RemoveAll(workdir); err != nil {
 			return fmt.Errorf("failed to delete %s: %w", workdir, err)
 		}
 	}
 
+	if err := r.rmPreviousImagerContainer(); err != nil {
+		return fmt.Errorf("failed to delete previous imager container: %w", err)
+	}
+
 	if err := os.Mkdir(workdir, 0o700); err != nil {
 		return fmt.Errorf("failed to create workdir: %w", err)
 	}
 
-	lcaNamespace := os.Getenv("MY_POD_NAMESPACE")
+	// Pull the recertImage first, to avoid potential failures late in the seed image generation procedure
+	if err := r.pullRecertImagePullSpec(seedgen); err != nil {
+		return fmt.Errorf("failed to pull recert image: %w", err)
+	}
 
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: lcaNamespace}, seedGenSecret); err != nil {
-		return fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, lcaNamespace, err)
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
+		return fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
 	}
 
-	if err := commonUtils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(storedSeedgenSecret)); err != nil {
-		return fmt.Errorf("failed to write secret to %s: %w", storedSeedgenSecret, err)
+	// Save the seedgen secret CR in order to restore it after the ibu-imager is complete
+	// Temporarily empty resource version so the file can be used to restore status
+	rv := seedGenSecret.ResourceVersion
+	seedGenSecret.ResourceVersion = ""
+	if err := commonUtils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(utils.SeedGenStoredSecretCR)); err != nil {
+		return fmt.Errorf("failed to write secret to %s: %w", utils.SeedGenStoredSecretCR, err)
 	}
+	seedGenSecret.ResourceVersion = rv
 
 	if seedAuth, exists := seedGenSecret.Data["seedAuth"]; exists {
 		if err := os.WriteFile(common.PathOutsideChroot(seedgenAuthFile), seedAuth, 0o644); err != nil {
@@ -475,9 +558,13 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Save the seedgen CR in order to restore it after the ibu-imager is complete
-	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(storedSeedgenCR)); err != nil {
-		return fmt.Errorf("failed to write CR to %s: %w", storedSeedgenCR, err)
+	// Temporarily empty resource version so the file can be used to restore status
+	rv = seedgen.ResourceVersion
+	seedgen.ResourceVersion = ""
+	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
+		return fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
 	}
+	seedgen.ResourceVersion = rv
 
 	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
 		// Create client for access to hub
@@ -528,6 +615,56 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	return nil
 }
 
+// finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
+func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
+	// Get the seedgen secret
+	seedGenSecret := &corev1.Secret{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
+		return fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
+	}
+
+	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
+		filePath := common.PathOutsideChroot(storedManagedClusterCR)
+		if _, err := os.Stat(filePath); err == nil {
+			// The hubKubeconfig exists and there's a stored ManagedCluster CR. Restore it.
+
+			// Create client for access to hub
+			hubClient, err := r.createHubClient(hubKubeconfig)
+			if err != nil {
+				return fmt.Errorf("failed to create hub client: %w", err)
+			}
+
+			if r.managedClusterExists(ctx, hubClient) {
+				r.Log.Info("ManagedCluster exists on hub, no need to restore")
+			} else {
+				// Save the ACM resources from hub needed for re-import
+				r.Log.Info("Reregistering cluster with ACM")
+				if err := r.reregisterWithHub(ctx, hubClient, filePath); err != nil {
+					return fmt.Errorf("failed to reregister with ACM: %w", err)
+				}
+			}
+		} else {
+			r.Log.Info("Found hubKubeconfig, but no saved ManagedCluster. Skipping restore")
+		}
+	} else {
+		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
+	}
+
+	// Check exit status of ibu_imager container
+	if err := r.checkImagerStatus(); err != nil {
+		return fmt.Errorf("imager container status check failed: %w", err)
+	}
+
+	workdir := common.PathOutsideChroot(utils.SeedgenWorkspacePath)
+	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
+		if err = os.RemoveAll(workdir); err != nil {
+			return fmt.Errorf("failed to delete %s: %w", workdir, err)
+		}
+	}
+
+	return nil
+}
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -542,6 +679,14 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Log.Info("Finish reconciling SeedGen", "name", req.NamespacedName, "requeueRightAway", nextReconcile.Requeue)
 		}
 	}()
+
+	// Wait for system stability before doing anything
+	r.Log.Info("Checking system health")
+	if err = healthcheck.HealthChecks(r.Client, r.Log); err != nil {
+		err = fmt.Errorf("health check failed: %w", err)
+		return
+	}
+	r.Log.Info("Health check passed")
 
 	nextReconcile = doNotRequeue()
 
@@ -606,7 +751,17 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return
 		}
 	} else if isSeedGenInProgress(seedgen) {
-		r.Log.Info("Seed Generation is in progress")
+		r.Log.Info("Completing Seed Generation")
+		if err = r.finishSeedgen(ctx); err != nil {
+			setSeedGenStatusFailed(seedgen)
+			if upderr := r.updateStatus(ctx, seedgen); upderr != nil {
+				r.Log.Error(upderr, "Failed to update status")
+			}
+
+			return
+		}
+
+		setSeedGenStatusCompleted(seedgen)
 	} else if isSeedGenCompleted(seedgen) {
 		r.Log.Info("Seed Generation is completed")
 	}
@@ -616,6 +771,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return
 }
 
+// Utility functions for conditions/status
 func setSeedGenStatusFailedWithMessage(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenCompleted,
@@ -644,7 +800,6 @@ func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator) {
 		seedgen.Generation)
 }
 
-//nolint:unused
 func setSeedGenStatusCompleted(seedgen *seedgenv1alpha1.SeedGenerator) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenCompleted,
@@ -691,9 +846,8 @@ func firstReconcile(seedgen *seedgenv1alpha1.SeedGenerator) bool {
 
 func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
 	seedgen.Status.ObservedGeneration = seedgen.ObjectMeta.Generation
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		err := r.Status().Update(ctx, seedgen)
-		return err
+	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
+		return r.Status().Update(ctx, seedgen)
 	})
 
 	if err != nil {

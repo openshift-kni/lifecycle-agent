@@ -23,7 +23,7 @@ The Lifecycle Agent provides orchestration of IBU Seed Image generation via the 
   - Prepare seed image config
   - Generate and publish the seed image
   - Restore the cluster operators
-- (not yet implemented) After LCA operator recovers, restore the seedgen CR and update its status to reflect success or failure of image generation, and restore the `ManagedCluster` CR on the hub (if applicable).
+- After LCA operator recovers, restore the seedgen CR and update its status to reflect success or failure of image generation, and restore the `ManagedCluster` CR on the hub (if applicable).
 
 ## Seed SNO Pre-Requisites
 

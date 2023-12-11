@@ -21,15 +21,20 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
-
-	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -41,13 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
-	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
-
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
@@ -352,9 +351,8 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 
 func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		err := r.Status().Update(ctx, ibu)
-		return err
+	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
+		return r.Status().Update(ctx, ibu)
 	})
 
 	if err != nil {
