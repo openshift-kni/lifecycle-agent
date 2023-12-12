@@ -24,24 +24,16 @@ cannot be merged. It is recommended that you run `make ci-job` regularly as part
 
 GO has automated formatting. To update code and ensure it is formatted properly, run:<br>`make fmt`
 
-## Updates to bindata
-
-When updating files in a `bindata` directory (eg. `internal/bindata/`), you will need to regenerate the
-corresponding go code by running:<br>
-`make update-bindata`
-
 ## Building and deploying image
 
 There are make variables you can set when building the image to customize how it is built and tagged. For example, you can set
-ENGINE=podman if your build system uses podman instead of docker. To use a custom repository, you can use the IMAGE_TAG_BASE variable.
-make IMAGE_TAG_BASE=quay.io/dpenney/lifecycle-agent-operator VERSION=latest ENGINE=podman update-bindata
+`ENGINE=podman` if your build system uses podman instead of docker. To use a custom repository, you can use the `IMAGE_TAG_BASE` variable.
 
 For example:
 
 ```console
-# Update bindata, then build and push the image
+# Build and push the image
 make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
-    update-bindata \
     docker-build \
     docker-push
 
