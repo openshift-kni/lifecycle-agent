@@ -185,6 +185,9 @@ func CopyFileIfExists(source, dest string) error {
 }
 
 func ReplaceImageRegistry(image, targetRegistry, sourceRegistry string) (string, error) {
+	if sourceRegistry == "" || targetRegistry == "" {
+		return image, nil
+	}
 	if targetRegistry == sourceRegistry {
 		return image, nil
 	}
