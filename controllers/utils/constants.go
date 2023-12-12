@@ -6,7 +6,6 @@ import (
 
 const (
 	IBUWorkspacePath   string = "/var/ibu"
-	Host               string = "/host"
 	PrepGetSeedImage   string = "prepGetSeedImage.sh"
 	PrepSetupStateroot string = "prepSetupStateroot.sh"
 	PrepCleanup        string = "prepCleanup.sh"

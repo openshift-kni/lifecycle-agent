@@ -56,7 +56,6 @@ type ImageBasedUpgradeReconciler struct {
 	Scheme          *runtime.Scheme
 	Recorder        record.EventRecorder
 	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
-	NetworkConfig   *clusterconfig.UpgradeNetworkConfigGather
 	Precache        *precache.PHandler
 	BackupRestore   *backuprestore.BRHandler
 	ExtraManifest   *extramanifest.EMHandler

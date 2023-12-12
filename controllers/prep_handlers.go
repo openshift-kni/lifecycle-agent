@@ -227,7 +227,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		}
 	}()
 
-	workspace, err := filepath.Rel(utils.Host, workspaceOutsideChroot)
+	workspace, err := filepath.Rel(common.Host, workspaceOutsideChroot)
 	if err != nil {
 		return fmt.Errorf("failed to get workspace relative path %w", err)
 	}
@@ -367,7 +367,7 @@ func (r *ImageBasedUpgradeReconciler) launchSetupStateroot(ctx context.Context,
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
 	result = doNotRequeue()
 
-	_, err = os.Stat(utils.Host)
+	_, err = os.Stat(common.Host)
 	if err != nil {
 		// fail without /host
 		return

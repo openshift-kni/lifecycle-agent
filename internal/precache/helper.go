@@ -28,7 +28,6 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -203,7 +202,7 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "host",
-									MountPath: utils.Host,
+									MountPath: common.Host,
 								},
 								{
 									Name:      "image-list-cm",
