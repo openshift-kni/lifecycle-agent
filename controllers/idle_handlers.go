@@ -98,7 +98,11 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		r.Log.Error(err, msg)
 		errorMessage += msg + " "
 	}
-
+	// Terminate precaching worker thread
+	if r.PrepTask.Active && r.PrepTask.Cancel != nil {
+		r.PrepTask.Cancel()
+		r.PrepTask.Reset()
+	}
 	if err := r.cleanupStateroots(allUnbootedStateroots, ibu); err != nil {
 		handleError(err, "failed to cleanup stateroots.")
 	}

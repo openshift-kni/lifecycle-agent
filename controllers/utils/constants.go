@@ -5,11 +5,7 @@ import (
 )
 
 const (
-	IBUWorkspacePath   string = "/var/ibu"
-	PrepGetSeedImage   string = "prepGetSeedImage.sh"
-	PrepSetupStateroot string = "prepSetupStateroot.sh"
-	PrepCleanup        string = "prepCleanup.sh"
-
+	IBUWorkspacePath string = "/var/ibu"
 	// IBUName defines the valid name of the CR for the controller to reconcile
 	IBUName     string = "upgrade"
 	IBUFilePath string = "/opt/ibu.json"

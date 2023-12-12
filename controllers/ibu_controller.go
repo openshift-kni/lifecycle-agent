@@ -64,6 +64,30 @@ type ImageBasedUpgradeReconciler struct {
 	ManifestClient  *clusterinfo.InfoClient
 	OstreeClient    ostreeclient.IClient
 	Ops             ops.Ops
+	PrepTask        *Task
+}
+
+// Task contains objects for executing a group of serial tasks asynchronously
+type Task struct {
+	Active   bool
+	Success  bool
+	Cancel   context.CancelFunc
+	Progress string
+	done     chan struct{}
+}
+
+// Reset Re-initialize the Task variables to initial values
+func (c *Task) Reset() {
+	c.Active = false
+	c.Success = false
+	c.Cancel = nil
+	c.Progress = ""
+	select {
+	case _, open := <-c.done:
+		if open {
+			close(c.done)
+		}
+	}
 }
 
 func doNotRequeue() ctrl.Result {

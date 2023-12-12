@@ -164,6 +164,7 @@ func main() {
 		ManifestClient:  clusterinfo.NewClusterInfoClient(mgr.GetClient()),
 		OstreeClient:    ostreeClient,
 		Ops:             op,
+		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

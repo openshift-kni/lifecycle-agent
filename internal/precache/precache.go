@@ -153,13 +153,13 @@ func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
 	status := &Status{Message: ""}
 	// Extract job status: active, successful, failed
 	if job.Status.Active > 0 {
-		status.Status = "Active"
+		status.Status = Active
 		h.Log.Info("Precaching job in-progress", "name:", LcaPrecacheJobName)
 	} else if job.Status.Succeeded > 0 {
-		status.Status = "Succeeded"
+		status.Status = Succeeded
 		h.Log.Info("Precaching job succeeded", "name:", LcaPrecacheJobName)
 	} else if job.Status.Failed > 0 {
-		status.Status = "Failed"
+		status.Status = Failed
 		h.Log.Info("Precaching job failed", "name:", LcaPrecacheJobName)
 	}
 
