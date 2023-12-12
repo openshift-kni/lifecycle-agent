@@ -37,7 +37,7 @@ while [[ ! $(lsblk -f --json | jq -r '.blockdevices[] | select(.label == "reloca
 done
 
 DEVICE=$(lsblk -f --json | jq -r '.blockdevices[] | select(.label == "relocation-config") | .name')
-if [[ -n "${DEVICE}" && ! -d "${OPT_OPENSHIFT}" ]]; then
+if [[ -n "${DEVICE}" && ! -d "${CONFIG_PATH}" ]]; then
     mount_config "${DEVICE}"
     cp -r /mnt/config/* ${OPT_OPENSHIFT}
 fi
