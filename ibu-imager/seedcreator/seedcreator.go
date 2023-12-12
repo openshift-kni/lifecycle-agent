@@ -11,14 +11,12 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	"github.com/thoas/go-funk"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -188,24 +186,23 @@ func (s *SeedCreator) handleServices() error {
 }
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
-	// TODO: remove after removing usage of clusterversion.json
-	manifestPath := path.Join(s.backupDir, common.ClusterInfoFileName)
-	if _, err := os.Stat(manifestPath); err == nil {
-		s.log.Info("Manifest file was already created, skipping")
-		return nil
-	}
-
-	clusterVersion := &v1.ClusterVersion{}
-	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return err
-	}
+	s.log.Info("Saving seed cluster configuration")
 	clusterManifest, err := utils.CreateClusterInfo(ctx, s.client)
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
+		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
+	}
 
 	s.log.Info("Creating manifest.json")
-	if err := utils.MarshalToFile(clusterManifest, path.Join(s.backupDir, common.ClusterInfoFileName)); err != nil {
+	if err := utils.MarshalToFile(clusterManifest, path.Join(common.SeedDataDir, common.ClusterInfoFileName)); err != nil {
+		return err
+	}
+
+	// in order to allow lca to verify version we need to provide file not as part of var archive too
+	if err := cp.Copy(path.Join(common.SeedDataDir, common.ClusterInfoFileName), path.Join(s.backupDir,
+		common.ClusterInfoFileName)); err != nil {
 		return err
 	}
 
@@ -213,7 +210,6 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		fmt.Sprintf("%s.%s", clusterManifest.ClusterName, clusterManifest.Domain))
 }
 
-// TODO: split function per operation
 func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Saving list of running containers and catalogsources.")
 	containersListFileName := s.backupDir + "/containers.list"

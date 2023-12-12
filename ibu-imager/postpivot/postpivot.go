@@ -101,8 +101,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
 
-	p.log.Infof("Removing %s", p.workingDir)
-	return os.RemoveAll(p.workingDir)
+	return p.cleanup()
 }
 
 func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
@@ -205,9 +204,18 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 
 func (p *PostPivot) applyManifests() error {
 	p.log.Infof("Applying manifests from %s", path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
+	dir, err := os.ReadDir(path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
+	if err != nil {
+		return err
+	}
+	if len(dir) == 0 {
+		p.log.Infof("No manifests to apply were found, skipping")
+		return nil
+	}
+
 	args := []string{"--kubeconfig", p.kubeconfig, "apply", "-f"}
 
-	_, err := p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))...)
+	_, err = p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))...)
 	if err != nil {
 		return fmt.Errorf("failed to apply manifests, err: %w", err)
 	}
@@ -325,4 +333,13 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	}
 	p.log.Infof("Done changing csv deployment")
 	return nil
+}
+
+func (p *PostPivot) cleanup() error {
+	p.log.Infof("Removing %s", p.workingDir)
+	if err := os.RemoveAll(p.workingDir); err != nil {
+		return err
+	}
+	p.log.Infof("Removing %s", common.SeedDataDir)
+	return os.RemoveAll(common.SeedDataDir)
 }
