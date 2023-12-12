@@ -23,7 +23,11 @@ import (
 	"math"
 
 	"github.com/go-logr/logr"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -70,6 +74,19 @@ var (
 	backupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
 	restoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
 )
+
+// BackuperRestorer interface also used for mocks
+type BackuperRestorer interface {
+	CleanupBackups(ctx context.Context) (bool, error)
+	DeleteOadpOperator(ctx context.Context, namespace string) error
+	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
+	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
+	GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error)
+	LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, error)
+	RestoreOadpConfigurations(ctx context.Context) error
+	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
+	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
+}
 
 // BRHandler handles the backup and restore
 type BRHandler struct {
