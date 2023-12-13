@@ -12,6 +12,7 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	"github.com/thoas/go-funk"
 	etcdClient "go.etcd.io/etcd/client/v3"
@@ -26,7 +27,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-	cp "github.com/otiai10/copy"
 )
 
 type PostPivot struct {
@@ -336,10 +336,6 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 }
 
 func (p *PostPivot) cleanup() error {
-	p.log.Infof("Removing %s", p.workingDir)
-	if err := os.RemoveAll(p.workingDir); err != nil {
-		return err
-	}
-	p.log.Infof("Removing %s", common.SeedDataDir)
-	return os.RemoveAll(common.SeedDataDir)
+	p.log.Info("Cleaning up")
+	return utils.RemoveListOfFolders(p.log, []string{p.workingDir, common.SeedDataDir})
 }

@@ -58,9 +58,6 @@ if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
     cp "${NETWORK_CONFIG_PATH}"/system-connections/*.nmconnection /etc/NetworkManager/system-connections/ -f
     find /etc/NetworkManager/system-connections/*.nmconnection -type f -exec chmod 600 {} \;
 fi
-if [[ -f "${NETWORK_CONFIG_PATH}"/hostname ]]; then
-    cp "${NETWORK_CONFIG_PATH}"/hostname /etc/hostname
-fi
 
 CLUSTER_CONFIG_FILE="${CONFIG_PATH}"/manifest.json
 NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${CLUSTER_CONFIG_FILE}")
@@ -72,6 +69,9 @@ SNO_CLUSTER_NAME_OVERRIDE=${NEW_CLUSTER_NAME}
 SNO_BASE_DOMAIN_OVERRIDE=${NEW_BASE_DOMAIN}
 SNO_DNSMASQ_IP_OVERRIDE=${NEW_HOST_IP}
 EOF
+
+NEW_HOSTNAME=$(jq -r '.hostname' "${CLUSTER_CONFIG_FILE}")
+echo ${NEW_HOSTNAME} > /etc/hostname
 
 systemctl restart NetworkManager
 systemctl disable prepare-installation-configuration.service

@@ -126,6 +126,9 @@ func (s *SeedCreator) CreateSeedImage() error {
 			return err
 		}
 	}
+	if err := s.removeOvnCertsFolders(); err != nil {
+		return err
+	}
 
 	if err := utils.RunOnce("backup_var", common.BackupChecksDir, s.log, s.backupVar); err != nil {
 		return err
@@ -517,4 +520,9 @@ func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {
 	}
 
 	return images, nil
+}
+
+func (s *SeedCreator) removeOvnCertsFolders() error {
+	s.log.Infof("Removing ovn certs folders")
+	return utils.RemoveListOfFolders(s.log, []string{common.OvnNodeCerts, common.MultusCerts})
 }

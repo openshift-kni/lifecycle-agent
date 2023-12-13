@@ -58,10 +58,8 @@ var (
 		"99-worker-ssh",
 	}
 
-	hostPath = common.Host
-
+	hostPath                = common.Host
 	listOfNetworkFilesPaths = []string{
-		"/etc/hostname",
 		"/etc/NetworkManager/system-connections",
 	}
 )
