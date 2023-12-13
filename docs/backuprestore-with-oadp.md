@@ -275,10 +275,13 @@ metadata:
     velero.io/storage-location: default
   namespace: openshift-adp
 spec:
+  includedNamespaces:
+  - open-cluster-management-agent
   includedClusterScopedResources:
   - klusterlets.operator.open-cluster-management.io
   - clusterclaims.cluster.open-cluster-management.io
-  ...
+  - clusterroles
+  - clusterrolebindings
 ```
 backup_localvolume.yaml
 ```yaml
@@ -427,9 +430,11 @@ spec:
 ```
 
 ### Note:
-1. The ZTP GitOps method described above can be used to install OADP on the seed cluster as well. However, please note that you should not apply the DPA (Data Protection Application) and S3 secret on the seed cluster. These will be handled by the LCA during the upgrade process.
+The ZTP GitOps method described above can be used to install OADP on the seed cluster as well. However, please note that you should not apply the DPA (Data Protection Application) and S3 secret on the seed cluster. These will be handled by the LCA during the upgrade process.
 
-2. If you prefer to install and configure OADP manually, you can copy all the neccessary CRs provided above and use them as a reference. Make sure to adjust the configuration according to your specific requirements.
+## Manually install OADP and configure OADP on target cluster
+
+If you prefer to install and configure OADP manually, you can copy all the neccessary CRs provided in the section **Install OADP and configure OADP on target cluster via ZTP GitOps**, remove the `ran.openshift.io/ztp-deploy-wave` annotation from CRs and use them as a reference. Remove Make sure to adjust the configuration according to your specific requirements.
 
 ## Update the IBU CR with OADP configmap
 To enable backup and restore during the upgrade stage, you should update the IBU CR with the generated OADP configmap specified in the `spec.oadpContent` field.

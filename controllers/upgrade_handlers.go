@@ -85,7 +85,10 @@ func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot() error {
 	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
 }
 
-// prePivot all the funcs needed to be called before a pivot
+// prePivot executes all the pre-upgrade steps and initiates a cluster reboot.
+//
+// Note: All decisions, including reconciles and failures, should be made within this function.
+// The caller will simply return what this function returns.
 func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	// backup with OADP
 	r.Log.Info("Handling backups with OADP operator")
@@ -102,6 +105,7 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return requeueWithError(err)
 	}
 	if !ctrlResult.IsZero() {
+		// The backup process has not been completed yet, requeue
 		return ctrlResult, nil
 	}
 
@@ -112,6 +116,10 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 
 	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
 	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
+		if backuprestore.IsBRFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
 		return requeueWithError(err)
 	}
 
@@ -161,6 +169,10 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	return doNotRequeue(), nil
 }
 
+// postPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
+//
+// Note: All decisions, including reconciles and failures, should be made within this function.
+// The caller will simply return what this function returns.
 func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting health check for different components")
 	err := healthcheck.HealthChecks(r.Client, r.Log)
@@ -169,7 +181,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		return doNotRequeue(), nil
 	}
 
-	r.Log.Info("Applying extra manifests")
+	// Applying extra manifests
 	err = r.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
@@ -179,7 +191,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Recovering OADP configuration")
+	// Recovering OADP configuration
 	err = r.BackupRestore.RestoreOadpConfigurations(ctx)
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
@@ -189,7 +201,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Handling restores with OADP operator")
+	// Handling restores with OADP operator
 	result, err := r.handleRestore(ctx)
 	if err != nil {
 		// Restore failed
@@ -200,6 +212,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		return requeueWithError(err)
 	}
 	if !result.IsZero() {
+		// The restore process has not been completed yet, requeue
 		return result, nil
 	}
 
@@ -241,7 +254,7 @@ func (r *ImageBasedUpgradeReconciler) handleBackup(ctx context.Context, ibu *lca
 
 		// Backups are in progress
 		if len(backupTracker.ProgressingBackups) > 0 {
-			return requeueWithCustomInterval(5 * time.Second), nil
+			return requeueWithShortInterval(), nil
 		}
 
 		// Backups are waiting for condition
@@ -253,6 +266,7 @@ func (r *ImageBasedUpgradeReconciler) handleBackup(ctx context.Context, ibu *lca
 }
 
 func (r *ImageBasedUpgradeReconciler) handleRestore(ctx context.Context) (ctrl.Result, error) {
+	r.Log.Info("Handling restores with OADP operator")
 	// Load restore CRs from files
 	sortedRestoreGroups, err := r.BackupRestore.LoadRestoresFromOadpRestorePath()
 	if err != nil {
@@ -292,9 +306,9 @@ func (r *ImageBasedUpgradeReconciler) handleRestore(ctx context.Context) (ctrl.R
 	}
 
 	r.Log.Info("All restores succeeded")
-	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpRestorePath)); err != nil {
+	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
 		return requeueWithError(err)
 	}
-	r.Log.Info("OADP restore path removed", "path", backuprestore.OadpRestorePath)
+	r.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
 	return doNotRequeue(), nil
 }

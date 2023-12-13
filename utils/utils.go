@@ -22,11 +22,21 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/tools/clientcmd"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 // MarshalToFile marshals anything and writes it to the given file path
 func MarshalToFile(data any, filePath string) error {
 	marshaled, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, marshaled, 0o644)
+}
+
+// MarshalToYamlFile marshals any object to YAML and writes it to the given file path
+func MarshalToYamlFile(data any, filePath string) error {
+	marshaled, err := k8syaml.Marshal(data)
 	if err != nil {
 		return err
 	}

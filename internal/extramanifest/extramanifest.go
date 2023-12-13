@@ -115,12 +115,12 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 	manifestYamls, err := os.ReadDir(fromDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			h.Log.Info("No extra manifests directory found, skipping", "path", fromDir)
 			return nil
 		}
 		return err
 	}
 
+	h.Log.Info("Applying extra manifests")
 	if len(manifestYamls) == 0 {
 		h.Log.Info("No extra manifests found", "path", fromDir)
 		return nil

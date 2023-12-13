@@ -21,9 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 )
 
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
@@ -54,16 +53,17 @@ const (
 	clusterIDLabel   = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
 	defaultApplyWave = math.MaxInt32                   // 2147483647, an enough large number
 
-	OadpRestorePath = "/opt/OADP/veleroRestore"
-	oadpDpaPath     = "/opt/OADP/dpa"
-	oadpSecretPath  = "/opt/OADP/secret"
+	OadpPath        = "/opt/OADP"
+	OadpRestorePath = OadpPath + "/veleroRestore"
+	oadpDpaPath     = OadpPath + "/dpa"
+	oadpSecretPath  = OadpPath + "/secret"
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
 	OadpNs = "openshift-adp"
 )
 
 var (
-	hostDir = "/host"
+	hostPath = common.Host
 
 	dpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
 	dpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
@@ -133,7 +133,7 @@ func IsBRNotFoundError(err error) bool {
 func IsBRFailedError(err error) bool {
 	var brErr *BRStatusError
 	if errors.As(err, &brErr) {
-		if brErr.Type == "Backup" || brErr.Type == "Restore" {
+		if brErr.Type == "Backup" || brErr.Type == "Restore" || brErr.Type == "OADP" {
 			return brErr.Reason == "Failed"
 		}
 	}
@@ -158,42 +158,6 @@ func IsBRStorageBackendUnavailableError(err error) bool {
 		}
 	}
 	return false
-}
-
-func writeSecretToFile(secret *corev1.Secret, filePath string) error {
-	secretBytes, err := yaml.Marshal(secret)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(filePath, secretBytes, 0o644); err != nil {
-		return err
-	}
-	return nil
-}
-
-func writeDpaToFile(dpa *unstructured.Unstructured, filePath string) error {
-	dpaBytes, err := yaml.Marshal(dpa)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(filePath, dpaBytes, 0o644); err != nil {
-		return err
-	}
-	return nil
-}
-
-func writeRestoreToFile(restore *velerov1.Restore, filePath string) error {
-	data, err := yaml.Marshal(restore)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return err
-	}
-	return nil
 }
 
 func getBackup(ctx context.Context, c client.Client, name, namespace string) (*velerov1.Backup, error) {
@@ -287,4 +251,24 @@ func (h *BRHandler) DeleteOadpOperator(ctx context.Context, namespace string) er
 		h.Log.Info("WARN: Found more than 1 OADP operator. Deleted all OADP operators.")
 	}
 	return nil
+}
+
+func isDPAReconciled(dpa *unstructured.Unstructured) bool {
+	if dpa.Object["status"] == nil {
+		return false
+	}
+
+	dpaStatus := dpa.Object["status"].(map[string]interface{})
+	if dpaStatus["conditions"] == nil {
+		return false
+	}
+
+	dpaStatusConditions := dpaStatus["conditions"].([]interface{})
+	for _, condition := range dpaStatusConditions {
+		conditionMap := condition.(map[string]interface{})
+		if conditionMap["type"] == "Reconciled" {
+			return conditionMap["status"] == "True"
+		}
+	}
+	return false
 }
