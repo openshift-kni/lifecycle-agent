@@ -34,16 +34,26 @@ For example:
 ```console
 # Build and push the image
 make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
-    docker-build \
     docker-push
 
 # Deploy the operator to your SNO (with KUBECONFIG set appropriately)
 make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
     install \
     deploy
+```
 
-# Watch LCA logs
-oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-agent-operator --timestamps --follow
+Alternatively, you can also build your own bundle image and deploy it through OLM as an operator:
+
+```console
+make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
+    bundle-push \
+    bundle-run 
+```
+
+To watch LCA logs:
+
+```console
+oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-agent-operator -c manager --follow
 ```
 
 ## Creating CR and Updating Stage
@@ -77,6 +87,9 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Idl
 ```console
 # Delete LCA resources
 make undeploy
+
+# Delete LCA installed as an operator
+make bundle-clean
 
 #
 # Delete the deployment and stateroot (on the SNO)
