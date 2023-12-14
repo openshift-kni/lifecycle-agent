@@ -198,6 +198,22 @@ spec:
                 type: array
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: can not change spec.seedImageRef while ibu is in progress
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef)
+            && oldSelf.spec.seedImageRef==self.spec.seedImageRef || !has(self.spec.seedImageRef)
+            && !has(oldSelf.spec.seedImageRef)'
+        - message: can not change spec.oadpContent while ibu is in progress
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || has(oldSelf.spec.oadpContent) && has(self.spec.oadpContent)
+            && oldSelf.spec.oadpContent==self.spec.oadpContent || !has(self.spec.oadpContent)
+            && !has(oldSelf.spec.oadpContent)'
+        - message: can not change spec.extraManifests while ibu is in progress
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests)
+            && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests)
+            && !has(oldSelf.spec.extraManifests)'
     served: true
     storage: true
     subresources:
