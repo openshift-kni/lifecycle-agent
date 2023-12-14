@@ -200,13 +200,6 @@ func TestClusterConfig(t *testing.T) {
 				}
 				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
-				// validate cluster version
-				clusterVersion := &ocpV1.ClusterVersion{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, clusterIDFileName), clusterVersion); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				assert.Equal(t, ocpV1.ClusterID("1"), clusterVersion.Spec.ClusterID)
-
 				// validate proxy
 				proxy := &ocpV1.Proxy{}
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, proxyFileName), proxy); err != nil {
@@ -335,7 +328,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 5, len(dir))
+				assert.Equal(t, 4, len(dir))
 			},
 		},
 		{

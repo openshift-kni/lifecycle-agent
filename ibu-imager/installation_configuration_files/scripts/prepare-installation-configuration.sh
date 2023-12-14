@@ -48,12 +48,11 @@ if [ ! -d "${OPT_OPENSHIFT}" ]; then
 fi
 
 echo "${OPT_OPENSHIFT} has been created"
-# Replace this with a function that loads values from yaml file
+
 set +o allexport
 
 echo "Network configuration exist"
 if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
-   # TODO: we might need to delete the connection first
     rm -f /etc/NetworkManager/system-connections/*.nmconnection
     cp "${NETWORK_CONFIG_PATH}"/system-connections/*.nmconnection /etc/NetworkManager/system-connections/ -f
     find /etc/NetworkManager/system-connections/*.nmconnection -type f -exec chmod 600 {} \;

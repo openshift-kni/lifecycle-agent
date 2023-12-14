@@ -92,6 +92,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return err
 	}
 
+	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, clusterInfo); err != nil {
+		return err
+	}
+
 	// Restore lvm devices
 	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
 		return err
@@ -338,4 +342,21 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 func (p *PostPivot) cleanup() error {
 	p.log.Info("Cleaning up")
 	return utils.RemoveListOfFolders(p.log, []string{p.workingDir, common.SeedDataDir})
+}
+
+func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, clusterInfo *clusterinfo.ClusterInfo) error {
+	p.log.Info("Set new cluster id")
+	clusterVersion := &v1.ClusterVersion{}
+	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
+		return err
+	}
+
+	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, clusterInfo.ClusterID))
+
+	p.log.Infof("Applying csv deploymet patch %s", string(patch))
+	err := client.Patch(ctx, clusterVersion, runtimeclient.RawPatch(types.MergePatchType, patch))
+	if err != nil {
+		return fmt.Errorf("failed to patch cluster id in clusterversion, err: %w", err)
+	}
+	return nil
 }
