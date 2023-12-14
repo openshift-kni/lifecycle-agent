@@ -70,6 +70,8 @@ import (
 	//+kubebuilder:scaffold:imports
 )
 
+// +kubebuilder:rbac:groups="security.openshift.io",resources=securitycontextconstraints,resourceNames=privileged,verbs=use
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")

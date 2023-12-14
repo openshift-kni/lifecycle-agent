@@ -361,6 +361,14 @@ spec:
           verbs:
           - delete
         - apiGroups:
+          - security.openshift.io
+          resourceNames:
+          - privileged
+          resources:
+          - securitycontextconstraints
+          verbs:
+          - use
+        - apiGroups:
           - velero.io
           resources:
           - backups

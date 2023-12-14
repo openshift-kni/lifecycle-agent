@@ -157,7 +157,7 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 docker-build: ## Build container image with the manager.
 	${ENGINE} build -t ${IMG} -f Dockerfile .
 
-docker-push: ## Push container image with the manager.
+docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}
 
 ##@ Deployment
@@ -184,12 +184,12 @@ bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metada
 	sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml
 
 .PHONY: bundle-build
-bundle-build: ## Build the bundle image.
+bundle-build: bundle docker-push ## Build the bundle image.
 	${ENGINE} build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
 
 .PHONY: bundle-push
-bundle-push: ## Push the bundle image.
-	$(MAKE) docker-push IMG=$(BUNDLE_IMG)
+bundle-push: bundle-build ## Push the bundle image.
+	${ENGINE} push $(BUNDLE_IMG)
 
 .PHONY: bundle-check
 bundle-check: bundle
@@ -206,7 +206,7 @@ bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
 
 .PHONY: bundle-clean
 bundle-clean: # Uninstall bundle on cluster using operator sdk.
-	$(OPERATOR_SDK) cleanup lifecycle-agent
+	$(OPERATOR_SDK) cleanup lifecycle-agent -n openshift-lifecycle-agent
 	oc delete ns openshift-lifecycle-agent
 
 .PHONY: opm
