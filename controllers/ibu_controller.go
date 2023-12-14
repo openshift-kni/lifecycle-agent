@@ -57,7 +57,7 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder        record.EventRecorder
 	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
 	Precache        *precache.PHandler
-	BackupRestore   *backuprestore.BRHandler
+	BackupRestore   backuprestore.BackuperRestorer
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
