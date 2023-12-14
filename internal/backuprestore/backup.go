@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -240,7 +241,7 @@ func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps 
 	return backups, nil
 }
 
-// ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CRs and required storage creds to a given location
+// ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CR and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	dpaList := &unstructured.UnstructuredList{}
 	dpaList.SetGroupVersionKind(dpaGvkList)
@@ -258,24 +259,28 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 	if len(dpaList.Items) == 0 {
 		return nil
 	}
+	if len(dpaList.Items) != 1 {
+		errMsg := fmt.Sprintf("Only one DataProtectionApplication CR is allowed in the %s", OadpNs)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedError("OADP", errMsg)
+	}
 
-	// Create the directory for DPAs
+	// Create the directory for DPA
 	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaPath), 0o700); err != nil {
 		return err
 	}
 
 	var secrets []string
-	// Write DPAs to a given directory
 	for _, dpa := range dpaList.Items {
 		// Unset uid and resource version
 		dpa.SetUID("")
 		dpa.SetResourceVersion("")
 
 		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+".yaml")
-		if err := writeDpaToFile(&dpa, filePath); err != nil {
+		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil {
 			return err
 		}
-		h.Log.Info("Exported DPA CR to file", "path", filePath)
+		h.Log.Info("Exported DataProtectionApplication CR to file", "path", filePath)
 
 		// Make sure the required storage creds are exported
 		dpaSpec := dpa.Object["spec"].(map[string]interface{})
@@ -321,7 +326,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		storageSecret.SetResourceVersion("")
 
 		filePath := filepath.Join(toDir, oadpSecretPath, secretName+".yaml")
-		if err := writeSecretToFile(storageSecret, filePath); err != nil {
+		if err := utils.MarshalToYamlFile(storageSecret, filePath); err != nil {
 			return err
 		}
 		h.Log.Info("Exported secret to file", "path", filePath)
@@ -358,7 +363,7 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		for j, restore := range restoreGroup {
 			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + ".yaml"
 			filePath := filepath.Join(group, restoreFileName)
-			if err := writeRestoreToFile(restore, filePath); err != nil {
+			if err := utils.MarshalToYamlFile(restore, filePath); err != nil {
 				return err
 			}
 			h.Log.Info("Exported restore CR to file", "path", filePath)

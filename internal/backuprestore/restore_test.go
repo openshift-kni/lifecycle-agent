@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -332,7 +333,7 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	}
 
 	// Override the default host path
-	hostDir = tmpDir
+	hostPath = tmpDir
 	// Load restores from the temporary directory
 	restores, err := handler.LoadRestoresFromOadpRestorePath()
 	if err != nil {
@@ -413,7 +414,7 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 		},
 	}
 	dpaFilePath := filepath.Join(dpaDir, dpa.GetName()+".yaml")
-	if err := writeDpaToFile(dpa, dpaFilePath); err != nil {
+	if err := utils.MarshalToYamlFile(dpa, dpaFilePath); err != nil {
 		t.Errorf("error in writing dpa to file")
 	}
 
@@ -432,8 +433,8 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 	// Test restore of DataProtectionApplication
 	go func() {
 		// Override the default host path
-		hostDir = fromDir
-		err := handler.restoreDataProtectionApplications(context.Background())
+		hostPath = fromDir
+		err := handler.restoreDataProtectionApplication(context.Background())
 		errorChan <- err
 	}()
 
@@ -472,11 +473,6 @@ func TestEnsureStorageBackendAvailable(t *testing.T) {
 		bsl         []client.Object
 		expectedErr error
 	}{
-		{
-			name:        "No backup storage locations",
-			bsl:         []client.Object{},
-			expectedErr: NewBRStorageBackendUnavailableError("No backup storage location found"),
-		},
 		{
 			name: "Backup storage location is unavailable",
 			bsl: []client.Object{

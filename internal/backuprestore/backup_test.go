@@ -413,6 +413,15 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 					},
 				},
 			},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   "Reconciled",
+						"status": "True",
+						"reason": "Complete",
+					},
+				},
+			},
 		},
 	}
 	err = c.Create(context.Background(), dpa)
