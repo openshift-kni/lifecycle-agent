@@ -413,7 +413,7 @@ func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1alpha
 func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) error {
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
-	_, err := r.Executor.Execute("podman", "pull", recertImage)
+	_, err := r.Executor.Execute("podman", "pull", "--authfile", common.ImageRegistryAuthFile, recertImage)
 	if err != nil {
 		return fmt.Errorf("failed to pull recertImage (%s): %w", recertImage, err)
 	}
