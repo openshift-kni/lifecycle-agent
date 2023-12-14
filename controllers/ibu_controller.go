@@ -374,6 +374,13 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 
 func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
+
+	// TODO: Does a blanket update of all conditions even make sense, or should
+	// we be more selective?
+	for i := range ibu.Status.Conditions {
+		ibu.Status.Conditions[i].ObservedGeneration = ibu.ObjectMeta.Generation
+	}
+
 	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
 		return r.Status().Update(ctx, ibu)
 	})
