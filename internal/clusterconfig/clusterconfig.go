@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -203,8 +202,7 @@ func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, ma
 func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clusterConfigPath string) error {
 	r.Log.Info("Fetching ClusterInfo")
 
-	cmClient := clusterinfo.NewClusterInfoClient(r.Client)
-	clusterInfo, err := cmClient.CreateClusterInfo(ctx)
+	clusterInfo, err := utils.CreateClusterInfo(ctx, r.Client)
 	if err != nil {
 		return err
 	}

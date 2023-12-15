@@ -104,9 +104,11 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
-		if err := s.backupSeedCertificates(ctx); err != nil {
+		s.log.Info("Backing up seed cluster certificates for recert tool")
+		if err := utils.BackupCertificates(ctx, s.client, common.BackupCertsDir); err != nil {
 			return err
 		}
+		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	}
 
 	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
@@ -197,7 +199,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	if err := s.client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return err
 	}
-	clusterManifest, err := s.manifestClient.CreateClusterInfo(ctx)
+	clusterManifest, err := utils.CreateClusterInfo(ctx, s.client)
 	if err != nil {
 		return err
 	}
@@ -251,42 +253,6 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	}
 
 	s.log.Info("List of containers  saved successfully.")
-	return nil
-}
-
-func (s *SeedCreator) backupSeedCertificates(ctx context.Context) error {
-	s.log.Info("Backing up seed cluster certificates for recert tool")
-	if err := os.MkdirAll(common.BackupCertsDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
-	}
-
-	adminKubeConfigClientCA, err := s.manifestClient.GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
-		return err
-	}
-
-	for _, cert := range common.CertPrefixes {
-		servingSignerKey, err := s.manifestClient.GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(path.Join(common.BackupCertsDir, cert+".key"), []byte(servingSignerKey), 0o644); err != nil {
-			return err
-		}
-	}
-
-	ingressOperatorKey, err := s.manifestClient.GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(common.BackupCertsDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
-		return err
-	}
-
-	s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	return nil
 }
 

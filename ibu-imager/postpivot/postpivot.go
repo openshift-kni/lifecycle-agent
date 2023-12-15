@@ -54,14 +54,14 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops,
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	p.log.Info("Reading cluster info")
-	clusterInfo, err := clusterinfo.ReadClusterInfoFromFile(
+	clusterInfo, err := utils.ReadClusterInfoFromFile(
 		path.Join(p.workingDir, common.ClusterConfigDir, common.ClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
 	p.log.Info("Reading seed info")
-	seedClusterInfo, err := clusterinfo.ReadClusterInfoFromFile(path.Join(p.workingDir, common.SeedManifest))
+	seedClusterInfo, err := utils.ReadClusterInfoFromFile(path.Join(p.workingDir, common.SeedManifest))
 	if err != nil {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
@@ -287,8 +287,7 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
 
 	p.log.Info("Changing release registry in csv deployment")
-	cmClient := clusterinfo.NewClusterInfoClient(client)
-	csvD, err := cmClient.GetCSVDeployment(ctx)
+	csvD, err := utils.GetCSVDeployment(ctx, client)
 	if err != nil {
 		return err
 	}

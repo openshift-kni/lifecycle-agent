@@ -31,11 +31,11 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
-	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -106,12 +106,13 @@ func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string) (im
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
-	clusterRegistry, err := clusterinfo.NewClusterInfoClient(r.Client).GetReleaseRegistry(ctx)
+	clusterRegistry, err := commonUtils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
 		r.Log.Error(err, "Failed to get cluster registry")
 		return false, err
 	}
-	seedInfo, err := clusterinfo.ReadClusterInfoFromFile(
+
+	seedInfo, err := commonUtils.ReadClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(getDesiredStaterootName(ibu))))
 	if err != nil {
 		r.Log.Error(err, "Failed to read seed info")
@@ -287,7 +288,12 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 
-	prep.BackupCertificates(ctx, osname, r.ManifestClient)
+	certsDir := common.PathOutsideChroot(
+		filepath.Join(common.GetStaterootPath(osname), "/var/opt/openshift/certs"),
+	)
+	if err := commonUtils.BackupCertificates(ctx, r.Client, certsDir); err != nil {
+		return fmt.Errorf("failed to backup cerificaties: %w", err)
+	}
 
 	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, common.ClusterInfoFileName),

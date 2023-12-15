@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -61,7 +60,6 @@ type ImageBasedUpgradeReconciler struct {
 	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
-	ManifestClient  *clusterinfo.InfoClient
 	OstreeClient    ostreeclient.IClient
 	Ops             ops.Ops
 	PrepTask        *Task
