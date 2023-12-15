@@ -62,6 +62,11 @@ var (
 	}
 )
 
+type UpgradeClusterConfigGatherer interface {
+	FetchClusterConfig(ctx context.Context, ostreeDir string) error
+	FetchLvmConfig(ctx context.Context, ostreeDir string) error
+}
+
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
 type UpgradeClusterConfigGather struct {
 	client.Client

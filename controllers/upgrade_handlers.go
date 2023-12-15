@@ -22,39 +22,54 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
-	v1 "k8s.io/api/core/v1"
-
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var (
-	// todo: this value might need adjusting later
-	defaultRebootTimeout = 60 * time.Minute
-)
-
-var isOrigStaterootBooted = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
-	currentStaterootName, err := r.RPMOstreeClient.GetCurrentStaterootName()
-	if err != nil {
-		return false, err
+type (
+	UpgradeHandler interface {
+		HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
+		HandleRestore(ctx context.Context) (ctrl.Result, error)
+		PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
+		PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
 	}
-	r.Log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", getDesiredStaterootName(ibu))
-	return currentStaterootName != getDesiredStaterootName(ibu), nil
-}
+
+	UpgHandler struct {
+		client.Client
+		Log             logr.Logger
+		BackupRestore   backuprestore.BackuperRestorer
+		ExtraManifest   extramanifest.EManifestHandler
+		ClusterConfig   clusterconfig.UpgradeClusterConfigGatherer
+		Executor        ops.Execute
+		Ops             ops.Ops
+		Recorder        record.EventRecorder
+		RPMOstreeClient rpmostreeclient.IClient
+		OstreeClient    ostreeclient.IClient
+	}
+)
 
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	origStaterootBooted, err := isOrigStaterootBooted(r, ibu)
+	origStaterootBooted, err := reboot.IsOrigStaterootBooted(ibu, r.RPMOstreeClient, r.Log)
+
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -64,37 +79,21 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	// WARNING: the pod may not know if we are boot loop (for now)
 	if origStaterootBooted {
 		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
-		return r.prePivot(ctx, ibu)
+		return r.UpgradeHandler.PrePivot(ctx, ibu)
 	} else {
 		r.Log.Info("Pivot successful, starting post pivot steps")
-		return r.postPivot(ctx, ibu)
+		return r.UpgradeHandler.PostPivot(ctx, ibu)
 	}
-}
-
-func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot(rationale string) error {
-	r.Log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
-
-	_, err := r.Executor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
-		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
-		"systemctl --message=\"Image Based Upgrade\" reboot")
-	if err != nil {
-		return err
-	}
-
-	r.Log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
-	time.Sleep(defaultRebootTimeout)
-
-	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
 }
 
 // prePivot executes all the pre-upgrade steps and initiates a cluster reboot.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
-func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	// backup with OADP
-	r.Log.Info("Handling backups with OADP operator")
-	ctrlResult, err := r.handleBackup(ctx, ibu)
+	u.Log.Info("Handling backups with OADP operator")
+	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -111,15 +110,16 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return ctrlResult, nil
 	}
 
-	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+	u.Log.Info("Remounting sysroot")
+	if err := u.Ops.RemountSysroot(); err != nil {
 		return requeueWithError(err)
 	}
 
-	stateroot := getDesiredStaterootName(ibu)
-	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
+	stateroot := common.GetDesiredStaterootName(ibu)
+	staterootVarPath := getStaterootVarPath(stateroot)
 
-	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
+	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
+	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
@@ -127,8 +127,8 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Writing Restore CRs into new stateroot")
-	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
+	u.Log.Info("Writing Restore CRs into new stateroot")
+	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
 		if backuprestore.IsBRFailedValidationError(err) {
 			utils.SetUpgradeStatusInProgress(ibu, err.Error())
 			return requeueWithMediumInterval(), nil
@@ -136,71 +136,88 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Writing extra-manifests into new stateroot")
-	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
+	u.Log.Info("Writing extra-manifests into new stateroot")
+	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Writing cluster-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchClusterConfig(ctx, staterootVarPath); err != nil {
+	u.Log.Info("Writing cluster-configuration into new stateroot")
+	if err := u.ClusterConfig.FetchClusterConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Writing lvm-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
+	u.Log.Info("Writing lvm-configuration into new stateroot")
+	if err := u.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
-	r.Log.Info("Save the IBU CR to the new state root before pivot")
+	u.Log.Info("Save the IBU CR to the new state root before pivot")
 	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		return requeueWithError(err)
 	}
 
-	// Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
-	ibuCopy := ibu.DeepCopy()
-	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
-	if err := lcautils.MarshalToFile(ibuCopy, common.PathOutsideChroot(utils.IBUFilePath)); err != nil {
+	u.Log.Info("Save a copy of the IBU in the current stateroot")
+	if err := exportForUncontrolledRollback(ibu); err != nil {
 		return requeueWithError(err)
 	}
 
 	// Set the new default deployment
-	if r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
-		deploymentIndex, err := r.RPMOstreeClient.GetDeploymentIndex(stateroot)
+	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
 		if err != nil {
 			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
 		}
-		if err := r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
 			return requeueWithError(fmt.Errorf("failed to set default deployment for pivot to"))
 		}
 	}
 
 	// Write an event to indicate reboot attempt
-	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
-	err = r.rebootToNewStateRoot("upgrade")
+	u.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
+	err = reboot.RebootToNewStateRoot("upgrade", u.Log, u.Executor)
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
-		r.Log.Error(err, "")
+		u.Log.Error(err, "")
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 	return doNotRequeue(), nil
 }
 
+// exportForUncontrolledRollback Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
+var ibuPreStaterootPath = common.PathOutsideChroot(utils.IBUFilePath)
+
+func exportForUncontrolledRollback(ibu *lcav1alpha1.ImageBasedUpgrade) error {
+	ibuCopy := ibu.DeepCopy()
+	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
+	if err := lcautils.MarshalToFile(ibuCopy, ibuPreStaterootPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+var getStaterootVarPath = func(stateroot string) string {
+	return common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
+}
+
+// CheckHealth helper func to call HealthChecks
+var CheckHealth = healthcheck.HealthChecks
+
 // postPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
-func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	r.Log.Info("Starting health check for different components")
-	err := healthcheck.HealthChecks(r.Client, r.Log)
+func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	u.Log.Info("Starting health check for different components")
+	err := CheckHealth(u.Client, u.Log)
 	if err != nil {
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 
 	// Applying extra manifests
-	err = r.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
+	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -210,7 +227,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 	}
 
 	// Recovering OADP configuration
-	err = r.BackupRestore.RestoreOadpConfigurations(ctx)
+	err = u.BackupRestore.RestoreOadpConfigurations(ctx)
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -220,7 +237,7 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 	}
 
 	// Handling restores with OADP operator
-	result, err := r.handleRestore(ctx)
+	result, err := u.HandleRestore(ctx)
 	if err != nil {
 		// Restore failed
 		if backuprestore.IsBRFailedError(err) {
@@ -234,27 +251,27 @@ func (r *ImageBasedUpgradeReconciler) postPivot(ctx context.Context, ibu *lcav1a
 		return result, nil
 	}
 
-	r.Log.Info("Done handleUpgrade")
+	u.Log.Info("Done handleUpgrade")
 	utils.SetUpgradeStatusCompleted(ibu)
 	return doNotRequeue(), nil
 }
 
-// handleBackup manages backup flow and returns with possible requeue
-func (r *ImageBasedUpgradeReconciler) handleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	sortedBackupGroups, err := r.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
+// HandleBackup manages backup flow and returns with possible requeue
+func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	sortedBackupGroups, err := u.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		return requeueWithError(err)
 	}
 
 	if len(sortedBackupGroups) == 0 {
-		r.Log.Info("No backup requests, skipping")
+		u.Log.Info("No backup requests, skipping")
 		return doNotRequeue(), nil
 	}
 
 	// trigger and track each group
 	for index, backups := range sortedBackupGroups {
-		r.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
-		backupTracker, err := r.BackupRestore.StartOrTrackBackup(ctx, backups)
+		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
+		backupTracker, err := u.BackupRestore.StartOrTrackBackup(ctx, backups)
 		if err != nil {
 			return requeueWithError(err)
 		}
@@ -279,26 +296,26 @@ func (r *ImageBasedUpgradeReconciler) handleBackup(ctx context.Context, ibu *lca
 		return requeueWithMediumInterval(), nil
 	}
 
-	r.Log.Info("All backups succeeded")
+	u.Log.Info("All backups succeeded")
 	return doNotRequeue(), nil
 }
 
-func (r *ImageBasedUpgradeReconciler) handleRestore(ctx context.Context) (ctrl.Result, error) {
-	r.Log.Info("Handling restores with OADP operator")
+func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
+	u.Log.Info("Handling restores with OADP operator")
 	// Load restore CRs from files
-	sortedRestoreGroups, err := r.BackupRestore.LoadRestoresFromOadpRestorePath()
+	sortedRestoreGroups, err := u.BackupRestore.LoadRestoresFromOadpRestorePath()
 	if err != nil {
 		return requeueWithError(err)
 	}
 
 	if len(sortedRestoreGroups) == 0 {
-		r.Log.Info("No restore requests, skipping")
+		u.Log.Info("No restore requests, skipping")
 		return doNotRequeue(), nil
 	}
 
 	for index, restores := range sortedRestoreGroups {
-		r.Log.Info("Processing restore", "groupIndex", index+1, "totalGroups", len(sortedRestoreGroups))
-		restoreTracker, err := r.BackupRestore.StartOrTrackRestore(ctx, restores)
+		u.Log.Info("Processing restore", "groupIndex", index+1, "totalGroups", len(sortedRestoreGroups))
+		restoreTracker, err := u.BackupRestore.StartOrTrackRestore(ctx, restores)
 		if err != nil {
 			return requeueWithError(err)
 		}
@@ -323,10 +340,10 @@ func (r *ImageBasedUpgradeReconciler) handleRestore(ctx context.Context) (ctrl.R
 		return requeueWithMediumInterval(), nil
 	}
 
-	r.Log.Info("All restores succeeded")
+	u.Log.Info("All restores succeeded")
 	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
 		return requeueWithError(err)
 	}
-	r.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
+	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
 	return doNotRequeue(), nil
 }

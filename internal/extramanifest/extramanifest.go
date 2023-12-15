@@ -39,6 +39,11 @@ import (
 
 const ExtraManifestPath = "/opt/extra-manifests"
 
+type EManifestHandler interface {
+	ApplyExtraManifests(ctx context.Context, fromDir string) error
+	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
+}
+
 // EMHandler handles the extra manifests
 type EMHandler struct {
 	Client client.Client
