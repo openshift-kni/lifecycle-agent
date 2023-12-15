@@ -264,12 +264,11 @@ func isFinalizeAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 	return false
 }
 
-func isAbortAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
-	upgradeCompletedCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeCompleted))
+func isAbortAllowed(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) bool {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
-	// TODO check if pivot has not been done
-	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse && upgradeCompletedCondition == nil {
-		// allowed if upgrade has not completed or failed yet
+	rollbackInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackInProgress))
+	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse && !isAfterPivot && rollbackInProgressCondition == nil {
+		// allowed if in prep or upgrade before pivot
 		return true
 	}
 	return false
@@ -313,7 +312,7 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 				"Finalizing",
 				ibu.Generation,
 			)
-		} else if isAbortAllowed(ibu) {
+		} else if isAbortAllowed(ibu, isAfterPivot) {
 			utils.SetStatusCondition(&ibu.Status.Conditions,
 				utils.ConditionTypes.Idle,
 				utils.ConditionReasons.Aborting,
@@ -333,7 +332,7 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 					utils.ConditionTypes.Idle,
 					utils.ConditionReasons.InvalidTransition,
 					metav1.ConditionFalse,
-					"Upgrade or rollback still in progress",
+					"Abort or finalize not allowed",
 					ibu.Generation,
 				)
 				return false
