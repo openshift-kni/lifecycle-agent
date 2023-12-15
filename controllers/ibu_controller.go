@@ -374,6 +374,13 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 
 func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
+
+	for _, condition := range ibu.Status.Conditions {
+		if condition.Type == string(utils.GetCompletedConditionType(ibu.Spec.Stage)) ||
+			condition.Type == string(utils.GetInProgressConditionType(ibu.Spec.Stage)) {
+			condition.ObservedGeneration = ibu.ObjectMeta.Generation
+		}
+	}
 	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
 		return r.Status().Update(ctx, ibu)
 	})
