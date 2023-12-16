@@ -363,8 +363,25 @@ func TestValidateStageTransisions(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:  "idle when upgrade failed",
-			stage: lcav1alpha1.Stages.Idle,
+			name:       "idle when upgrade failed before pivot",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Aborting,
+				metav1.ConditionFalse,
+				"Aborting",
+			}},
+			expected: true,
+		},
+		{
+			name:       "idle when upgrade failed after pivot",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -373,13 +390,14 @@ func TestValidateStageTransisions(t *testing.T) {
 				utils.ConditionTypes.Idle,
 				utils.ConditionReasons.InvalidTransition,
 				metav1.ConditionFalse,
-				"Upgrade or rollback still in progress",
+				"Abort or finalize not allowed",
 			}},
 			expected: false,
 		},
 		{
-			name:  "idle when upgrade in progress before pivot",
-			stage: lcav1alpha1.Stages.Idle,
+			name:       "idle when upgrade in progress before pivot",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -391,10 +409,26 @@ func TestValidateStageTransisions(t *testing.T) {
 			}},
 			expected: true,
 		},
-		// TODO "idle when upgrade in progress after pivot"
 		{
-			name:  "idle when rollback in progress",
-			stage: lcav1alpha1.Stages.Idle,
+			name:       "idle when upgrade in progress after pivot",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: true,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Abort or finalize not allowed",
+			}},
+			expected: false,
+		},
+		{
+			name:       "idle when rollback in progress",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -405,7 +439,24 @@ func TestValidateStageTransisions(t *testing.T) {
 				utils.ConditionTypes.Idle,
 				utils.ConditionReasons.InvalidTransition,
 				metav1.ConditionFalse,
-				"Upgrade or rollback still in progress",
+				"Abort or finalize not allowed",
+			}},
+		},
+		{
+			name:       "idle when rollback in progress after pivoting back",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: false,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+			},
+			expected: false,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InvalidTransition,
+				metav1.ConditionFalse,
+				"Abort or finalize not allowed",
 			}},
 		},
 		{
