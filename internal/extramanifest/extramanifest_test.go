@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const sriovnodepolicy1 = `
+const sriovnodepolicies = `
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
@@ -38,9 +38,7 @@ metadata:
   spec:
     deviceType: netdevice
     isRdma: false
-`
-
-const sriovnodepolicy2 = `
+---
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
@@ -99,8 +97,7 @@ func TestExportExtraManifests(t *testing.T) {
 				Namespace: "default",
 			},
 			Data: map[string]string{
-				"sriovnodepolicy1.yaml": sriovnodepolicy1,
-				"sriovnodepolicy2.yaml": sriovnodepolicy2,
+				"sriovnodepolicies.yaml": sriovnodepolicies,
 			},
 		},
 	}

@@ -17,9 +17,11 @@ limitations under the License.
 package extramanifest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,11 +29,12 @@ import (
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 )
 
 const ExtraManifestPath = "/opt/extra-manifests"
@@ -87,23 +90,29 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 
 	for i, cm := range configmaps {
 		for _, value := range cm.Data {
-			manifest := unstructured.Unstructured{}
-			err := yaml.Unmarshal([]byte(value), &manifest)
-			if err != nil {
-				return err
-			}
+			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
+			for {
+				manifest := unstructured.Unstructured{}
+				err := decoder.Decode(&manifest)
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						// Reach the end of the data, exit the loop
+						break
+					}
+					return err
+				}
+				// In case it contains the UID and ResourceVersion, remove them
+				manifest.SetUID("")
+				manifest.SetResourceVersion("")
 
-			// In case it contains the UID and ResourceVersion, remove them
-			manifest.SetUID("")
-			manifest.SetResourceVersion("")
-
-			fileName := strconv.Itoa(i) + "_" + manifest.GetName() + "_" + manifest.GetNamespace() + ".yaml"
-			filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
-			err = writeManifestToFile(&manifest, filePath)
-			if err != nil {
-				return err
+				fileName := strconv.Itoa(i) + "_" + manifest.GetName() + "_" + manifest.GetNamespace() + ".yaml"
+				filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
+				err = utils.MarshalToYamlFile(&manifest, filePath)
+				if err != nil {
+					return err
+				}
+				h.Log.Info("Exported manifest to file", "path", filePath)
 			}
-			h.Log.Info("Exported manifest to file", "path", filePath)
 		}
 	}
 
@@ -138,13 +147,8 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 			continue
 		}
 
-		manifestBytes, err := os.ReadFile(manifestYamlPath)
-		if err != nil {
-			return err
-		}
-
 		manifest := &unstructured.Unstructured{}
-		if err := yaml.Unmarshal(manifestBytes, manifest); err != nil {
+		if err := utils.ReadYamlOrJSONFile(manifestYamlPath, manifest); err != nil {
 			return err
 		}
 		// Mapping resource GVK to CVR
@@ -196,17 +200,5 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		return err
 	}
 	h.Log.Info("Extra manifests path removed", "path", fromDir)
-	return nil
-}
-
-func writeManifestToFile(manifest *unstructured.Unstructured, filePath string) error {
-	manifestBytes, err := yaml.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(filePath, manifestBytes, 0o644); err != nil {
-		return err
-	}
 	return nil
 }

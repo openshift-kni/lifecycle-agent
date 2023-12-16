@@ -216,6 +216,25 @@ func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 	backup.SetLabels(labels)
 }
 
+func (h *BRHandler) createObjectWithDryRun(ctx context.Context, object *unstructured.Unstructured, cm string) error {
+	// Create the resource in dry-run mode to detect any validation errors in the CR
+	// i.e., missing required fields
+	err := h.Create(ctx, object, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+	if err != nil {
+		if k8serrors.IsInvalid(err) {
+			errMsg := fmt.Sprintf("Invalid %s %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
+				object.GetKind(), object.GetName(), cm, err.Error())
+			h.Log.Error(err, errMsg)
+			return NewBRFailedValidationError(object.GetKind(), errMsg)
+		}
+
+		if !k8serrors.IsAlreadyExists(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteOadpOperator deletes the oadp operator
 func (h *BRHandler) DeleteOadpOperator(ctx context.Context, namespace string) error {
 	// Should only be one oadp subscription in the namespace
