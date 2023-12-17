@@ -37,6 +37,7 @@ const (
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
+	SeedDataDir                       = "/var/seed_data"
 	SeedManifest                      = "seed_manifest.json"
 	CertsDir                          = "certs"
 	ClusterConfigDir                  = "cluster-configuration"

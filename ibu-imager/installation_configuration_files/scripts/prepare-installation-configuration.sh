@@ -48,18 +48,14 @@ if [ ! -d "${OPT_OPENSHIFT}" ]; then
 fi
 
 echo "${OPT_OPENSHIFT} has been created"
-# Replace this with a function that loads values from yaml file
+
 set +o allexport
 
 echo "Network configuration exist"
 if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
-   # TODO: we might need to delete the connection first
     rm -f /etc/NetworkManager/system-connections/*.nmconnection
     cp "${NETWORK_CONFIG_PATH}"/system-connections/*.nmconnection /etc/NetworkManager/system-connections/ -f
     find /etc/NetworkManager/system-connections/*.nmconnection -type f -exec chmod 600 {} \;
-fi
-if [[ -f "${NETWORK_CONFIG_PATH}"/hostname ]]; then
-    cp "${NETWORK_CONFIG_PATH}"/hostname /etc/hostname
 fi
 
 CLUSTER_CONFIG_FILE="${CONFIG_PATH}"/manifest.json
@@ -72,6 +68,9 @@ SNO_CLUSTER_NAME_OVERRIDE=${NEW_CLUSTER_NAME}
 SNO_BASE_DOMAIN_OVERRIDE=${NEW_BASE_DOMAIN}
 SNO_DNSMASQ_IP_OVERRIDE=${NEW_HOST_IP}
 EOF
+
+NEW_HOSTNAME=$(jq -r '.hostname' "${CLUSTER_CONFIG_FILE}")
+echo ${NEW_HOSTNAME} > /etc/hostname
 
 systemctl restart NetworkManager
 systemctl disable prepare-installation-configuration.service

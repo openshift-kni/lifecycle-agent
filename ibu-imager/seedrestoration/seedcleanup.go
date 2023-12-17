@@ -32,6 +32,7 @@ var foldersToRemove = []string{
 	common.BackupChecksDir,
 	common.OvnNodeCerts,
 	common.MultusCerts,
+	common.SeedDataDir,
 }
 
 // SeedRestoration handles cleanup operations after creating a seed image, removing temporary files

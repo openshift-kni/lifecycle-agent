@@ -41,8 +41,7 @@ import (
 )
 
 func (r *ImageBasedUpgradeReconciler) getSeedImage(
-	ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string,
-) error {
+	ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	// Use cluster wide pull-secret by default
 	pullSecretFilename := common.ImageRegistryAuthFile
 
@@ -69,14 +68,6 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
-	mountpoint, err := r.Executor.Execute("podman", "image", "mount", ibu.Spec.SeedImageRef.Image)
-	if err != nil {
-		return fmt.Errorf("failed to mount seed image: %w", err)
-	}
-
-	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
-		return fmt.Errorf("failed to copy image list file: %w", err)
-	}
 	return nil
 
 }
@@ -169,7 +160,7 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context)
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string) error {
 	r.Log.Info("Start setupstateroot")
 
 	defer r.Ops.UnmountAndRemoveImage(ibu.Spec.SeedImageRef.Image)
@@ -295,11 +286,8 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to backup cerificaties: %w", err)
 	}
 
-	if err = common.CopyOutsideChroot(
-		filepath.Join(mountpoint, common.ClusterInfoFileName),
-		getSeedManifestPath(osname),
-	); err != nil {
-		return fmt.Errorf("failed to copy ClusterInfo file: %w", err)
+	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
+		return fmt.Errorf("failed to copy image list file: %w", err)
 	}
 
 	return nil
@@ -354,7 +342,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 			return derivedCtx.Err()
 		default:
 			r.PrepTask.Progress = "Pulling seed image"
-			if err = r.getSeedImage(derivedCtx, ibu, imageListFile); err != nil {
+			if err = r.getSeedImage(derivedCtx, ibu); err != nil {
 				r.Log.Error(err, "failed to pull seed image")
 				return err
 			}
@@ -369,7 +357,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 			return derivedCtx.Err()
 		default:
 			r.PrepTask.Progress = "Setting up stateroot"
-			if err = r.SetupStateroot(derivedCtx, ibu); err != nil {
+			if err = r.SetupStateroot(derivedCtx, ibu, imageListFile); err != nil {
 				r.Log.Error(err, "failed to setup stateroot")
 				return err
 			}
@@ -486,6 +474,6 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 func getSeedManifestPath(osname string) string {
 	return filepath.Join(
 		common.GetStaterootPath(osname),
-		filepath.Join("/var/", common.OptOpenshift, common.SeedManifest),
+		filepath.Join(common.SeedDataDir, common.ClusterInfoFileName),
 	)
 }

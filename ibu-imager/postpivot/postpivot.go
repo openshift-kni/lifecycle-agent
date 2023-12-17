@@ -12,6 +12,7 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	"github.com/thoas/go-funk"
 	etcdClient "go.etcd.io/etcd/client/v3"
@@ -26,7 +27,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-	cp "github.com/otiai10/copy"
 )
 
 type PostPivot struct {
@@ -92,6 +92,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return err
 	}
 
+	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, clusterInfo); err != nil {
+		return err
+	}
+
 	// Restore lvm devices
 	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
 		return err
@@ -101,8 +105,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
 
-	p.log.Infof("Removing %s", p.workingDir)
-	return os.RemoveAll(p.workingDir)
+	return p.cleanup()
 }
 
 func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
@@ -205,9 +208,18 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 
 func (p *PostPivot) applyManifests() error {
 	p.log.Infof("Applying manifests from %s", path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
+	dir, err := os.ReadDir(path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
+	if err != nil {
+		return err
+	}
+	if len(dir) == 0 {
+		p.log.Infof("No manifests to apply were found, skipping")
+		return nil
+	}
+
 	args := []string{"--kubeconfig", p.kubeconfig, "apply", "-f"}
 
-	_, err := p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))...)
+	_, err = p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))...)
 	if err != nil {
 		return fmt.Errorf("failed to apply manifests, err: %w", err)
 	}
@@ -324,5 +336,27 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 		return fmt.Errorf("failed to patch csv deployment, err: %w", err)
 	}
 	p.log.Infof("Done changing csv deployment")
+	return nil
+}
+
+func (p *PostPivot) cleanup() error {
+	p.log.Info("Cleaning up")
+	return utils.RemoveListOfFolders(p.log, []string{p.workingDir, common.SeedDataDir})
+}
+
+func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, clusterInfo *clusterinfo.ClusterInfo) error {
+	p.log.Info("Set new cluster id")
+	clusterVersion := &v1.ClusterVersion{}
+	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
+		return err
+	}
+
+	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, clusterInfo.ClusterID))
+
+	p.log.Infof("Applying csv deploymet patch %s", string(patch))
+	err := client.Patch(ctx, clusterVersion, runtimeclient.RawPatch(types.MergePatchType, patch))
+	if err != nil {
+		return fmt.Errorf("failed to patch cluster id in clusterversion, err: %w", err)
+	}
 	return nil
 }

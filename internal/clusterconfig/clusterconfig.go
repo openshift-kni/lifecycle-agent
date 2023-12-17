@@ -41,8 +41,6 @@ const (
 
 	configNamespace = "openshift-config"
 
-	clusterIDFileName = "cluster-id-override.json"
-
 	idmsFileName  = "image-digest-mirror-set.json"
 	icspsFileName = "image-content-source-policy-list.json"
 
@@ -58,10 +56,8 @@ var (
 		"99-worker-ssh",
 	}
 
-	hostPath = common.Host
-
+	hostPath                = common.Host
 	listOfNetworkFilesPaths = []string{
-		"/etc/hostname",
 		"/etc/NetworkManager/system-connections",
 	}
 )
@@ -93,9 +89,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
 		return err
 	}
-	if err := r.fetchClusterVersion(ctx, manifestsDir); err != nil {
-		return err
-	}
+
 	if err := r.fetchClusterInfo(ctx, clusterConfigPath); err != nil {
 		return err
 	}
@@ -211,32 +205,6 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
 	return utils.MarshalToFile(clusterInfo, filePath)
-}
-
-func (r *UpgradeClusterConfigGather) fetchClusterVersion(ctx context.Context, manifestsDir string) error {
-	r.Log.Info("Fetching ClusterVersion", "name", "version")
-	clusterVersion := &v1.ClusterVersion{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return err
-	}
-
-	cv := v1.ClusterVersion{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "version",
-		},
-		Spec: v1.ClusterVersionSpec{
-			ClusterID: clusterVersion.Spec.ClusterID,
-		},
-	}
-	typeMeta, err := r.typeMetaForObject(&cv)
-	if err != nil {
-		return err
-	}
-	cv.TypeMeta = *typeMeta
-
-	filePath := filepath.Join(manifestsDir, clusterIDFileName)
-	r.Log.Info("Writing ClusterVersion with only the ClusterID field to file", "path", filePath)
-	return utils.MarshalToFile(cv, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir string) error {
