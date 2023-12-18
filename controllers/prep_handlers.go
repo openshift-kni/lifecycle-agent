@@ -406,7 +406,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 
 	if err := errGroup.Wait(); err != nil {
 		r.Log.Info("Encountered error while running prep-stage worker goroutine", "error", err)
-		r.PrepTask.Progress = fmt.Sprintf("Prep failed due to %v", err)
+		r.PrepTask.Progress = fmt.Sprintf("Prep failed with error: %v", err)
 		return err
 	}
 
