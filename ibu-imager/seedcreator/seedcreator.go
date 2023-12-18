@@ -122,7 +122,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
-		if err := s.ops.ForceExpireSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
+		if err := utils.RunOnce("recert", common.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto, s.recertContainerImage, s.authFile); err != nil {
 			return err
 		}
 	}
