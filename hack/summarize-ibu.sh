@@ -45,9 +45,9 @@ elif [ "${PREP_COMPLETE}" == "True" ]; then
     echo "  Prep completed at: $(getCondition PrepCompleted lastTransitionTime)"
 elif [ "${PREP_COMPLETE}" == "False" ] && [ "${PREP_PROG}" == "False" ]; then
     echo "  Prep failed:"
-    echo "    Time:    $(getCondition PrepCompleted lastTransitionTime)"
-    echo "    Reason:  $(getCondition PrepCompleted reason)"
-    echo "    Message: $(getCondition PrepCompleted message)"
+    echo "    Time:    $(getCondition PrepInProgress lastTransitionTime)"
+    echo "    Reason:  $(getCondition PrepInProgress reason)"
+    echo "    Message: $(getCondition PrepInProgress message)"
 elif [ "${PREP_PROG}" == "True" ]; then
     echo "  Prep in progress at: $(getCondition PrepInProgress lastTransitionTime)"
 elif [ "${IDLE}" == "True" ]; then
