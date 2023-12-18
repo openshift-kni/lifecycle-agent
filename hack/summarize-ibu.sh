@@ -26,19 +26,30 @@ PREP_PROG=$(getCondition PrepInProgress status)
 PREP_COMPLETE=$(getCondition PrepCompleted status)
 UPG_PROG=$(getCondition UpgradeInProgress status)
 UPG_COMPLETE=$(getCondition UpgradeCompleted status)
+ROLLBACK_PROG=$(getCondition RollbackInProgress status)
+ROLLBACK_COMPLETE=$(getCondition RollbackCompleted status)
 
 echo "Image:   ${SEED}"
 echo "Version: ${VER}"
 echo "Stage:   ${STAGE}"
 echo "Status:"
 
-if [ "${UPG_COMPLETE}" == "True" ]; then
+if [ "${ROLLBACK_COMPLETE}" == "True" ]; then
+    echo "  Rollback completed at: $(getCondition RollbackCompleted lastTransitionTime)"
+elif [ "${ROLLBACK_COMPLETE}" == "False" ] && [ "${ROLLBACK_PROG}" == "False" ]; then
+    echo "  Rollback failed:"
+    echo "    Time:    $(getCondition RollbackInProgress lastTransitionTime)"
+    echo "    Reason:  $(getCondition RollbackInProgress reason)"
+    echo "    Message: $(getCondition RollbackInProgress message)"
+elif [ "${ROLLBACK_PROG}" == "True" ]; then
+    echo "  Rollback in progress at: $(getCondition RollbackInProgress lastTransitionTime)"
+elif [ "${UPG_COMPLETE}" == "True" ]; then
     echo "  Upgrade completed at: $(getCondition UpgradeCompleted lastTransitionTime)"
 elif [ "${UPG_COMPLETE}" == "False" ] && [ "${UPG_PROG}" == "False" ]; then
     echo "  Upgrade failed:"
-    echo "    Time:    $(getCondition UpgradeCompleted lastTransitionTime)"
-    echo "    Reason:  $(getCondition UpgradeCompleted reason)"
-    echo "    Message: $(getCondition UpgradeCompleted message)"
+    echo "    Time:    $(getCondition UpgradeInProgress lastTransitionTime)"
+    echo "    Reason:  $(getCondition UpgradeInProgress reason)"
+    echo "    Message: $(getCondition UpgradeInProgress message)"
 elif [ "${UPG_PROG}" == "True" ]; then
     echo "  Upgrade in progress at: $(getCondition UpgradeInProgress lastTransitionTime)"
 elif [ "${PREP_COMPLETE}" == "True" ]; then

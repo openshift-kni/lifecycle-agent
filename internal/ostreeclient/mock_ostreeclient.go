@@ -51,6 +51,20 @@ func (mr *MockIClientMockRecorder) Deploy(osname, refsepc, kargs any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), osname, refsepc, kargs)
 }
 
+// IsOstreeAdminSetDefaultFeatureEnabled mocks base method.
+func (m *MockIClient) IsOstreeAdminSetDefaultFeatureEnabled() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsOstreeAdminSetDefaultFeatureEnabled")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsOstreeAdminSetDefaultFeatureEnabled indicates an expected call of IsOstreeAdminSetDefaultFeatureEnabled.
+func (mr *MockIClientMockRecorder) IsOstreeAdminSetDefaultFeatureEnabled() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOstreeAdminSetDefaultFeatureEnabled", reflect.TypeOf((*MockIClient)(nil).IsOstreeAdminSetDefaultFeatureEnabled))
+}
+
 // OSInit mocks base method.
 func (m *MockIClient) OSInit(osname string) error {
 	m.ctrl.T.Helper()
@@ -77,6 +91,20 @@ func (m *MockIClient) PullLocal(repoPath string) error {
 func (mr *MockIClientMockRecorder) PullLocal(repoPath any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PullLocal", reflect.TypeOf((*MockIClient)(nil).PullLocal), repoPath)
+}
+
+// SetDefaultDeployment mocks base method.
+func (m *MockIClient) SetDefaultDeployment(index int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetDefaultDeployment", index)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetDefaultDeployment indicates an expected call of SetDefaultDeployment.
+func (mr *MockIClientMockRecorder) SetDefaultDeployment(index any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDefaultDeployment", reflect.TypeOf((*MockIClient)(nil).SetDefaultDeployment), index)
 }
 
 // Undeploy mocks base method.

@@ -368,3 +368,48 @@ spec:
   seedImage: quay.io/dpenney/upgbackup:orchestrated-seed-image
   recertImage: quay.io/edge-infrastructure/recert:latest
 ```
+
+## Rollbacks
+
+After the cluster has rebooted to the new release as part of the Upgrade stage handling, a controlled Rollback can be triggered by setting the IBU stage to "Rollback". LCA will automatically pivot to the original stateroot, if supported (manual pivot is required otherwise), and reboot the cluster. Once the cluster recovers on the original stateroot, LCA will update the CR to indicate that the rollback is complete. At this point, the rollback can be finalized by setting the stage to Idle, triggering cleanup of the upgrade stateroot.
+
+In the case of an uncontrolled rollback, such as a manual reboot to the original stateroot, LCA will update the CR to indicate that the upgrade has failed. The stage can then be set to Idle to trigger the abort handler.
+
+### Manually setting new default deployment
+
+The `ostree admin set-default` command is used to set a new default (ie. next boot) deployment. It is available as of 4.14.7. If available, LCA will automatically set the new default deployment as part of triggering the rollback.
+
+If the `set-default` command is not available, LCA is unable to set the new default deployment automatically, requiring it to be set manually. As a workaround for earlier releases without this command, a dev image has been built with the newer ostree cli that can be used.
+
+Note that deployment 0 is the default deployment, when viewing `ostree admin status` output. The argument passed to the `set-default` command is the deployment index. So to select the second deployment in the list as the new default, run `ostree admin set-default 1`. Also note that `/sysroot` and `/boot` must be remounted with write-access if using the dev image workaround for earlier releases.
+
+```console
+# Using "ostree admin set-default"
+[root@cnfdf01 core]# ostree admin status
+* rhcos_4.14.7 abb6d9631dc78117e7f6058bfab5f94ceff6328f2916fb887715b156f8620cbc.0
+    origin: <unknown origin type>
+  rhcos 16189fd979d620d0df256f41b8fdf345ad05f2dbaf56f99ed21ff81c695e676c.0
+    origin: <unknown origin type>
+[root@cnfdf01 core]# ostree admin set-default 1
+Bootloader updated; bootconfig swap: yes; bootversion: boot.0.1, deployment count change: 0
+[root@cnfdf01 core]# ostree admin status
+  rhcos 16189fd979d620d0df256f41b8fdf345ad05f2dbaf56f99ed21ff81c695e676c.0
+    origin: <unknown origin type>
+* rhcos_4.14.7 abb6d9631dc78117e7f6058bfab5f94ceff6328f2916fb887715b156f8620cbc.0
+    origin: <unknown origin type>
+
+# Using quay.io/openshift-kni/telco-ran-tools:test-ostree-cli
+[root@cnfdf01 core]# ostree admin status
+* rhcos_4.14.7 abb6d9631dc78117e7f6058bfab5f94ceff6328f2916fb887715b156f8620cbc.0
+    origin: <unknown origin type>
+  rhcos 16189fd979d620d0df256f41b8fdf345ad05f2dbaf56f99ed21ff81c695e676c.0
+    origin: <unknown origin type>
+[root@cnfdf01 core]# mount /sysroot -o remount,rw ; mount /boot -o remount,rw
+[root@cnfdf01 core]# podman run --rm --privileged -v /sysroot:/sysroot -v /boot:/boot -v /ostree:/ostree quay.io/openshift-kni/telco-ran-tools:test-ostree-cli ostree admin set-default 1
+Bootloader updated; bootconfig swap: yes; bootversion: boot.0.1, deployment count change: 0
+[root@cnfdf01 core]# ostree admin status
+  rhcos 16189fd979d620d0df256f41b8fdf345ad05f2dbaf56f99ed21ff81c695e676c.0
+    origin: <unknown origin type>
+* rhcos_4.14.7 abb6d9631dc78117e7f6058bfab5f94ceff6328f2916fb887715b156f8620cbc.0
+    origin: <unknown origin type>
+```

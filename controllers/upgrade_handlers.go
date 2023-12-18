@@ -30,6 +30,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	v1 "k8s.io/api/core/v1"
 
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -41,7 +42,7 @@ var (
 	defaultRebootTimeout = 60 * time.Minute
 )
 
-var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+var isOrigStaterootBooted = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
 	currentStaterootName, err := r.RPMOstreeClient.GetCurrentStaterootName()
 	if err != nil {
 		return false, err
@@ -54,7 +55,7 @@ var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBase
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	prePivot, err := isPrePivot(r, ibu)
+	origStaterootBooted, err := isOrigStaterootBooted(r, ibu)
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -62,7 +63,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 
 	// WARNING: the pod may not know if we are boot loop (for now)
-	if prePivot {
+	if origStaterootBooted {
 		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
 		return r.prePivot(ctx, ibu)
 	} else {
@@ -112,7 +113,9 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
 		return requeueWithError(err)
 	}
-	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
+
+	stateroot := getDesiredStaterootName(ibu)
+	stateRootRepo := common.PathOutsideChroot(ostreeclient.StaterootPath(stateroot))
 
 	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
 	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
@@ -156,6 +159,25 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 		return requeueWithError(err)
 	}
 	ibu.ResourceVersion = rv
+
+	// Save a copy of the IBU in the current stateroot in case of uncontrolled rollback
+	ibuCopy := ibu.DeepCopy()
+	ibuCopy.ResourceVersion = ""
+	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
+	if err := lcautils.MarshalToFile(ibuCopy, common.PathOutsideChroot(utils.IBUFilePath)); err != nil {
+		return requeueWithError(err)
+	}
+
+	// Set the new default deployment
+	if r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		deploymentIndex, err := r.RPMOstreeClient.GetDeploymentIndex(stateroot)
+		if err != nil {
+			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
+		}
+		if err := r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+			return requeueWithError(fmt.Errorf("failed to set default deployment for pivot to"))
+		}
+	}
 
 	// Write an event to indicate reboot attempt
 	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot")

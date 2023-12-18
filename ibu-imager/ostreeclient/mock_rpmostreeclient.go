@@ -67,6 +67,51 @@ func (mr *MockIClientMockRecorder) GetDeploymentID(osname any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentID", reflect.TypeOf((*MockIClient)(nil).GetDeploymentID), osname)
 }
 
+// GetDeploymentIndex mocks base method.
+func (m *MockIClient) GetDeploymentIndex(osname string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDeploymentIndex", osname)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDeploymentIndex indicates an expected call of GetDeploymentIndex.
+func (mr *MockIClientMockRecorder) GetDeploymentIndex(osname any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetDeploymentIndex), osname)
+}
+
+// GetUnbootedDeploymentIndex mocks base method.
+func (m *MockIClient) GetUnbootedDeploymentIndex() (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUnbootedDeploymentIndex")
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUnbootedDeploymentIndex indicates an expected call of GetUnbootedDeploymentIndex.
+func (mr *MockIClientMockRecorder) GetUnbootedDeploymentIndex() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetUnbootedDeploymentIndex))
+}
+
+// GetUnbootedStaterootName mocks base method.
+func (m *MockIClient) GetUnbootedStaterootName() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUnbootedStaterootName")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUnbootedStaterootName indicates an expected call of GetUnbootedStaterootName.
+func (mr *MockIClientMockRecorder) GetUnbootedStaterootName() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedStaterootName", reflect.TypeOf((*MockIClient)(nil).GetUnbootedStaterootName))
+}
+
 // IsStaterootBooted mocks base method.
 func (m *MockIClient) IsStaterootBooted(stateroot string) (bool, error) {
 	m.ctrl.T.Helper()
