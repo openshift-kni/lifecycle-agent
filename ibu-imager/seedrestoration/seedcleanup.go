@@ -88,9 +88,12 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping restoring crypto via recert tool")
 	} else {
-		if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
-			s.log.Errorf("Error restoring certificates: %v", err)
-			errors = append(errors, err)
+		recertFilePath := filepath.Join(common.BackupChecksDir, "recert.done")
+		if _, err := os.Stat(recertFilePath); err == nil && !os.IsNotExist(err) {
+			if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
+				s.log.Errorf("Error restoring certificates: %v", err)
+				errors = append(errors, err)
+			}
 		}
 	}
 
