@@ -502,7 +502,10 @@ func TestClusterConfig(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(tmpDir, common.OptOpenshift), 0o700); err != nil {
 				t.Errorf("failed to create opt dir, error: %v", err)
 			}
-			err = utils.MarshalToFile(seedManifestData, filepath.Join(tmpDir, common.OptOpenshift, common.SeedManifest))
+			if err := os.MkdirAll(filepath.Join(tmpDir, common.SeedDataDir), 0o700); err != nil {
+				t.Errorf("failed to create %s dir, error: %v", common.SeedDataDir, err)
+			}
+			err = utils.MarshalToFile(seedManifestData, filepath.Join(tmpDir, common.SeedDataDir, common.ClusterInfoFileName))
 			if err != nil {
 				t.Errorf("failed to create seed manifest, error: %v", err)
 			}
