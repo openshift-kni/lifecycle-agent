@@ -61,7 +61,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	p.log.Info("Reading seed info")
-	seedClusterInfo, err := utils.ReadClusterInfoFromFile(path.Join(p.workingDir, common.SeedManifest))
+	seedClusterInfo, err := utils.ReadClusterInfoFromFile(path.Join(common.SeedDataDir, common.ClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
