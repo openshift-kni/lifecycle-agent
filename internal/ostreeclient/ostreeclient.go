@@ -70,7 +70,3 @@ func (c *Client) SetDefaultDeployment(index int) error {
 	_, err := c.executor.Execute("ostree", args...)
 	return err
 }
-
-func StaterootPath(stateroot string) string {
-	return fmt.Sprintf("/ostree/deploy/%s/var", stateroot)
-}

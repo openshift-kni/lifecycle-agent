@@ -223,6 +223,9 @@ func initIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 		return err
 	}
 
+	// Strip the ResourceVersion, otherwise the restore fails
+	ibu.SetResourceVersion("")
+
 	log.Info("Saved IBU CR found, restoring ...")
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
 		return client.IgnoreNotFound(c.Delete(ctx, ibu))
@@ -305,6 +308,9 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		return err
 	}
 
+	// Strip the ResourceVersion, otherwise the restore fails
+	secret.SetResourceVersion("")
+
 	seedgen := &seedgenv1alpha1.SeedGenerator{}
 	if err := lcautils.ReadYamlOrJSONFile(seedgenFilePath, seedgen); err != nil {
 		if os.IsNotExist(err) {
@@ -312,6 +318,9 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		}
 		return err
 	}
+
+	// Strip the ResourceVersion, otherwise the restore fails
+	seedgen.SetResourceVersion("")
 
 	// Restore Secret CR
 	log.Info("Saved SeedGenerator Secret CR found, restoring ...")

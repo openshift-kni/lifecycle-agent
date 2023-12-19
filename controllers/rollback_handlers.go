@@ -23,13 +23,11 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 //nolint:unparam
@@ -39,31 +37,29 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
-		return requeueWithError(err)
+		return doNotRequeue(), nil
 	}
 
 	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
-		return requeueWithError(err)
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
 	}
 
-	stateRootRepo := common.PathOutsideChroot(ostreeclient.StaterootPath(stateroot))
+	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
 
-	// Save the CR for post-reboot restore, stripping Upgrade conditions and ResourceVersion from IBU CR before saving
+	// Save the CR for post-reboot restore
 	r.Log.Info("Save the IBU CR to the old state root before pivot")
-	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
-	// Temporarily empty resource version so the file can be used to restore status
-	rv := ibu.ResourceVersion
-	ibu.ResourceVersion = ""
+	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		return requeueWithError(err)
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
 	}
-	ibu.ResourceVersion = rv
 
 	r.Log.Info("Finding unbooted deployment")
 	deploymentIndex, err := r.RPMOstreeClient.GetUnbootedDeploymentIndex()
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
-		return requeueWithError(fmt.Errorf("failed to get unbooted deployment index: %w", err))
+		return doNotRequeue(), nil
 	}
 
 	// Set the new default deployment
@@ -74,7 +70,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 
 		if err = r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
 			utils.SetRollbackStatusFailed(ibu, err.Error())
-			return requeueWithError(fmt.Errorf("failed to set default deployment for pivot: %w", err))
+			return doNotRequeue(), nil
 		}
 	} else {
 		r.Log.Info("set-default feature not available")
@@ -82,7 +78,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 		// Check to make sure the default deployment is set
 		if deploymentIndex != 0 {
 			msg := "default deployment must be manually set for next boot"
-			utils.SetRollbackStatusFailed(ibu, msg)
+			utils.SetRollbackStatusInProgress(ibu, msg)
 			return requeueWithError(fmt.Errorf(msg))
 		}
 	}
@@ -102,18 +98,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) finishRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Rollback completed",
-		ibu.Generation)
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionFalse,
-		"Rollback completed",
-		ibu.Generation)
+	utils.SetRollbackStatusCompleted(ibu)
 
 	return doNotRequeue(), nil
 }

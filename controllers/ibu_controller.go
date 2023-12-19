@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -417,5 +418,5 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func getDesiredStaterootName(ibu *lcav1alpha1.ImageBasedUpgrade) string {
-	return fmt.Sprintf("rhcos_%s", ibu.Spec.SeedImageRef.Version)
+	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(ibu.Spec.SeedImageRef.Version, "-", "_"))
 }

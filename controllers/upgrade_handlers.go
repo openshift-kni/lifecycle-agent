@@ -30,7 +30,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
-	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	v1 "k8s.io/api/core/v1"
 
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -115,10 +114,10 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	stateroot := getDesiredStaterootName(ibu)
-	stateRootRepo := common.PathOutsideChroot(ostreeclient.StaterootPath(stateroot))
+	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
 
 	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
+	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
@@ -127,7 +126,7 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	r.Log.Info("Writing Restore CRs into new stateroot")
-	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, stateRootRepo); err != nil {
+	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
 		if backuprestore.IsBRFailedValidationError(err) {
 			utils.SetUpgradeStatusInProgress(ibu, err.Error())
 			return requeueWithMediumInterval(), nil
@@ -136,33 +135,28 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	r.Log.Info("Writing extra-manifests into new stateroot")
-	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo); err != nil {
+	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Writing cluster-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {
+	if err := r.ClusterConfig.FetchClusterConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Writing lvm-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchLvmConfig(ctx, stateRootRepo); err != nil {
+	if err := r.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Save the IBU CR to the new state root before pivot")
-	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
-	// Temporarily empty resource version so the file can be used to restore status
-	rv := ibu.ResourceVersion
-	ibu.ResourceVersion = ""
+	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		return requeueWithError(err)
 	}
-	ibu.ResourceVersion = rv
 
-	// Save a copy of the IBU in the current stateroot in case of uncontrolled rollback
+	// Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
 	ibuCopy := ibu.DeepCopy()
-	ibuCopy.ResourceVersion = ""
 	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
 	if err := lcautils.MarshalToFile(ibuCopy, common.PathOutsideChroot(utils.IBUFilePath)); err != nil {
 		return requeueWithError(err)
