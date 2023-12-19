@@ -414,8 +414,15 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 	_ = tmpfile.Close() // Close the temporary file
 
 	// Build the single OCI image (note: We could include --squash-all option, as well)
+	podmanBuildArgs := []string{
+		"build",
+		"--file", tmpfile.Name(),
+		"--tag", s.containerRegistry,
+		"--label", fmt.Sprintf("%s=%d", common.SeedFormatOCILabel, common.SeedFormatVersion),
+		s.backupDir,
+	}
 	_, err = s.ops.RunInHostNamespace(
-		"podman", []string{"build", "-f", tmpfile.Name(), "-t", s.containerRegistry, s.backupDir}...)
+		"podman", podmanBuildArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to build seed image: %w", err)
 	}

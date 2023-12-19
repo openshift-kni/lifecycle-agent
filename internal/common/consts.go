@@ -57,6 +57,10 @@ const (
 	InstallConfigCM = "cluster-config-v1"
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
+
+	// Bump this every time the seed format changes in a backwards incompatible way
+	SeedFormatVersion  = 1
+	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up

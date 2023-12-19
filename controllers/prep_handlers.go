@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -68,8 +69,62 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
-	return nil
+	r.Log.Info("Checking seed image compatibility")
+	if err := r.checkSeedImageCompatibility(ctx, ibu.Spec.SeedImageRef.Image); err != nil {
+		return fmt.Errorf("checking seed image compatibility: %w", err)
+	}
 
+	return nil
+}
+
+// checkSeedImageCompatibility checks if the seed image is compatible with the
+// current version of the lifecycle-agent by inspecting the OCI image's labels
+// and checking if the specified format version equals the hard-coded one that
+// this version of the lifecycle agent expects. That format version is set by
+// the imager during the image build process, and is only manually bumped by
+// developers when the image format changes in a way that is incompatible with
+// previous versions of the lifecycle-agent.
+func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Context, seedImageRef string) error {
+	inspectArgs := []string{
+		"inspect",
+		"--format", "json",
+		seedImageRef,
+	}
+
+	var inspect []struct {
+		Labels map[string]string `json:"Labels"`
+	}
+
+	// TODO: use the context when execute supports it
+	if inspectRaw, err := r.Executor.Execute("podman", inspectArgs...); err != nil || inspectRaw == "" {
+		return fmt.Errorf("failed to inspect image: %w", err)
+	} else {
+		if err := json.Unmarshal([]byte(inspectRaw), &inspect); err != nil {
+			return fmt.Errorf("failed to unmarshal image inspect output: %w", err)
+		}
+	}
+
+	if len(inspect) != 1 {
+		return fmt.Errorf("expected 1 image inspect result, got %d", len(inspect))
+	}
+
+	seedFormatLabelValue, ok := inspect[0].Labels[common.SeedFormatOCILabel]
+	if !ok {
+		return fmt.Errorf(
+			"seed image %s is missing the %s label, please build a new image using the latest version of the imager",
+			seedImageRef, common.SeedFormatOCILabel)
+	}
+
+	// Hard equal since we don't have backwards compatibility guarantees yet.
+	// In the future we might want to have backwards compatibility code to
+	// handle older seed formats and in that case we'll look at the version
+	// number and do the right thing.
+	if seedFormatLabelValue != fmt.Sprintf("%d", common.SeedFormatVersion) {
+		return fmt.Errorf("seed image format version mismatch: expected %d, got %s",
+			common.SeedFormatVersion, seedFormatLabelValue)
+	}
+
+	return nil
 }
 
 func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string, overrideSeedRegistry bool) (imageList []string, err error) {
