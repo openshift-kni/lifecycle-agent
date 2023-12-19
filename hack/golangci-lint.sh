@@ -40,4 +40,4 @@ fi
 
 export GOCACHE=/tmp/
 export GOLANGCI_LINT_CACHE=/tmp/.cache
-"${golangci_lint}" run --verbose --print-resources-usage --modules-download-mode=vendor --timeout=5m0s
+"${golangci_lint}" run --verbose --print-resources-usage --timeout=5m0s
