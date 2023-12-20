@@ -270,15 +270,15 @@ func SetUpgradeStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) 
 // SetUpgradeStatusCompleted updates the upgrade status to completed
 func SetUpgradeStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
-		ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Upgrade completed",
-		ibu.Generation)
-	SetStatusCondition(&ibu.Status.Conditions,
 		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
+		"Upgrade completed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
 		"Upgrade completed",
 		ibu.Generation)
 }
@@ -296,31 +296,31 @@ func SetPrepStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 // SetPrepStatusFailed updates the prep status to failed with message
 func SetPrepStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
-		ConditionReasons.Failed,
-		metav1.ConditionFalse,
-		msg,
-		ibu.Generation)
-	SetStatusCondition(&ibu.Status.Conditions,
 		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		"Prep failed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
 		ibu.Generation)
 }
 
 // SetPrepStatusCompleted updates the prep status to completed
 func SetPrepStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
-		ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		msg,
-		ibu.Generation)
-	SetStatusCondition(&ibu.Status.Conditions,
 		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		"Prep completed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		msg,
 		ibu.Generation)
 }
