@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -160,7 +161,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	err = r.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			err = nil
+			err = lcautils.InitIBU(ctx, r.Client, &r.Log)
 			return
 		}
 		r.Log.Error(err, "Failed to get ImageBasedUpgrade")
@@ -411,7 +412,18 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
 			GenericFunc: func(ge event.GenericEvent) bool { return false },
-			DeleteFunc:  func(de event.DeleteEvent) bool { return false },
+			DeleteFunc: func(de event.DeleteEvent) bool {
+				if de.Object.GetName() == utils.IBUName {
+					filePath := common.PathOutsideChroot(utils.IBUFilePath)
+					if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+						return lcautils.MarshalToFile(de.Object, filePath)
+					}); err != nil {
+						fmt.Printf("Failed to save deleted IBU: %v", err)
+					}
+					return true
+				}
+				return false
+			},
 		})).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)

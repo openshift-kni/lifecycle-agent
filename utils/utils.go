@@ -13,6 +13,10 @@ import (
 	"regexp"
 	"text/template"
 
+	"github.com/go-logr/logr"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
 )
@@ -215,5 +221,64 @@ func RemoveListOfFolders(log *logrus.Logger, folders []string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
+	ibu := &lcav1alpha1.ImageBasedUpgrade{}
+	filePath := common.PathOutsideChroot(utils.IBUFilePath)
+	if err := ReadYamlOrJSONFile(filePath, ibu); err != nil {
+		if os.IsNotExist(err) {
+			ibu = &lcav1alpha1.ImageBasedUpgrade{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: utils.IBUName,
+				},
+				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+					Stage: lcav1alpha1.Stages.Idle,
+				},
+			}
+			if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+				return client.IgnoreAlreadyExists(c.Create(ctx, ibu))
+			}); err != nil {
+				return err
+			}
+			log.Info("Initial IBU created")
+			return nil
+		}
+		return err
+	}
+
+	// Strip the ResourceVersion, otherwise the restore fails
+	ibu.SetResourceVersion("")
+
+	log.Info("Saved IBU CR found, restoring ...")
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return client.IgnoreNotFound(c.Delete(ctx, ibu))
+	}); err != nil {
+		return err
+	}
+
+	// Save status as the ibu structure gets over-written by the create call
+	// with the result which has no status
+	status := ibu.Status
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return c.Create(ctx, ibu)
+	}); err != nil {
+		return err
+	}
+
+	// Put the saved status into the newly create ibu with the right resource
+	// version which is required for the update call to work
+	ibu.Status = status
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return c.Status().Update(ctx, ibu)
+	}); err != nil {
+		return err
+	}
+
+	if err := os.Remove(filePath); err != nil {
+		return err
+	}
+	log.Info("Restore successful and saved IBU CR removed")
 	return nil
 }
