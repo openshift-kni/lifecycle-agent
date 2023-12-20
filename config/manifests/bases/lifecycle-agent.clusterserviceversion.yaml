@@ -39,6 +39,11 @@ spec:
       - kind: Namespace
         name: ""
         version: v1
+      specDescriptors:
+      - displayName: Seed Image Reference
+        path: seedImageRef
+      - displayName: Stage
+        path: stage
       statusDescriptors:
       - displayName: Conditions
         path: conditions
