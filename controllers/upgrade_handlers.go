@@ -71,10 +71,12 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 }
 
-func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot() error {
-	r.Log.Info("rebooting to a new stateroot")
+func (r *ImageBasedUpgradeReconciler) rebootToNewStateRoot(rationale string) error {
+	r.Log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
 
-	_, err := r.Executor.Execute("systemctl", "--message=\"Image Based Upgrade\"", "reboot")
+	_, err := r.Executor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
+		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
+		"systemctl --message=\"Image Based Upgrade\" reboot")
 	if err != nil {
 		return err
 	}
@@ -174,8 +176,8 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	// Write an event to indicate reboot attempt
-	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot")
-	err = r.rebootToNewStateRoot()
+	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
+	err = r.rebootToNewStateRoot("upgrade")
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		r.Log.Error(err, "")

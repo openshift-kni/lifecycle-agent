@@ -84,8 +84,8 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	}
 
 	// Write an event to indicate reboot attempt
-	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot")
-	err = r.rebootToNewStateRoot()
+	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot for rollback")
+	err = r.rebootToNewStateRoot("rollback")
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		r.Log.Error(err, "")
