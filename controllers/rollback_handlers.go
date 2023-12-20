@@ -18,29 +18,105 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
+	corev1 "k8s.io/api/core/v1"
 )
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	utils.SetRollbackStatusInProgress(ibu, "Initiating rollback")
 
-	// TODO actual steps
-	// If completed, update conditions and return doNotRequeue
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Rollback completed",
-		ibu.Generation)
-	utils.SetStatusCondition(&ibu.Status.Conditions,
-		utils.GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
-		utils.ConditionReasons.Completed,
-		metav1.ConditionFalse,
-		"Rollback completed",
-		ibu.Generation)
+	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
+	if err != nil {
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
+
+	// Save the CR for post-reboot restore
+	r.Log.Info("Save the IBU CR to the old state root before pivot")
+	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	r.Log.Info("Finding unbooted deployment")
+	deploymentIndex, err := r.RPMOstreeClient.GetUnbootedDeploymentIndex()
+	if err != nil {
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	// Set the new default deployment
+	r.Log.Info("Checking for set-default feature")
+
+	if r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		r.Log.Info("set-default feature available")
+
+		if err = r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+			utils.SetRollbackStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+	} else {
+		r.Log.Info("set-default feature not available")
+
+		// Check to make sure the default deployment is set
+		if deploymentIndex != 0 {
+			msg := "default deployment must be manually set for next boot"
+			utils.SetRollbackStatusInProgress(ibu, msg)
+			return requeueWithError(fmt.Errorf(msg))
+		}
+	}
+
+	// Write an event to indicate reboot attempt
+	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot")
+	err = r.rebootToNewStateRoot()
+	if err != nil {
+		//todo: abort handler? e.g delete desired stateroot
+		r.Log.Error(err, "")
+		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
 	return doNotRequeue(), nil
+}
+
+//nolint:unparam
+func (r *ImageBasedUpgradeReconciler) finishRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	utils.SetRollbackStatusCompleted(ibu)
+
+	return doNotRequeue(), nil
+}
+
+//nolint:unparam
+func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	origStaterootBooted, err := isOrigStaterootBooted(r, ibu)
+	if err != nil {
+		//todo: abort handler? e.g delete desired stateroot
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
+	}
+
+	if origStaterootBooted {
+		r.Log.Info("Pivot for rollback successful, starting post pivot steps")
+		return r.finishRollback(ctx, ibu)
+	} else {
+		r.Log.Info("Starting pre pivot for rollback steps and will pivot to previous stateroot with a reboot")
+		return r.startRollback(ctx, ibu)
+	}
 }

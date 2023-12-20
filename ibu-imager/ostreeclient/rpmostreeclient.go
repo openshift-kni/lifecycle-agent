@@ -63,7 +63,10 @@ type IClient interface {
 	QueryStatus() (*Status, error)
 	IsStaterootBooted(stateroot string) (bool, error)
 	GetCurrentStaterootName() (string, error)
+	GetUnbootedStaterootName() (string, error)
 	GetDeploymentID(osname string) (string, error)
+	GetDeploymentIndex(osname string) (int, error)
+	GetUnbootedDeploymentIndex() (int, error)
 }
 
 // Client is a handle for interacting with a rpm-ostree based system.
@@ -98,6 +101,41 @@ type rpmOstreeVersionData struct {
 	Root VersionData `yaml:"rpm-ostree"`
 }
 
+func getBootedStaterootName(deployments []Deployment) (string, error) {
+	for _, deployment := range deployments {
+		if deployment.Booted {
+			return deployment.OSName, nil
+		}
+	}
+	return "", fmt.Errorf("unable to determine booted stateroot")
+}
+
+func getUnbootedStaterootName(deployments []Deployment) (string, error) {
+	// Determine the booted stateroot
+	bootedStateroot, err := getBootedStaterootName(deployments)
+	if err != nil {
+		return "", err
+	}
+
+	// Find the first deployment in the unbooted stateroot
+	for _, deployment := range deployments {
+		if deployment.OSName != bootedStateroot {
+			return deployment.OSName, nil
+		}
+	}
+
+	return "", fmt.Errorf("unable to find deployment in unbooted stateroot")
+}
+
+func getDeploymentIndex(deployments []Deployment, stateroot string) (int, error) {
+	for index, deployment := range deployments {
+		if deployment.OSName == stateroot {
+			return index, nil
+		}
+	}
+	return -1, fmt.Errorf("unable to find deployment in stateroot: %s", stateroot)
+}
+
 // RpmOstreeVersion returns the running rpm-ostree version number
 func (c *Client) RpmOstreeVersion() (*VersionData, error) {
 	buf := c.newCmd("--version")
@@ -123,18 +161,43 @@ func (c *Client) QueryStatus() (*Status, error) {
 	return &q, nil
 }
 
-func (c *Client) GetDeploymentID(osname string) (string, error) {
+func (c *Client) GetDeploymentID(stateroot string) (string, error) {
 	status, err := c.QueryStatus()
 	if err != nil {
 		return "", err
 	}
 
 	for _, deployment := range status.Deployments {
-		if deployment.OSName == osname {
+		if deployment.OSName == stateroot {
 			return deployment.ID, nil
 		}
 	}
-	return "", fmt.Errorf("failed to find deployment with osname %s", osname)
+	return "", fmt.Errorf("failed to find deployment with osname %s", stateroot)
+}
+
+func (c *Client) GetDeploymentIndex(stateroot string) (int, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return -1, err
+	}
+
+	return getDeploymentIndex(status.Deployments, stateroot)
+}
+
+func (c *Client) GetUnbootedDeploymentIndex() (int, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return -1, err
+	}
+
+	// Determine the booted stateroot
+	unbootedStateroot, err := getUnbootedStaterootName(status.Deployments)
+	if err != nil {
+		return -1, err
+	}
+
+	// Find the first deployment in the unbooted stateroot
+	return getDeploymentIndex(status.Deployments, unbootedStateroot)
 }
 
 // IsStaterootBooted returns whether the specified stateroot is booted
@@ -159,11 +222,16 @@ func (c *Client) GetCurrentStaterootName() (string, error) {
 		return "", err
 	}
 
-	for _, deployment := range status.Deployments {
-		if deployment.Booted {
-			return deployment.OSName, nil
-		}
+	return getBootedStaterootName(status.Deployments)
+}
+
+// GetUnbootedStaterootName returns unbooted stateroot name (a.k.a OSName)
+func (c *Client) GetUnbootedStaterootName() (string, error) {
+	status, err := c.QueryStatus()
+	if err != nil {
+		return "", err
 	}
 
-	return "", fmt.Errorf("could not find a booted stateroot name")
+	// Determine the booted stateroot
+	return getUnbootedStaterootName(status.Deployments)
 }

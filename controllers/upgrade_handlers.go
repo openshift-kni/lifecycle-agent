@@ -41,7 +41,7 @@ var (
 	defaultRebootTimeout = 60 * time.Minute
 )
 
-var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+var isOrigStaterootBooted = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
 	currentStaterootName, err := r.RPMOstreeClient.GetCurrentStaterootName()
 	if err != nil {
 		return false, err
@@ -54,7 +54,7 @@ var isPrePivot = func(r *ImageBasedUpgradeReconciler, ibu *lcav1alpha1.ImageBase
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	prePivot, err := isPrePivot(r, ibu)
+	origStaterootBooted, err := isOrigStaterootBooted(r, ibu)
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -62,7 +62,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 
 	// WARNING: the pod may not know if we are boot loop (for now)
-	if prePivot {
+	if origStaterootBooted {
 		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
 		return r.prePivot(ctx, ibu)
 	} else {
@@ -112,10 +112,12 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
 		return requeueWithError(err)
 	}
-	stateRootRepo := fmt.Sprintf("/host/ostree/deploy/rhcos_%s/var", ibu.Spec.SeedImageRef.Version)
+
+	stateroot := getDesiredStaterootName(ibu)
+	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
 
 	r.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, stateRootRepo, backuprestore.OadpNs); err != nil {
+	if err := r.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
@@ -124,7 +126,7 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	r.Log.Info("Writing Restore CRs into new stateroot")
-	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, stateRootRepo); err != nil {
+	if err := r.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
 		if backuprestore.IsBRFailedValidationError(err) {
 			utils.SetUpgradeStatusInProgress(ibu, err.Error())
 			return requeueWithMediumInterval(), nil
@@ -133,29 +135,43 @@ func (r *ImageBasedUpgradeReconciler) prePivot(ctx context.Context, ibu *lcav1al
 	}
 
 	r.Log.Info("Writing extra-manifests into new stateroot")
-	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, stateRootRepo); err != nil {
+	if err := r.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Writing cluster-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchClusterConfig(ctx, stateRootRepo); err != nil {
+	if err := r.ClusterConfig.FetchClusterConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Writing lvm-configuration into new stateroot")
-	if err := r.ClusterConfig.FetchLvmConfig(ctx, stateRootRepo); err != nil {
+	if err := r.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 
 	r.Log.Info("Save the IBU CR to the new state root before pivot")
-	filePath := filepath.Join(stateRootRepo, utils.IBUFilePath)
-	// Temporarily empty resource version so the file can be used to restore status
-	rv := ibu.ResourceVersion
-	ibu.ResourceVersion = ""
+	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		return requeueWithError(err)
 	}
-	ibu.ResourceVersion = rv
+
+	// Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
+	ibuCopy := ibu.DeepCopy()
+	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
+	if err := lcautils.MarshalToFile(ibuCopy, common.PathOutsideChroot(utils.IBUFilePath)); err != nil {
+		return requeueWithError(err)
+	}
+
+	// Set the new default deployment
+	if r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		deploymentIndex, err := r.RPMOstreeClient.GetDeploymentIndex(stateroot)
+		if err != nil {
+			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
+		}
+		if err := r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+			return requeueWithError(fmt.Errorf("failed to set default deployment for pivot to"))
+		}
+	}
 
 	// Write an event to indicate reboot attempt
 	r.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot")

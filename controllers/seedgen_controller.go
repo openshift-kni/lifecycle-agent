@@ -122,14 +122,9 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 	}
 	managedcluster.TypeMeta = *typeMeta
 
-	rv := managedcluster.ResourceVersion
-	managedcluster.ResourceVersion = ""
-
 	if err := commonUtils.MarshalToFile(managedcluster, common.PathOutsideChroot(storedManagedClusterCR)); err != nil {
 		return fmt.Errorf("failed to write managedcluster to %s: %w", storedManagedClusterCR, err)
 	}
-
-	managedcluster.ResourceVersion = rv
 
 	// Ensure that the dependent resources are deleted
 	deleteOpts := []client.DeleteOption{
@@ -170,6 +165,9 @@ func (r *SeedGeneratorReconciler) reregisterWithHub(ctx context.Context, hubClie
 		}
 		return fmt.Errorf("unable to read stored managedcluster file (%s): %w", filePath, err)
 	}
+
+	// Clear the ResourceVersion, otherwise the restore will fail
+	managedcluster.SetResourceVersion("")
 
 	if err := hubClient.Create(ctx, managedcluster); err != nil {
 		return fmt.Errorf("failed to create ManagedCluster: %w", err)
@@ -540,13 +538,9 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Save the seedgen secret CR in order to restore it after the ibu-imager is complete
-	// Temporarily empty resource version so the file can be used to restore status
-	rv := seedGenSecret.ResourceVersion
-	seedGenSecret.ResourceVersion = ""
 	if err := commonUtils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(utils.SeedGenStoredSecretCR)); err != nil {
 		return fmt.Errorf("failed to write secret to %s: %w", utils.SeedGenStoredSecretCR, err)
 	}
-	seedGenSecret.ResourceVersion = rv
 
 	if seedAuth, exists := seedGenSecret.Data["seedAuth"]; exists {
 		if err := os.WriteFile(common.PathOutsideChroot(seedgenAuthFile), seedAuth, 0o644); err != nil {
@@ -557,13 +551,9 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Save the seedgen CR in order to restore it after the ibu-imager is complete
-	// Temporarily empty resource version so the file can be used to restore status
-	rv = seedgen.ResourceVersion
-	seedgen.ResourceVersion = ""
 	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
 		return fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
 	}
-	seedgen.ResourceVersion = rv
 
 	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
 		// Create client for access to hub

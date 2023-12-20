@@ -106,6 +106,10 @@ func SetStatusCondition(existingConditions *[]metav1.Condition, conditionType Co
 	)
 }
 
+func ClearStatusCondition(existingConditions *[]metav1.Condition, conditionType ConditionType) {
+	meta.RemoveStatusCondition(existingConditions, string(conditionType))
+}
+
 // ResetStatusConditions remove all other conditions and sets idle to true
 func ResetStatusConditions(existingConditions *[]metav1.Condition, generation int64) {
 	for _, condition := range *existingConditions {
@@ -322,5 +326,47 @@ func SetPrepStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		"Prep completed",
+		ibu.Generation)
+}
+
+// SetRollbackStatusFailed updates the Rollback status to failed with message
+func SetRollbackStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		"Rollback failed",
+		ibu.Generation)
+}
+
+// SetRollbackStatusInProgress updates the Rollback status to in progress with message
+func SetRollbackStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		ConditionReasons.InProgress,
+		metav1.ConditionTrue,
+		msg,
+		ibu.Generation)
+}
+
+// SetUpgradeStatusCompleted updates the Rollback status to completed
+func SetRollbackStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		"Rollback completed",
+		ibu.Generation)
+	SetStatusCondition(&ibu.Status.Conditions,
+		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		"Rollback completed",
 		ibu.Generation)
 }

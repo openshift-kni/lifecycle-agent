@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -241,6 +242,10 @@ func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context,
 
 func isRollbackAllowed(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) bool {
 	if !isAfterPivot {
+		rollbackInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackInProgress))
+		if rollbackInProgressCondition != nil && rollbackInProgressCondition.Status == metav1.ConditionTrue {
+			return true
+		}
 		return false
 	}
 	upgradeInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.UpgradeInProgress))
@@ -413,5 +418,5 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func getDesiredStaterootName(ibu *lcav1alpha1.ImageBasedUpgrade) string {
-	return fmt.Sprintf("rhcos_%s", ibu.Spec.SeedImageRef.Version)
+	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(ibu.Spec.SeedImageRef.Version, "-", "_"))
 }
