@@ -44,7 +44,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
 
 	"github.com/go-logr/logr"
@@ -142,7 +141,7 @@ func main() {
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor)
 
-	if err := initIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
+	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
 		os.Exit(1)
 	}
@@ -197,65 +196,6 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-}
-
-func initIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
-	ibu := &lcav1alpha1.ImageBasedUpgrade{}
-	filePath := common.PathOutsideChroot(utils.IBUFilePath)
-	if err := lcautils.ReadYamlOrJSONFile(filePath, ibu); err != nil {
-		if os.IsNotExist(err) {
-			ibu = &lcav1alpha1.ImageBasedUpgrade{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: utils.IBUName,
-				},
-				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-					Stage: lcav1alpha1.Stages.Idle,
-				},
-			}
-			if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-				return client.IgnoreAlreadyExists(c.Create(ctx, ibu))
-			}); err != nil {
-				return err
-			}
-			log.Info("Initial IBU created")
-			return nil
-		}
-		return err
-	}
-
-	// Strip the ResourceVersion, otherwise the restore fails
-	ibu.SetResourceVersion("")
-
-	log.Info("Saved IBU CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, ibu))
-	}); err != nil {
-		return err
-	}
-
-	// Save status as the ibu structure gets over-written by the create call
-	// with the result which has no status
-	status := ibu.Status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, ibu)
-	}); err != nil {
-		return err
-	}
-
-	// Put the saved status into the newly create ibu with the right resource
-	// version which is required for the update call to work
-	ibu.Status = status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, ibu)
-	}); err != nil {
-		return err
-	}
-
-	if err := os.Remove(filePath); err != nil {
-		return err
-	}
-	log.Info("Restore successful and saved IBU CR removed")
-	return nil
 }
 
 // Seed generator orchestration is done in two stages.
