@@ -57,12 +57,14 @@ var Stages = struct {
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
 type ImageBasedUpgradeSpec struct {
 	//+kubebuilder:validation:Enum=Idle;Prep;Upgrade;Rollback
-	Stage            ImageBasedUpgradeStage `json:"stage,omitempty"`
-	SeedImageRef     SeedImageRef           `json:"seedImageRef,omitempty"`
-	AdditionalImages ConfigMapRef           `json:"additionalImages,omitempty"`
-	OADPContent      []ConfigMapRef         `json:"oadpContent,omitempty"`
-	ExtraManifests   []ConfigMapRef         `json:"extraManifests,omitempty"`
-	RollbackTarget   string                 `json:"rollbackTarget,omitempty"`
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Stage"
+	Stage ImageBasedUpgradeStage `json:"stage,omitempty"`
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image Reference"
+	SeedImageRef     SeedImageRef   `json:"seedImageRef,omitempty"`
+	AdditionalImages ConfigMapRef   `json:"additionalImages,omitempty"`
+	OADPContent      []ConfigMapRef `json:"oadpContent,omitempty"`
+	ExtraManifests   []ConfigMapRef `json:"extraManifests,omitempty"`
+	RollbackTarget   string         `json:"rollbackTarget,omitempty"`
 }
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
