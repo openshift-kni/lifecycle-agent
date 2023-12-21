@@ -368,7 +368,7 @@ spec:
 > [!IMPORTANT] 
 > 1. The examples provided are just for reference. Create your own backup and restore CRs based on your needs.
 > 2. The backup and restore CRs must be created in the same namespace where the OADP is installed which is `openshift-adp`.
-> 3. The OADP configmaps should only contain backup and restore CRs. Other type of CRs are unknown to the LCA and will be ignored.
+> 3. The OADP configmaps should only contain backup and restore CRs which are in YAML format or multiple document YAML format. Other type of CRs are unknown to the LCA and will be ignored.
 
 2. Build a configmap to include all CRs
 

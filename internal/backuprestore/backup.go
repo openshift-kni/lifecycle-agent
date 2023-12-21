@@ -17,9 +17,11 @@ limitations under the License.
 package backuprestore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,11 +37,12 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 )
 
 type BackupTracker struct {
@@ -204,38 +207,35 @@ func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps 
 
 	for _, cm := range configmaps {
 		for _, value := range cm.Data {
-			resource := unstructured.Unstructured{}
-			err := yaml.Unmarshal([]byte(value), &resource)
-			if err != nil {
-				return nil, err
-			}
-			if resource.GroupVersionKind() != backupGvk {
-				continue
-			}
-
-			// Create the backup CR in dry-run mode to detect any validation errors in the CR
-			// i.e., missing required fields
-			err = h.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-			if err != nil {
-				if k8serrors.IsInvalid(err) {
-					errMsg := fmt.Sprintf("Invalid backup %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
-						resource.GetName(), cm.GetName(), err.Error())
-					h.Log.Error(err, errMsg)
-					return nil, NewBRFailedValidationError("Backup", errMsg)
+			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
+			for {
+				resource := unstructured.Unstructured{}
+				err := decoder.Decode(&resource)
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						// Reach the end of the data, exit the loop
+						break
+					}
+					errMsg := fmt.Sprintf("Failed to decode yaml in configmap: %v", err.Error())
+					h.Log.Error(nil, errMsg)
+					return nil, NewBRFailedValidationError(resource.GetKind(), errMsg)
 				}
 
-				if !k8serrors.IsAlreadyExists(err) {
+				if resource.GroupVersionKind() != backupGvk {
+					continue
+				}
+
+				err = h.createObjectWithDryRun(ctx, &resource, cm.Name)
+				if err != nil {
 					return nil, err
 				}
 
+				backup := velerov1.Backup{}
+				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &backup); err != nil {
+					return nil, err
+				}
+				backups = append(backups, &backup)
 			}
-
-			backup := velerov1.Backup{}
-			err = yaml.Unmarshal([]byte(value), &backup)
-			if err != nil {
-				return nil, err
-			}
-			backups = append(backups, &backup)
 		}
 	}
 	return backups, nil
@@ -342,7 +342,7 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		return err
 	}
 
-	restores, err := extractRestoreFromConfigmaps(ctx, h.Client, configmaps)
+	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
 	if err != nil {
 		return err
 	}

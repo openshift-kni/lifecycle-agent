@@ -17,9 +17,11 @@ limitations under the License.
 package backuprestore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,12 +32,12 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 )
 
 type RestoreTracker struct {
@@ -124,39 +126,40 @@ func (h *BRHandler) StartOrTrackRestore(ctx context.Context, restores []*velerov
 }
 
 // extractRestoreFromConfigmaps extacts Restore CRs from configmaps
-func extractRestoreFromConfigmaps(ctx context.Context, c client.Client, configmaps []corev1.ConfigMap) ([]*velerov1.Restore, error) {
+func (h *BRHandler) extractRestoreFromConfigmaps(ctx context.Context, configmaps []corev1.ConfigMap) ([]*velerov1.Restore, error) {
 	var restores []*velerov1.Restore
 
 	for _, cm := range configmaps {
 		for _, value := range cm.Data {
-			resource := unstructured.Unstructured{}
-			err := yaml.Unmarshal([]byte(value), &resource)
-			if err != nil {
-				return nil, err
-			}
-
-			if resource.GroupVersionKind() != restoreGvk {
-				continue
-			}
-
-			// Create the restore CR in dry-run mode to detect any validation errors in the CR
-			// i.e., missing required fields
-			err = c.Create(ctx, &resource, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-			if err != nil {
-				if k8serrors.IsInvalid(err) {
-					errMsg := fmt.Sprintf("Invalid restore %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
-						resource.GetName(), cm.GetName(), err.Error())
-					return nil, NewBRFailedValidationError("Restore", errMsg)
+			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
+			for {
+				resource := unstructured.Unstructured{}
+				err := decoder.Decode(&resource)
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						// Reach the end of the data, exit the loop
+						break
+					}
+					errMsg := fmt.Sprintf("Failed to decode yaml in configmap: %v", err.Error())
+					h.Log.Error(nil, errMsg)
+					return nil, NewBRFailedValidationError(resource.GetKind(), errMsg)
 				}
-				return nil, err
-			}
 
-			restore := velerov1.Restore{}
-			err = yaml.Unmarshal([]byte(value), &restore)
-			if err != nil {
-				return nil, err
+				if resource.GroupVersionKind() != restoreGvk {
+					continue
+				}
+
+				err = h.createObjectWithDryRun(ctx, &resource, cm.Name)
+				if err != nil {
+					return nil, err
+				}
+
+				restore := velerov1.Restore{}
+				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &restore); err != nil {
+					return nil, err
+				}
+				restores = append(restores, &restore)
 			}
-			restores = append(restores, &restore)
 		}
 	}
 

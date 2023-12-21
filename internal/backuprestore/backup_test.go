@@ -84,7 +84,7 @@ func fakeBackupCrWithStatus(name, applyWave, backupResource string, phase velero
 	return backup
 }
 
-func fakeConfigmap(name, applyWave string, number, start int) *corev1.ConfigMap {
+func fakeConfigmap(name, applyWave string, number, start int, multiyamls bool) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -94,15 +94,18 @@ func fakeConfigmap(name, applyWave string, number, start int) *corev1.ConfigMap 
 	}
 
 	for i := start; i < number+start; i++ {
-		name := "backup" + strconv.Itoa(i)
-		backup := fakeBackupCr(name, applyWave, "fakeResource")
+		backup := fakeBackupCr("backup"+strconv.Itoa(i), applyWave, "fakeResource")
 		backupBytes, _ := yaml.Marshal(backup)
-		cm.Data[name] = string(backupBytes)
-
-		name = "restore" + strconv.Itoa(i)
-		restore := fakeRestoreCr(name, applyWave, backup.Name)
+		restore := fakeRestoreCr("restore"+strconv.Itoa(i), applyWave, backup.Name)
 		restoreBytes, _ := yaml.Marshal(restore)
-		cm.Data[name] = string(restoreBytes)
+
+		if multiyamls {
+			name := "backup_restore" + strconv.Itoa(i)
+			cm.Data[name] = string(backupBytes) + "---\n" + string(restoreBytes)
+		} else {
+			cm.Data[backup.Name] = string(backupBytes)
+			cm.Data[restore.Name] = string(restoreBytes)
+		}
 	}
 
 	return cm
@@ -319,6 +322,10 @@ func TestExportRestoresToDir(t *testing.T) {
 			Name:      "configmap2",
 			Namespace: oadpNs,
 		},
+		{
+			Name:      "configmap3",
+			Namespace: oadpNs,
+		},
 	}
 
 	toDir, err := os.MkdirTemp("", "staterootB")
@@ -328,10 +335,12 @@ func TestExportRestoresToDir(t *testing.T) {
 	defer os.RemoveAll(toDir)
 
 	// Create fake configmaps
-	cm1 := fakeConfigmap("configmap1", "1", 2, 1)
-	cm2 := fakeConfigmap("configmap2", "10", 2, 3)
+	cm1 := fakeConfigmap("configmap1", "1", 2, 1, false)
+	cm2 := fakeConfigmap("configmap2", "10", 2, 3, false)
+	// Configmap3 has a multi-document yaml format data
+	cm3 := fakeConfigmap("configmap3", "11", 2, 5, true)
 
-	fakeClient, err := getFakeClientFromObjects(cm1, cm2)
+	fakeClient, err := getFakeClientFromObjects(cm1, cm2, cm3)
 	if err != nil {
 		t.Errorf("error in creating fake client")
 	}
@@ -349,13 +358,16 @@ func TestExportRestoresToDir(t *testing.T) {
 	// Check the output
 	expectedDir1 := filepath.Join(toDir, OadpRestorePath, "restore1")
 	expectedDir2 := filepath.Join(toDir, OadpRestorePath, "restore2")
-	expectedDirs := []string{expectedDir1, expectedDir2}
+	expectedDir3 := filepath.Join(toDir, OadpRestorePath, "restore3")
+	expectedDirs := []string{expectedDir1, expectedDir2, expectedDir3}
 
 	expectedFiles := []string{
 		filepath.Join(expectedDir1, "1_restore1_openshift-adp.yaml"),
 		filepath.Join(expectedDir1, "2_restore2_openshift-adp.yaml"),
 		filepath.Join(expectedDir2, "1_restore3_openshift-adp.yaml"),
 		filepath.Join(expectedDir2, "2_restore4_openshift-adp.yaml"),
+		filepath.Join(expectedDir3, "1_restore5_openshift-adp.yaml"),
+		filepath.Join(expectedDir3, "2_restore6_openshift-adp.yaml"),
 	}
 	for _, dir := range expectedDirs {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
