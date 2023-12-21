@@ -84,11 +84,15 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 	p.waitForApi(ctx, client)
 
-	if err := p.deleteAllOldMirrorResources(ctx, client, clusterInfo, seedClusterInfo); err != nil {
+	if err := p.deleteAllOldMirrorResources(ctx, client); err != nil {
 		return err
 	}
 
 	if err := p.applyManifests(); err != nil {
+		return err
+	}
+
+	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfo, seedClusterInfo); err != nil {
 		return err
 	}
 
@@ -259,7 +263,7 @@ func (p *PostPivot) copyClusterConfigFiles() error {
 		common.CABundleFilePath)
 }
 
-func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client, clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client) error {
 	p.log.Info("Deleting ImageContentSourcePolicy and ImageDigestMirrorSet if they exist")
 	icsp := &operatorv1alpha1.ImageContentSourcePolicy{}
 	if err := client.DeleteAllOf(ctx, icsp); err != nil {
@@ -269,10 +273,6 @@ func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runt
 	idms := &v1.ImageDigestMirrorSet{}
 	if err := client.DeleteAllOf(ctx, idms); err != nil {
 		return fmt.Errorf("failed to delete all idms %w", err)
-	}
-
-	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfo, seedInfo); err != nil {
-		return err
 	}
 
 	return p.deleteCatalogSources(ctx, client)
@@ -297,6 +297,11 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 
 func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
 	clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
+
+	// in case we should not override we can skip
+	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client, seedInfo); !shouldOverride || err != nil {
+		return err
+	}
 
 	p.log.Info("Changing release registry in csv deployment")
 	csvD, err := utils.GetCSVDeployment(ctx, client)

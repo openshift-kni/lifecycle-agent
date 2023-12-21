@@ -72,7 +72,7 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 
 }
 
-func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string) (imageList []string, err error) {
+func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string, overrideSeedRegistry bool) (imageList []string, err error) {
 	var content []byte
 	content, err = os.ReadFile(common.PathOutsideChroot(imageListFile))
 	if err != nil {
@@ -80,15 +80,17 @@ func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string) (im
 	}
 
 	lines := strings.Split(string(content), "\n")
-
 	// Filter out empty lines
 	for _, line := range lines {
+		image := line
 		if line == "" {
 			continue
 		}
-		image, err := commonUtils.ReplaceImageRegistry(line, clusterRegistry, seedRegistry)
-		if err != nil {
-			return nil, err
+		if overrideSeedRegistry {
+			image, err = commonUtils.ReplaceImageRegistry(image, clusterRegistry, seedRegistry)
+			if err != nil {
+				return nil, err
+			}
 		}
 		imageList = append(imageList, image)
 	}
@@ -102,15 +104,18 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		r.Log.Error(err, "Failed to get cluster registry")
 		return false, err
 	}
-
 	seedInfo, err := commonUtils.ReadClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(getDesiredStaterootName(ibu))))
 	if err != nil {
 		r.Log.Error(err, "Failed to read seed info")
 		return false, err
 	}
+	shouldOverrideRegistry, err := commonUtils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo)
+	if err != nil {
+		return false, err
+	}
 
-	imageList, err := readPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry)
+	imageList, err := readPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
 	if err != nil {
 		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return false, err

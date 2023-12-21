@@ -195,12 +195,10 @@ func CopyFileIfExists(source, dest string) error {
 }
 
 func ReplaceImageRegistry(image, targetRegistry, sourceRegistry string) (string, error) {
-	if sourceRegistry == "" || targetRegistry == "" {
+	if sourceRegistry == "" || targetRegistry == "" || targetRegistry == sourceRegistry {
 		return image, nil
 	}
-	if targetRegistry == sourceRegistry {
-		return image, nil
-	}
+
 	re, err := regexp.Compile(fmt.Sprintf("^%s", sourceRegistry))
 	if err != nil {
 		return "", fmt.Errorf("failed to create regex for registry replacement, err: %w", err)
