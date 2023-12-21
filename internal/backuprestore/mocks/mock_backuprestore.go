@@ -43,6 +43,20 @@ func (m *MockBackuperRestorer) EXPECT() *MockBackuperRestorerMockRecorder {
 	return m.recorder
 }
 
+// CheckOadpOperatorAvailability mocks base method.
+func (m *MockBackuperRestorer) CheckOadpOperatorAvailability(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckOadpOperatorAvailability", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CheckOadpOperatorAvailability indicates an expected call of CheckOadpOperatorAvailability.
+func (mr *MockBackuperRestorerMockRecorder) CheckOadpOperatorAvailability(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckOadpOperatorAvailability", reflect.TypeOf((*MockBackuperRestorer)(nil).CheckOadpOperatorAvailability), ctx)
+}
+
 // CleanupBackups mocks base method.
 func (m *MockBackuperRestorer) CleanupBackups(ctx context.Context) (bool, error) {
 	m.ctrl.T.Helper()
@@ -172,4 +186,18 @@ func (m *MockBackuperRestorer) StartOrTrackRestore(ctx context.Context, restores
 func (mr *MockBackuperRestorerMockRecorder) StartOrTrackRestore(ctx, restores any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartOrTrackRestore", reflect.TypeOf((*MockBackuperRestorer)(nil).StartOrTrackRestore), ctx, restores)
+}
+
+// ValidateOadpConfigmap mocks base method.
+func (m *MockBackuperRestorer) ValidateOadpConfigmap(ctx context.Context, content []v1alpha1.ConfigMapRef) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateOadpConfigmap", ctx, content)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ValidateOadpConfigmap indicates an expected call of ValidateOadpConfigmap.
+func (mr *MockBackuperRestorerMockRecorder) ValidateOadpConfigmap(ctx, content any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateOadpConfigmap", reflect.TypeOf((*MockBackuperRestorer)(nil).ValidateOadpConfigmap), ctx, content)
 }
