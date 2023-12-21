@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -149,7 +150,9 @@ func PullImages(precacheSpec []string) (progress *precache.Progress, err error) 
 	log.Infof("Checking the pre-cache spec file images to determine if they need to be pulled...")
 	var skip bool
 	for _, image := range precacheSpec {
-		skip = podmanImgExists(image)
+		// Never skip tagged images, as the tagged image may have been updated
+		isUntagged := strings.Contains(image, "@sha")
+		skip = isUntagged && podmanImgExists(image)
 		if !skip {
 			pullSpec = append(pullSpec, image)
 		} else {
