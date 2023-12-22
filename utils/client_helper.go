@@ -8,14 +8,18 @@ import (
 	"path"
 	"strings"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	v1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/thoas/go-funk"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
 func GetSecretData(ctx context.Context, name, namespace, key string, client runtimeclient.Client) (string, error) {
@@ -108,6 +112,11 @@ func CreateClusterInfo(ctx context.Context, client runtimeclient.Client) (*clust
 		return nil, err
 	}
 
+	mirrorRegistrySources, err := GetMirrorRegistrySourceRegistries(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
 	return &clusterinfo.ClusterInfo{
 		ClusterName:     installConfig.Metadata.Name,
 		Domain:          installConfig.BaseDomain,
@@ -116,6 +125,7 @@ func CreateClusterInfo(ctx context.Context, client runtimeclient.Client) (*clust
 		MasterIP:        ip,
 		ReleaseRegistry: releaseRegistry,
 		Hostname:        hostname,
+		MirrorRegistry:  len(mirrorRegistrySources) > 0,
 	}, nil
 }
 
@@ -184,4 +194,48 @@ func ReadClusterInfoFromFile(path string) (*clusterinfo.ClusterInfo, error) {
 	data := &clusterinfo.ClusterInfo{}
 	err := ReadYamlOrJSONFile(path, data)
 	return data, err
+}
+
+func ExtractRegistryFromImage(image string) string {
+	return strings.Split(image, "/")[0]
+}
+
+func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient.Client) ([]string, error) {
+	var sourceRegistries []string
+	allNamespaces := runtimeclient.ListOptions{Namespace: metav1.NamespaceAll}
+	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
+	if err := client.List(ctx, currentIcps, &allNamespaces); err != nil {
+		return nil, err
+	}
+	for _, icsp := range currentIcps.Items {
+		for _, rdp := range icsp.Spec.RepositoryDigestMirrors {
+			sourceRegistries = append(sourceRegistries, ExtractRegistryFromImage(rdp.Source))
+		}
+	}
+	currentIdms := v1.ImageDigestMirrorSetList{}
+	if err := client.List(ctx, &currentIdms, &allNamespaces); err != nil {
+		return nil, err
+	}
+
+	for _, idms := range currentIdms.Items {
+		for _, idm := range idms.Spec.ImageDigestMirrors {
+			sourceRegistries = append(sourceRegistries, ExtractRegistryFromImage(idm.Source))
+		}
+	}
+	return sourceRegistries, nil
+}
+
+func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, seedInfo *clusterinfo.ClusterInfo) (bool, error) {
+	mirroredRegistries, err := GetMirrorRegistrySourceRegistries(ctx, client)
+	if err != nil {
+		return false, err
+	}
+	isMirrorRegistryConfigured := len(mirroredRegistries) == 0
+
+	// if snoa doesn't have mirror registry but seed have we should try to override registry
+	if !isMirrorRegistryConfigured && seedInfo.MirrorRegistry {
+		return true, err
+	}
+
+	return funk.ContainsString(mirroredRegistries, seedInfo.ReleaseRegistry), nil
 }

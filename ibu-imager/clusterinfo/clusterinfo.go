@@ -13,6 +13,7 @@ type ClusterInfo struct {
 	MasterIP        string `json:"master_ip,omitempty"`
 	ReleaseRegistry string `json:"release_registry,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
+	MirrorRegistry  bool   `json:"mirror_registry,omitempty"`
 }
 
 type installConfigMetadata struct {
