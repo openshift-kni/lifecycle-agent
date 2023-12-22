@@ -305,20 +305,23 @@ Note that the logs are available until the user triggers a clean-up through an a
 By default, the pre-caching job is configured to fail if it encounters any error, or it fails to pull one or more images.
 
 Should you wish to change the pre-caching mode to exit successfully even though there was a failure to pull an image, 
-you can re-configure the pre-caching to `best-effort` by running the sequence of `shell` and `oc` commands provided below.
+you can re-configure the pre-caching to `best-effort` by setting `PRECACHE_BEST_EFFORT=TRUE` in the LCA deployment
+environment variables..
 
 ```shell
-# Get current list of env vars for the lifecycle-agent-controller-manager deployment
-ENV_VARS=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env}' | jq -c)
+# Set the env variable for the manager container in the deployment
+oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager PRECACHE_BEST_EFFORT=TRUE
 
-# Append the pre-caching best-effort environment variable  
-UPDATED_ENV_VARS=$(echo "$ENV_VARS" | jq --argjson new_var '{"name":"PRECACHE_BEST_EFFORT","value":"TRUE"}' '. + [$new_var]' | jq -c)
+# To check the list of env variables in the deployment
+oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager --list
 
-# Patch the lifecycle-agent-controller-manager deployment
-oc patch deployment lifecycle-agent-controller-manager -n openshift-lifecycle-agent --type=json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env", "value": '"$UPDATED_ENV_VARS"'}]'
+# To check the env in the running container
+oc rsh -n openshift-lifecycle-agent -c manager \
+    $(oc get pods -n openshift-lifecycle-agent -l app.kubernetes.io/component=lifecycle-agent --no-headers -o custom-columns=NAME:.metadata.name) \
+    env
 
-# Confirm the patching was successful - you should see `{"name":"PRECACHE_BEST_EFFORT","value":"TRUE"}` in the output
-oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env}'
+# To drop the env variable
+oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager PRECACHE_BEST_EFFORT-
 ```
 
 Note that the patching will result in the termination of the current lifecycle-agent-controller-manager pod and the 
