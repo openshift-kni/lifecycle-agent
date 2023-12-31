@@ -18,13 +18,15 @@ package workload
 
 import (
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 )
 
 // MaxRetries is the max number of retries for pulling an image before marking it as failed
@@ -36,36 +38,11 @@ const (
 	DefaultAuthFile string = "/var/lib/kubelet/config.json"
 )
 
-// executeCmd execute shell commands
-func executeCmd(suppressCmdOutput bool, cmd string, args ...string) (err error) {
-
-	logger := log.StandardLogger()
-	logWriter := logger.Writer()
-
-	log.Debugf("Executing %s with args %s", cmd, args)
-	execCmd := exec.Command(cmd, args...)
-
-	if suppressCmdOutput {
-		execCmd.Stdout = nil
-		execCmd.Stderr = nil
-	} else {
-		execCmd.Stdout = logWriter
-		execCmd.Stderr = logWriter
-	}
-
-	if err = execCmd.Run(); err != nil {
-		if !suppressCmdOutput {
-			log.Error(err)
-		}
-	}
-
-	_ = logWriter.Close()
-	return err
-}
+var Executor = ops.NewChrootExecutor(log.StandardLogger(), false, common.Host)
 
 // CheckPodman verifies that podman is running by checking the version of podman
 func CheckPodman() bool {
-	if err := executeCmd(false, "podman", []string{"version"}...); err != nil {
+	if _, err := Executor.ExecuteWithLiveLogger("podman", []string{"version"}...); err != nil {
 		return false
 	}
 	return true
@@ -73,7 +50,7 @@ func CheckPodman() bool {
 
 // podmanImgExists reports the existence of the given image via podman CLI
 func podmanImgExists(image string) bool {
-	if err := executeCmd(true, "podman", []string{"image", "exists", image}...); err != nil {
+	if _, err := Executor.Execute("podman", []string{"image", "exists", image}...); err != nil {
 		return false
 	}
 	return true
@@ -85,7 +62,8 @@ func podmanImgPull(image, authFile string) error {
 	if authFile != "" {
 		args = append(args, []string{"--authfile", authFile}...)
 	}
-	return executeCmd(false, "podman", args...)
+	_, err := Executor.ExecuteWithLiveLogger("podman", args...)
+	return err
 }
 
 // pullImage attempts to pull an image via podman CLI
@@ -111,7 +89,7 @@ func pullImage(image, authFile string, progress *precache.Progress) error {
 }
 
 // getAuthFile returns the auth file for podman
-func getAuthFile() (string, error) {
+func GetAuthFile() (string, error) {
 	// Configure Podman auth file
 	authFile := os.Getenv(EnvAuthFile)
 	if authFile == "" {
@@ -129,13 +107,7 @@ func getAuthFile() (string, error) {
 }
 
 // PullImages pulls a list of images using podman
-func PullImages(precacheSpec []string) (progress *precache.Progress, err error) {
-
-	// Get auth file for Podman
-	authFile, err := getAuthFile()
-	if err != nil {
-		return progress, err
-	}
+func PullImages(precacheSpec []string, authFile string) (progress *precache.Progress, err error) {
 
 	// Initialize progress tracking
 	progress = &precache.Progress{

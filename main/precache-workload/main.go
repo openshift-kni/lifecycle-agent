@@ -20,11 +20,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache/workload"
 )
@@ -91,20 +89,18 @@ func main() {
 
 	log.Info("Loaded precache spec file.")
 
-	// Change root directory to /host
-	if err := syscall.Chroot(common.Host); err != nil {
-		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err), Failure)
-	}
-	log.Infof("chroot %s successful", common.Host)
-
 	// Pre-check: Verify podman is running
 	if !workload.CheckPodman() {
 		terminateOnError(fmt.Errorf("failed to execute podman command"), Failure)
 	}
 	log.Info("podman is running, proceeding to pre-cache images!")
-
+	// Get auth file for Podman
+	authFile, err := workload.GetAuthFile()
+	if err != nil {
+		terminateOnError(err, Failure)
+	}
 	// Pre-cache images
-	status, err := workload.PullImages(precacheSpec)
+	status, err := workload.PullImages(precacheSpec, authFile)
 	if err != nil {
 		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %w", err), Failure)
 	}
