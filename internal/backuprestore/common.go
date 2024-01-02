@@ -78,6 +78,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
+	CheckOadpOperatorAvailability(ctx context.Context) error
 	DeleteOadpOperator(ctx context.Context, namespace string) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
@@ -86,6 +87,7 @@ type BackuperRestorer interface {
 	RestoreOadpConfigurations(ctx context.Context) error
 	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
+	ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error
 }
 
 // BRHandler handles the backup and restore
@@ -160,7 +162,7 @@ func IsBRFailedError(err error) bool {
 func IsBRFailedValidationError(err error) bool {
 	var brErr *BRStatusError
 	if errors.As(err, &brErr) {
-		if brErr.Type == "Backup" || brErr.Type == "Restore" {
+		if brErr.Type == "Backup" || brErr.Type == "Restore" || brErr.Type == "OADP" {
 			return brErr.Reason == "FailedValidation"
 		}
 	}
@@ -307,4 +309,98 @@ func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 		}
 	}
 	return false
+}
+
+func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
+	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			errMsg := fmt.Sprintf("OADP configmap not found, error: %s. Please create the configmap.", err.Error())
+			h.Log.Error(nil, errMsg)
+			return NewBRFailedValidationError("OADP", errMsg)
+		}
+		return err
+	}
+
+	backups, err := h.extractBackupFromConfigmaps(ctx, configmaps)
+	if err != nil {
+		return err
+	}
+	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
+	if err != nil {
+		return err
+	}
+
+	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {
+		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	// Check if the backup CRs defined in restore CRs exist in OADP configmaps
+	for _, restore := range restores {
+		found := false
+		for _, backup := range backups {
+			if restore.Spec.BackupName == backup.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			errMsg := fmt.Sprintf("The backup CR %s defined in restore CR %s not found in OADP configmaps", restore.Spec.BackupName, restore.Name)
+			h.Log.Error(nil, errMsg)
+			return NewBRFailedValidationError("OADP", errMsg)
+		}
+	}
+	return nil
+}
+
+func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
+	// Check if OADP is running
+	oadpCsv := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.List(ctx, oadpCsv, &client.ListOptions{Namespace: OadpNs}); err != nil {
+		return err
+	}
+
+	if len(oadpCsv.Items) == 0 ||
+		!(oadpCsv.Items[0].Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && oadpCsv.Items[0].Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
+		errMsg := fmt.Sprintf("Please ensure OADP operator is running successfully in the %s", OadpNs)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	// Check if OADP DPA is reconciled
+	dpaList := &unstructured.UnstructuredList{}
+	dpaList.SetGroupVersionKind(dpaGvkList)
+	opts := []client.ListOption{
+		client.InNamespace(OadpNs),
+	}
+	if err := h.List(ctx, dpaList, opts...); err != nil {
+		return err
+	}
+
+	if len(dpaList.Items) == 0 {
+		errMsg := fmt.Sprintf("No DataProtectionApplication CR found in the %s", OadpNs)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	if len(dpaList.Items) != 1 {
+		errMsg := fmt.Sprintf("Only one DataProtectionApplication CR is allowed in the %s,", OadpNs)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	if !isDPAReconciled(&dpaList.Items[0]) {
+		errMsg := fmt.Sprintf("DataProtectionApplication CR %s is not reconciled", dpaList.Items[0].GetName())
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	// Check if the storage backend is ready
+	err := h.ensureStorageBackendAvailable(ctx, OadpNs)
+	if err != nil {
+		return NewBRFailedValidationError("OADP", err.Error())
+	}
+	return nil
 }

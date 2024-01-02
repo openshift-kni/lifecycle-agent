@@ -185,8 +185,20 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			return
 		}
 
+		// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 		if validateStageTransition(ibu, isAfterPivot) {
-			// Update in progress condition to true and idle condition to false when transitioning to non idle stage
+			// Validate the IBU spec if the transition is to prep stage
+			if ibu.Spec.Stage == lcav1alpha1.Stages.Prep {
+				var isValid bool
+				isValid, err = r.validateIBUSpec(ctx, ibu)
+				if err != nil {
+					return
+				}
+				if !isValid {
+					err = r.updateStatus(ctx, ibu)
+					return
+				}
+			}
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
 			if err != nil {
 				return
@@ -373,6 +385,33 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 		)
 	}
 	return true
+}
+
+// validateIBUSpec validates the IBU CR, returns true if the spec is valid, false otherwise
+func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+	r.Log.Info("Validating IBU spec")
+
+	// If OADP configmap is provided, validate the configmap and check if OADP operator is available
+	if len(ibu.Spec.OADPContent) != 0 {
+		err := r.BackupRestore.ValidateOadpConfigmap(ctx, ibu.Spec.OADPContent)
+		if err != nil {
+			if backuprestore.IsBRFailedValidationError(err) {
+				utils.SetPrepStatusFailed(ibu, err.Error())
+				return false, nil
+			}
+			return false, err
+		}
+
+		err = r.BackupRestore.CheckOadpOperatorAvailability(ctx)
+		if err != nil {
+			if backuprestore.IsBRFailedValidationError(err) {
+				utils.SetPrepStatusFailed(ibu, err.Error())
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
