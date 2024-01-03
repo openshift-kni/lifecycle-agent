@@ -118,14 +118,14 @@ func CreateClusterInfo(ctx context.Context, client runtimeclient.Client) (*clust
 	}
 
 	return &clusterinfo.ClusterInfo{
-		ClusterName:     installConfig.Metadata.Name,
-		Domain:          installConfig.BaseDomain,
-		Version:         clusterVersion.Status.Desired.Version,
-		ClusterID:       string(clusterVersion.Spec.ClusterID),
-		MasterIP:        ip,
-		ReleaseRegistry: releaseRegistry,
-		Hostname:        hostname,
-		MirrorRegistry:  len(mirrorRegistrySources) > 0,
+		ClusterName:              installConfig.Metadata.Name,
+		Domain:                   installConfig.BaseDomain,
+		Version:                  clusterVersion.Status.Desired.Version,
+		ClusterID:                string(clusterVersion.Spec.ClusterID),
+		MasterIP:                 ip,
+		ReleaseRegistry:          releaseRegistry,
+		Hostname:                 hostname,
+		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
 	}, nil
 }
 
@@ -230,12 +230,12 @@ func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client
 	if err != nil {
 		return false, err
 	}
-	isMirrorRegistryConfigured := len(mirroredRegistries) == 0
+	isMirrorRegistryConfigured := len(mirroredRegistries) > 0
 
 	// if snoa doesn't have mirror registry but seed have we should try to override registry
-	if !isMirrorRegistryConfigured && seedInfo.MirrorRegistry {
+	if !isMirrorRegistryConfigured && seedInfo.MirrorRegistryConfigured {
 		return true, err
 	}
 
-	return funk.ContainsString(mirroredRegistries, seedInfo.ReleaseRegistry), nil
+	return !funk.ContainsString(mirroredRegistries, seedInfo.ReleaseRegistry), nil
 }
