@@ -29,6 +29,8 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
@@ -44,12 +46,17 @@ type PHandler struct {
 type Config struct {
 	ImageList          []string
 	NumConcurrentPulls int
+
 	// To run pre-caching job with an adjusted niceness, which affects process scheduling.
 	// Niceness values range from -20 (most favorable to the process) to 19 (least favorable to the process).
 	NicePriority int
+
 	// To configure the I/O-scheduling class and priority of a process.
 	IoNiceClass    int // 0: none, 1: realtime, 2: best-effort, 3: idle
 	IoNicePriority int // priority (0..7) in the specified scheduling class, only for the realtime and best-effort classes
+
+	// Allow for environment variables to be passed in
+	EnvVars []corev1.EnvVar
 }
 
 // NewConfig creates a new Config instance with the provided imageList and optional configuration parameters.
@@ -63,13 +70,14 @@ type Config struct {
 // Example usage:
 //
 //	config := NewConfig(imageList, "NumConcurrentPulls", 10, "NicePriority", 5)
-func NewConfig(imageList []string, args ...interface{}) *Config {
+func NewConfig(imageList []string, envVars []corev1.EnvVar, args ...interface{}) *Config {
 	instance := &Config{
 		ImageList:          imageList,
 		NumConcurrentPulls: DefaultMaxConcurrentPulls,
 		NicePriority:       DefaultNicePriority,
 		IoNiceClass:        DefaultIoNiceClass,
 		IoNicePriority:     DefaultIoNicePriority,
+		EnvVars:            envVars,
 	}
 
 	for i := 0; i < len(args); i += 2 {

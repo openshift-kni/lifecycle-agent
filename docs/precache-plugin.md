@@ -37,6 +37,7 @@ The `Config` struct defines the configuration options for a pre-caching job. The
 - `NicePriority`: Nice priority for pre-caching, affecting process scheduling.
 - `IoNiceClass`: I/O scheduling class for pre-caching (0: none, 1: realtime, 2: best-effort, 3: idle).
 - `IoNicePriority`: I/O nice priority for pre-caching.
+- `EnvVars`: A list of container spec environment variables to be set in the job definition.
 
 ### 2. ConfigMap Generation
 
