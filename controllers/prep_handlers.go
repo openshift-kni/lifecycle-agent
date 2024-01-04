@@ -305,6 +305,10 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 
+	if err = r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
+		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
+	}
+
 	deploymentID, err := r.RPMOstreeClient.GetDeploymentID(osname)
 	if err != nil {
 		return fmt.Errorf("failed to get deploymentID: %w", err)

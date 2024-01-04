@@ -142,6 +142,20 @@ func (mr *MockIClientMockRecorder) QueryStatus() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryStatus", reflect.TypeOf((*MockIClient)(nil).QueryStatus))
 }
 
+// RpmOstreeCleanup mocks base method.
+func (m *MockIClient) RpmOstreeCleanup() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RpmOstreeCleanup")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RpmOstreeCleanup indicates an expected call of RpmOstreeCleanup.
+func (mr *MockIClientMockRecorder) RpmOstreeCleanup() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RpmOstreeCleanup", reflect.TypeOf((*MockIClient)(nil).RpmOstreeCleanup))
+}
+
 // RpmOstreeVersion mocks base method.
 func (m *MockIClient) RpmOstreeVersion() (*VersionData, error) {
 	m.ctrl.T.Helper()
@@ -158,7 +172,7 @@ func (mr *MockIClientMockRecorder) RpmOstreeVersion() *gomock.Call {
 }
 
 // newCmd mocks base method.
-func (m *MockIClient) newCmd(args ...string) []byte {
+func (m *MockIClient) newCmd(args ...string) ([]byte, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{}
 	for _, a := range args {
@@ -166,7 +180,8 @@ func (m *MockIClient) newCmd(args ...string) []byte {
 	}
 	ret := m.ctrl.Call(m, "newCmd", varargs...)
 	ret0, _ := ret[0].([]byte)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // newCmd indicates an expected call of newCmd.

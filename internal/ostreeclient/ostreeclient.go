@@ -38,7 +38,7 @@ func (c *Client) OSInit(osname string) error {
 }
 
 func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
-	args := []string{"admin", "deploy", "--os", osname}
+	args := []string{"admin", "deploy", "--os", osname, "--no-prune"}
 	args = append(args, kargs...)
 	args = append(args, refsepc)
 	if c.IsOstreeAdminSetDefaultFeatureEnabled() {

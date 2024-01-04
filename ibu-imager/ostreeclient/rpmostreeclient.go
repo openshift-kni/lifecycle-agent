@@ -58,7 +58,7 @@ type Deployment struct {
 
 //go:generate mockgen -source=rpmostreeclient.go -package=rpmostreeclient -destination=mock_rpmostreeclient.go
 type IClient interface {
-	newCmd(args ...string) []byte
+	newCmd(args ...string) ([]byte, error)
 	RpmOstreeVersion() (*VersionData, error)
 	QueryStatus() (*Status, error)
 	IsStaterootBooted(stateroot string) (bool, error)
@@ -67,6 +67,7 @@ type IClient interface {
 	GetDeploymentID(osname string) (string, error)
 	GetDeploymentIndex(osname string) (int, error)
 	GetUnbootedDeploymentIndex() (int, error)
+	RpmOstreeCleanup() error
 }
 
 // Client is a handle for interacting with a rpm-ostree based system.
@@ -85,9 +86,9 @@ func NewClient(id string, executor ops.Execute) *Client {
 	}
 }
 
-func (c *Client) newCmd(args ...string) []byte {
-	rawOutput, _ := c.executor.Execute("rpm-ostree", args...)
-	return []byte(rawOutput)
+func (c *Client) newCmd(args ...string) ([]byte, error) {
+	rawOutput, err := c.executor.Execute("rpm-ostree", args...)
+	return []byte(rawOutput), err
 }
 
 // VersionData represents the static information about rpm-ostree.
@@ -138,11 +139,14 @@ func getDeploymentIndex(deployments []Deployment, stateroot string) (int, error)
 
 // RpmOstreeVersion returns the running rpm-ostree version number
 func (c *Client) RpmOstreeVersion() (*VersionData, error) {
-	buf := c.newCmd("--version")
+	buf, err := c.newCmd("--version")
+	if err != nil {
+		return nil, err
+	}
 
 	var q rpmOstreeVersionData
 
-	if err := yaml.Unmarshal(buf, &q); err != nil {
+	if err = yaml.Unmarshal(buf, &q); err != nil {
 		return nil, fmt.Errorf("failed to parse `rpm-ostree --version` output: %w", err)
 	}
 
@@ -152,9 +156,12 @@ func (c *Client) RpmOstreeVersion() (*VersionData, error) {
 // QueryStatus loads the current system state.
 func (c *Client) QueryStatus() (*Status, error) {
 	var q Status
-	buf := c.newCmd("status", "--json")
+	buf, err := c.newCmd("status", "--json")
+	if err != nil {
+		return nil, err
+	}
 
-	if err := json.Unmarshal(buf, &q); err != nil {
+	if err = json.Unmarshal(buf, &q); err != nil {
 		return nil, fmt.Errorf("failed to parse `rpm-ostree status --json` output: %w", err)
 	}
 
@@ -234,4 +241,9 @@ func (c *Client) GetUnbootedStaterootName() (string, error) {
 
 	// Determine the booted stateroot
 	return getUnbootedStaterootName(status.Deployments)
+}
+
+func (c *Client) RpmOstreeCleanup() error {
+	_, err := c.newCmd("cleanup", "-b")
+	return err
 }
