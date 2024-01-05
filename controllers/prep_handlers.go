@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"golang.org/x/sync/errgroup"
@@ -153,6 +154,29 @@ func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string, ove
 	return imageList, nil
 }
 
+func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVars []corev1.EnvVar, err error) {
+	pod := &corev1.Pod{}
+	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+		err = fmt.Errorf("failed to get pod info: %w", err)
+		return
+	}
+
+	for _, container := range pod.Spec.Containers {
+		if container.Name == "manager" {
+			for _, envVar := range container.Env {
+				if envVar.ValueFrom != nil {
+					// Skipping any valueFrom env variables
+					continue
+				}
+				envVars = append(envVars, envVar)
+			}
+			break
+		}
+	}
+
+	return
+}
+
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
 	clusterRegistry, err := commonUtils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
@@ -176,8 +200,14 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		return false, err
 	}
 
+	envVars, err := r.getPodEnvVars(ctx)
+	if err != nil {
+		err = fmt.Errorf("failed to get pod env vars: %w", err)
+		return false, err
+	}
+
 	// Create pre-cache config using default values
-	config := precache.NewConfig(imageList)
+	config := precache.NewConfig(imageList, envVars)
 	err = r.Precache.CreateJob(ctx, config)
 	if err != nil {
 		r.Log.Error(err, "Failed to create precaching job")

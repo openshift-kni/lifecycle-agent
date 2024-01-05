@@ -156,7 +156,7 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d precache",
 		nicePriority, ioNiceClass, ioNicePriority)
 
-	envVars := []corev1.EnvVar{
+	precacheEnvVars := append(config.EnvVars, []corev1.EnvVar{
 		{
 			Name:  EnvPrecacheSpecFile,
 			Value: filepath.Join(PrecachingSpecFilepath, PrecachingSpecFilename),
@@ -165,15 +165,7 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 			Name:  EnvMaxPullThreads,
 			Value: strconv.Itoa(numConcurrentPulls),
 		},
-	}
-
-	envBestEffort := os.Getenv(EnvPrecacheBestEffort)
-	if envBestEffort == "TRUE" {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  EnvPrecacheBestEffort,
-			Value: "TRUE",
-		})
-	}
+	}...)
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -194,7 +186,7 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 							ImagePullPolicy: corev1.PullAlways,
 							Command:         []string{"sh", "-c", "--"},
 							Args:            []string{execPrecacheArgs},
-							Env:             envVars,
+							Env:             precacheEnvVars,
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: &privileged,
 								RunAsUser:  &runAsUser,
