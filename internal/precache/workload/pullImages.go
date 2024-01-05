@@ -83,7 +83,7 @@ func pullImage(image, authFile string, progress *precache.Progress) error {
 	progress.Update(err == nil, image)
 
 	// persist progress to file
-	progress.Persist(precache.StatusFile)
+	progress.Persist(common.PathOutsideChroot(precache.StatusFile))
 
 	return err
 }
@@ -95,6 +95,7 @@ func GetAuthFile() (string, error) {
 	if authFile == "" {
 		authFile = DefaultAuthFile
 	}
+	authFile = common.PathOutsideChroot(authFile)
 
 	// Check if authFile exists
 	if _, err := os.Stat(authFile); os.IsNotExist(err) {
@@ -169,7 +170,7 @@ func PullImages(precacheSpec []string, authFile string) (progress *precache.Prog
 	progress.Log()
 
 	// Store final precache progress report to file
-	progress.Persist(precache.StatusFile)
+	progress.Persist(common.PathOutsideChroot(precache.StatusFile))
 
 	return progress, nil
 }

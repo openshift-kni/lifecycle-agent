@@ -20,9 +20,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache/workload"
 )
@@ -88,6 +90,12 @@ func main() {
 	}
 
 	log.Info("Loaded precache spec file.")
+
+	// Change root directory to /host
+	if err := syscall.Chroot(common.Host); err != nil {
+		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err), Failure)
+	}
+	log.Infof("chroot %s successful", common.Host)
 
 	// Pre-check: Verify podman is running
 	if !workload.CheckPodman() {
