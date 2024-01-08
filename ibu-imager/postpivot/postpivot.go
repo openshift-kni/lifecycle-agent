@@ -14,7 +14,6 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
-	"github.com/thoas/go-funk"
 	etcdClient "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -133,7 +132,7 @@ func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *cl
 	return err
 }
 
-func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
 	p.log.Info("Start running etcd post pivot operations")
 	cli, err := etcdClient.New(etcdClient.Config{
 		Endpoints:   []string{common.EtcdDefaultEndpoint},
@@ -147,21 +146,11 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo, se
 	// cleanup etcd keys
 	p.log.Info("Cleaning up etcd keys from seed data")
 	keysToDelete := []string{"/kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"}
-	kvs, err := cli.Get(ctx, "/", etcdClient.WithPrefix())
-	if err != nil {
-		return err
-	}
 
-	for _, kv := range kvs.Kvs {
-		if strings.Contains(string(kv.Key), seedInfo.Hostname) ||
-			strings.Contains(string(kv.Value), seedInfo.Hostname) ||
-			funk.Contains(keysToDelete, string(kv.Key)) {
-
-			p.log.Infof("Deleting etcd key %s", string(kv.Key))
-			_, err = cli.Delete(ctx, string(kv.Key))
-			if err != nil {
-				return err
-			}
+	for _, key := range keysToDelete {
+		_, err = cli.Delete(ctx, key)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -184,7 +173,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo, se
 
 func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
 	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
-	if err := p.etcdPostPivotOperations(ctx, clusterInfo, seedClusterInfo); err != nil {
+	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
 		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
 	}
 
