@@ -73,6 +73,10 @@ var (
 	imagerContainerName    = "ibu_imager"
 )
 
+const (
+	EnvSkipRecert = "SEEDGEN_IMAGER_SKIP_RECERT"
+)
+
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators/finalizers,verbs=update
@@ -423,6 +427,13 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 	r.Log.Info("Launching ibu-imager")
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
+	skipRecert := false
+	skipRecertEnvValue := os.Getenv(EnvSkipRecert)
+	if skipRecertEnvValue == "TRUE" {
+		skipRecert = true
+		r.Log.Info(fmt.Sprintf("Skipping recert validation because %s=%s", EnvSkipRecert, skipRecertEnvValue))
+	}
+
 	imagerCmdArgs := []string{
 		"podman", "run", "--privileged", "--pid=host",
 		fmt.Sprintf("--name=%s", imagerContainerName),
@@ -435,6 +446,10 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 		"--authfile", seedgenAuthFile,
 		"--image", seedgen.Spec.SeedImage,
 		"--recert-image", recertImage,
+	}
+
+	if skipRecert {
+		imagerCmdArgs = append(imagerCmdArgs, "--skip-recert-validation")
 	}
 
 	// In order to have the ibu-imager container both survive the LCA pod shutdown and have continued network access
