@@ -2,13 +2,13 @@
 # Build the manager binary
 FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as builder
 
-# Bring in the go dependencies before anything else so we can take
-# advantage of caching these layers in future builds.
-COPY vendor/ vendor/
-
 # Copy the go modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+RUN go mod download
 
 # Copy the go source
 COPY api api
@@ -19,20 +19,20 @@ COPY utils utils
 COPY main main
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o build/manager main/main.go
 
 
 #####################################################################################################
 # Build the imager binary
 FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as imager
 
-# Bring in the go dependencies before anything else so we can take
-# advantage of caching these layers in future builds.
-COPY vendor/ vendor/
-
 # Copy the go modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+RUN go mod download
 
 # Copy the go source
 COPY main main
@@ -43,19 +43,19 @@ COPY internal internal
 COPY ibu-imager ibu-imager
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ibu-imager main/ibu-imager/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o build/ibu-imager main/ibu-imager/main.go
 
 #####################################################################################################
 # Build the workload binary
 FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as precache-workload
 
-# Bring in the go dependencies before anything else so we can take
-# advantage of caching these layers in future builds.
-COPY vendor/ vendor/
-
 # Copy the go modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+RUN go mod download
 
 # Copy the go source
 COPY api/v1alpha1 api/v1alpha1
@@ -65,7 +65,7 @@ COPY internal/precache internal/precache
 COPY main/precache-workload main/precache-workload
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o build/precache main/precache-workload/main.go
 
 #####################################################################################################
 # Use distroless as minimal base image to package the manager binary
