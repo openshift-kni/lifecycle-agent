@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
@@ -47,16 +46,6 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 		return doNotRequeue(), nil
 	}
 
-	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
-
-	// Save the CR for post-reboot restore
-	r.Log.Info("Save the IBU CR to the old state root before pivot")
-	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
-	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		utils.SetRollbackStatusFailed(ibu, err.Error())
-		return doNotRequeue(), nil
-	}
-
 	r.Log.Info("Finding unbooted deployment")
 	deploymentIndex, err := r.RPMOstreeClient.GetUnbootedDeploymentIndex()
 	if err != nil {
@@ -81,8 +70,22 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 		if deploymentIndex != 0 {
 			msg := "default deployment must be manually set for next boot"
 			utils.SetRollbackStatusInProgress(ibu, msg)
-			return requeueWithError(fmt.Errorf(msg))
+			r.Log.Info(msg)
+			return requeueWithShortInterval(), nil
 		}
+	}
+
+	// Update in-progress message
+	utils.SetRollbackStatusInProgress(ibu, "Completing rollback")
+	_ = r.updateStatus(ctx, ibu)
+
+	// Save the CR for post-reboot restore
+	r.Log.Info("Save the IBU CR to the old state root before pivot")
+	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
+	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
+		utils.SetRollbackStatusFailed(ibu, err.Error())
+		return doNotRequeue(), nil
 	}
 
 	// Write an event to indicate reboot attempt

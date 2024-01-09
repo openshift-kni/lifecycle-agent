@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -20,12 +24,9 @@ import (
 	"go.uber.org/mock/gomock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	"os"
-	"path/filepath"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
-	"testing"
 )
 
 func BoolPointer(b bool) *bool {
@@ -350,16 +351,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "this is a test - error",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "this is a test - error",
 				},
 			},
 		},
@@ -418,6 +419,14 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			want:    requeueWithMediumInterval(),
 			wantErr: assert.NoError,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "In progress",
+				},
+			},
 		},
 		{
 			name: "ExportOadpConfigurationToDir with failed validation error",
@@ -437,16 +446,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "this is a test - NotFound stop reconcile",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "this is a test - NotFound stop reconcile",
 				},
 			},
 		},
@@ -464,9 +473,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			exportOadpConfigurationToDirReturn: func() error {
 				return fmt.Errorf("unknown error")
 			},
-			want:           doNotRequeue(),
-			wantErr:        assert.Error,
-			wantConditions: []metav1.Condition{},
+			want:    doNotRequeue(),
+			wantErr: assert.Error,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "In progress",
+				},
+			},
 		},
 		{
 			name: "ExportRestoresToDir with failed validation error",
@@ -515,9 +531,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return fmt.Errorf("unknown error")
 			},
 
-			want:           doNotRequeue(),
-			wantErr:        assert.Error,
-			wantConditions: []metav1.Condition{},
+			want:    doNotRequeue(),
+			wantErr: assert.Error,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "In progress",
+				},
+			},
 		},
 		{
 			name: "ExportExtraManifestToDir with any error",
@@ -539,9 +562,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			exportExtraManifestToDirReturn: func() error {
 				return fmt.Errorf("any error")
 			},
-			want:           doNotRequeue(),
-			wantErr:        assert.Error,
-			wantConditions: []metav1.Condition{},
+			want:    doNotRequeue(),
+			wantErr: assert.Error,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "In progress",
+				},
+			},
 		},
 		{
 			name: "FetchClusterConfig with any error",
@@ -566,39 +596,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			fetchClusterConfigReturn: func() error {
 				return fmt.Errorf("any error")
 			},
-			want:           doNotRequeue(),
-			wantErr:        assert.Error,
-			wantConditions: []metav1.Condition{},
-		},
-		{
-			name: "FetchClusterConfig with any error",
-			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+			want:    doNotRequeue(),
+			wantErr: assert.Error,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "In progress",
+				},
 			},
-			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
-				return nil, nil
-			},
-			remountSysrootReturn: func() error {
-				return nil
-			},
-			exportOadpConfigurationToDirReturn: func() error {
-				return nil
-			},
-			exportRestoresToDirReturn: func() error {
-				return nil
-			},
-			exportExtraManifestToDirReturn: func() error {
-				return nil
-			},
-			fetchClusterConfigReturn: func() error {
-				return nil
-			},
-			fetchLvmConfigReturn: func() error {
-				return fmt.Errorf("any error")
-			},
-			want:           doNotRequeue(),
-			wantErr:        assert.Error,
-			wantConditions: []metav1.Condition{},
 		},
 		{
 			name: "Export IBU Crs successfully and reboot fail",
@@ -636,16 +643,16 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "reboot failed",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "reboot failed",
 				},
 			},
 		},
@@ -750,8 +757,8 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					savedIbu := lcav1alpha1.ImageBasedUpgrade{}
 					err = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, len(savedIbu.Status.Conditions), 2, "")
-					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, "Uncontrolled rollback", "")
-					assert.Equalf(t, savedIbu.Status.Conditions[1].Message, "Upgrade failed", "")
+					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, "Upgrade failed", "")
+					assert.Equalf(t, savedIbu.Status.Conditions[1].Message, "Uncontrolled rollback", "")
 				}
 			}
 		})
@@ -800,16 +807,16 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "any error from hc",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "any error from hc",
 				},
 			},
 			wantErr: assert.NoError,
@@ -825,16 +832,16 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "Test error EM",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "Test error EM",
 				},
 			},
 			wantErr: assert.NoError,
@@ -853,16 +860,16 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "error RestoreOadpConfigurations",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "error RestoreOadpConfigurations",
 				},
 			},
 			wantErr: assert.NoError,
@@ -887,16 +894,16 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "Failed restore CRs: name-failed",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "Upgrade failed",
+				},
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "Failed restore CRs: name-failed",
 				},
 			},
 			wantErr: assert.NoError,

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -63,6 +64,7 @@ type ImageBasedUpgradeReconciler struct {
 	OstreeClient    ostreeclient.IClient
 	Ops             ops.Ops
 	PrepTask        *Task
+	Mux             *sync.Mutex
 }
 
 // Task contains objects for executing a group of serial tasks asynchronously
@@ -138,6 +140,11 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (nextReconcile ctrl.Result, err error) {
+	if r.Mux != nil {
+		r.Mux.Lock()
+		defer r.Mux.Unlock()
+	}
+
 	r.Log.Info("Start reconciling IBU", "name", req.NamespacedName)
 	defer func() {
 		if nextReconcile.RequeueAfter > 0 {
@@ -171,6 +178,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if currentInProgressStage != "" {
 		nextReconcile, err = r.handleStage(ctx, ibu, currentInProgressStage)
 		if err != nil {
+			_ = r.updateStatus(ctx, ibu)
 			return
 		}
 	}
@@ -198,6 +206,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
 			if err != nil {
+				_ = r.updateStatus(ctx, ibu)
 				return
 			}
 		}

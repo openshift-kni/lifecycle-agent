@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -49,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -63,6 +65,7 @@ type SeedGeneratorReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 	Executor ops.Execute
+	Mux      *sync.Mutex
 }
 
 var (
@@ -524,20 +527,69 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 	return
 }
 
-// Generate the seed image
-func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+	r.Log.Info("Restoring seedgen CR in DB")
+
+	// Clear the ResourceVersion
+	seedgen.SetResourceVersion("")
+
+	// Save status as the seedgen structure gets over-written by the create call
+	// with the result which has no status
+	status := seedgen.Status
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return client.IgnoreAlreadyExists(r.Client.Create(ctx, seedgen))
+	}); err != nil {
+		return err
+	}
+
+	// Put the saved status into the newly create seedgen with the right resource
+	// version which is required for the update call to work
+	seedgen.Status = status
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return r.Client.Status().Update(ctx, seedgen)
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) restoreSeedgenSecretCR(ctx context.Context, secret *corev1.Secret) error {
+	r.Log.Info("Restoring seedgen secret CR")
+
+	// Strip the ResourceVersion, otherwise the restore fails
+	secret.SetResourceVersion("")
+
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return client.IgnoreAlreadyExists(r.Client.Create(ctx, secret))
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 	workdir := common.PathOutsideChroot(utils.SeedgenWorkspacePath)
 	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
 		if err = os.RemoveAll(workdir); err != nil {
 			return fmt.Errorf("failed to delete %s: %w", workdir, err)
 		}
 	}
+	return nil
+}
+
+// Generate the seed image
+func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+	if err := r.wipeExistingWorkspace(); err != nil {
+		return err
+	}
 
 	if err := r.rmPreviousImagerContainer(); err != nil {
 		return fmt.Errorf("failed to delete previous imager container: %w", err)
 	}
 
-	if err := os.Mkdir(workdir, 0o700); err != nil {
+	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
 		return fmt.Errorf("failed to create workdir: %w", err)
 	}
 
@@ -584,6 +636,10 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 				return err
 			}
 
+			// In the success case, the pod will block until terminated by the imager container.
+			// Create a deferred function to restore the ManagedCluster in the case where a failure happens
+			// before that point.
+			defer r.restoreManagedCluster(ctx)
 		} else {
 			r.Log.Info("ManagedCluster does not exist on hub")
 		}
@@ -607,20 +663,42 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return fmt.Errorf("failed to cleanup Failed pods: %w", err)
 	}
 
+	r.Log.Info("Deleting seedgen secret CR")
+	if err := r.Client.Delete(ctx, seedGenSecret); err != nil {
+		return fmt.Errorf("unable to delete seedgen secret CR: %w", err)
+	}
+	// In the success case, the pod will block until terminated by the imager container.
+	// Create a deferred function to restore the secret CR in the case where a failure happens
+	// before that point.
+	defer r.restoreSeedgenSecretCR(ctx, seedGenSecret)
+
 	r.Log.Info("Deleting seedgen CR")
 	if err := r.Client.Delete(ctx, seedgen); err != nil {
 		return fmt.Errorf("unable to delete seedgen CR: %w", err)
+	}
+	// In the success case, the pod will block until terminated by the imager container.
+	// Create a deferred function to restore the seedgen CR in the case where a failure happens
+	// before that point.
+	defer r.restoreSeedgenCRIfNeeded(ctx, seedgen)
+
+	// Delete the IBU CR prior to launching the imager, so it's not in the seed image
+	ibu := &lcav1alpha1.ImageBasedUpgrade{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: utils.IBUName,
+		}}
+	if err := r.Client.Delete(ctx, ibu); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete IBU CR: %w", err)
 	}
 
 	if err := r.launchImager(seedgen); err != nil {
 		return fmt.Errorf("imager failed: %w", err)
 	}
 
-	return nil
+	// If we've gotten this far, something has gone wrong
+	return fmt.Errorf("unexpected return from launching imager container")
 }
 
-// finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
-func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
+func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context) error {
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
@@ -654,19 +732,21 @@ func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
 		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
 	}
 
+	return nil
+}
+
+// finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
+func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
+	if err := r.restoreManagedCluster(ctx); err != nil {
+		return err
+	}
+
 	// Check exit status of ibu_imager container
 	if err := r.checkImagerStatus(); err != nil {
 		return fmt.Errorf("imager container status check failed: %w", err)
 	}
 
-	workdir := common.PathOutsideChroot(utils.SeedgenWorkspacePath)
-	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
-		if err = os.RemoveAll(workdir); err != nil {
-			return fmt.Errorf("failed to delete %s: %w", workdir, err)
-		}
-	}
-
-	return nil
+	return r.wipeExistingWorkspace()
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -674,7 +754,13 @@ func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
-func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (nextReconcile ctrl.Result, err error) {
+func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (nextReconcile ctrl.Result, rc error) {
+	if r.Mux != nil {
+		r.Mux.Lock()
+		defer r.Mux.Unlock()
+	}
+
+	var err error
 	r.Log.Info("Start reconciling SeedGen", "name", req.NamespacedName)
 	defer func() {
 		if nextReconcile.RequeueAfter > 0 {
@@ -687,7 +773,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Wait for system stability before doing anything
 	r.Log.Info("Checking system health")
 	if err = healthcheck.HealthChecks(r.Client, r.Log); err != nil {
-		err = fmt.Errorf("health check failed: %w", err)
+		rc = fmt.Errorf("health check failed: %w", err)
 		return
 	}
 	r.Log.Info("Health check passed")
@@ -700,12 +786,14 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if lcaImage, err = r.getLcaImage(ctx); err != nil {
+		rc = err
 		return
 	}
 
 	// Get the cluster name
 	clusterData, err := commonUtils.CreateClusterInfo(ctx, r.Client)
 	if err != nil {
+		rc = err
 		return
 	}
 	clusterName = clusterData.ClusterName
@@ -715,50 +803,55 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	err = r.Get(ctx, req.NamespacedName, seedgen)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			err = nil
 			return
 		}
 		r.Log.Error(err, "Failed to get SeedGenerator")
+		rc = err
 		return
 	}
 
 	if isSeedGenFailed(seedgen) {
-		r.Log.Info("Seed Generation previously failed")
+		r.Log.Info("Seed Generation has failed. Please delete and recreate the CR to try again")
 		return
 	}
 
 	if rejection := r.validateSystem(ctx); len(rejection) > 0 {
-		setSeedGenStatusFailedWithMessage(seedgen, rejection)
+		setSeedGenStatusFailed(seedgen, rejection)
 		r.Log.Info(fmt.Sprintf("Seed generation rejected: system validation failed: %s", rejection))
 
 		// Update status
-		err = r.updateStatus(ctx, seedgen)
+		if err = r.updateStatus(ctx, seedgen); err != nil {
+			r.Log.Error(err, "Failed to update status")
+		}
 		return
 	}
 
-	// TODO: Handle restoring the CR from file and completing processing
 	if firstReconcile(seedgen) {
 		setSeedGenStatusInProgress(seedgen)
 		if err = r.updateStatus(ctx, seedgen); err != nil {
-			err = fmt.Errorf("failed to update status: %w", err)
+			rc = fmt.Errorf("failed to update status: %w", err)
 			return
 		}
 
 		r.Log.Info(fmt.Sprintf("Generating seed image: %s", seedgen.Spec.SeedImage))
 		if err = r.generateSeedImage(ctx, seedgen); err != nil {
-			setSeedGenStatusFailed(seedgen)
-			if upderr := r.updateStatus(ctx, seedgen); upderr != nil {
-				r.Log.Error(upderr, "Failed to update status")
+			r.Log.Error(err, "Seed generation failed")
+
+			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
+			if err = r.updateStatus(ctx, seedgen); err != nil {
+				r.Log.Error(err, "Failed to update status")
 			}
 
+			_ = r.wipeExistingWorkspace()
 			return
 		}
 	} else if isSeedGenInProgress(seedgen) {
 		r.Log.Info("Completing Seed Generation")
 		if err = r.finishSeedgen(ctx); err != nil {
-			setSeedGenStatusFailed(seedgen)
-			if upderr := r.updateStatus(ctx, seedgen); upderr != nil {
-				r.Log.Error(upderr, "Failed to update status")
+			r.Log.Error(err, "Seed generation failed")
+			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
+			if err = r.updateStatus(ctx, seedgen); err != nil {
+				r.Log.Error(err, "Failed to update status")
 			}
 
 			return
@@ -770,17 +863,19 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Update status
-	err = r.updateStatus(ctx, seedgen)
+	if err = r.updateStatus(ctx, seedgen); err != nil {
+		r.Log.Error(err, "Failed to update status")
+	}
 	return
 }
 
 // Utility functions for conditions/status
-func setSeedGenStatusFailedWithMessage(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
+func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenCompleted,
 		utils.SeedGenConditionReasons.Failed,
 		metav1.ConditionFalse,
-		msg,
+		"Seed Generation Failed",
 		seedgen.Generation)
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
@@ -788,16 +883,12 @@ func setSeedGenStatusFailedWithMessage(seedgen *seedgenv1alpha1.SeedGenerator, m
 		metav1.ConditionFalse,
 		msg,
 		seedgen.Generation)
-}
-
-func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator) {
-	setSeedGenStatusFailedWithMessage(seedgen, "Seed Generation failed")
 }
 
 func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
-		utils.SeedGenConditionReasons.Completed,
+		utils.SeedGenConditionReasons.InProgress,
 		metav1.ConditionTrue,
 		"Seed Generation in progress",
 		seedgen.Generation)
@@ -805,15 +896,15 @@ func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator) {
 
 func setSeedGenStatusCompleted(seedgen *seedgenv1alpha1.SeedGenerator) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
-		utils.SeedGenConditionTypes.SeedGenCompleted,
-		utils.SeedGenConditionReasons.Completed,
-		metav1.ConditionTrue,
-		"Seed Generation completed",
-		seedgen.Generation)
-	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
 		utils.SeedGenConditionReasons.Completed,
 		metav1.ConditionFalse,
+		"Seed Generation completed",
+		seedgen.Generation)
+	utils.SetStatusCondition(&seedgen.Status.Conditions,
+		utils.SeedGenConditionTypes.SeedGenCompleted,
+		utils.SeedGenConditionReasons.Completed,
+		metav1.ConditionTrue,
 		"Seed Generation completed",
 		seedgen.Generation)
 }
@@ -866,14 +957,7 @@ func (r *SeedGeneratorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&seedgenv1alpha1.SeedGenerator{}, builder.WithPredicates(predicate.Funcs{
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				// Generation is only updated on spec changes (also on deletion),
-				// not metadata or status
-				oldGeneration := e.ObjectOld.GetGeneration()
-				newGeneration := e.ObjectNew.GetGeneration()
-				// spec update only for SeedGen
-				return oldGeneration != newGeneration
-			},
+			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
 			GenericFunc: func(ge event.GenericEvent) bool { return false },
 			DeleteFunc:  func(de event.DeleteEvent) bool { return false },
