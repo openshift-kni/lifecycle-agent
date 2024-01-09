@@ -86,11 +86,25 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 }
 
+//nolint:unparam
+func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) {
+	// Clear any error status that may have been set
+	utils.SetUpgradeStatusInProgress(ibu, "In progress")
+	// TODO: Update status in DB
+	//nolint:gocritic
+	// _ = r.updateStatus(ctx, ibu)
+}
+
 // prePivot executes all the pre-upgrade steps and initiates a cluster reboot.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	if prog := utils.GetInProgressCondition(ibu, lcav1alpha1.Stages.Upgrade); prog == nil {
+		// Set in-progress status
+		u.resetProgressMessage(ctx, ibu)
+	}
+
 	// backup with OADP
 	u.Log.Info("Handling backups with OADP operator")
 	ctrlResult, err := u.HandleBackup(ctx, ibu)
@@ -150,6 +164,9 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	if err := u.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
+
+	// Clear any error status that may have been previously set
+	u.resetProgressMessage(ctx, ibu)
 
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
 	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
