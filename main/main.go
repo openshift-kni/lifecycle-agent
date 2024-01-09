@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -113,6 +114,8 @@ func main() {
 
 	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
 
+	mux := &sync.Mutex{}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
 		HealthProbeBindAddress:        probeAddr,
@@ -164,6 +167,7 @@ func main() {
 		OstreeClient:    ostreeClient,
 		Ops:             op,
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
+		Mux:             mux,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -176,6 +180,7 @@ func main() {
 		Log:      seedgenLog,
 		Scheme:   mgr.GetScheme(),
 		Executor: executor,
+		Mux:      mux,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SeedGenerator")
 		os.Exit(1)
@@ -285,7 +290,7 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		return err
 	}
 
-	// Save status as the ibu structure gets over-written by the create call
+	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {

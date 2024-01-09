@@ -25,6 +25,8 @@ import (
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:path=seedgenerators,scope=Cluster,shortName=seedgen
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.conditions[-1:].type"
+//+kubebuilder:printcolumn:name="Details",type="string",JSONPath=".status.conditions[-1:].message"
 
 // SeedGenerator is the Schema for the seedgenerators API
 // +operator-sdk:csv:customresourcedefinitions:displayName="Seed Generator",resources={{Namespace, v1}}
@@ -32,6 +34,7 @@ type SeedGenerator struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	//+kubebuilder:validation:XValidation:rule="self == oldSelf",message="cannot modify spec, cr must be deleted and recreated"
 	Spec   SeedGeneratorSpec   `json:"spec,omitempty"`
 	Status SeedGeneratorStatus `json:"status,omitempty"`
 }
