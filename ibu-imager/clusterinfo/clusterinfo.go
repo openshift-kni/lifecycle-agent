@@ -14,6 +14,7 @@ type ClusterInfo struct {
 	ReleaseRegistry string `json:"release_registry,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
 	MirrorRegistry  bool   `json:"mirror_registry,omitempty"`
+	NewAPI          bool   `json:"new_api,omitempty"`
 }
 
 type installConfigMetadata struct {
