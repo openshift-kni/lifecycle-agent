@@ -184,7 +184,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		return false, err
 	}
 	seedInfo, err := commonUtils.ReadClusterInfoFromFile(
-		common.PathOutsideChroot(getSeedManifestPath(getDesiredStaterootName(ibu))))
+		common.PathOutsideChroot(getSeedManifestPath(common.GetDesiredStaterootName(ibu))))
 	if err != nil {
 		r.Log.Error(err, "Failed to read seed info")
 		return false, err
@@ -316,7 +316,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 			version, ibu.Spec.SeedImageRef.Version)
 	}
 
-	osname := getDesiredStaterootName(ibu)
+	osname := common.GetDesiredStaterootName(ibu)
 
 	if err = r.OstreeClient.PullLocal(ostreeRepo); err != nil {
 		return fmt.Errorf("failed ostree pull-local: %w", err)

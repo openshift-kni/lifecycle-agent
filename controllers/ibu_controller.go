@@ -19,28 +19,27 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+
+	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 
-	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -53,13 +52,12 @@ import (
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
 type ImageBasedUpgradeReconciler struct {
 	client.Client
+	UpgradeHandler  UpgradeHandler
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
 	Recorder        record.EventRecorder
-	ClusterConfig   *clusterconfig.UpgradeClusterConfigGather
 	Precache        *precache.PHandler
 	BackupRestore   backuprestore.BackuperRestorer
-	ExtraManifest   *extramanifest.EMHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
 	OstreeClient    ostreeclient.IClient
@@ -108,7 +106,6 @@ func requeueWithShortInterval() ctrl.Result {
 	return requeueWithCustomInterval(30 * time.Second)
 }
 
-//nolint:unused
 func requeueWithMediumInterval() ctrl.Result {
 	return requeueWithCustomInterval(1 * time.Minute)
 }
@@ -180,7 +177,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if isTransitionRequested(ibu) {
 		var isAfterPivot bool
-		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(getDesiredStaterootName(ibu))
+		isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(common.GetDesiredStaterootName(ibu))
 		if err != nil {
 			return
 		}
@@ -466,8 +463,4 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		})).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
-}
-
-func getDesiredStaterootName(ibu *lcav1alpha1.ImageBasedUpgrade) string {
-	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(ibu.Spec.SeedImageRef.Version, "-", "_"))
 }

@@ -132,7 +132,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupStateroots(
 	if allUnbootedStateroots {
 		return r.cleanupUnbootedStateroots()
 	}
-	return r.cleanupUnbootedStateroot(getDesiredStaterootName(ibu))
+	return r.cleanupUnbootedStateroot(common.GetDesiredStaterootName(ibu))
 }
 
 func cleanupIBUFiles() error {

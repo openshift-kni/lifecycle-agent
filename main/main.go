@@ -22,6 +22,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -59,9 +62,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
-	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -151,19 +152,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	backupRestore := &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")}
+
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),
 		Log:             log,
 		Scheme:          mgr.GetScheme(),
-		ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache")},
-		BackupRestore:   &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")},
-		ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 		RPMOstreeClient: rpmOstreeClient,
 		Executor:        executor,
 		OstreeClient:    ostreeClient,
 		Ops:             op,
+		BackupRestore:   backupRestore,
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
+		UpgradeHandler: &controllers.UpgHandler{
+			Client:          mgr.GetClient(),
+			Log:             log.WithName("UpgradHandler"),
+			BackupRestore:   backupRestore,
+			ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
+			ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
+			Executor:        executor,
+			Ops:             op,
+			Recorder:        mgr.GetEventRecorderFor("ImageBasedUpgrade"),
+			RPMOstreeClient: rpmOstreeClient,
+			OstreeClient:    ostreeClient,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

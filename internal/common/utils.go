@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -123,4 +124,8 @@ func isConflictOrRetriable(err error) bool {
 
 func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
 	return retry.OnError(backoff, isConflictOrRetriable, fn)
+}
+
+func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {
+	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(ibu.Spec.SeedImageRef.Version, "-", "_"))
 }
