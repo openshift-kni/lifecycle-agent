@@ -25,6 +25,7 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=imagebasedupgrades,scope=Cluster,shortName=ibu
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:printcolumn:name="Stage",type="string",JSONPath=".spec.stage"
 // +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.conditions[-1:].type"
 // +kubebuilder:printcolumn:name="Details",type="string",JSONPath=".status.conditions[-1:].message"
 // +kubebuilder:validation:XValidation:message="can not change spec.seedImageRef while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef) && oldSelf.spec.seedImageRef==self.spec.seedImageRef || !has(self.spec.seedImageRef) && !has(oldSelf.spec.seedImageRef)"
