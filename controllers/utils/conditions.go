@@ -1,8 +1,15 @@
 package utils
 
 import (
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"context"
+
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -369,4 +376,30 @@ func SetRollbackStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
 		metav1.ConditionTrue,
 		"Rollback completed",
 		ibu.Generation)
+}
+
+func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+	if c == nil {
+		// In UT code
+		return nil
+	}
+
+	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
+
+	for i := range ibu.Status.Conditions {
+		condition := &ibu.Status.Conditions[i]
+		if condition.Type == string(GetCompletedConditionType(ibu.Spec.Stage)) ||
+			condition.Type == string(GetInProgressConditionType(ibu.Spec.Stage)) {
+			condition.ObservedGeneration = ibu.ObjectMeta.Generation
+		}
+	}
+	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
+		return c.Status().Update(ctx, ibu)
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
