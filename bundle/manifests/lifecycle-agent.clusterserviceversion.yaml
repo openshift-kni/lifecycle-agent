@@ -440,7 +440,8 @@ spec:
               app.kubernetes.io/component: lifecycle-agent
               app.kubernetes.io/name: lifecyle-agent-operator
               control-plane: controller-manager
-          strategy: {}
+          strategy:
+            type: Recreate
           template:
             metadata:
               annotations:
@@ -454,7 +455,6 @@ spec:
               - args:
                 - --health-probe-bind-address=:8081
                 - --metrics-bind-address=127.0.0.1:8080
-                - --leader-elect
                 command:
                 - /usr/local/bin/manager
                 env:
