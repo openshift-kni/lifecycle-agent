@@ -59,7 +59,7 @@ const (
 	InstallConfigCMNamespace = "kube-system"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
-	SeedFormatVersion  = 1
+	SeedFormatVersion  = 2
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 )
 
