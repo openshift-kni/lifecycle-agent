@@ -10,7 +10,7 @@ data:
     webhook:
       port: 9443
     leaderElection:
-      leaderElect: true
+      leaderElect: false
       resourceName: lca.openshift.io
 kind: ConfigMap
 metadata:

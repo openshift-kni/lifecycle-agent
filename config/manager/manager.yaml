@@ -26,6 +26,8 @@ spec:
       app.kubernetes.io/component: lifecycle-agent
       control-plane: controller-manager
   replicas: 1
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
@@ -38,8 +40,6 @@ spec:
       containers:
       - command:
         - /usr/local/bin/manager
-        args:
-        - --leader-elect
         env:
         - name: MY_POD_NAME
           valueFrom:
