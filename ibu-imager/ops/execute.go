@@ -16,6 +16,7 @@ import (
 //go:generate mockgen -source=execute.go -package=ops -destination=mock_execute.go
 type Execute interface {
 	Execute(command string, args ...string) (string, error)
+	ExecuteWithLiveLogger(command string, args ...string) (string, error)
 }
 
 type executor struct {
@@ -59,6 +60,10 @@ func (e *regularExecutor) Execute(command string, args ...string) (string, error
 	return e.executor.execute(nil, "", command, args...)
 }
 
+func (e *regularExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
+	return e.executor.execute(e.executor.log.Writer(), "", command, args...)
+}
+
 type nsenterExecutor struct {
 	executor
 }
@@ -67,7 +72,11 @@ func NewNsenterExecutor(logger *logrus.Logger, verbose bool) Execute {
 	return &nsenterExecutor{executor: executor{logger, verbose}}
 }
 
-func (e *nsenterExecutor) Execute(command string, args ...string) (string, error) {
+func (e *nsenterExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
+	return e.baseExecute(e.executor.log.Writer(), command, args...)
+}
+
+func (e *nsenterExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
 	// nsenter is used here to launch processes inside the container in a way that makes said processes feel
 	// and behave as if they're running on the host directly rather than inside the container
 	commandBase := "nsenter"
@@ -91,7 +100,11 @@ func (e *nsenterExecutor) Execute(command string, args ...string) (string, error
 	}
 
 	arguments = append(arguments, args...)
-	return e.executor.execute(nil, "", commandBase, arguments...)
+	return e.executor.execute(writer, "", commandBase, arguments...)
+}
+
+func (e *nsenterExecutor) Execute(command string, args ...string) (string, error) {
+	return e.baseExecute(nil, command, args...)
 }
 
 type chrootExecutor struct {

@@ -41,6 +41,9 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 )
 
+// TODO: Need a better way to change this but will require relatively big refactoring
+var OstreeDeployPathPrefix = ""
+
 // GetConfigMap retrieves the configmap from cluster
 func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.ConfigMapRef) (*corev1.ConfigMap, error) {
 
@@ -80,7 +83,7 @@ func CopyOutsideChroot(src, dest string) error {
 }
 
 func GetStaterootPath(osname string) string {
-	return fmt.Sprintf("/ostree/deploy/%s", osname)
+	return fmt.Sprintf("%s/ostree/deploy/%s", OstreeDeployPathPrefix, osname)
 }
 
 // FuncTimer check execution time
@@ -127,5 +130,9 @@ func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
 }
 
 func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {
-	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(ibu.Spec.SeedImageRef.Version, "-", "_"))
+	return GetStaterootName(ibu.Spec.SeedImageRef.Version)
+}
+
+func GetStaterootName(seedImageVersion string) string {
+	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(seedImageVersion, "-", "_"))
 }
