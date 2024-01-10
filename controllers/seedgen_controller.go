@@ -610,7 +610,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	if seedAuth, exists := seedGenSecret.Data["seedAuth"]; exists {
-		if err := os.WriteFile(common.PathOutsideChroot(seedgenAuthFile), seedAuth, 0o644); err != nil {
+		if err := os.WriteFile(common.PathOutsideChroot(seedgenAuthFile), seedAuth, 0o600); err != nil {
 			return fmt.Errorf("failed to write %s: %w", seedgenAuthFile, err)
 		}
 	} else {

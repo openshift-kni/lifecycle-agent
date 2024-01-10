@@ -59,7 +59,7 @@ func BackupCertificates(ctx context.Context, client runtimeclient.Client, certDi
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(certDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(certDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o600); err != nil {
 		return err
 	}
 
@@ -68,7 +68,7 @@ func BackupCertificates(ctx context.Context, client runtimeclient.Client, certDi
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(path.Join(certDir, cert+".key"), []byte(servingSignerKey), 0o644); err != nil {
+		if err := os.WriteFile(path.Join(certDir, cert+".key"), []byte(servingSignerKey), 0o600); err != nil {
 			return err
 		}
 	}
@@ -77,7 +77,7 @@ func BackupCertificates(ctx context.Context, client runtimeclient.Client, certDi
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(certDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(certDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o600); err != nil {
 		return err
 	}
 	return nil

@@ -31,22 +31,23 @@ import (
 	k8syaml "sigs.k8s.io/yaml"
 )
 
-// MarshalToFile marshals anything and writes it to the given file path
+// MarshalToFile marshals anything and writes it to the given file path. file only readable by root
 func MarshalToFile(data any, filePath string) error {
 	marshaled, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, marshaled, 0o644)
+	return os.WriteFile(filePath, marshaled, 0o600)
 }
 
 // MarshalToYamlFile marshals any object to YAML and writes it to the given file path
+// file only readable by root
 func MarshalToYamlFile(data any, filePath string) error {
 	marshaled, err := k8syaml.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, marshaled, 0o644)
+	return os.WriteFile(filePath, marshaled, 0o600)
 }
 
 // TypeMetaForObject returns the given object's TypeMeta or an error otherwise.
