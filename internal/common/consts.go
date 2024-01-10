@@ -23,6 +23,10 @@ const (
 	BackupCertsDir  = "/var/tmp/backupCertsDir"
 	BackupChecksDir = "/var/tmp/checks"
 
+	// Workload partitioning annotation key and value
+	WorkloadManagementAnnotationKey   = "target.workload.openshift.io/management"
+	WorkloadManagementAnnotationValue = `{"effect": "PreferredDuringScheduling"}`
+
 	// ImageRegistryAuthFile is the pull secret. Written by the machine-config-operator
 	ImageRegistryAuthFile = "/var/lib/kubelet/config.json"
 	KubeconfigFile        = "/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-ext.kubeconfig"

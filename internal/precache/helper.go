@@ -178,6 +178,11 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backOffLimit,
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						common.WorkloadManagementAnnotationKey: common.WorkloadManagementAnnotationValue,
+					},
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
