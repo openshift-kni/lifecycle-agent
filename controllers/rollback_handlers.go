@@ -77,7 +77,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 
 	// Update in-progress message
 	utils.SetRollbackStatusInProgress(ibu, "Completing rollback")
-	_ = r.updateStatus(ctx, ibu)
+	_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 
 	// Save the CR for post-reboot restore
 	r.Log.Info("Save the IBU CR to the old state root before pivot")

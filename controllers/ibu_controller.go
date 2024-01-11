@@ -178,7 +178,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if currentInProgressStage != "" {
 		nextReconcile, err = r.handleStage(ctx, ibu, currentInProgressStage)
 		if err != nil {
-			_ = r.updateStatus(ctx, ibu)
+			_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 			return
 		}
 	}
@@ -200,20 +200,20 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					return
 				}
 				if !isValid {
-					err = r.updateStatus(ctx, ibu)
+					err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 					return
 				}
 			}
 			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
 			if err != nil {
-				_ = r.updateStatus(ctx, ibu)
+				_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 				return
 			}
 		}
 	}
 
 	// Update status
-	err = r.updateStatus(ctx, ibu)
+	err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 	return
 }
 
@@ -418,27 +418,6 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 		}
 	}
 	return true, nil
-}
-
-func (r *ImageBasedUpgradeReconciler) updateStatus(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
-	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
-
-	for i := range ibu.Status.Conditions {
-		condition := &ibu.Status.Conditions[i]
-		if condition.Type == string(utils.GetCompletedConditionType(ibu.Spec.Stage)) ||
-			condition.Type == string(utils.GetInProgressConditionType(ibu.Spec.Stage)) {
-			condition.ObservedGeneration = ibu.ObjectMeta.Generation
-		}
-	}
-	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
-		return r.Status().Update(ctx, ibu)
-	})
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
