@@ -60,8 +60,9 @@ COPY go.sum go.sum
 # Copy the go source
 COPY api/v1alpha1 api/v1alpha1
 COPY controllers/utils controllers/utils
-COPY internal/common internal/common
-COPY internal/precache internal/precache
+COPY internal internal
+COPY ibu-imager ibu-imager
+COPY utils utils
 COPY main/precache-workload main/precache-workload
 
 # Build the binary

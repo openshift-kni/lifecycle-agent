@@ -31,14 +31,13 @@ import (
 
 // Exit codes
 const (
-	Success int = 0
 	Failure int = 1
 )
 
 // terminateOnError Logs a "terminating job" + error message and terminates the pre-caching job with the given exit code
-func terminateOnError(err error, exitCode int) {
+func terminateOnError(err error) {
 	log.Errorf("terminating pre-caching job due to error: %v", err)
-	os.Exit(exitCode)
+	os.Exit(Failure)
 }
 
 // readPrecacheSpecFile returns the list of images to be precached as specified in the precache spec file
@@ -86,41 +85,36 @@ func main() {
 	// Load precache spec file which is outside /host filesystem
 	precacheSpec, err := readPrecacheSpecFile()
 	if err != nil {
-		terminateOnError(err, Failure)
+		terminateOnError(err)
 	}
 
 	log.Info("Loaded precache spec file.")
 
 	// Change root directory to /host
 	if err := syscall.Chroot(common.Host); err != nil {
-		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err), Failure)
+		terminateOnError(fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err))
 	}
 	log.Infof("chroot %s successful", common.Host)
 
 	// Pre-check: Verify podman is running
 	if !workload.CheckPodman() {
-		terminateOnError(fmt.Errorf("failed to execute podman command"), Failure)
+		terminateOnError(fmt.Errorf("failed to execute podman command"))
 	}
 	log.Info("podman is running, proceeding to pre-cache images!")
-
-	// Pre-cache images
-	status, err := workload.PullImages(precacheSpec)
+	// Get auth file for Podman
+	authFile, err := workload.GetAuthFile()
 	if err != nil {
-		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %w", err), Failure)
+		terminateOnError(err)
+	}
+	// Pre-cache images
+	status, err := workload.PullImages(precacheSpec, authFile)
+	if err != nil {
+		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %w", err))
 	}
 	log.Info("Completed executing pre-caching, no errors encountered!")
 
-	// Check pre-caching execution status
-	if status.Failed != 0 {
-		log.Info("Failed to pre-cache the following images:")
-		for _, image := range status.FailedPullList {
-			log.Info(image)
-		}
-		exitCode := Failure
-		if bestEffort {
-			exitCode = Success
-		}
-		terminateOnError(fmt.Errorf("failed to pre-cache one or more images"), exitCode)
+	if err := workload.ValidatePrecache(status, bestEffort); err != nil {
+		terminateOnError(fmt.Errorf("failed to pre-cache one or more images"))
 	}
 
 	log.Info("Pre-cached images successfully.")

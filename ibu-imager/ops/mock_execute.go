@@ -56,3 +56,23 @@ func (mr *MockExecuteMockRecorder) Execute(command any, args ...any) *gomock.Cal
 	varargs := append([]any{command}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Execute", reflect.TypeOf((*MockExecute)(nil).Execute), varargs...)
 }
+
+// ExecuteWithLiveLogger mocks base method.
+func (m *MockExecute) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{command}
+	for _, a := range args {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ExecuteWithLiveLogger", varargs...)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExecuteWithLiveLogger indicates an expected call of ExecuteWithLiveLogger.
+func (mr *MockExecuteMockRecorder) ExecuteWithLiveLogger(command any, args ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{command}, args...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecuteWithLiveLogger", reflect.TypeOf((*MockExecute)(nil).ExecuteWithLiveLogger), varargs...)
+}

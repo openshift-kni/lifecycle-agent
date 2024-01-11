@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -128,32 +127,6 @@ func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Cont
 	return nil
 }
 
-func readPrecachingList(imageListFile, clusterRegistry, seedRegistry string, overrideSeedRegistry bool) (imageList []string, err error) {
-	var content []byte
-	content, err = os.ReadFile(common.PathOutsideChroot(imageListFile))
-	if err != nil {
-		return
-	}
-
-	lines := strings.Split(string(content), "\n")
-	// Filter out empty lines
-	for _, line := range lines {
-		image := line
-		if line == "" {
-			continue
-		}
-		if overrideSeedRegistry {
-			image, err = commonUtils.ReplaceImageRegistry(image, clusterRegistry, seedRegistry)
-			if err != nil {
-				return nil, err
-			}
-		}
-		imageList = append(imageList, image)
-	}
-
-	return imageList, nil
-}
-
 func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVars []corev1.EnvVar, err error) {
 	pod := &corev1.Pod{}
 	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
@@ -194,7 +167,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		return false, err
 	}
 
-	imageList, err := readPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
+	imageList, err := prep.ReadPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
 	if err != nil {
 		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return false, err
@@ -251,137 +224,21 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context)
 }
 
 func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string) error {
-	r.Log.Info("Start setupstateroot")
-
-	defer r.Ops.UnmountAndRemoveImage(ibu.Spec.SeedImageRef.Image)
-
-	workspaceOutsideChroot, err := os.MkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory %w", err)
-	}
-
-	defer func() {
-		if err := os.RemoveAll(workspaceOutsideChroot); err != nil {
-			r.Log.Error(err, "failed to cleanup workspace")
-		}
-	}()
-
-	workspace, err := filepath.Rel(common.Host, workspaceOutsideChroot)
-	if err != nil {
-		return fmt.Errorf("failed to get workspace relative path %w", err)
-	}
-	r.Log.Info("workspace:" + workspace)
-
-	if err = r.Ops.RemountSysroot(); err != nil {
-		return fmt.Errorf("failed to remount /sysroot: %w", err)
-	}
-
-	mountpoint, err := r.Executor.Execute("podman", "image", "mount", ibu.Spec.SeedImageRef.Image)
-	if err != nil {
-		return fmt.Errorf("failed to mount seed image: %w", err)
-	}
-
-	ostreeRepo := filepath.Join(workspace, "ostree")
-	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o755); err != nil {
-		return fmt.Errorf("failed to create ostree repo directory: %w", err)
-	}
-
-	if err := r.Ops.ExtractTarWithSELinux(
-		fmt.Sprintf("%s/ostree.tgz", mountpoint), ostreeRepo,
-	); err != nil {
-		return fmt.Errorf("failed to extract ostree.tgz: %w", err)
-	}
-
-	// example:
-	// seedBootedID: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
-	// seedBootedDeployment: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
-	// seedBootedRef: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c
-	seedBootedID, err := prep.GetBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
-	if err != nil {
-		return fmt.Errorf("failed to get booted stateroot id: %w", err)
-	}
-	seedBootedDeployment, err := prep.GetDeploymentFromDeploymentID(seedBootedID)
-	if err != nil {
+	if err := prep.SetupStateroot(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient, ibu.Spec.SeedImageRef.Image,
+		ibu.Spec.SeedImageRef.Version, imageListFile, false); err != nil {
 		return err
 	}
-	seedBootedRef := strings.Split(seedBootedDeployment, ".")[0]
 
-	version, err := prep.GetVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
-	if err != nil {
-		return fmt.Errorf("failed to get version from ClusterInfo: %w", err)
-	}
-
-	if version != ibu.Spec.SeedImageRef.Version {
-		return fmt.Errorf("version specified in seed image (%s) differs from version in spec (%s)",
-			version, ibu.Spec.SeedImageRef.Version)
-	}
-
-	osname := common.GetDesiredStaterootName(ibu)
-
-	if err = r.OstreeClient.PullLocal(ostreeRepo); err != nil {
-		return fmt.Errorf("failed ostree pull-local: %w", err)
-	}
-
-	if err = r.OstreeClient.OSInit(osname); err != nil {
-		return fmt.Errorf("failed ostree admin os-init: %w", err)
-	}
-
-	kargs, err := prep.BuildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
-	if err != nil {
-		return fmt.Errorf("failed to build kargs: %w", err)
-	}
-
-	if err = r.OstreeClient.Deploy(osname, seedBootedRef, kargs); err != nil {
-		return fmt.Errorf("failed ostree admin deploy: %w", err)
-	}
-
-	if err = r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
+	if err := r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
 		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
 	}
 
-	deploymentID, err := r.RPMOstreeClient.GetDeploymentID(osname)
-	if err != nil {
-		return fmt.Errorf("failed to get deploymentID: %w", err)
-	}
-	deployment, err := prep.GetDeploymentFromDeploymentID(deploymentID)
-	if err != nil {
-		return err
-	}
-
-	if err = common.CopyOutsideChroot(
-		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
-		prep.GetDeploymentOriginPath(osname, deployment),
-	); err != nil {
-		return fmt.Errorf("failed to restore origin file: %w", err)
-	}
-
-	if err = r.Ops.ExtractTarWithSELinux(
-		filepath.Join(mountpoint, "var.tgz"),
-		common.GetStaterootPath(osname),
-	); err != nil {
-		return fmt.Errorf("failed to restore var directory: %w", err)
-	}
-
-	if err := r.Ops.ExtractTarWithSELinux(
-		filepath.Join(mountpoint, "etc.tgz"),
-		prep.GetDeploymentDirPath(osname, deployment),
-	); err != nil {
-		return fmt.Errorf("failed to extract seed etc: %w", err)
-	}
-
-	if err = prep.RemoveETCDeletions(mountpoint, osname, deployment); err != nil {
-		return fmt.Errorf("failed to process etc.deletions: %w", err)
-	}
-
+	osname := common.GetDesiredStaterootName(ibu)
 	certsDir := common.PathOutsideChroot(
 		filepath.Join(common.GetStaterootPath(osname), "/var/opt/openshift/certs"),
 	)
 	if err := commonUtils.BackupCertificates(ctx, r.Client, certsDir); err != nil {
 		return fmt.Errorf("failed to backup cerificaties: %w", err)
-	}
-
-	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
-		return fmt.Errorf("failed to copy image list file: %w", err)
 	}
 
 	return nil

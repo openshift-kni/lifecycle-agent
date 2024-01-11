@@ -51,6 +51,21 @@ func (mr *MockIClientMockRecorder) Deploy(osname, refsepc, kargs any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), osname, refsepc, kargs)
 }
 
+// GetDeployment mocks base method.
+func (m *MockIClient) GetDeployment(osname string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDeployment", osname)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDeployment indicates an expected call of GetDeployment.
+func (mr *MockIClientMockRecorder) GetDeployment(osname any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeployment", reflect.TypeOf((*MockIClient)(nil).GetDeployment), osname)
+}
+
 // IsOstreeAdminSetDefaultFeatureEnabled mocks base method.
 func (m *MockIClient) IsOstreeAdminSetDefaultFeatureEnabled() bool {
 	m.ctrl.T.Helper()
