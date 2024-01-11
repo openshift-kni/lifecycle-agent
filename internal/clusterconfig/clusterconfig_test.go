@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -93,7 +93,7 @@ var (
 		},
 	}
 
-	seedManifestData = clusterinfo.ClusterInfo{Domain: "seed.com", ClusterName: "seed", MasterIP: "192.168.127.10", Hostname: "seed"}
+	seedManifestData = seedreconfig.SeedReconfiguration{BaseDomain: "seed.com", ClusterName: "seed", NodeIP: "192.168.127.10", Hostname: "seed"}
 
 	machineConfigs = []*mcv1.MachineConfig{
 		{
@@ -115,6 +115,43 @@ var (
 			Name:  "cluster-version-operator",
 			Image: "mirror.redhat.com:5005/openshift-release-dev/ocp-release@sha256:d6a7e20a8929a3ad985373f05472ea64bada8ff46f0beb89e1b6d04919affde3"}}}},
 		}}
+	kubeconfigRetentionObjects = []client.Object{
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "admin-kubeconfig-client-ca",
+				Namespace: "openshift-config",
+			},
+			Data: map[string]string{"ca-bundle.crt": "test"},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "loadbalancer-serving-signer",
+				Namespace: "openshift-kube-apiserver-operator",
+			},
+			Data: map[string][]byte{"tls.key": []byte("test")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "localhost-serving-signer",
+				Namespace: "openshift-kube-apiserver-operator",
+			},
+			Data: map[string][]byte{"tls.key": []byte("test")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "service-network-serving-signer",
+				Namespace: "openshift-kube-apiserver-operator",
+			},
+			Data: map[string][]byte{"tls.key": []byte("test")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "router-ca",
+				Namespace: "openshift-ingress-operator",
+			},
+			Data: map[string][]byte{"tls.key": []byte("test")},
+		},
+	}
 )
 
 func init() {
@@ -194,7 +231,7 @@ func TestClusterConfig(t *testing.T) {
 			machineConfigs: machineConfigs,
 			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				clusterConfigPath, err := ucc.configDirs(tempDir)
+				clusterConfigPath, err := ucc.configDir(tempDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -231,13 +268,13 @@ func TestClusterConfig(t *testing.T) {
 
 				// validate manifest json
 
-				clusterInfo := &clusterinfo.ClusterInfo{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.ClusterInfoFileName), clusterInfo); err != nil {
+				clusterInfo := &seedreconfig.SeedReconfiguration{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), clusterInfo); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, "test-infra-cluster", clusterInfo.ClusterName)
-				assert.Equal(t, "redhat.com", clusterInfo.Domain)
-				assert.Equal(t, "192.168.121.10", clusterInfo.MasterIP)
+				assert.Equal(t, "redhat.com", clusterInfo.BaseDomain)
+				assert.Equal(t, "192.168.121.10", clusterInfo.NodeIP)
 				assert.Equal(t, "mirror.redhat.com:5005", clusterInfo.ReleaseRegistry)
 			},
 		},
@@ -320,7 +357,7 @@ func TestClusterConfig(t *testing.T) {
 			machineConfigs: machineConfigs,
 			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				filesDir, err := ucc.configDirs(tempDir)
+				filesDir, err := ucc.configDir(tempDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -407,7 +444,7 @@ func TestClusterConfig(t *testing.T) {
 			machineConfigs: machineConfigs,
 			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				clusterConfigPath, err := ucc.configDirs(tempDir)
+				clusterConfigPath, err := ucc.configDir(tempDir)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -464,6 +501,11 @@ func TestClusterConfig(t *testing.T) {
 			}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
 				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment}
+
+			for _, kcro := range kubeconfigRetentionObjects {
+				objs = append(objs, kcro)
+			}
+
 			for _, mc := range tc.machineConfigs {
 				objs = append(objs, mc)
 			}
@@ -505,7 +547,7 @@ func TestClusterConfig(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(tmpDir, common.SeedDataDir), 0o700); err != nil {
 				t.Errorf("failed to create %s dir, error: %v", common.SeedDataDir, err)
 			}
-			err = utils.MarshalToFile(seedManifestData, filepath.Join(tmpDir, common.SeedDataDir, common.ClusterInfoFileName))
+			err = utils.MarshalToFile(seedManifestData, filepath.Join(tmpDir, common.SeedDataDir, common.SeedClusterInfoFileName))
 			if err != nil {
 				t.Errorf("failed to create seed manifest, error: %v", err)
 			}

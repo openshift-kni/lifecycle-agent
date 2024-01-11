@@ -86,6 +86,14 @@ func GetStaterootPath(osname string) string {
 	return fmt.Sprintf("%s/ostree/deploy/%s", OstreeDeployPathPrefix, osname)
 }
 
+// GetStaterootOptOpenshift returns the path to the `/opt/openshift` directory
+// in a given stateroot. Note that since `/opt` in ostree systems is actually a
+// symlink to `/var/opt`, and the `/var` directory of a stateroot is outside
+// the stateroot deployment, we need to access it in this odd manner.
+func GetStaterootOptOpenshift(staterootPath string) string {
+	return filepath.Join(staterootPath, "var", OptOpenshift)
+}
+
 // FuncTimer check execution time
 func FuncTimer(start time.Time, name string, r logr.Logger) {
 	elapsed := time.Since(start)
@@ -131,6 +139,10 @@ func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
 
 func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {
 	return GetStaterootName(ibu.Spec.SeedImageRef.Version)
+}
+
+func GetStaterootCertsDir(ibu *v1alpha1.ImageBasedUpgrade) string {
+	return PathOutsideChroot(filepath.Join(GetStaterootOptOpenshift(GetStaterootPath(GetDesiredStaterootName(ibu))), KubeconfigCryptoDir))
 }
 
 func GetStaterootName(seedImageVersion string) string {

@@ -21,51 +21,53 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 type PostPivot struct {
-	scheme               *runtime.Scheme
-	log                  *logrus.Logger
-	ops                  ops.Ops
-	recertContainerImage string
-	authFile             string
-	workingDir           string
-	kubeconfig           string
+	scheme     *runtime.Scheme
+	log        *logrus.Logger
+	ops        ops.Ops
+	authFile   string
+	workingDir string
+	kubeconfig string
 }
 
-func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops,
-	recertContainerImage, authFile, workingDir, kubeconfig string) *PostPivot {
+func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authFile, workingDir, kubeconfig string) *PostPivot {
 	return &PostPivot{
-		scheme:               scheme,
-		log:                  log,
-		ops:                  ops,
-		authFile:             authFile,
-		recertContainerImage: recertContainerImage,
-		workingDir:           workingDir,
-		kubeconfig:           kubeconfig,
+		scheme:     scheme,
+		log:        log,
+		ops:        ops,
+		authFile:   authFile,
+		workingDir: workingDir,
+		kubeconfig: kubeconfig,
 	}
 }
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
-	p.log.Info("Reading cluster info")
-	clusterInfo, err := utils.ReadClusterInfoFromFile(
-		path.Join(p.workingDir, common.ClusterConfigDir, common.ClusterInfoFileName))
-	if err != nil {
-		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
-	}
-
-	p.log.Info("Reading seed info")
-	seedClusterInfo, err := utils.ReadClusterInfoFromFile(path.Join(common.SeedDataDir, common.ClusterInfoFileName))
+	p.log.Info("Reading seed image info")
+	seedClusterInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(path.Join(common.SeedDataDir, common.SeedClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get seed info from %s, err: %w", "", err)
 	}
 
-	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, clusterInfo, seedClusterInfo); err != nil {
+	p.log.Info("Reading seed reconfiguration info")
+	seedReconfiguration, err := utils.ReadSeedReconfigurationFromFile(
+		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedClusterInfoFileName))
+	if err != nil {
+		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
+	}
+
+	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
+		return fmt.Errorf("unsupported seed reconfiguration version %d", seedReconfiguration.APIVersion)
+	}
+
+	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
 		return err
 	}
 
@@ -91,11 +93,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return err
 	}
 
-	if err := p.changeRegistryInCSVDeployment(ctx, client, clusterInfo, seedClusterInfo); err != nil {
+	if err := p.changeRegistryInCSVDeployment(ctx, client, seedReconfiguration, seedClusterInfo); err != nil {
 		return err
 	}
 
-	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, clusterInfo); err != nil {
+	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, seedReconfiguration); err != nil {
 		return err
 	}
 
@@ -111,28 +113,32 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	return p.cleanup()
 }
 
-func (p *PostPivot) recert(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 	if _, err := os.Stat(recert.SummaryFile); err == nil {
 		return fmt.Errorf("found %s file, returning error, it means recert previously failed. "+
 			"In case you still want to rerun it please remove the file", recert.SummaryFile)
 	}
 
 	p.log.Info("Create recert configuration file")
-	if err := recert.CreateRecertConfigFile(clusterInfo, seedClusterInfo, path.Join(p.workingDir, common.CertsDir),
+	kubeconfigCryptoDir := path.Join(p.workingDir, common.KubeconfigCryptoDir)
+	if err := utils.SeedReconfigurationKubeconfigRetentionToCryptoDir(kubeconfigCryptoDir, &seedReconfiguration.KubeconfigCryptoRetention); err != nil {
+		return fmt.Errorf("failed to populate crypto dir from seed reconfiguration: %w", err)
+	}
+
+	if err := recert.CreateRecertConfigFile(seedReconfiguration, seedClusterInfo, kubeconfigCryptoDir,
 		p.workingDir); err != nil {
 		return err
 	}
 
-	additional := func() error {
-		return p.additionalCommands(ctx, clusterInfo, seedClusterInfo)
-	}
-
-	err := p.ops.RecertFullFlow(p.recertContainerImage, p.authFile, path.Join(p.workingDir, recert.RecertConfigFile),
-		nil, additional, "-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
+	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
+		path.Join(p.workingDir, recert.RecertConfigFile),
+		nil,
+		func() error { return p.postRecertCommands(ctx, seedReconfiguration, seedClusterInfo) },
+		"-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
 	return err
 }
 
-func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfigurationInfo *clusterconfig_api.SeedReconfiguration) error {
 	p.log.Info("Start running etcd post pivot operations")
 	cli, err := etcdClient.New(etcdClient.Config{
 		Endpoints:   []string{common.EtcdDefaultEndpoint},
@@ -154,7 +160,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *cl
 		}
 	}
 
-	newEtcdIp := clusterInfo.MasterIP
+	newEtcdIp := reconfigurationInfo.NodeIP
 	if utils.IsIpv6(newEtcdIp) {
 		newEtcdIp = fmt.Sprintf("[%s]", newEtcdIp)
 	}
@@ -171,7 +177,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, clusterInfo *cl
 	return nil
 }
 
-func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) postRecertCommands(ctx context.Context, clusterInfo *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
 	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
 		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
@@ -179,7 +185,7 @@ func (p *PostPivot) additionalCommands(ctx context.Context, clusterInfo, seedClu
 
 	// changing seed ip to new ip in all static pod files
 	_, err := p.ops.RunBashInHostNamespace(fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
-		seedClusterInfo.MasterIP, clusterInfo.MasterIP))
+		seedClusterInfo.NodeIP, clusterInfo.NodeIP))
 	if err != nil {
 		return fmt.Errorf("failed to change seed ip to new ip in /etc/kubernetes, err: %w", err)
 	}
@@ -285,10 +291,11 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 }
 
 func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
-	clusterInfo, seedInfo *clusterinfo.ClusterInfo) error {
+	seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 
 	// in case we should not override we can skip
-	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client, seedInfo); !shouldOverride || err != nil {
+	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client,
+		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry); !shouldOverride || err != nil {
 		return err
 	}
 
@@ -298,14 +305,14 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 		return err
 	}
 
-	if clusterInfo.ReleaseRegistry == seedInfo.ReleaseRegistry {
+	if seedReconfiguration.ReleaseRegistry == seedClusterInfo.ReleaseRegistry {
 		p.log.Infof("No registry change occurred, skipping")
 		return nil
 	}
 
-	p.log.Infof("Changing release registry from %s to %s", seedInfo.ReleaseRegistry, clusterInfo.ReleaseRegistry)
+	p.log.Infof("Changing release registry from %s to %s", seedClusterInfo.ReleaseRegistry, seedReconfiguration.ReleaseRegistry)
 	newImage, err := utils.ReplaceImageRegistry(csvD.Spec.Template.Spec.Containers[0].Image,
-		clusterInfo.ReleaseRegistry, seedInfo.ReleaseRegistry)
+		seedReconfiguration.ReleaseRegistry, seedClusterInfo.ReleaseRegistry)
 	if err != nil {
 		return err
 	}
@@ -338,14 +345,19 @@ func (p *PostPivot) cleanup() error {
 	return utils.RemoveListOfFolders(p.log, []string{p.workingDir, common.SeedDataDir})
 }
 
-func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, clusterInfo *clusterinfo.ClusterInfo) error {
+func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	p.log.Info("Set new cluster id")
 	clusterVersion := &v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return err
 	}
 
-	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, clusterInfo.ClusterID))
+	if seedReconfiguration.ClusterID == "" {
+		// TODO: Generate a fresh cluster ID in case it is empty
+		return fmt.Errorf("cluster id is empty, automatic generation is not yet implemented")
+	}
+
+	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, seedReconfiguration.ClusterID))
 
 	p.log.Infof("Applying csv deploymet patch %s", string(patch))
 	err := client.Patch(ctx, clusterVersion, runtimeclient.RawPatch(types.MergePatchType, patch))

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -63,8 +64,8 @@ var (
 )
 
 type UpgradeClusterConfigGatherer interface {
-	FetchClusterConfig(ctx context.Context, ostreeDir string) error
-	FetchLvmConfig(ctx context.Context, ostreeDir string) error
+	FetchClusterConfig(ctx context.Context, ostreeVarDir string) error
+	FetchLvmConfig(ctx context.Context, ostreeVarDir string) error
 }
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -76,10 +77,10 @@ type UpgradeClusterConfigGather struct {
 
 // FetchClusterConfig collects the current cluster's configuration and write it as JSON files into
 // given filesystem directory.
-func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ostreeDir string) error {
+func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ostreeVarDir string) error {
 	r.Log.Info("Fetching cluster configuration")
 
-	clusterConfigPath, err := r.configDirs(ostreeDir)
+	clusterConfigPath, err := r.configDir(ostreeVarDir)
 	if err != nil {
 		return err
 	}
@@ -107,7 +108,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err := r.fetchICSPs(ctx, manifestsDir); err != nil {
 		return err
 	}
-	if err := r.fetchNetworkConfig(ostreeDir); err != nil {
+	if err := r.fetchNetworkConfig(ostreeVarDir); err != nil {
 		return err
 	}
 
@@ -198,18 +199,39 @@ func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, ma
 	return nil
 }
 
+func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) *seedreconfig.SeedReconfiguration {
+	return &seedreconfig.SeedReconfiguration{
+		APIVersion:                seedreconfig.SeedReconfigurationVersion,
+		BaseDomain:                clusterInfo.BaseDomain,
+		ClusterName:               clusterInfo.ClusterName,
+		ClusterID:                 clusterInfo.ClusterID,
+		NodeIP:                    clusterInfo.NodeIP,
+		ReleaseRegistry:           clusterInfo.ReleaseRegistry,
+		Hostname:                  clusterInfo.Hostname,
+		MirrorRegistryConfigured:  clusterInfo.MirrorRegistryConfigured,
+		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
+	}
+}
+
 func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clusterConfigPath string) error {
 	r.Log.Info("Fetching ClusterInfo")
 
-	clusterInfo, err := utils.CreateClusterInfo(ctx, r.Client)
+	clusterInfo, err := utils.GetClusterInfo(ctx, r.Client)
 	if err != nil {
 		return err
 	}
 
-	filePath := filepath.Join(clusterConfigPath, common.ClusterInfoFileName)
+	seedReconfigurationKubeconfigRetention, err := utils.SeedReconfigurationKubeconfigRetentionFromCluster(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("failed to get kubeconfig retention from crypto dir: %w", err)
+	}
 
+	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention)
+
+	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
-	return utils.MarshalToFile(clusterInfo, filePath)
+	return utils.MarshalToFile(seedReconfiguration, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir string) error {
@@ -230,8 +252,8 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 }
 
 // configDirs creates and returns the directory for the given cluster configuration.
-func (r *UpgradeClusterConfigGather) configDirs(ostreeDir string) (string, error) {
-	filesDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir)
+func (r *UpgradeClusterConfigGather) configDir(ostreeVarDir string) (string, error) {
+	filesDir := filepath.Join(ostreeVarDir, common.OptOpenshift, common.ClusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
 	if err := os.MkdirAll(filepath.Join(filesDir, manifestDir), 0o700); err != nil {
 		return "", err

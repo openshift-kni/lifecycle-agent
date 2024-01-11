@@ -69,7 +69,6 @@ type SeedGeneratorReconciler struct {
 }
 
 var (
-	clusterName            string
 	lcaImage               string
 	seedgenAuthFile        = filepath.Join(utils.SeedgenWorkspacePath, "auth.json")
 	storedManagedClusterCR = filepath.Join(utils.SeedgenWorkspacePath, "managedcluster.json")
@@ -112,7 +111,7 @@ func (r *SeedGeneratorReconciler) createHubClient(hubKubeconfig []byte) (hubClie
 }
 
 // Collect and save the data needed to restore the ACM registration, then delete the managedcluster from the hub
-func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClient client.Client) error {
+func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClient client.Client, clusterName string) error {
 	// Save the managedcluster
 	managedcluster := &clusterv1.ManagedCluster{}
 	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
@@ -150,7 +149,7 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 	maxRetries := 90 // ~15 minutes
 	current := 0
 	r.Log.Info("Waiting until managedcluster is deleted")
-	for r.managedClusterExists(ctx, hubClient) {
+	for r.managedClusterExists(ctx, hubClient, clusterName) {
 		if current < maxRetries {
 			time.Sleep(interval)
 			current += 1
@@ -188,7 +187,7 @@ func (r *SeedGeneratorReconciler) reregisterWithHub(ctx context.Context, hubClie
 }
 
 // Check whether the managedcluster resource exists on the hub
-func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubClient client.Client) bool {
+func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubClient client.Client, clusterName string) bool {
 	managedcluster := &clusterv1.ManagedCluster{}
 	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
 		if client.IgnoreNotFound(err) != nil {
@@ -580,7 +579,7 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 }
 
 // Generate the seed image
-func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator, clusterName string) error {
 	if err := r.wipeExistingWorkspace(); err != nil {
 		return err
 	}
@@ -629,17 +628,17 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 			return fmt.Errorf("failed to create hub client: %w", err)
 		}
 
-		if r.managedClusterExists(ctx, hubClient) {
+		if r.managedClusterExists(ctx, hubClient, clusterName) {
 			// Save the ACM resources from hub needed for re-import
 			r.Log.Info("Collecting ACM import data")
-			if err := r.deregisterFromHub(ctx, hubClient); err != nil {
+			if err := r.deregisterFromHub(ctx, hubClient, clusterName); err != nil {
 				return err
 			}
 
 			// In the success case, the pod will block until terminated by the imager container.
 			// Create a deferred function to restore the ManagedCluster in the case where a failure happens
 			// before that point.
-			defer r.restoreManagedCluster(ctx)
+			defer r.restoreManagedCluster(ctx, clusterName)
 		} else {
 			r.Log.Info("ManagedCluster does not exist on hub")
 		}
@@ -698,7 +697,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	return fmt.Errorf("unexpected return from launching imager container")
 }
 
-func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context) error {
+func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context, clusterName string) error {
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
@@ -716,7 +715,7 @@ func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context) err
 				return fmt.Errorf("failed to create hub client: %w", err)
 			}
 
-			if r.managedClusterExists(ctx, hubClient) {
+			if r.managedClusterExists(ctx, hubClient, clusterName) {
 				r.Log.Info("ManagedCluster exists on hub, no need to restore")
 			} else {
 				// Save the ACM resources from hub needed for re-import
@@ -736,8 +735,8 @@ func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context) err
 }
 
 // finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
-func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
-	if err := r.restoreManagedCluster(ctx); err != nil {
+func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context, clusterName string) error {
+	if err := r.restoreManagedCluster(ctx, clusterName); err != nil {
 		return err
 	}
 
@@ -790,13 +789,11 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return
 	}
 
-	// Get the cluster name
-	clusterData, err := commonUtils.CreateClusterInfo(ctx, r.Client)
+	clusterName, err := commonUtils.GetClusterName(ctx, r.Client)
 	if err != nil {
 		rc = err
 		return
 	}
-	clusterName = clusterData.ClusterName
 
 	// Get the SeedGenerator CR
 	seedgen := &seedgenv1alpha1.SeedGenerator{}
@@ -834,7 +831,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		r.Log.Info(fmt.Sprintf("Generating seed image: %s", seedgen.Spec.SeedImage))
-		if err = r.generateSeedImage(ctx, seedgen); err != nil {
+		if err = r.generateSeedImage(ctx, seedgen, clusterName); err != nil {
 			r.Log.Error(err, "Seed generation failed")
 
 			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
@@ -847,7 +844,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	} else if isSeedGenInProgress(seedgen) {
 		r.Log.Info("Completing Seed Generation")
-		if err = r.finishSeedgen(ctx); err != nil {
+		if err = r.finishSeedgen(ctx, clusterName); err != nil {
 			r.Log.Error(err, "Seed generation failed")
 			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
 			if err = r.updateStatus(ctx, seedgen); err != nil {

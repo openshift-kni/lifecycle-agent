@@ -28,7 +28,7 @@ filters:
     - oourfali
     - romfreiman
     - tsorya
-  ^ibu-imager/clusterinfo/clusterinfo.go:
+  ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed
   ^Dockerfile:

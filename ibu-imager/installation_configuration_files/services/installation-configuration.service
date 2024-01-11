@@ -5,8 +5,7 @@ After=prepare-installation-configuration.service NetworkManager-wait-online.serv
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/ibu-imager post-pivot --recert-image ${RECERT_IMAGE}
-EnvironmentFile=/etc/systemd/system/installation-configuration.env
+ExecStart=/usr/local/bin/ibu-imager post-pivot
 
 Restart=on-failure
 RestartSec=5s

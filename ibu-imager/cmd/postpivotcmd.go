@@ -41,8 +41,6 @@ func init() {
 	// Add create command
 	rootCmd.AddCommand(postPivotCmd)
 
-	// TODO: maybe better to get as os env?
-	postPivotCmd.Flags().StringVarP(&recertContainerImage, "recert-image", "e", common.DefaultRecertImage, "The full image name for the recert container tool.")
 	postPivotCmd.Flags().BoolVarP(&inContainer, "in-container", "", false, "Use this flag if this command is being ran inside a container")
 }
 
@@ -55,7 +53,7 @@ func postPivot() {
 		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
 	}
 
-	postPivotRunner := postpivot.NewPostPivot(scheme, log, ops.NewOps(log, hostCommandsExecutor), recertContainerImage,
+	postPivotRunner := postpivot.NewPostPivot(scheme, log, ops.NewOps(log, hostCommandsExecutor),
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
 	if err := postPivotRunner.PostPivotConfiguration(context.TODO()); err != nil {
 		log.Fatal(err)
