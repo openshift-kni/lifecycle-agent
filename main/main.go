@@ -34,7 +34,10 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"k8s.io/client-go/dynamic"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -153,7 +156,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	backupRestore := &backuprestore.BRHandler{Client: mgr.GetClient(), Log: log.WithName("BackupRestore")}
+	var config *rest.Config
+	if _, err := os.Stat(common.PathOutsideChroot(common.KubeconfigFile)); err != nil {
+		setupLog.Error(err, "could not fine KubeconfigFile. Using empty config only for test environment")
+		config = &rest.Config{}
+	} else {
+		config, err = clientcmd.BuildConfigFromFlags("", common.PathOutsideChroot(common.KubeconfigFile))
+		if err != nil {
+			setupLog.Error(err, "unable to create kube config")
+			os.Exit(1)
+		}
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		setupLog.Error(err, "unable to create dynamic client")
+		os.Exit(1)
+	}
+
+	backupRestore := &backuprestore.BRHandler{
+		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("BackupRestore")}
 
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),

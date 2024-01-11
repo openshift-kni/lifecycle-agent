@@ -28,6 +28,42 @@ anntotations:
 If the annotation is provided in the backup or restore CRs, they will be applied in increasing order based on the annotation value. The LCA will move on the next group of CRs only after completing the previous group with the same wave number.
 If no `lca.openshift.io/apply-wave` annotation is defined in the backup or restore CRs, which means no particular order is required, they will be applied all together. 
 
+## LCA apply label annotation
+
+OADP backup doesn't support backing up specific CRs by object names, and the way to scope/filter backup specific resources is by using label selector.
+
+This annotation provides a way for users to pass in the specific resources, and LCA will apply the label to those resources internally in order for the backup CR to only pick them up.
+
+The resources could be passed using the
+`lca.openshift.io/apply-label` annotation. The value should be a list of comma separated objects in `group/version/resource/name` format for cluster-scoped resources or `group/version/resource/namespace/name` format for namespace-scoped resources, and it should be attached to the related Backup CR. For example:
+
+```
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: acm-klusterlet
+  namespace: openshift-adp
+annotations:
+  lca.openshift.io/apply-label: rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet
+labels:
+  velero.io/storage-location: default
+spec:
+  includeNamespace:
+   - open-cluster-management-agent
+  includeClusterScopedResources:
+   - clusterroles
+  includeNamespaceScopedResources:
+   - deployments
+```
+
+By adding this annotation, LCA will limit the scope exclusively to those resources. LCA will parse the annotations and apply `lca.openshift.io/backup: true` label to those resources. LCA then adds this labelSelector when creating the backup CR:
+
+```
+labelSelector:
+  matchLabels:
+    lca.openshift.io/backup: true
+```
+
 ## Install OADP and configure OADP on target cluster via ZTP GitOps
 
  Install OADP via [GitOps ZTP pipeline](https://docs.openshift.com/container-platform/4.14/scalability_and_performance/ztp_far_edge/ztp-configuring-managed-clusters-policies.html).
