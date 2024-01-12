@@ -23,8 +23,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go
 
 #####################################################################################################
-# Copy the binaries into the operator image
-FROM registry.access.redhat.com/ubi9/ubi:latest
+# Build the operator image
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+RUN if [[ ! -f /bin/nsenter ]]; then \
+        microdnf -y install util-linux-core && \
+        microdnf clean all && \
+        rm -rf /var/cache/yum ; \
+    fi
 
 COPY --from=builder \
     /opt/app-root/src/build/manager \
