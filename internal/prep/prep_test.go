@@ -38,7 +38,7 @@ func TestGetDeploymentFromDeploymentID(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := GetDeploymentFromDeploymentID(tc.deploymentID)
+			res, err := getDeploymentFromDeploymentID(tc.deploymentID)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {
 				assert.ErrorContains(t, err, tc.err.Error())
@@ -106,7 +106,7 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 				log.Fatal(err)
 			}
 
-			res, err := BuildKernelArgumentsFromMCOFile(f.Name())
+			res, err := buildKernelArgumentsFromMCOFile(f.Name())
 			assert.Equal(t, tc.expect, res)
 			assert.NoError(t, err)
 		})

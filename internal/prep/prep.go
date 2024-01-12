@@ -22,9 +22,9 @@ import (
 // need this for unit tests
 var osReadFile = os.ReadFile
 
-// GetBootedStaterootIDFromRPMOstreeJson reads rpm-ostree.json file from the seed image
+// getBootedStaterootIDFromRPMOstreeJson reads rpm-ostree.json file from the seed image
 // and returns the deployment.ID of the booted stateroot
-func GetBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
+func getBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
 	data, err := osReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("failed reading %s: %w", path, err)
@@ -41,8 +41,8 @@ func GetBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
 	return "", fmt.Errorf("failed finding booted stateroot")
 }
 
-// GetVersionFromClusterInfoFile reads ClusterInfo file and returns the ocp version
-func GetVersionFromClusterInfoFile(path string) (string, error) {
+// getVersionFromClusterInfoFile reads ClusterInfo file and returns the ocp version
+func getVersionFromClusterInfoFile(path string) (string, error) {
 	ci := &clusterinfo.ClusterInfo{}
 	if err := utils.ReadYamlOrJSONFile(path, ci); err != nil {
 		return "", fmt.Errorf("failed to read and decode ClusterInfo file: %w", err)
@@ -52,7 +52,7 @@ func GetVersionFromClusterInfoFile(path string) (string, error) {
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
 // and builds the string arguments that ostree admin deploy requires
-func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
+func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 	mc := &mcfgv1.MachineConfig{}
 	if err := utils.ReadYamlOrJSONFile(path, mc); err != nil {
 		return nil, fmt.Errorf("failed to read and decode machine config json file: %w", err)
@@ -71,21 +71,21 @@ func BuildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 	return args, nil
 }
 
-// GetDeploymentDirPath return the path to ostree deploy directory e.g:
+// getDeploymentDirPath return the path to ostree deploy directory e.g:
 // /ostree/deploy/<osname>/deploy/<deployment.id>
-func GetDeploymentDirPath(osname, deployment string) string {
+func getDeploymentDirPath(osname, deployment string) string {
 	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", deployment))
 }
 
-// GetDeploymentOriginPath return the path to .orign file e.g:
+// getDeploymentOriginPath return the path to .orign file e.g:
 // /ostree/deploy/<osname>/deploy/<deployment.id>.origin
-func GetDeploymentOriginPath(osname, deployment string) string {
+func getDeploymentOriginPath(osname, deployment string) string {
 	originName := fmt.Sprintf("%s.origin", deployment)
 	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", originName))
 }
 
-// RemoveETCDeletions remove the files that are listed in etc.deletions
-func RemoveETCDeletions(mountpoint, osname, deployment string) error {
+// removeETCDeletions remove the files that are listed in etc.deletions
+func removeETCDeletions(mountpoint, osname, deployment string) error {
 	file, err := os.Open(filepath.Join(common.PathOutsideChroot(mountpoint), "etc.deletions"))
 	if err != nil {
 		return fmt.Errorf("failed to open etc.deletions: %w", err)
@@ -95,7 +95,7 @@ func RemoveETCDeletions(mountpoint, osname, deployment string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fileToRemove := strings.Trim(scanner.Text(), " ")
-		filePath := common.PathOutsideChroot(filepath.Join(GetDeploymentDirPath(osname, deployment), fileToRemove))
+		filePath := common.PathOutsideChroot(filepath.Join(getDeploymentDirPath(osname, deployment), fileToRemove))
 		err = os.Remove(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to remove %s: %w", filePath, err)
@@ -109,7 +109,7 @@ func RemoveETCDeletions(mountpoint, osname, deployment string) error {
 
 // split the deploymentID by '-' and return the last item
 // there should be at least one '-' in the deploymentID
-func GetDeploymentFromDeploymentID(deploymentID string) (string, error) {
+func getDeploymentFromDeploymentID(deploymentID string) (string, error) {
 	splitted := strings.Split(deploymentID, "-")
 	if len(splitted) < 2 {
 		return "", fmt.Errorf(
@@ -169,17 +169,17 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	// seedBootedID: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedDeployment: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
 	// seedBootedRef: ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c
-	seedBootedID, err := GetBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
+	seedBootedID, err := getBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
 	if err != nil {
 		return fmt.Errorf("failed to get booted stateroot id: %w", err)
 	}
-	seedBootedDeployment, err := GetDeploymentFromDeploymentID(seedBootedID)
+	seedBootedDeployment, err := getDeploymentFromDeploymentID(seedBootedID)
 	if err != nil {
 		return err
 	}
 	seedBootedRef := strings.Split(seedBootedDeployment, ".")[0]
 
-	version, err := GetVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
+	version, err := getVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get version from ClusterInfo: %w", err)
 	}
@@ -199,7 +199,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed ostree admin os-init: %w", err)
 	}
 
-	kargs, err := BuildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
+	kargs, err := buildKernelArgumentsFromMCOFile(filepath.Join(common.PathOutsideChroot(mountpoint), "mco-currentconfig.json"))
 	if err != nil {
 		return fmt.Errorf("failed to build kargs: %w", err)
 	}
@@ -221,7 +221,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		if err != nil {
 			return fmt.Errorf("failed to get deploymentID: %w", err)
 		}
-		deployment, err = GetDeploymentFromDeploymentID(deploymentID)
+		deployment, err = getDeploymentFromDeploymentID(deploymentID)
 		if err != nil {
 			return err
 		}
@@ -229,7 +229,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
-		GetDeploymentOriginPath(osname, deployment),
+		getDeploymentOriginPath(osname, deployment),
 	); err != nil {
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
@@ -243,12 +243,12 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	if err := ops.ExtractTarWithSELinux(
 		filepath.Join(mountpoint, "etc.tgz"),
-		GetDeploymentDirPath(osname, deployment),
+		getDeploymentDirPath(osname, deployment),
 	); err != nil {
 		return fmt.Errorf("failed to extract seed etc: %w", err)
 	}
 
-	if err = RemoveETCDeletions(mountpoint, osname, deployment); err != nil {
+	if err = removeETCDeletions(mountpoint, osname, deployment); err != nil {
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 
