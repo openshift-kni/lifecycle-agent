@@ -6,14 +6,15 @@ import (
 
 // ClusterInfo struct that describe current cluster critical info
 type ClusterInfo struct {
-	Version                  string `json:"version,omitempty"`
-	Domain                   string `json:"domain,omitempty"`
-	ClusterName              string `json:"cluster_name,omitempty"`
-	ClusterID                string `json:"cluster_id,omitempty"`
-	MasterIP                 string `json:"master_ip,omitempty"`
-	ReleaseRegistry          string `json:"release_registry,omitempty"`
-	Hostname                 string `json:"hostname,omitempty"`
-	MirrorRegistryConfigured bool   `json:"mirror_registry_configured,omitempty"`
+	Version                  string   `json:"version,omitempty"`
+	Domain                   string   `json:"domain,omitempty"`
+	ClusterName              string   `json:"cluster_name,omitempty"`
+	ClusterID                string   `json:"cluster_id,omitempty"`
+	MasterIP                 string   `json:"master_ip,omitempty"`
+	ReleaseRegistry          string   `json:"release_registry,omitempty"`
+	Hostname                 string   `json:"hostname,omitempty"`
+	MirrorRegistryConfigured bool     `json:"mirror_registry_configured,omitempty"`
+	NMStatePolicies          []string `json:"nmstate_policies,omitempty"`
 }
 
 type installConfigMetadata struct {

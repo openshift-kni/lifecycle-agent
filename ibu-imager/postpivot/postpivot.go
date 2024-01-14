@@ -59,6 +59,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
+	if err := utils.RunOnce("createNMStatePolicyFiles", p.workingDir, p.log,
+		p.createNMStatePolicyFiles, clusterInfo); err != nil {
+		return err
+	}
+
 	p.log.Info("Reading seed info")
 	seedClusterInfo, err := utils.ReadClusterInfoFromFile(path.Join(common.SeedDataDir, common.ClusterInfoFileName))
 	if err != nil {
@@ -353,4 +358,18 @@ func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Cl
 		return fmt.Errorf("failed to patch cluster id in clusterversion, err: %w", err)
 	}
 	return nil
+}
+
+func (p *PostPivot) createNMStatePolicyFiles(clusterInfo *clusterinfo.ClusterInfo) error {
+	p.log.Info("Creating NMState Policy Files")
+	for i, policy := range clusterInfo.NMStatePolicies {
+		// TODO: get policy name?
+		// TODO: we can verify files by running nmstatectl policy <file path>
+		if err := utils.MarshalToFile(policy, path.Join("/etc/nmstate/",
+			fmt.Sprintf("policy_%d.yml", i))); err != nil {
+			return err
+		}
+	}
+	_, err := p.ops.SystemctlAction("restart", "nmstate")
+	return err
 }
