@@ -155,7 +155,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	}
 
 	ostreeRepo := filepath.Join(workspace, "ostree")
-	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o755); err != nil {
+	if err = os.Mkdir(common.PathOutsideChroot(ostreeRepo), 0o700); err != nil {
 		return fmt.Errorf("failed to create ostree repo directory: %w", err)
 	}
 

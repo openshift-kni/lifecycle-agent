@@ -247,7 +247,7 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	images = append(images, s.recertContainerImage)
 
 	s.log.Infof("Creating %s file", containersListFileName)
-	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o644); err != nil {
+	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o600); err != nil {
 		return fmt.Errorf("failed to write container list file %s, err %w", containersListFileName, err)
 	}
 
@@ -472,7 +472,7 @@ func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDo
 		"SeedFullDomain":       seedFullDomain,
 	}
 
-	return utils.RenderTemplateFile(srcFile, substitutions, destFile, 0o644)
+	return utils.RenderTemplateFile(srcFile, substitutions, destFile, 0o600)
 }
 
 func (s *SeedCreator) deleteNode(ctx context.Context) error {
