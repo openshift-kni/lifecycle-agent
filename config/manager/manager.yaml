@@ -7,7 +7,9 @@ metadata:
     control-plane: controller-manager
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/warn: privileged    
+    pod-security.kubernetes.io/warn: privileged
+  annotations:
+    workload.openshift.io/allowed: management
   name: system
 ---
 apiVersion: apps/v1
@@ -36,6 +38,7 @@ spec:
         control-plane: controller-manager
       annotations:
         openshift.io/scc: privileged
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       containers:
       - command:
