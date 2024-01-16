@@ -31,3 +31,9 @@ filters:
   ^ibu-imager/clusterinfo/clusterinfo.go:
     labels:
       - cluster-config-api-changed
+  ^Dockerfile:
+    reviewers:
+    - rauhersu
+  ^bundle/manifests/lifecycle-agent.clusterserviceversion.yaml:
+    reviewers:
+    - rauhersu
