@@ -10,7 +10,7 @@ import (
 
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	"github.com/thoas/go-funk"
+	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -237,5 +237,5 @@ func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client
 		return true, err
 	}
 
-	return !funk.ContainsString(mirroredRegistries, seedInfo.ReleaseRegistry), nil
+	return !lo.Contains(mirroredRegistries, seedInfo.ReleaseRegistry), nil
 }
