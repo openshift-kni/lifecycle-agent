@@ -404,10 +404,10 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 
 	// Create oadp DPA file
 	dpa := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"kind":       dpaGvk.Kind,
 			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "oadp",
 				"namespace": OadpNs,
 			},

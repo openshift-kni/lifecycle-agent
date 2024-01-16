@@ -296,14 +296,14 @@ func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 		return false
 	}
 
-	dpaStatus := dpa.Object["status"].(map[string]interface{})
+	dpaStatus := dpa.Object["status"].(map[string]any)
 	if dpaStatus["conditions"] == nil {
 		return false
 	}
 
-	dpaStatusConditions := dpaStatus["conditions"].([]interface{})
+	dpaStatusConditions := dpaStatus["conditions"].([]any)
 	for _, condition := range dpaStatusConditions {
-		conditionMap := condition.(map[string]interface{})
+		conditionMap := condition.(map[string]any)
 		if conditionMap["type"] == "Reconciled" {
 			return conditionMap["status"] == "True"
 		}

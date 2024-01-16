@@ -70,7 +70,7 @@ type Config struct {
 // Example usage:
 //
 //	config := NewConfig(imageList, "NumConcurrentPulls", 10, "NicePriority", 5)
-func NewConfig(imageList []string, envVars []corev1.EnvVar, args ...interface{}) *Config {
+func NewConfig(imageList []string, envVars []corev1.EnvVar, args ...any) *Config {
 	instance := &Config{
 		ImageList:          imageList,
 		NumConcurrentPulls: DefaultMaxConcurrentPulls,

@@ -400,34 +400,34 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 
 	// Test case 2: DPA with velero credentials found
 	dpa := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"kind":       dpaGvk.Kind,
 			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "dpa-name",
 				"namespace": oadpNs,
 			},
-			"spec": map[string]interface{}{
-				"backupLocations": []interface{}{
-					map[string]interface{}{
-						"velero": map[string]interface{}{
-							"credential": map[string]interface{}{
+			"spec": map[string]any{
+				"backupLocations": []any{
+					map[string]any{
+						"velero": map[string]any{
+							"credential": map[string]any{
 								"name": "velero-cred",
 							},
 						},
 					},
-					map[string]interface{}{
-						"velero": map[string]interface{}{
-							"credential": map[string]interface{}{
+					map[string]any{
+						"velero": map[string]any{
+							"credential": map[string]any{
 								"name": "cloud-credentials",
 							},
 						},
 					},
 				},
 			},
-			"status": map[string]interface{}{
-				"conditions": []interface{}{
-					map[string]interface{}{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
 						"type":   "Reconciled",
 						"status": "True",
 						"reason": "Complete",
