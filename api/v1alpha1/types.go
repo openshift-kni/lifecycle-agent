@@ -67,7 +67,6 @@ type ImageBasedUpgradeSpec struct {
 	AdditionalImages ConfigMapRef   `json:"additionalImages,omitempty"`
 	OADPContent      []ConfigMapRef `json:"oadpContent,omitempty"`
 	ExtraManifests   []ConfigMapRef `json:"extraManifests,omitempty"`
-	RollbackTarget   string         `json:"rollbackTarget,omitempty"`
 }
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
@@ -101,15 +100,8 @@ type ImageBasedUpgradeStatus struct {
 	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
 	StartedAt          metav1.Time `json:"startedAt,omitempty"`
 	CompletedAt        metav1.Time `json:"completedAt,omitempty"`
-	StateRoots         []StateRoot `json:"stateRoots,omitempty"`
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Conditions"
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// StateRoot defines a list of saved pod states and the running OCP version when they are saved
-type StateRoot struct {
-	Version string `json:"version,omitempty"`
-	// TODO add fields for saved states
 }
 
 // +kubebuilder:object:root=true
