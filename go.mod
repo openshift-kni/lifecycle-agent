@@ -3,7 +3,6 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.20
 
 require (
-	github.com/RHsyseng/cluster-relocation-operator v0.9.9
 	github.com/go-logr/logr v1.2.4
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
@@ -67,8 +66,6 @@ require (
 	github.com/prometheus/common v0.44.0 // indirect
 	github.com/prometheus/procfs v0.10.1 // indirect
 	github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace // indirect
-	github.com/stolostron/cluster-lifecycle-api v0.0.0-20220621134646-8b67f2e6afed // indirect
-	github.com/stolostron/klusterlet-addon-controller v0.0.0-20230528112800-a466a2368df4 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.10 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.10 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
