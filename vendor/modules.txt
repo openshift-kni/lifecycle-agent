@@ -1,6 +1,3 @@
-# github.com/RHsyseng/cluster-relocation-operator v0.9.9
-## explicit; go 1.19
-github.com/RHsyseng/cluster-relocation-operator/api/v1beta1
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
@@ -170,12 +167,8 @@ github.com/spf13/cobra
 github.com/spf13/pflag
 # github.com/stolostron/cluster-lifecycle-api v0.0.0-20220621134646-8b67f2e6afed
 ## explicit; go 1.18
-github.com/stolostron/cluster-lifecycle-api/helpers/imageregistry
-github.com/stolostron/cluster-lifecycle-api/imageregistry/v1alpha1
 # github.com/stolostron/klusterlet-addon-controller v0.0.0-20230528112800-a466a2368df4
 ## explicit; go 1.19
-github.com/stolostron/klusterlet-addon-controller/pkg/apis/agent/v1
-github.com/stolostron/klusterlet-addon-controller/version
 # github.com/stretchr/testify v1.8.4
 ## explicit; go 1.20
 github.com/stretchr/testify/assert

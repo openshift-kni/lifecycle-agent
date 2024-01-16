@@ -36,7 +36,6 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	cro "github.com/RHsyseng/cluster-relocation-operator/api/v1beta1"
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
@@ -111,7 +110,6 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	scheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{}, &ocpV1.Ingress{},
 		&ocpV1.ImageDigestMirrorSet{})
-	scheme.AddKnownTypes(cro.GroupVersion, &cro.ClusterRelocation{})
 
 	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
 
