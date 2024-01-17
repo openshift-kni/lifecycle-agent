@@ -31,7 +31,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -79,7 +78,6 @@ var (
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
 	CheckOadpOperatorAvailability(ctx context.Context) error
-	DeleteOadpOperator(ctx context.Context, namespace string) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
 	GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error)
@@ -233,60 +231,6 @@ func (h *BRHandler) createObjectWithDryRun(ctx context.Context, object *unstruct
 		if !k8serrors.IsAlreadyExists(err) {
 			return err
 		}
-	}
-	return nil
-}
-
-// DeleteOadpOperator deletes the oadp operator
-func (h *BRHandler) DeleteOadpOperator(ctx context.Context, namespace string) error {
-	// Should only be one oadp subscription in the namespace
-	listOpts := []client.ListOption{
-		client.InNamespace(namespace),
-		client.HasLabels{"operators.coreos.com/redhat-oadp-operator." + namespace},
-	}
-
-	// Ensure that the dependent resources are deleted
-	deleteOpts := []client.DeleteOption{
-		client.PropagationPolicy(metav1.DeletePropagationForeground),
-	}
-
-	oadpSub := &operatorsv1alpha1.SubscriptionList{}
-	if err := h.List(ctx, oadpSub, listOpts...); err == nil {
-		for _, sub := range oadpSub.Items {
-			if err := h.Delete(ctx, &sub, deleteOpts...); err != nil {
-				return err
-			}
-		}
-	} else {
-		return err
-	}
-
-	oadpCsv := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.List(ctx, oadpCsv, listOpts...); err == nil {
-		for _, csv := range oadpCsv.Items {
-			if err := h.Delete(ctx, &csv, deleteOpts...); err != nil {
-				return err
-			}
-		}
-	} else {
-		return err
-	}
-
-	if err := h.Delete(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespace,
-		}}, deleteOpts...); err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	if len(oadpSub.Items) == 0 {
-		h.Log.Info("Found no OADP operator to delete")
-	} else if len(oadpSub.Items) == 1 {
-		h.Log.Info("OADP operator has been deleted", "name", oadpSub.Items[0].Name, "namespace", namespace)
-	} else {
-		h.Log.Info("WARN: Found more than 1 OADP operator. Deleted all OADP operators.")
 	}
 	return nil
 }
