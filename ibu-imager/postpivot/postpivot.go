@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -49,6 +50,11 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authF
 	}
 }
 
+const (
+	nodeIpFile       = "/run/nodeip-configuration/primary-ip"
+	dnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
+)
+
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	p.log.Info("Reading seed image info")
 	seedClusterInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(path.Join(common.SeedDataDir, common.SeedClusterInfoFileName))
@@ -65,6 +71,14 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
 		return fmt.Errorf("unsupported seed reconfiguration version %d", seedReconfiguration.APIVersion)
+	}
+
+	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
+		return err
+	}
+
+	if err := p.setDnsMasqConfiguration(seedReconfiguration, dnsmasqOverrides); err != nil {
+		return err
 	}
 
 	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
@@ -364,5 +378,70 @@ func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Cl
 	if err != nil {
 		return fmt.Errorf("failed to patch cluster id in clusterversion, err: %w", err)
 	}
+	return nil
+}
+
+// setDnsMasqConfiguration sets new configuration for dnsmasq and forcedns dispatcher script.
+// It points them to new ip, cluster name and domain.
+// For new configuration to apply we must restart NM and dnsmasq
+func (p *PostPivot) setDnsMasqConfiguration(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	dnsmasqOverridesFiles string) error {
+	p.log.Info("Setting new dnsmasq and forcedns dispatcher script configuration")
+	config := []string{
+		fmt.Sprintf("SNO_CLUSTER_NAME_OVERRIDE=%s", seedReconfiguration.ClusterName),
+		fmt.Sprintf("SNO_BASE_DOMAIN_OVERRIDE=%s", seedReconfiguration.BaseDomain),
+		fmt.Sprintf("SNO_DNSMASQ_IP_OVERRIDE=%s", seedReconfiguration.NodeIP),
+	}
+
+	if err := os.WriteFile(dnsmasqOverridesFiles, []byte(strings.Join(config, "\n")), 0o600); err != nil {
+		return fmt.Errorf("failed to configure dnsmasq and forcedns dispatcher script, err %w", err)
+	}
+
+	_, err := p.ops.SystemctlAction("restart", "NetworkManager.service")
+	if err != nil {
+		return fmt.Errorf("failed to restart network manager service, err %w", err)
+	}
+
+	_, err = p.ops.SystemctlAction("restart", "dnsmasq.service")
+	if err != nil {
+		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
+	}
+
+	return nil
+}
+
+// setNodeIPIfNotProvided will run nodeip configuration service on demand in case seedReconfiguration node ip is empty
+// nodeip-configuration service in on charge of setting kubelet and crio ip, this ip we will take as NodeIP
+func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
+	seedReconfiguration *clusterconfig_api.SeedReconfiguration, ipFile string) error {
+	if seedReconfiguration.NodeIP != "" {
+		return nil
+	}
+
+	if _, err := os.Stat(ipFile); err != nil {
+		_, err := p.ops.SystemctlAction("start", "nodeip-configuration")
+		if err != nil {
+			return fmt.Errorf("failed to start nodeip-configuration service, err %w", err)
+		}
+
+		p.log.Info("Start waiting for nodeip service to choose node ip")
+		_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
+			if _, err := os.Stat(ipFile); err != nil {
+				return false, nil
+			}
+			return true, nil
+		})
+	}
+
+	b, err := os.ReadFile(ipFile)
+	if err != nil {
+		return fmt.Errorf("failed to read ip from %s, err: %w", ipFile, err)
+	}
+	ip := net.ParseIP(string(b))
+	if ip == nil {
+		return fmt.Errorf("failed to parse ip %s from %s", string(b), ipFile)
+	}
+
+	seedReconfiguration.NodeIP = ip.String()
 	return nil
 }
