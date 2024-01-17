@@ -18,19 +18,27 @@ package backuprestore
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -120,6 +128,276 @@ func fakeSecret(name string) *corev1.Secret {
 		Data: map[string][]byte{
 			"key": []byte("value"),
 		},
+	}
+}
+
+func newUnstructured(apiVersion, kind, namespace, name string) *unstructured.Unstructured {
+	if namespace == "" {
+		return &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": apiVersion,
+				"kind":       kind,
+				"metadata": map[string]interface{}{
+					"name": name,
+				},
+			},
+		}
+	}
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": apiVersion,
+			"kind":       kind,
+			"metadata": map[string]interface{}{
+				"namespace": namespace,
+				"name":      name,
+			},
+		},
+	}
+}
+func newUnstructuredWithLabel(apiVersion, kind, namespace, name, label, value string) *unstructured.Unstructured {
+	if namespace == "" {
+		return &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": apiVersion,
+				"kind":       kind,
+				"metadata": map[string]interface{}{
+					"name": name,
+					"labels": map[string]interface{}{
+						label: value,
+					},
+				},
+			},
+		}
+	}
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": apiVersion,
+			"kind":       kind,
+			"metadata": map[string]interface{}{
+				"namespace": namespace,
+				"name":      name,
+				"labels": map[string]interface{}{
+					label: value,
+				},
+			},
+		},
+	}
+}
+
+func TestApplyBackupLabels(t *testing.T) {
+	testcases := []struct {
+		name           string
+		annotationObjs []ObjMetadata
+	}{
+		{
+			name: "no annotations",
+		},
+		{
+			name: "one namespaced obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "namespace", Name: "name",
+				},
+			},
+		},
+		{
+			name: "one cluster obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+		{
+			name: "two cluster obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name2",
+				},
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+		{
+			name: "one cluster obj, one namespaced",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "namespace", Name: "name",
+				},
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+	}
+	for _, tc := range testcases {
+		sch := apiruntime.NewScheme()
+		objs := []runtime.Object{
+			newUnstructured("group/version", "resource", "namespace", "name"),
+			newUnstructured("group/version", "resource", "", "name"),
+			newUnstructured("group/version", "resource", "", "name2"),
+		}
+		client := dynamicfake.NewSimpleDynamicClient(sch, objs...)
+		handler := &BRHandler{
+			Client:        nil,
+			DynamicClient: client,
+			Log:           ctrl.Log.WithName("BackupRestore"),
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			backup := fakeBackupCr("a", "1", "b")
+			var objStrings []string
+			for _, obj := range tc.annotationObjs {
+				v := fmt.Sprintf("%s/%s/%s/", obj.Group, obj.Version, obj.Resource)
+				if obj.Namespace != "" {
+					v += obj.Namespace + "/" + obj.Name
+				} else {
+					v += obj.Name
+				}
+				objStrings = append(objStrings, v)
+			}
+			backup.Annotations[applyLabelAnn] = strings.Join(objStrings, ",")
+			err := handler.applyBackupLabels(context.Background(), backup)
+			assert.NoError(t, err)
+			for _, meta := range tc.annotationObjs {
+				var get *unstructured.Unstructured
+				var err error
+				if meta.Namespace == "" {
+					get, err = client.Resource(schema.GroupVersionResource{
+						Group: meta.Group, Version: meta.Version, Resource: meta.Resource,
+					}).Get(context.TODO(), meta.Name, metav1.GetOptions{})
+				} else {
+					get, err = client.Resource(schema.GroupVersionResource{
+						Group: meta.Group, Version: meta.Version, Resource: meta.Resource,
+					}).Namespace(meta.Namespace).Get(context.TODO(), meta.Name, metav1.GetOptions{})
+				}
+				expect := newUnstructuredWithLabel(
+					"group/version", "resource", meta.Namespace, meta.Name, backupLabel, "true")
+				assert.NoError(t, err)
+				if !equality.Semantic.DeepEqual(get, expect) {
+					t.Fatal(cmp.Diff(expect, get))
+				}
+			}
+			if len(tc.annotationObjs) > 0 {
+				assert.Equal(t, backup.Spec.LabelSelector.MatchLabels[backupLabel], "true")
+			}
+		})
+	}
+}
+
+func TestGetObjsFromAnnotations(t *testing.T) {
+	testcases := []struct {
+		name       string
+		annotation string
+		expected   []ObjMetadata
+	}{
+		{
+			name:       "one name spaced resource",
+			annotation: "apps/v1/deployments/default/klusterlet",
+			expected: []ObjMetadata{
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "deployments",
+					Namespace: "default",
+					Name:      "klusterlet",
+				},
+			},
+		},
+		{
+			name:       "one cluster resource, one namespaced",
+			annotation: "apps/v1/clusterroles/klusterlet,apps/v1/deployment/ns/klusterlet-deploy",
+			expected: []ObjMetadata{
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "clusterroles",
+					Namespace: "",
+					Name:      "klusterlet",
+				},
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "deployment",
+					Namespace: "ns",
+					Name:      "klusterlet-deploy",
+				},
+			},
+		},
+		{
+			name:       "two cluster resources",
+			annotation: "apps/v1/clusterroles/klusterlet,apps/v1/clusterroles/klusterlet2",
+			expected: []ObjMetadata{
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "clusterroles",
+					Namespace: "",
+					Name:      "klusterlet",
+				},
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "clusterroles",
+					Namespace: "",
+					Name:      "klusterlet2",
+				},
+			},
+		},
+		{
+			name:       "one cluster resources",
+			annotation: "apps/v1/clusterroles/klusterlet",
+			expected: []ObjMetadata{
+				{
+					Group:     "apps",
+					Version:   "v1",
+					Resource:  "clusterroles",
+					Namespace: "",
+					Name:      "klusterlet",
+				},
+			},
+		},
+		{
+			name:       "object without group and namespace",
+			annotation: "v1/namespace/klusterlet",
+			expected: []ObjMetadata{
+				{
+					Group:     "",
+					Version:   "v1",
+					Resource:  "namespace",
+					Namespace: "",
+					Name:      "klusterlet",
+				},
+			},
+		},
+		{
+			name:       "object without group",
+			annotation: "v1/secrets/default/klusterlet",
+			expected: []ObjMetadata{
+				{
+					Group:     "",
+					Version:   "v1",
+					Resource:  "secrets",
+					Namespace: "default",
+					Name:      "klusterlet",
+				},
+			},
+		},
+		{
+			name:       "empty",
+			annotation: "",
+			expected:   []ObjMetadata{},
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			backup := fakeBackupCr("a", "1", "b")
+			backup.Annotations[applyLabelAnn] = tc.annotation
+			result, err := getObjsFromAnnotations(backup)
+			assert.Equal(t, tc.expected, result)
+			assert.NoError(t, err)
+		})
 	}
 }
 

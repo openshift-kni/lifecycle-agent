@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -142,6 +143,82 @@ func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.
 	return &bt, nil
 }
 
+// getObjsFromAnnotations goes through a backup annotations and returns the list
+// of objects that backup label should be applied to them, example backup CR:
+//
+//	apiVersion: velero.io/v1
+//	kind: Backup
+//	metadata:
+//	  name: acm-klusterlet
+//	  namespace: openshift-adp
+//	annotations:
+//	  lca.openshift.io/apply-label: "rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet"
+func getObjsFromAnnotations(backup *velerov1.Backup) ([]ObjMetadata, error) {
+	result := []ObjMetadata{}
+	for k, v := range backup.GetAnnotations() {
+		if k != applyLabelAnn || v == "" {
+			continue
+		}
+		objStrings := strings.Split(v, ",")
+		for _, objString := range objStrings {
+			objStringSplitted := strings.Split(objString, "/")
+			if len(objStringSplitted) < 3 || len(objStringSplitted) > 5 {
+				return result, fmt.Errorf("invalid apply-label obj in annotation value: %s", objString)
+			}
+			var obj ObjMetadata
+			switch len(objStringSplitted) {
+			case 3:
+				obj = ObjMetadata{Version: objStringSplitted[0], Resource: objStringSplitted[1], Name: objStringSplitted[2]}
+			case 4:
+				if objStringSplitted[0] == "v1" {
+					obj = ObjMetadata{
+						Version: objStringSplitted[0], Resource: objStringSplitted[1],
+						Namespace: objStringSplitted[2], Name: objStringSplitted[3],
+					}
+				} else {
+					obj = ObjMetadata{
+						Group: objStringSplitted[0], Version: objStringSplitted[1],
+						Resource: objStringSplitted[2], Name: objStringSplitted[3],
+					}
+				}
+			case 5:
+				obj = ObjMetadata{
+					Group: objStringSplitted[0], Version: objStringSplitted[1],
+					Resource: objStringSplitted[2], Namespace: objStringSplitted[3], Name: objStringSplitted[4],
+				}
+			default:
+				return result, fmt.Errorf("invalid apply-label obj in annotation value: %s", objString)
+			}
+			result = append(result, obj)
+		}
+	}
+	return result, nil
+}
+
+// applyBackupLabels patches objects that are in apply-backup annotation with backup label
+// and adds label selector to backup CR
+//
+// The objects could be passed using the "lca.openshift.io/apply-label" annotation.
+// The value should be a list of comma separated objects in
+// "<group>/<version>/<resource>/<name>" format for cluster-scoped resources
+// and "<group>/<version>/<resource>/<namespace>/<name> format for namespace-scoped resources.
+func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Backup) error {
+	objs, err := getObjsFromAnnotations(backup)
+	if err != nil {
+		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
+	}
+	for _, obj := range objs {
+		err := patchBackupLabelToObj(ctx, h.DynamicClient, &obj, false)
+		if err != nil {
+			return err
+		}
+	}
+	if len(objs) != 0 {
+		setBackupLabelSelector(backup)
+	}
+	return nil
+}
+
 func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Backup) error {
 	clusterID, err := getClusterID(ctx, h.Client)
 	if err != nil {
@@ -149,6 +226,9 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 	}
 
 	setBackupLabel(backup, map[string]string{clusterIDLabel: clusterID})
+	if err := h.applyBackupLabels(ctx, backup); err != nil {
+		return fmt.Errorf("failed to apply backup labels: %w", err)
+	}
 	if err := h.Create(ctx, backup); err != nil {
 		return err
 	}

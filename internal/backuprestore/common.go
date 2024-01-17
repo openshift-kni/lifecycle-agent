@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -53,6 +54,8 @@ import (
 
 const (
 	applyWaveAnn     = "lca.openshift.io/apply-wave"
+	applyLabelAnn    = "lca.openshift.io/apply-label"
+	backupLabel      = "lca.openshift.io/backup"
 	clusterIDLabel   = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
 	defaultApplyWave = math.MaxInt32                   // 2147483647, an enough large number
 
@@ -91,7 +94,8 @@ type BackuperRestorer interface {
 // BRHandler handles the backup and restore
 type BRHandler struct {
 	client.Client
-	Log logr.Logger
+	DynamicClient dynamic.Interface
+	Log           logr.Logger
 }
 
 // BRStatusError type
@@ -99,6 +103,14 @@ type BRStatusError struct {
 	Type       string
 	Reason     string
 	ErrMessage string
+}
+
+type ObjMetadata struct {
+	Group     string
+	Version   string
+	Resource  string
+	Namespace string
+	Name      string
 }
 
 func (e *BRStatusError) Error() string {
@@ -204,6 +216,13 @@ func getClusterID(ctx context.Context, c client.Client) (string, error) {
 	return string(clusterVersion.Spec.ClusterID), nil
 }
 
+func setBackupLabelSelector(backup *velerov1.Backup) {
+	if backup.Spec.LabelSelector == nil {
+		backup.Spec.LabelSelector = &metav1.LabelSelector{}
+	}
+	metav1.AddLabelToSelector(backup.Spec.LabelSelector, backupLabel, "true")
+}
+
 func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 	labels := backup.GetLabels()
 	if labels == nil {
@@ -255,6 +274,30 @@ func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 	return false
 }
 
+func patchBackupLabelToObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool) error {
+	patchOptions := metav1.PatchOptions{}
+	if isDryRun {
+		patchOptions = metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
+	}
+	resourceClient := client.Resource(schema.GroupVersionResource{
+		Group: obj.Group, Version: obj.Version, Resource: obj.Resource},
+	)
+	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
+	var err error
+	if obj.Namespace != "" {
+		_, err = resourceClient.Namespace(obj.Namespace).Patch(
+			ctx, obj.Name, types.JSONPatchType, payload, patchOptions,
+		)
+	} else {
+		_, err = resourceClient.Patch(ctx, obj.Name, types.JSONPatchType, payload, patchOptions)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to apply backup label (dry-run) on obj name:%s namespace:%s resource:%s group:%s version:%s err:%w",
+			obj.Name, obj.Namespace, obj.Resource, obj.Group, obj.Version, err)
+	}
+	return err
+}
+
 func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
@@ -279,6 +322,19 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
+	for _, backup := range backups {
+		objs, err := getObjsFromAnnotations(backup)
+		if err != nil {
+			return NewBRFailedValidationError("OADP", err.Error())
+		}
+		for _, obj := range objs {
+			err := patchBackupLabelToObj(ctx, h.DynamicClient, &obj, true)
+			if err != nil {
+				return NewBRFailedValidationError("OADP", err.Error())
+			}
+		}
 	}
 
 	// Check if the backup CRs defined in restore CRs exist in OADP configmaps

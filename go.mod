@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/go-logr/logr v1.2.4
+	github.com/google/go-cmp v0.5.9
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
 	github.com/operator-framework/api v0.17.6
@@ -46,7 +47,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
-	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/pprof v0.0.0-20230323073829-e72429f035bd // indirect
 	github.com/google/uuid v1.3.1 // indirect
