@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -83,7 +82,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context,
 	return doNotRequeue(), nil
 }
 
-// cleanup cleans stateroots, precache, backup, ibu files and OADP operator
+// cleanup cleans stateroots, precache, backup, ibu files
 // returns true if all cleanup tasks were successful
 func (r *ImageBasedUpgradeReconciler) cleanup(
 	ctx context.Context, allUnbootedStateroots bool,
@@ -109,15 +108,15 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 	if err := r.Precache.Cleanup(ctx); err != nil {
 		handleError(err, "failed to cleanup precaching resources.")
 	}
+
+	// only delete Backup CRs
 	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
 		handleError(err, "failed to cleanup backups.")
 	} else if !allRemoved {
 		err := errors.New("failed to delete all the backup CRs.")
 		handleError(err, err.Error())
 	}
-	if err := r.BackupRestore.DeleteOadpOperator(ctx, backuprestore.OadpNs); err != nil {
-		handleError(err, "failed to delete OADP operator.")
-	}
+
 	if err := cleanupIBUFiles(); err != nil {
 		handleError(err, "failed to cleanup ibu files.")
 	}

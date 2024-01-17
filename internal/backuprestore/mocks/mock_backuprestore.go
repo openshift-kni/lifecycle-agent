@@ -72,20 +72,6 @@ func (mr *MockBackuperRestorerMockRecorder) CleanupBackups(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupBackups", reflect.TypeOf((*MockBackuperRestorer)(nil).CleanupBackups), ctx)
 }
 
-// DeleteOadpOperator mocks base method.
-func (m *MockBackuperRestorer) DeleteOadpOperator(ctx context.Context, namespace string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteOadpOperator", ctx, namespace)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteOadpOperator indicates an expected call of DeleteOadpOperator.
-func (mr *MockBackuperRestorerMockRecorder) DeleteOadpOperator(ctx, namespace any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOadpOperator", reflect.TypeOf((*MockBackuperRestorer)(nil).DeleteOadpOperator), ctx, namespace)
-}
-
 // ExportOadpConfigurationToDir mocks base method.
 func (m *MockBackuperRestorer) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	m.ctrl.T.Helper()
