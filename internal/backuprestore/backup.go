@@ -283,18 +283,18 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		h.Log.Info("Exported DataProtectionApplication CR to file", "path", filePath)
 
 		// Make sure the required storage creds are exported
-		dpaSpec := dpa.Object["spec"].(map[string]interface{})
-		backupLocations := dpaSpec["backupLocations"].([]interface{})
+		dpaSpec := dpa.Object["spec"].(map[string]any)
+		backupLocations := dpaSpec["backupLocations"].([]any)
 		for _, backupLocation := range backupLocations {
-			if backupLocation.(map[string]interface{})["velero"] == nil {
+			if backupLocation.(map[string]any)["velero"] == nil {
 				continue
 			}
-			velero := backupLocation.(map[string]interface{})["velero"].(map[string]interface{})
+			velero := backupLocation.(map[string]any)["velero"].(map[string]any)
 			if velero["credential"] == nil {
 				continue
 			}
 
-			creds := velero["credential"].(map[string]interface{})
+			creds := velero["credential"].(map[string]any)
 			if creds["name"] == nil {
 				continue
 			}

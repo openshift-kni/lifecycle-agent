@@ -103,7 +103,7 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 	return &nodesList.Items[0], nil
 }
 
-func ReadYamlOrJSONFile(filePath string, into interface{}) error {
+func ReadYamlOrJSONFile(filePath string, into any) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
