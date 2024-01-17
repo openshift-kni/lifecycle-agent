@@ -8,10 +8,10 @@ require (
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
 	github.com/operator-framework/api v0.17.6
 	github.com/otiai10/copy v1.14.0
+	github.com/samber/lo v1.39.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.4
-	github.com/thoas/go-funk v0.9.3
 	github.com/vmware-tanzu/velero v1.12.0
 	go.etcd.io/etcd/client/v3 v3.5.10
 	go.uber.org/mock v0.3.0

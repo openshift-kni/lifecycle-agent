@@ -156,6 +156,9 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
+# github.com/samber/lo v1.39.0
+## explicit; go 1.18
+github.com/samber/lo
 # github.com/sirupsen/logrus v1.9.3
 ## explicit; go 1.13
 github.com/sirupsen/logrus
@@ -165,16 +168,9 @@ github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace
 ## explicit; go 1.12
 github.com/spf13/pflag
-# github.com/stolostron/cluster-lifecycle-api v0.0.0-20220621134646-8b67f2e6afed
-## explicit; go 1.18
-# github.com/stolostron/klusterlet-addon-controller v0.0.0-20230528112800-a466a2368df4
-## explicit; go 1.19
 # github.com/stretchr/testify v1.8.4
 ## explicit; go 1.20
 github.com/stretchr/testify/assert
-# github.com/thoas/go-funk v0.9.3
-## explicit; go 1.13
-github.com/thoas/go-funk
 # github.com/vmware-tanzu/velero v1.12.0
 ## explicit; go 1.20
 github.com/vmware-tanzu/velero/pkg/apis/velero/shared
@@ -218,6 +214,7 @@ go.uber.org/zap/zapcore
 go.uber.org/zap/zapgrpc
 # golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 ## explicit; go 1.20
+golang.org/x/exp/constraints
 golang.org/x/exp/maps
 # golang.org/x/mod v0.13.0
 ## explicit; go 1.18

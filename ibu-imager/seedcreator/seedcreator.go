@@ -13,8 +13,8 @@ import (
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
+	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
-	"github.com/thoas/go-funk"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -239,8 +239,8 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 		return err
 	}
 	s.log.Infof("Removing list of catalog images from full image list, catalog images to remove %s", catalogImages)
-	images = funk.FilterString(images, func(image string) bool {
-		return !funk.ContainsString(catalogImages, image)
+	images = lo.Filter(images, func(image string, index int) bool {
+		return !lo.Contains(catalogImages, image)
 	})
 
 	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
