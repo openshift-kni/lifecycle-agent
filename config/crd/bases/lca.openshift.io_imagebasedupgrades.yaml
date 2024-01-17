@@ -86,8 +86,6 @@ spec:
                   - namespace
                   type: object
                 type: array
-              rollbackTarget:
-                type: string
               seedImageRef:
                 description: SeedImageRef defines the seed image and OCP version for
                   the upgrade
@@ -196,15 +194,6 @@ spec:
               startedAt:
                 format: date-time
                 type: string
-              stateRoots:
-                items:
-                  description: StateRoot defines a list of saved pod states and the
-                    running OCP version when they are saved
-                  properties:
-                    version:
-                      type: string
-                  type: object
-                type: array
             type: object
         type: object
         x-kubernetes-validations:
