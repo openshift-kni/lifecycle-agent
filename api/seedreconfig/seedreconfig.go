@@ -48,9 +48,6 @@ type SeedReconfiguration struct {
 	// The desired hostname of the SNO node.
 	Hostname string `json:"hostname,omitempty"`
 
-	// Whether or not the cluster is using a mirror registry.
-	MirrorRegistryConfigured bool `json:"mirror_registry_configured,omitempty"`
-
 	// KubeconfigCryptoRetention contains all the crypto material that is
 	// required for recert to ensure existing kubeconfigs can be used to access
 	// the cluster after recert.
