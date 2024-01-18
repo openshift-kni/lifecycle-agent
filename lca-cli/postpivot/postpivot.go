@@ -83,6 +83,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("unsupported seed reconfiguration version %d", seedReconfiguration.APIVersion)
 	}
 
+	if err := utils.RunOnce("applyNMStateConfiguration", p.workingDir, p.log, p.applyNMStateConfiguration, seedReconfiguration); err != nil {
+		return err
+	}
+
 	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
 		return err
 	}
@@ -515,6 +519,24 @@ func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 			common.ManifestsDir, fmt.Sprintf(sshMachineConfig, role))); err != nil {
 			return fmt.Errorf("failed to marshal ssh key into file for role %s, err: %w", role, err)
 		}
+	}
+	return nil
+}
+
+// applyNMStateConfiguration is applying nmstate yaml provided as string in seedReconfiguration.
+// It uses nmstatectl apply <file> command that will return error in case configuration is not successful
+func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if seedReconfiguration.RawNMStateConfig == "" {
+		p.log.Infof("NMState config is empty, skipping")
+		return nil
+	}
+	nmFile := path.Join(p.workingDir, "nmstate.yaml")
+	p.log.Infof("Applying nmstate config %s", seedReconfiguration.RawNMStateConfig)
+	if err := os.WriteFile(nmFile, []byte(seedReconfiguration.RawNMStateConfig), 0o600); err != nil {
+		return fmt.Errorf("failed to write nmstate config to %s, err %w", nmFile, err)
+	}
+	if _, err := p.ops.RunInHostNamespace("nmstatectl", "apply", nmFile); err != nil {
+		return fmt.Errorf("failed to apply nmstate config %s, err: %w", seedReconfiguration.RawNMStateConfig, err)
 	}
 
 	return nil
