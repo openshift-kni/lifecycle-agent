@@ -11,9 +11,9 @@ import (
 	"github.com/go-logr/logr"
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -41,13 +41,13 @@ func getBootedStaterootIDFromRPMOstreeJson(path string) (string, error) {
 	return "", fmt.Errorf("failed finding booted stateroot")
 }
 
-// getVersionFromClusterInfoFile reads ClusterInfo file and returns the ocp version
-func getVersionFromClusterInfoFile(path string) (string, error) {
-	ci := &clusterinfo.ClusterInfo{}
+// getVersionFromSeedClusterInfoFile reads ClusterInfo file and returns the ocp version
+func getVersionFromSeedClusterInfoFile(path string) (string, error) {
+	ci := &seedclusterinfo.SeedClusterInfo{}
 	if err := utils.ReadYamlOrJSONFile(path, ci); err != nil {
 		return "", fmt.Errorf("failed to read and decode ClusterInfo file: %w", err)
 	}
-	return ci.Version, nil
+	return ci.SeedClusterOCPVersion, nil
 }
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
@@ -179,7 +179,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	}
 	seedBootedRef := strings.Split(seedBootedDeployment, ".")[0]
 
-	version, err := getVersionFromClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.ClusterInfoFileName))
+	version, err := getVersionFromSeedClusterInfoFile(filepath.Join(common.PathOutsideChroot(mountpoint), common.SeedClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get version from ClusterInfo: %w", err)
 	}

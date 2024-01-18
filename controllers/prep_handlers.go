@@ -32,6 +32,7 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -156,13 +157,13 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 		r.Log.Error(err, "Failed to get cluster registry")
 		return false, err
 	}
-	seedInfo, err := commonUtils.ReadClusterInfoFromFile(
+	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(common.GetDesiredStaterootName(ibu))))
 	if err != nil {
 		r.Log.Error(err, "Failed to read seed info")
 		return false, err
 	}
-	shouldOverrideRegistry, err := commonUtils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo)
+	shouldOverrideRegistry, err := commonUtils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
 	if err != nil {
 		return false, err
 	}
@@ -233,11 +234,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
 	}
 
-	osname := common.GetDesiredStaterootName(ibu)
-	certsDir := common.PathOutsideChroot(
-		filepath.Join(common.GetStaterootPath(osname), "/var/opt/openshift/certs"),
-	)
-	if err := commonUtils.BackupCertificates(ctx, r.Client, certsDir); err != nil {
+	if err := commonUtils.BackupKubeconfigCrypto(ctx, r.Client, common.GetStaterootCertsDir(ibu)); err != nil {
 		return fmt.Errorf("failed to backup cerificaties: %w", err)
 	}
 
@@ -425,6 +422,6 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 func getSeedManifestPath(osname string) string {
 	return filepath.Join(
 		common.GetStaterootPath(osname),
-		filepath.Join(common.SeedDataDir, common.ClusterInfoFileName),
+		filepath.Join(common.SeedDataDir, common.SeedClusterInfoFileName),
 	)
 }

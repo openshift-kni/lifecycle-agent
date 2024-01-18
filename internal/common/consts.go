@@ -42,9 +42,10 @@ const (
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
 	SeedDataDir                       = "/var/seed_data"
-	CertsDir                          = "certs"
+	KubeconfigCryptoDir               = "kubeconfig-crypto"
 	ClusterConfigDir                  = "cluster-configuration"
-	ClusterInfoFileName               = "manifest.json"
+	SeedClusterInfoFileName           = "manifest.json"
+	SeedReconfigurationFileName       = "manifest.json"
 	ManifestsDir                      = "manifests"
 	ExtraManifestsDir                 = "extra-manifests"
 	EtcdContainerName                 = "recert_etcd"
@@ -63,7 +64,7 @@ const (
 	InstallConfigCMNamespace = "kube-system"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
-	SeedFormatVersion  = 2
+	SeedFormatVersion  = 3
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 )
 

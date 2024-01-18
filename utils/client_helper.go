@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"path"
 	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/samber/lo"
@@ -17,9 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
 func GetSecretData(ctx context.Context, name, namespace, key string, client runtimeclient.Client) (string, error) {
@@ -50,46 +47,45 @@ func GetConfigMapData(ctx context.Context, name, namespace, key string, client r
 	return data, nil
 }
 
-func BackupCertificates(ctx context.Context, client runtimeclient.Client, certDir string) error {
-	if err := os.MkdirAll(certDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error creating %s: %w", certDir, err)
-	}
-
-	adminKubeConfigClientCA, err := GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt", client)
+func GetClusterName(ctx context.Context, client runtimeclient.Client) (string, error) {
+	installConfig, err := getInstallConfig(ctx, client)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("failed to get install config: %w", err)
 	}
-	if err := os.WriteFile(path.Join(certDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), 0o600); err != nil {
-		return err
-	}
-
-	for _, cert := range common.CertPrefixes {
-		servingSignerKey, err := GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key", client)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(path.Join(certDir, cert+".key"), []byte(servingSignerKey), 0o600); err != nil {
-			return err
-		}
-	}
-
-	ingressOperatorKey, err := GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key", client)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(certDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), 0o600); err != nil {
-		return err
-	}
-	return nil
+	return installConfig.Metadata.Name, nil
 }
 
-func CreateClusterInfo(ctx context.Context, client runtimeclient.Client) (*clusterinfo.ClusterInfo, error) {
+func GetClusterBaseDomain(ctx context.Context, client runtimeclient.Client) (string, error) {
+	installConfig, err := getInstallConfig(ctx, client)
+	if err != nil {
+		return "", fmt.Errorf("failed to get install config: %w", err)
+	}
+	return installConfig.BaseDomain, nil
+}
+
+type ClusterInfo struct {
+	OCPVersion               string
+	BaseDomain               string
+	ClusterName              string
+	ClusterID                string
+	NodeIP                   string
+	ReleaseRegistry          string
+	Hostname                 string
+	MirrorRegistryConfigured bool
+}
+
+func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
 	clusterVersion := &v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return nil, err
 	}
 
-	installConfig, err := getInstallConfig(ctx, client)
+	clusterName, err := GetClusterName(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	clusterBaseDomain, err := GetClusterBaseDomain(ctx, client)
 	if err != nil {
 		return nil, err
 	}
@@ -117,12 +113,12 @@ func CreateClusterInfo(ctx context.Context, client runtimeclient.Client) (*clust
 		return nil, err
 	}
 
-	return &clusterinfo.ClusterInfo{
-		ClusterName:              installConfig.Metadata.Name,
-		Domain:                   installConfig.BaseDomain,
-		Version:                  clusterVersion.Status.Desired.Version,
+	return &ClusterInfo{
+		ClusterName:              clusterName,
+		BaseDomain:               clusterBaseDomain,
+		OCPVersion:               clusterVersion.Status.Desired.Version,
 		ClusterID:                string(clusterVersion.Spec.ClusterID),
-		MasterIP:                 ip,
+		NodeIP:                   ip,
 		ReleaseRegistry:          releaseRegistry,
 		Hostname:                 hostname,
 		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
@@ -148,7 +144,16 @@ func getNodeHostname(node corev1.Node) (string, error) {
 	return "", fmt.Errorf("failed to find node hostname")
 }
 
-func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*clusterinfo.BasicInstallConfig, error) {
+type installConfigMetadata struct {
+	Name string `json:"name"`
+}
+
+type basicInstallConfig struct {
+	BaseDomain string                `json:"baseDomain"`
+	Metadata   installConfigMetadata `json:"metadata"`
+}
+
+func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*basicInstallConfig, error) {
 	cm := &corev1.ConfigMap{}
 	err := client.Get(ctx, types.NamespacedName{Name: common.InstallConfigCM, Namespace: common.InstallConfigCMNamespace}, cm)
 	if err != nil {
@@ -161,7 +166,7 @@ func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*cluste
 	}
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(data)), 4096)
-	instConf := &clusterinfo.BasicInstallConfig{}
+	instConf := &basicInstallConfig{}
 	if err := decoder.Decode(instConf); err != nil {
 		return nil, fmt.Errorf("failed to decode install config, err: %w", err)
 	}
@@ -189,9 +194,8 @@ func GetReleaseRegistry(ctx context.Context, client runtimeclient.Client) (strin
 
 	return strings.Split(deployment.Spec.Template.Spec.Containers[0].Image, "/")[0], nil
 }
-
-func ReadClusterInfoFromFile(path string) (*clusterinfo.ClusterInfo, error) {
-	data := &clusterinfo.ClusterInfo{}
+func ReadSeedReconfigurationFromFile(path string) (*seedreconfig.SeedReconfiguration, error) {
+	data := &seedreconfig.SeedReconfiguration{}
 	err := ReadYamlOrJSONFile(path, data)
 	return data, err
 }
@@ -225,7 +229,7 @@ func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient
 	return sourceRegistries, nil
 }
 
-func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, seedInfo *clusterinfo.ClusterInfo) (bool, error) {
+func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, mirrorRegistryConfigured bool, releaseRegistry string) (bool, error) {
 	mirroredRegistries, err := GetMirrorRegistrySourceRegistries(ctx, client)
 	if err != nil {
 		return false, err
@@ -233,9 +237,9 @@ func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client
 	isMirrorRegistryConfigured := len(mirroredRegistries) > 0
 
 	// if snoa doesn't have mirror registry but seed have we should try to override registry
-	if !isMirrorRegistryConfigured && seedInfo.MirrorRegistryConfigured {
+	if !isMirrorRegistryConfigured && mirrorRegistryConfigured {
 		return true, err
 	}
 
-	return !lo.Contains(mirroredRegistries, seedInfo.ReleaseRegistry), nil
+	return !lo.Contains(mirroredRegistries, releaseRegistry), nil
 }

@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -36,34 +37,34 @@ type RecertConfig struct {
 // CreateRecertConfigFile function to create recert config file
 // those params will be provided to an installation script after reboot
 // that will run recert command with them
-func CreateRecertConfigFile(clusterInfo, seedClusterInfo *clusterinfo.ClusterInfo, certsDir, recertConfigFolder string) error {
+func CreateRecertConfigFile(clusterInfo *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder string) error {
 	config := createBasicEmptyRecertConfig()
-	config.ClusterRename = fmt.Sprintf("%s:%s", clusterInfo.ClusterName, clusterInfo.Domain)
+	config.ClusterRename = fmt.Sprintf("%s:%s", clusterInfo.ClusterName, clusterInfo.BaseDomain)
 	config.SummaryFile = SummaryFile
-	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.Domain)
-	clusterFullDomain := fmt.Sprintf("%s.%s", clusterInfo.ClusterName, clusterInfo.Domain)
+	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
+	clusterFullDomain := fmt.Sprintf("%s.%s", clusterInfo.ClusterName, clusterInfo.BaseDomain)
 	config.ExtendExpiration = true
 	config.CNSanReplaceRules = []string{
-		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
-		fmt.Sprintf("%s,%s", seedClusterInfo.Hostname, clusterInfo.Hostname),
-		fmt.Sprintf("%s,%s", seedClusterInfo.MasterIP, clusterInfo.MasterIP),
+		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.SNOHostname, clusterInfo.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.SNOHostname, clusterInfo.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.NodeIP, clusterInfo.NodeIP),
 		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
 	}
 
-	if _, err := os.Stat(certsDir); err == nil {
-		ingressFile, ingressCN, err := getIngressCNAndFile(certsDir)
+	if _, err := os.Stat(cryptoDir); err == nil {
+		ingressFile, ingressCN, err := getIngressCNAndFile(cryptoDir)
 		if err != nil {
 			return err
 		}
 		config.UseKeyRules = []string{
-			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", certsDir),
-			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", certsDir),
-			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", certsDir),
-			fmt.Sprintf("%s %s/%s", ingressCN, certsDir, ingressFile),
+			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", cryptoDir),
+			fmt.Sprintf("%s %s/%s", ingressCN, cryptoDir, ingressFile),
 		}
-		config.UseCertRules = []string{filepath.Join(certsDir, "admin-kubeconfig-client-ca.crt")}
+		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
 	}
 
 	return utils.MarshalToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))

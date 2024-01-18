@@ -20,9 +20,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/clusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -45,7 +45,6 @@ type SeedCreator struct {
 	authFile             string
 	recertContainerImage string
 	recertSkipValidation bool
-	manifestClient       *clusterinfo.InfoClient
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
@@ -63,7 +62,6 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 		authFile:             authFile,
 		recertContainerImage: recertContainerImage,
 		recertSkipValidation: recertSkipValidation,
-		manifestClient:       clusterinfo.NewClusterInfoClient(client),
 	}
 }
 
@@ -103,7 +101,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
 		s.log.Info("Backing up seed cluster certificates for recert tool")
-		if err := utils.BackupCertificates(ctx, s.client, common.BackupCertsDir); err != nil {
+		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
 			return err
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
@@ -190,27 +188,29 @@ func (s *SeedCreator) handleServices() error {
 
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	s.log.Info("Saving seed cluster configuration")
-	clusterManifest, err := utils.CreateClusterInfo(ctx, s.client)
+	clusterInfo, err := utils.GetClusterInfo(ctx, s.client)
 	if err != nil {
 		return err
 	}
+
+	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage)
+
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
 	}
 
-	s.log.Info("Creating manifest.json")
-	if err := utils.MarshalToFile(clusterManifest, path.Join(common.SeedDataDir, common.ClusterInfoFileName)); err != nil {
+	s.log.Infof("Creating seed information file in %s", common.SeedClusterInfoFileName)
+	if err := utils.MarshalToFile(seedClusterInfo, path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)); err != nil {
 		return err
 	}
 
 	// in order to allow lca to verify version we need to provide file not as part of var archive too
-	if err := cp.Copy(path.Join(common.SeedDataDir, common.ClusterInfoFileName), path.Join(s.backupDir,
-		common.ClusterInfoFileName)); err != nil {
+	if err := cp.Copy(path.Join(common.SeedDataDir, common.SeedClusterInfoFileName), path.Join(s.backupDir,
+		common.SeedClusterInfoFileName)); err != nil {
 		return err
 	}
 
-	return s.renderInstallationEnvFile(s.recertContainerImage,
-		fmt.Sprintf("%s.%s", clusterManifest.ClusterName, clusterManifest.Domain))
+	return nil
 }
 
 func (s *SeedCreator) createContainerList(ctx context.Context) error {
@@ -460,19 +460,6 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	}
 	s.log.Info("Backup of .origin created successfully.")
 	return nil
-}
-
-func (s *SeedCreator) renderInstallationEnvFile(recertContainerImage, seedFullDomain string) error {
-	// Define source and destination file paths
-	srcFile := filepath.Join(common.InstallationConfigurationFilesDir, "conf/installation-configuration.env")
-	destFile := "/etc/systemd/system/installation-configuration.env"
-	// Prepare variable substitutions for template files
-	substitutions := map[string]any{
-		"RecertContainerImage": recertContainerImage,
-		"SeedFullDomain":       seedFullDomain,
-	}
-
-	return utils.RenderTemplateFile(srcFile, substitutions, destFile, 0o600)
 }
 
 func (s *SeedCreator) deleteNode(ctx context.Context) error {

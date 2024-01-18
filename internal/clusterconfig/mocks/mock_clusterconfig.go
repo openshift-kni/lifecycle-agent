@@ -41,29 +41,29 @@ func (m *MockUpgradeClusterConfigGatherer) EXPECT() *MockUpgradeClusterConfigGat
 }
 
 // FetchClusterConfig mocks base method.
-func (m *MockUpgradeClusterConfigGatherer) FetchClusterConfig(ctx context.Context, ostreeDir string) error {
+func (m *MockUpgradeClusterConfigGatherer) FetchClusterConfig(ctx context.Context, ostreeVarDir string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchClusterConfig", ctx, ostreeDir)
+	ret := m.ctrl.Call(m, "FetchClusterConfig", ctx, ostreeVarDir)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FetchClusterConfig indicates an expected call of FetchClusterConfig.
-func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchClusterConfig(ctx, ostreeDir any) *gomock.Call {
+func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchClusterConfig(ctx, ostreeVarDir any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchClusterConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchClusterConfig), ctx, ostreeDir)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchClusterConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchClusterConfig), ctx, ostreeVarDir)
 }
 
 // FetchLvmConfig mocks base method.
-func (m *MockUpgradeClusterConfigGatherer) FetchLvmConfig(ctx context.Context, ostreeDir string) error {
+func (m *MockUpgradeClusterConfigGatherer) FetchLvmConfig(ctx context.Context, ostreeVarDir string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchLvmConfig", ctx, ostreeDir)
+	ret := m.ctrl.Call(m, "FetchLvmConfig", ctx, ostreeVarDir)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FetchLvmConfig indicates an expected call of FetchLvmConfig.
-func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchLvmConfig(ctx, ostreeDir any) *gomock.Call {
+func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchLvmConfig(ctx, ostreeVarDir any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchLvmConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchLvmConfig), ctx, ostreeDir)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchLvmConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchLvmConfig), ctx, ostreeVarDir)
 }
