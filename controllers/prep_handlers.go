@@ -344,7 +344,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		msg := "Prep completed successfully"
 		status, err := r.Precache.QueryJobStatus(ctx)
 		if err == nil && status != nil && status.Message != "" {
-			msg += fmt.Sprintf(": %s", status.Message)
+			r.Log.Info(msg, "summary", status.Message)
 		}
 		r.PrepTask.Progress = msg
 
