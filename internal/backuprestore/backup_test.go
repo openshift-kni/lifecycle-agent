@@ -184,6 +184,100 @@ func newUnstructuredWithLabel(apiVersion, kind, namespace, name, label, value st
 	}
 }
 
+func TestCleanupBackupLabels(t *testing.T) {
+	testcases := []struct {
+		name           string
+		annotationObjs []ObjMetadata
+	}{
+		{
+			name: "no annotations",
+		},
+		{
+			name: "one namespaced obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "namespace", Name: "name",
+				},
+			},
+		},
+		{
+			name: "one cluster obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+		{
+			name: "two cluster obj",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name2",
+				},
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+		{
+			name: "one cluster obj, one namespaced",
+			annotationObjs: []ObjMetadata{
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "namespace", Name: "name",
+				},
+				{
+					Group: "group", Version: "version", Resource: "resources", Namespace: "", Name: "name",
+				},
+			},
+		},
+	}
+	for _, tc := range testcases {
+		sch := apiruntime.NewScheme()
+		objs := []runtime.Object{
+			newUnstructuredWithLabel("group/version", "resource", "namespace", "name", backupLabel, "true"),
+			newUnstructuredWithLabel("group/version", "resource", "", "name", backupLabel, "true"),
+			newUnstructuredWithLabel("group/version", "resource", "", "name2", backupLabel, "true"),
+		}
+		client := dynamicfake.NewSimpleDynamicClient(sch, objs...)
+		handler := &BRHandler{
+			Client:        nil,
+			DynamicClient: client,
+			Log:           ctrl.Log.WithName("BackupRestore"),
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			backup := fakeBackupCr("a", "1", "b")
+			var objStrings []string
+			for _, obj := range tc.annotationObjs {
+				v := fmt.Sprintf("%s/%s/%s/", obj.Group, obj.Version, obj.Resource)
+				if obj.Namespace != "" {
+					v += obj.Namespace + "/" + obj.Name
+				} else {
+					v += obj.Name
+				}
+				objStrings = append(objStrings, v)
+			}
+			backup.Annotations[applyLabelAnn] = strings.Join(objStrings, ",")
+			err := handler.cleanupBackupLabels(context.TODO(), backup)
+			assert.NoError(t, err)
+			for _, meta := range tc.annotationObjs {
+				var get *unstructured.Unstructured
+				var err error
+				if meta.Namespace == "" {
+					get, err = client.Resource(schema.GroupVersionResource{
+						Group: meta.Group, Version: meta.Version, Resource: meta.Resource,
+					}).Get(context.TODO(), meta.Name, metav1.GetOptions{})
+				} else {
+					get, err = client.Resource(schema.GroupVersionResource{
+						Group: meta.Group, Version: meta.Version, Resource: meta.Resource,
+					}).Namespace(meta.Namespace).Get(context.TODO(), meta.Name, metav1.GetOptions{})
+				}
+				assert.Equal(t, get.GetLabels(), map[string]string{})
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestApplyBackupLabels(t *testing.T) {
 	testcases := []struct {
 		name           string

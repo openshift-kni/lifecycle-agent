@@ -207,14 +207,36 @@ func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Back
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
 	}
+	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
 	for _, obj := range objs {
-		err := patchBackupLabelToObj(ctx, h.DynamicClient, &obj, false)
+		err := patchObj(ctx, h.DynamicClient, &obj, false, payload)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to apply backup label on object name:%s namespace:%s resource:%s group:%s version:%s err:%w",
+				obj.Name, obj.Namespace, obj.Resource, obj.Group, obj.Version, err)
 		}
 	}
 	if len(objs) != 0 {
 		setBackupLabelSelector(backup)
+	}
+	return nil
+}
+
+func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Backup) error {
+	h.Log.Info("start clean up backup for something")
+	objs, err := getObjsFromAnnotations(backup)
+	if err != nil {
+		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
+	}
+	// json patch escape info: https://jsonpatch.com/#json-pointer
+	escaped := strings.Replace(backupLabel, "/", "~1", 1)
+	payload := []byte(fmt.Sprintf(`[{"op":"remove","path":"/metadata/labels/%s"}]`, escaped))
+	for _, obj := range objs {
+		h.Log.Info("clean up back label for obj")
+		err := patchObj(ctx, h.DynamicClient, &obj, false, payload)
+		if err != nil {
+			h.Log.Error(err, "failed to remove backup label", "name", obj.Name, "namespace", obj.Namespace,
+				"resource", obj.Resource, "group", obj.Group, "version", obj.Version)
+		}
 	}
 	return nil
 }
@@ -493,9 +515,17 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
 	}
 
+	for _, backup := range backupList.Items {
+		err := h.cleanupBackupLabels(ctx, &backup)
+		if err != nil {
+			h.Log.Error(err, "failed to clean backup labels")
+		}
+	}
+
 	// Ensure all backups are deleted
 	return h.ensureBackupsDeleted(ctx, backupList.Items)
 }
+
 func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) (bool, error) {
 	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
 		func(ctx context.Context) (bool, error) {
