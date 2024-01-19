@@ -14,6 +14,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	mock_backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore/mocks"
 	mock_clusterconfig "github.com/openshift-kni/lifecycle-agent/internal/clusterconfig/mocks"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	mock_extramanifest "github.com/openshift-kni/lifecycle-agent/internal/extramanifest/mocks"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
@@ -321,23 +322,24 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		ibu lcav1alpha1.ImageBasedUpgrade
 	}
 	tests := []struct {
-		name                                        string
-		args                                        args
-		getSortedBackupsFromConfigmapReturn         func() ([][]*velerov1.Backup, error)
-		getStartOrTrackBackupReturn                 func() (*backuprestore.BackupTracker, error)
-		remountSysrootReturn                        func() error
-		exportOadpConfigurationToDirReturn          func() error
-		exportRestoresToDirReturn                   func() error
-		exportExtraManifestToDirReturn              func() error
-		fetchClusterConfigReturn                    func() error
-		fetchLvmConfigReturn                        func() error
-		exportIBUCRNew                              bool
-		exportIBUCROrig                             bool
-		rebootToNewStateRootReturn                  func() (string, error)
-		isOstreeAdminSetDefaultFeatureEnabledReturn *bool
-		want                                        controllerruntime.Result
-		wantErr                                     assert.ErrorAssertionFunc
-		wantConditions                              []metav1.Condition
+		name                                            string
+		args                                            args
+		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
+		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
+		remountSysrootReturn                            func() error
+		exportOadpConfigurationToDirReturn              func() error
+		exportRestoresToDirReturn                       func() error
+		exportExtraManifestToDirReturn                  func() error
+		extractAndExportManifestFromPoliciesToDirReturn func() error
+		fetchClusterConfigReturn                        func() error
+		fetchLvmConfigReturn                            func() error
+		exportIBUCRNew                                  bool
+		exportIBUCROrig                                 bool
+		rebootToNewStateRootReturn                      func() (string, error)
+		isOstreeAdminSetDefaultFeatureEnabledReturn     *bool
+		want                                            controllerruntime.Result
+		wantErr                                         assert.ErrorAssertionFunc
+		wantConditions                                  []metav1.Condition
 	}{
 		{
 			name: "backup failed request no requeue",
@@ -559,6 +561,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			exportRestoresToDirReturn: func() error {
 				return nil
 			},
+			extractAndExportManifestFromPoliciesToDirReturn: func() error {
+				return nil
+			},
 			exportExtraManifestToDirReturn: func() error {
 				return fmt.Errorf("any error")
 			},
@@ -588,6 +593,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil
 			},
 			exportRestoresToDirReturn: func() error {
+				return nil
+			},
+			extractAndExportManifestFromPoliciesToDirReturn: func() error {
 				return nil
 			},
 			exportExtraManifestToDirReturn: func() error {
@@ -622,6 +630,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil
 			},
 			exportRestoresToDirReturn: func() error {
+				return nil
+			},
+			extractAndExportManifestFromPoliciesToDirReturn: func() error {
 				return nil
 			},
 			exportExtraManifestToDirReturn: func() error {
@@ -673,6 +684,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.exportRestoresToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
+			}
+			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
+				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
 			}
 			if tt.exportExtraManifestToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExportExtraManifestToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportExtraManifestToDirReturn()).Times(1)
@@ -766,13 +780,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 }
 
 func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
-
 	var (
 		mockController    = gomock.NewController(t)
 		mockExtramanifest = mock_extramanifest.NewMockEManifestHandler(mockController)
 		mockBackuprestore = mock_backuprestore.NewMockBackuperRestorer(mockController)
 	)
-
 	defer func() {
 		mockController.Finish()
 	}()
@@ -794,6 +806,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		wantErr                           assert.ErrorAssertionFunc
 		checkHealthReturn                 func(c client.Reader, l logr.Logger) error
 		applyExtraManifestsReturn         func() error
+		applyPolicyManifestsReturn        func() error
 		restoreOadpConfigurationsReturn   func() error
 		loadRestoresFromOadpRestoreReturn func() ([][]*velerov1.Restore, error)
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
@@ -827,6 +840,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
 				return nil
 			},
+			applyPolicyManifestsReturn: func() error {
+				return nil
+			},
 			applyExtraManifestsReturn: func() error {
 				return extramanifest.NewEMFailedError("Test error EM")
 			},
@@ -850,6 +866,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			name: "RestoreOadpConfigurations return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+				return nil
+			},
+			applyPolicyManifestsReturn: func() error {
 				return nil
 			},
 			applyExtraManifestsReturn: func() error {
@@ -878,6 +897,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			name: "handleRestore with restore error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+				return nil
+			},
+			applyPolicyManifestsReturn: func() error {
 				return nil
 			},
 			applyExtraManifestsReturn: func() error {
@@ -914,6 +936,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
 				return nil
 			},
+			applyPolicyManifestsReturn: func() error {
+				return nil
+			},
 			applyExtraManifestsReturn: func() error {
 				return nil
 			},
@@ -941,6 +966,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
+
 		t.Run(tt.name, func(t *testing.T) {
 			uh := &UpgHandler{
 				Client:        nil,
@@ -956,8 +982,11 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 
 			CheckHealth = tt.checkHealthReturn
 
+			if tt.applyPolicyManifestsReturn != nil {
+				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.PolicyManifestPath)).Return(tt.applyPolicyManifestsReturn()).Times(1)
+			}
 			if tt.applyExtraManifestsReturn != nil {
-				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), gomock.Any()).Return(tt.applyExtraManifestsReturn()).Times(1)
+				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.ExtraManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
 			if tt.restoreOadpConfigurationsReturn != nil {
 				mockBackuprestore.EXPECT().RestoreOadpConfigurations(gomock.Any()).Return(tt.restoreOadpConfigurationsReturn()).Times(1)

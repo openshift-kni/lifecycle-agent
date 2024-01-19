@@ -21,9 +21,11 @@ require (
 	k8s.io/api v0.28.2
 	k8s.io/apiextensions-apiserver v0.28.2
 	k8s.io/apimachinery v0.28.2
-	k8s.io/client-go v0.28.2
+	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/code-generator v0.28.2
 	open-cluster-management.io/api v0.12.0
+	open-cluster-management.io/config-policy-controller v0.12.0
+	open-cluster-management.io/governance-policy-propagator v0.12.0
 	sigs.k8s.io/controller-runtime v0.16.1
 	sigs.k8s.io/yaml v1.4.0
 )
@@ -48,7 +50,6 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/pprof v0.0.0-20230323073829-e72429f035bd // indirect
 	github.com/google/uuid v1.3.1 // indirect
 	github.com/imdario/mergo v0.3.16 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -93,8 +94,11 @@ require (
 	k8s.io/klog/v2 v2.100.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
+	open-cluster-management.io/multicloud-operators-subscription v0.11.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 )
+
+replace k8s.io/client-go => k8s.io/client-go v0.28.2
 
 //replace github.com/vmware-tanzu/velero => github.com/openshift/velero v0.10.2-0.20231002153713-b470b0211e1f

@@ -64,6 +64,8 @@ type (
 	}
 )
 
+const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
+
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
@@ -148,6 +150,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
+	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, labels, staterootVarPath); err != nil {
+		return requeueWithError(err)
+	}
+
 	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
@@ -231,6 +238,15 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	}
 
 	// Applying extra manifests
+	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
+	if err != nil {
+		if extramanifest.IsEMFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
+		return requeueWithError(err)
+	}
+
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {

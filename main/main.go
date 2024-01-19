@@ -69,6 +69,8 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
+	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -95,6 +97,8 @@ func init() {
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
+	utilruntime.Must(policyv1.AddToScheme(scheme))
+	utilruntime.Must(policiesv1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }
