@@ -209,7 +209,6 @@ func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		NodeIP:                    clusterInfo.NodeIP,
 		ReleaseRegistry:           clusterInfo.ReleaseRegistry,
 		Hostname:                  clusterInfo.Hostname,
-		MirrorRegistryConfigured:  clusterInfo.MirrorRegistryConfigured,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
 	}
 }
