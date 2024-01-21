@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -234,15 +235,10 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 		return err
 	}
 	images := strings.Split(output, "\n")
-	catalogImages, err := s.getCatalogImages(ctx)
+	images, err = s.filterCatalogImages(ctx, images)
 	if err != nil {
 		return err
 	}
-	s.log.Infof("Removing list of catalog images from full image list, catalog images to remove %s", catalogImages)
-	images = lo.Filter(images, func(image string, index int) bool {
-		return !lo.Contains(catalogImages, image)
-	})
-
 	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
 	images = append(images, s.recertContainerImage)
 
@@ -500,9 +496,21 @@ func (s *SeedCreator) waitTillOvnKubeNodeIsDown(ctx context.Context) {
 	defer deadlineCancel()
 }
 
-func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {
+// filterCatalogImages filters catalog source images as catalog sources have pull always policy
+// and there is no point to precache them.
+// List of catalog images are taken from catalog sources that are currently configured on cluster and known ocp ones.
+// Filtering known images will allow us to fix the case where those images were pulled in seed
+// and after it their catalog sources were removed but images are still part of podman images output as we create seed
+func (s *SeedCreator) filterCatalogImages(ctx context.Context, images []string) ([]string, error) {
+	// Regex matches list of known catalog images, there are 4 of them at least in 4.15
+	// registry.redhat.io/redhat/community-operator-index:v4.15
+	// registry.redhat.io/redhat/redhat-operator-index:v4.15
+	// registry.redhat.io/redhat/certified-operator-index:v4.15
+	// registry.redhat.io/redhat/redhat-marketplace-index:v4.15
+	defaultCatalogsRegex := regexp.MustCompile(`^registry\.redhat\.io/redhat/.+-index:.+`)
 	s.log.Info("Searching for catalog sources")
-	var images []string
+	var catalogImages []string
+
 	catalogSources := &operatorsv1alpha1.CatalogSourceList{}
 	allNamespaces := runtime.ListOptions{Namespace: metav1.NamespaceAll}
 	if err := s.client.List(ctx, catalogSources, &allNamespaces); err != nil {
@@ -510,8 +518,14 @@ func (s *SeedCreator) getCatalogImages(ctx context.Context) ([]string, error) {
 	}
 
 	for _, catalogSource := range catalogSources.Items {
-		images = append(images, catalogSource.Spec.Image)
+		catalogImages = append(catalogImages, catalogSource.Spec.Image)
 	}
+
+	s.log.Infof("Removing list of catalog images from full image list, catalog images to remove %s", catalogImages)
+	images = lo.Filter(images, func(image string, _ int) bool {
+		// removing found catalog images + defaults
+		return !lo.Contains(catalogImages, image) && !defaultCatalogsRegex.MatchString(image)
+	})
 
 	return images, nil
 }
