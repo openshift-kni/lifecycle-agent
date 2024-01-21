@@ -59,16 +59,6 @@ if [[ -d "${NETWORK_CONFIG_PATH}"/system-connections ]]; then
 fi
 
 CLUSTER_CONFIG_FILE="${CONFIG_PATH}"/manifest.json
-NEW_CLUSTER_NAME=$(jq -r '.cluster_name' "${CLUSTER_CONFIG_FILE}")
-NEW_BASE_DOMAIN=$(jq -r '.domain' "${CLUSTER_CONFIG_FILE}")
-NEW_HOST_IP=$(jq -r '.master_ip' "${CLUSTER_CONFIG_FILE}")
-
-cat << EOF > /etc/default/sno_dnsmasq_configuration_overrides
-SNO_CLUSTER_NAME_OVERRIDE=${NEW_CLUSTER_NAME}
-SNO_BASE_DOMAIN_OVERRIDE=${NEW_BASE_DOMAIN}
-SNO_DNSMASQ_IP_OVERRIDE=${NEW_HOST_IP}
-EOF
-
 NEW_HOSTNAME=$(jq -r '.hostname' "${CLUSTER_CONFIG_FILE}")
 echo ${NEW_HOSTNAME} > /etc/hostname
 

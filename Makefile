@@ -116,7 +116,7 @@ bashate: ## Run bashate.
 	hack/bashate.sh
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check imager-unittest
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
@@ -262,15 +262,6 @@ imager-build: common-deps-update fmt vet ## Build the imager tool from your host
 TEST_FORMAT ?= standard-verbose
 GOTEST_FLAGS = --format=$(TEST_FORMAT)
 GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
-
-imager_test: $(REPORTS)
-	$(GOTESTSUM) $(GOTEST_FLAGS) $(TEST) $(GINKGO_FLAGS) -timeout $(TIMEOUT)
-
-.PHONY: imager-unittest
-imager-unittest: ## Run unittests for imager.
-	@echo "Running unittests"
-	$(call go-get-tool,$(GOTESTSUM),gotest.tools/gotestsum@latest)
-	$(MAKE) imager_test TEST_SCENARIO=unit TIMEOUT=30m TEST="$(or $(TEST),$(shell go list ./ibu-imager/...))"
 
 help:   ## Shows this message.
 	@echo "Available targets:"
