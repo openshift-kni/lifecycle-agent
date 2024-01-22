@@ -21,8 +21,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/sirupsen/logrus"
 )
@@ -61,7 +61,7 @@ func NewSeedRestoration(log *logrus.Logger, ops ops.Ops, backupDir,
 	}
 }
 
-// CleanupSeedCluster comprises the Imager workflow for cleanup operations after creating a seed image
+// CleanupSeedCluster comprises the lca-cli workflow for cleanup operations after creating a seed image
 // out of an SNO cluster.
 func (s *SeedRestoration) CleanupSeedCluster() error {
 	s.log.Info("Cleaning up seed cluster")

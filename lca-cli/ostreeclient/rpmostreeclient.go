@@ -24,7 +24,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
 // Status summarizes the current worldview of the rpm-ostree daemon.

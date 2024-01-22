@@ -19,9 +19,9 @@ package cmd
 import (
 	"context"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/postpivot"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/postpivot"
 	"github.com/spf13/cobra"
 )
 

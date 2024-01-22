@@ -5,7 +5,7 @@ After=prepare-installation-configuration.service NetworkManager-wait-online.serv
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/ibu-imager post-pivot
+ExecStart=/usr/local/bin/lca-cli post-pivot
 
 Restart=on-failure
 RestartSec=5s

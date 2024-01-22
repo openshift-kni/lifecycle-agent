@@ -25,8 +25,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
 // MaxRetries is the max number of retries for pulling an image before marking it as failed

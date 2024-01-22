@@ -18,7 +18,7 @@ The Lifecycle Agent provides orchestration of IBU Seed Image generation via the 
 
 - Perform system configuration checks to ensure any required configuration is present.
 - Perform any necessary system cleanup prior to generating the seed image.
-- Launch the ibu-imager tool, which will:
+- Launch the lca-cli tool, which will:
   - Shutdown the cluster operators
   - Prepare seed image config
   - Generate and publish the seed image
@@ -299,10 +299,10 @@ First, the orchestrator will run its system config validation checks to ensure t
 
 *TODO*: Provide example of CR with rejection message.
 
-After the system config has been validated successfully, the orchestor will perform any necessary cleanup and launch the ibu-imager tool to generate and publish the image.
+After the system config has been validated successfully, the orchestor will perform any necessary cleanup and launch the lca-cli tool to generate and publish the image.
 
 > [!WARNING]  
-> As part of preparing the generate the seed image, the ibu-imager will shut down all running operators and pods. Once the ibu-imager is complete, it will restart kubelet to trigger recovery of the operators.
+> As part of preparing the generate the seed image, the lca-cli will shut down all running operators and pods. Once the lca-cli is complete, it will restart kubelet to trigger recovery of the operators.
 
 ### Monitoring Progress
 
@@ -312,15 +312,15 @@ LCA Operator logs:
 oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/component=lifecycle-agent --container manager --follow
 ```
 
-Once the ibu-imager is launched, you can SSH to the seed SNO and monitor the container logs by running the following:
+Once the lca-cli is launched, you can SSH to the seed SNO and monitor the container logs by running the following:
 
 ```console
-podman logs -f ibu_imager
+podman logs -f lca_image_builder
 ```
 
 ## ACM and ZTP GitOps Considerations
 
-If you provide a `hubKubeconfig` in your `seedgen` `Secret`, the orchestrator will interact with the hub to verify whether the `ManagedCluster` exists for the seed SNO. If it exists, the orchestrator will detach the cluster from ACM by deleting the `ManagedCluster`, saving the CR to be restored as part of post-imager recovery.
+If you provide a `hubKubeconfig` in your `seedgen` `Secret`, the orchestrator will interact with the hub to verify whether the `ManagedCluster` exists for the seed SNO. If it exists, the orchestrator will detach the cluster from ACM by deleting the `ManagedCluster`, saving the CR to be restored as part of the recovery.
 
 > [!WARNING]  
 > When the orchestrator deletes the `ManagedCluster`, ArgoCD will mark the site-config "out of sync". If you have the `selfHeal` option enabled in ArgoCD, it will automatically sync and recreate the CR, triggering ACM to reimport the seed SNO while it is preparing to generate the image. This means you must drop the site-config in gitops prior to triggering the seed image generation, rather than providing the `hubKubeconfig`. Similarly, if you are using a shared hub, a sync could be triggered by someone else.

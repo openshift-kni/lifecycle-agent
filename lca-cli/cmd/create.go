@@ -29,11 +29,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedcreator"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedrestoration"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedcreator"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedrestoration"
 )
 
 var (
@@ -87,7 +87,7 @@ func create() error {
 
 	hostCommandsExecutor := ops.NewNsenterExecutor(log, true)
 	op := ops.NewOps(log, hostCommandsExecutor)
-	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
+	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 
 	if !skipCleanup {
 		defer func() {

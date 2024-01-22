@@ -1,4 +1,4 @@
-# IBU Imager
+# LCA CLI
 
 This application will assist users to easily create an OCI seed image for the Image-Based Upgrade (IBU) workflow, using
 a simple CLI.
@@ -20,7 +20,7 @@ upgrading and reconfiguration times.
 
 ### What does this tool do?
 
-The purpose of the `ibu-imager` tool is to assist in the creation of IBU seed images, which are used later on by
+The purpose of the `lca-cli` tool is to assist in the creation of IBU seed images, which are used later on by
 other components (e.g., [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent)) during an image-based
 upgrade procedure.
 
@@ -37,49 +37,44 @@ In that direction, the tool does the following at a high level:
 Building the binary locally.
 
 ```shell
--> make imager-build 
+-> make cli-build 
 go mod tidy
 Running go fmt
 go fmt ./...
 Running go vet
 go vet ./...
-go build -o bin/ibu-imager main/ibu-imager/main.go
+go build -o bin/lca-cli main/lca-cli/main.go
 ```
 
-> **Note:** The binary can be found in `./bin/ibu-imager`.
+> **Note:** The binary can be found in `./bin/lca-cli`.
 
 ### Running the tool's help
 
 To see the tool's help on your local host, run the following command:
 
 ```shell
--> ./bin/ibu-imager -h
+-> ./bin/lca-cli -h
+lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
 
- ___ ____  _   _            ___
-|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __
- | ||  _ \| | | |   _____   | ||  _   _ \ / _  |/ _  |/ _ \ '__|
- | || |_) | |_| |  |_____|  | || | | | | | (_| | (_| |  __/ |
-|___|____/ \___/           |___|_| |_| |_|\__,_|\__, |\___|_|
-                                                |___/
-
- A tool to assist in building OCI seed images for Image Based Upgrades (IBU)
-
+  Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
+        
 Usage:
-  ibu-imager [command]
+  lca-cli [command]
 
 Available Commands:
   completion  Generate the autocompletion script for the specified shell
   create      Create OCI image and push it to a container registry.
   help        Help about any command
+  ibi         prepare ibi
   post-pivot  post pivot configuration
   restore     Restore seed cluster configurations
 
 Flags:
-  -h, --help       help for ibu-imager
+  -h, --help       help for lca-cli
   -c, --no-color   Control colored output
   -v, --verbose    Display verbose logs
 
-Use "ibu-imager [command] --help" for more information about a command.
+Use "lca-cli [command] --help" for more information about a command.
 ```
 
 ### Running as a container
@@ -99,18 +94,13 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
     -v /var/run:/var/run \
     -v /run/systemd/journal/socket:/run/systemd/journal/socket \
     -v ${AUTHFILE}:${AUTHFILE} \
-    --entrypoint ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
+    --entrypoint lca-cli ${LCA_IMAGE} create --authfile ${AUTHFILE} \
                                                  --image ${SEED_IMG_REFSPEC} \
                                                  --recert-image ${IMG_RECERT_TOOL}
 
- ___ ____  _   _            ___
-|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __
- | ||  _ \| | | |   _____   | ||  _   _ \ / _  |/ _  |/ _ \ '__|
- | || |_) | |_| |  |_____|  | || | | | | | (_| | (_| |  __/ |
-|___|____/ \___/           |___|_| |_| |_|\__,_|\__, |\___|_|
-                                                |___/
+lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
 
- A tool to assist building OCI seed images for Image Based Upgrades (IBU)
+  Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
 
 time="2023-11-28 11:50:12" level=info msg="OCI image creation has started"
 time="2023-11-28 11:50:12" level=info msg="Creating seed image"
@@ -128,5 +118,5 @@ time="2023-11-28 11:56:37" level=info msg="Seed cluster restored successfully!"
 Notice that the `--recert-image` flag is optional (mainly used in disconnected environments), if not provided the
 tool will use `quay.io/edge-infrastructure/recert:latest` as the default recert image.
 
-> **Note:** For a disconnected environment, first mirror the `ibu-imager` and `recert` container images to your local 
+> **Note:** For a disconnected environment, first mirror the `lca-cli` and `recert` container images to your local
 > registry using [skopeo](https://github.com/containers/skopeo) or a similar tool.

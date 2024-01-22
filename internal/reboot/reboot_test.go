@@ -3,7 +3,7 @@ package reboot
 import (
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"go.uber.org/mock/gomock"
 	"testing"
 )

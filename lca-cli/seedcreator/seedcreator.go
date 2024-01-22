@@ -21,10 +21,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -66,7 +66,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 	}
 }
 
-// CreateSeedImage comprises the Imager workflow for creating a single OCI seed image
+// CreateSeedImage comprises the lca-cli workflow for creating a single OCI seed image
 func (s *SeedCreator) CreateSeedImage() error {
 	s.log.Info("Creating seed image")
 	ctx := context.TODO()
@@ -80,8 +80,8 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return err
 	}
 
-	s.log.Info("Copy ibu-imager binary")
-	err := cp.Copy("/usr/local/bin/ibu-imager", "/var/usrlocal/bin/ibu-imager", cp.Options{AddPermission: os.FileMode(0o777)})
+	s.log.Info("Copy lca-cli binary")
+	err := cp.Copy("/usr/local/bin/lca-cli", "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
 		return err
 	}

@@ -22,9 +22,9 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"go.uber.org/mock/gomock"
 )
 

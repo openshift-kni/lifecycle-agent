@@ -28,9 +28,9 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
@@ -72,11 +72,11 @@ var (
 	lcaImage               string
 	seedgenAuthFile        = filepath.Join(utils.SeedgenWorkspacePath, "auth.json")
 	storedManagedClusterCR = filepath.Join(utils.SeedgenWorkspacePath, "managedcluster.json")
-	imagerContainerName    = "ibu_imager"
+	lcaCliContainerName    = "lca_image_builder"
 )
 
 const (
-	EnvSkipRecert = "SEEDGEN_IMAGER_SKIP_RECERT"
+	EnvSkipRecert = "SEEDGEN_SKIP_RECERT"
 )
 
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators,verbs=get;list;watch;create;update;patch;delete
@@ -393,9 +393,9 @@ func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string
 	return
 }
 
-// Delete the previous imager container, if it exists
-func (r *SeedGeneratorReconciler) rmPreviousImagerContainer() error {
-	_, err := r.Executor.Execute("podman", "rm", "-i", "-f", imagerContainerName)
+// Delete the previous lca-cli container, if it exists
+func (r *SeedGeneratorReconciler) rmPreviousLCACliContainer() error {
+	_, err := r.Executor.Execute("podman", "rm", "-i", "-f", lcaCliContainerName)
 	if err != nil {
 		return fmt.Errorf("failed to run podman rm command: %w", err)
 	}
@@ -424,9 +424,9 @@ func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1alph
 	return nil
 }
 
-// Launch a container to run the ibu-imager
-func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGenerator) error {
-	r.Log.Info("Launching ibu-imager")
+// Launch a container to run the lca-cli
+func (r *SeedGeneratorReconciler) launchLCACli(seedgen *seedgenv1alpha1.SeedGenerator) error {
+	r.Log.Info("Launching lca-cli")
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
 	skipRecert := false
@@ -436,13 +436,13 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 		r.Log.Info(fmt.Sprintf("Skipping recert validation because %s=%s", EnvSkipRecert, skipRecertEnvValue))
 	}
 
-	imagerCmdArgs := []string{
+	lcaCliCmdArgs := []string{
 		"podman", "run", "--privileged", "--pid=host",
-		fmt.Sprintf("--name=%s", imagerContainerName),
+		fmt.Sprintf("--name=%s", lcaCliContainerName),
 		"--replace", "--net=host",
 		"-v", "/etc:/etc", "-v", "/var:/var", "-v", "/var/run:/var/run", "-v", "/run/systemd/journal/socket:/run/systemd/journal/socket",
 		"-v", fmt.Sprintf("%s:%s", seedgenAuthFile, seedgenAuthFile),
-		"--entrypoint", "ibu-imager",
+		"--entrypoint", "lca-cli",
 		lcaImage,
 		"create",
 		"--authfile", seedgenAuthFile,
@@ -451,22 +451,22 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 	}
 
 	if skipRecert {
-		imagerCmdArgs = append(imagerCmdArgs, "--skip-recert-validation")
+		lcaCliCmdArgs = append(lcaCliCmdArgs, "--skip-recert-validation")
 	}
 
-	// In order to have the ibu-imager container both survive the LCA pod shutdown and have continued network access
+	// In order to have the lca-cli container both survive the LCA pod shutdown and have continued network access
 	// after all other pods are shutdown, we're using systemd-run to launch it as a transient service-unit
 	systemdRunOpts := []string{"--collect", "--wait", "--unit", "lca-generate-seed-image"}
-	if _, err := r.Executor.Execute("systemd-run", append(systemdRunOpts, imagerCmdArgs...)...); err != nil {
-		return fmt.Errorf("failed to run ibu-imager container: %w", err)
+	if _, err := r.Executor.Execute("systemd-run", append(systemdRunOpts, lcaCliCmdArgs...)...); err != nil {
+		return fmt.Errorf("failed to run lca-cli container: %w", err)
 	}
 
-	// We should never get here, as the ibu-imager will shutdown this pod
+	// We should never get here, as the lca-cli will shutdown this pod
 	return nil
 }
 
-// checkImagerStatus examines the ibu_imager container, returning nil if it exited successfully
-func (r *SeedGeneratorReconciler) checkImagerStatus() error {
+// checkLCACliStatus examines the lca_cli container, returning nil if it exited successfully
+func (r *SeedGeneratorReconciler) checkLCACliStatus() error {
 	type ContainerState struct {
 		Status   string `json:"Status"`
 		ExitCode int    `json:"ExitCode"`
@@ -479,9 +479,9 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 	expectedStatus := "exited"
 	expectedExitCode := 0
 
-	r.Log.Info("Checking status of ibu_imager container")
+	r.Log.Info("Checking status of lca_cli container")
 
-	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", imagerContainerName)
+	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", lcaCliContainerName)
 	if err != nil {
 		return fmt.Errorf("failed to run podman inspect command: %w", err)
 	}
@@ -584,8 +584,8 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return err
 	}
 
-	if err := r.rmPreviousImagerContainer(); err != nil {
-		return fmt.Errorf("failed to delete previous imager container: %w", err)
+	if err := r.rmPreviousLCACliContainer(); err != nil {
+		return fmt.Errorf("failed to delete previous lca-cli container: %w", err)
 	}
 
 	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
@@ -603,7 +603,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
 	}
 
-	// Save the seedgen secret CR in order to restore it after the ibu-imager is complete
+	// Save the seedgen secret CR in order to restore it after the lca-cli is complete
 	if err := commonUtils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(utils.SeedGenStoredSecretCR)); err != nil {
 		return fmt.Errorf("failed to write secret to %s: %w", utils.SeedGenStoredSecretCR, err)
 	}
@@ -616,7 +616,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return fmt.Errorf("could not find seedAuth in %s secret", utils.SeedGenSecretName)
 	}
 
-	// Save the seedgen CR in order to restore it after the ibu-imager is complete
+	// Save the seedgen CR in order to restore it after the lca-cli is complete
 	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
 		return fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
 	}
@@ -635,7 +635,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 				return err
 			}
 
-			// In the success case, the pod will block until terminated by the imager container.
+			// In the success case, the pod will block until terminated by the lca-cli container.
 			// Create a deferred function to restore the ManagedCluster in the case where a failure happens
 			// before that point.
 			defer r.restoreManagedCluster(ctx, clusterName)
@@ -666,7 +666,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	if err := r.Client.Delete(ctx, seedGenSecret); err != nil {
 		return fmt.Errorf("unable to delete seedgen secret CR: %w", err)
 	}
-	// In the success case, the pod will block until terminated by the imager container.
+	// In the success case, the pod will block until terminated by the lca-cli container.
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
 	defer r.restoreSeedgenSecretCR(ctx, seedGenSecret)
@@ -675,12 +675,12 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	if err := r.Client.Delete(ctx, seedgen); err != nil {
 		return fmt.Errorf("unable to delete seedgen CR: %w", err)
 	}
-	// In the success case, the pod will block until terminated by the imager container.
+	// In the success case, the pod will block until terminated by the lca-cli container.
 	// Create a deferred function to restore the seedgen CR in the case where a failure happens
 	// before that point.
 	defer r.restoreSeedgenCRIfNeeded(ctx, seedgen)
 
-	// Delete the IBU CR prior to launching the imager, so it's not in the seed image
+	// Delete the IBU CR prior to launching the lca-cli, so it's not in the seed image
 	ibu := &lcav1alpha1.ImageBasedUpgrade{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: utils.IBUName,
@@ -689,12 +689,12 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return fmt.Errorf("failed to delete IBU CR: %w", err)
 	}
 
-	if err := r.launchImager(seedgen); err != nil {
-		return fmt.Errorf("imager failed: %w", err)
+	if err := r.launchLCACli(seedgen); err != nil {
+		return fmt.Errorf("lca-cli failed: %w", err)
 	}
 
 	// If we've gotten this far, something has gone wrong
-	return fmt.Errorf("unexpected return from launching imager container")
+	return fmt.Errorf("unexpected return from launching lca-cli container")
 }
 
 func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context, clusterName string) error {
@@ -734,15 +734,15 @@ func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context, clu
 	return nil
 }
 
-// finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
+// finishSeedgen runs after the lca-cli container completes and restores kubelet, once the LCA operator restarts
 func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context, clusterName string) error {
 	if err := r.restoreManagedCluster(ctx, clusterName); err != nil {
 		return err
 	}
 
-	// Check exit status of ibu_imager container
-	if err := r.checkImagerStatus(); err != nil {
-		return fmt.Errorf("imager container status check failed: %w", err)
+	// Check exit status of lca_cli container
+	if err := r.checkLCACliStatus(); err != nil {
+		return fmt.Errorf("lca-cli container status check failed: %w", err)
 	}
 
 	return r.wipeExistingWorkspace()

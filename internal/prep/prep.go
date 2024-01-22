@@ -11,11 +11,11 @@ import (
 	"github.com/go-logr/logr"
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 

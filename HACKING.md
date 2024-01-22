@@ -116,9 +116,9 @@ fi
 rm -f /var/ibu/*
 ```
 
-## Running the ibu-imager
+## Running the lca-cli
 
-With the IBU Imager packaged into the LCA image, it can be run on the seed SNO with the LCA deployed.
+With the lca-cli packaged into the LCA image, it can be run on the seed SNO with the LCA deployed.
 
 ```console
 # Get the LCA Image reference
@@ -138,7 +138,7 @@ podman run --privileged --pid=host --rm --net=host \
     -v /var/run:/var/run \
     -v /run/systemd/journal/socket:/run/systemd/journal/socket \
     -v ${AUTHFILE}:${AUTHFILE} \
-    --entrypoint ibu-imager ${LCA_IMAGE} create --authfile ${AUTHFILE} \
+    --entrypoint lca-cli ${LCA_IMAGE} create --authfile ${AUTHFILE} \
                                                  --image ${IMG_REFSPEC} \
                                                  --recert-image ${IMG_RECERT_TOOL}
 ```
@@ -335,8 +335,8 @@ normal workflow.
 Generation of the seed image can be triggered by creating a `SeedGenerator` CR named `seedimage`. The CR requires the
 following data to be set:
 
-- `seedImage`: The pullspec (ie. registry/repo:tag) for the generated image
-- `recertImage`: (Optional) Allows user to specify the recert tool image to pass to ibu-imager
+- `seedImage`: The pullspec (i.e., registry/repo:tag) for the generated image
+- `recertImage`: (Optional) Allows user to specify the recert tool image to pass to the image builder
 
 In addition, a `Secret` named `seedgen` is required in the `openshift-lifecycle-agent` namespace. This allows the user
 to provide the following information in the `Data` section:

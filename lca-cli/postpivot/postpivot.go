@@ -23,10 +23,10 @@ import (
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 

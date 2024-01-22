@@ -16,7 +16,7 @@ limitations under the License.
 
 package common
 
-// Common constants mainly used by packages in ibu-imager
+// Common constants mainly used by packages in lca-cli
 const (
 	VarFolder       = "/var"
 	BackupDir       = "/var/tmp/backup"

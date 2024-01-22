@@ -250,13 +250,13 @@ catalog-build: opm ## Build a catalog image.
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
 
-##@ Imager
+##@ lca-cli
 
-imager-run: common-deps-update fmt vet ## Run the imager tool from your host.
-	go run main/ibu-imager/main.go
+cli-run: common-deps-update fmt vet ## Run the lca-cli tool from your host.
+	go run main/lca-cli/main.go
 
-imager-build: common-deps-update fmt vet ## Build the imager tool from your host.
-	go build -o bin/ibu-imager main/ibu-imager/main.go
+cli-build: common-deps-update fmt vet ## Build the lca-cli tool from your host.
+	go build -o bin/lca-cli main/lca-cli/main.go
 
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
