@@ -38,6 +38,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -232,6 +233,10 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 
 	if err := r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
 		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
+	}
+
+	if err := reboot.WriteIBUAutoRollbackConfigFile(ibu, r.OstreeClient); err != nil {
+		return fmt.Errorf("failed to write auto-rollback config: %w", err)
 	}
 
 	if err := commonUtils.BackupKubeconfigCrypto(ctx, r.Client, common.GetStaterootCertsDir(ibu)); err != nil {

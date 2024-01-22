@@ -7,5 +7,15 @@ spec:
   seedImageRef:
     version: 4.14.0
     image: quay.io/xyz
+  additionalImages:
+    name: ""
+    namespace: ""
+  autoRollbackOnFailure: {}
+  extraManifests:
+  - name: sno-extramanifests
+    namespace: openshift-lifecycle-agent
+  oadpContent:
+    - name: oadp-cm-sno-backup
+      namespace: openshift-adp
 
 

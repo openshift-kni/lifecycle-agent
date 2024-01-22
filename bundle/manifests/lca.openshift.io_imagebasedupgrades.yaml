@@ -60,6 +60,17 @@ spec:
                 - name
                 - namespace
                 type: object
+              autoRollbackOnFailure:
+                properties:
+                  disabledForPostRebootConfig:
+                    type: boolean
+                  disabledForUpgradeCompletion:
+                    type: boolean
+                  disabledInitMonitor:
+                    type: boolean
+                  initMonitorTimeoutSeconds:
+                    type: integer
+                type: object
               extraManifests:
                 items:
                   description: ConfigMapRef defines a reference to a config map

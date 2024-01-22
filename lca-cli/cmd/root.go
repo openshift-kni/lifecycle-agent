@@ -17,7 +17,6 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -68,6 +67,11 @@ var (
 				log.SetLevel(logrus.InfoLevel)
 			}
 		},
+
+		Long: `lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
+
+Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
+`,
 	}
 )
 
@@ -78,9 +82,5 @@ func Execute() error {
 		TimestampFormat: "2006-01-02 15:04:05",
 		FullTimestamp:   true,
 	})
-	fmt.Println(`lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
-
-  Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
-	`)
 	return rootCmd.Execute()
 }

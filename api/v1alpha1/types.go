@@ -63,10 +63,11 @@ type ImageBasedUpgradeSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Stage"
 	Stage ImageBasedUpgradeStage `json:"stage,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image Reference"
-	SeedImageRef     SeedImageRef   `json:"seedImageRef,omitempty"`
-	AdditionalImages ConfigMapRef   `json:"additionalImages,omitempty"`
-	OADPContent      []ConfigMapRef `json:"oadpContent,omitempty"`
-	ExtraManifests   []ConfigMapRef `json:"extraManifests,omitempty"`
+	SeedImageRef          SeedImageRef          `json:"seedImageRef,omitempty"`
+	AdditionalImages      ConfigMapRef          `json:"additionalImages,omitempty"`
+	OADPContent           []ConfigMapRef        `json:"oadpContent,omitempty"`
+	ExtraManifests        []ConfigMapRef        `json:"extraManifests,omitempty"`
+	AutoRollbackOnFailure AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
 }
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
@@ -74,6 +75,13 @@ type SeedImageRef struct {
 	Version       string         `json:"version,omitempty"`
 	Image         string         `json:"image,omitempty"`
 	PullSecretRef *PullSecretRef `json:"pullSecretRef,omitempty"`
+}
+
+type AutoRollbackOnFailure struct {
+	DisabledForPostRebootConfig  bool `json:"disabledForPostRebootConfig,omitempty"`
+	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"`
+	DisabledInitMonitor          bool `json:"disabledInitMonitor,omitempty"`
+	InitMonitorTimeoutSeconds    int  `json:"initMonitorTimeoutSeconds,omitempty"`
 }
 
 // ConfigMapRef defines a reference to a config map

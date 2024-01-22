@@ -129,6 +129,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	stateroot := common.GetDesiredStaterootName(ibu)
+	staterootPath := getStaterootPath(stateroot)
 	staterootVarPath := getStaterootVarPath(stateroot)
 
 	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
@@ -176,12 +177,18 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.resetProgressMessage(ctx, ibu)
 
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
-	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
+
+	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
+	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
+		return requeueWithError(err)
+	}
+
+	filePath := filepath.Join(staterootPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		return requeueWithError(fmt.Errorf("error while saving IBU CR to the new state root: %w", err))
 	}
 
-	u.Log.Info("Save a copy of the IBU in the current stateroot")
+	u.Log.Info("Save a copy of the IBU in the current stateroot for rollback")
 	if err := exportForUncontrolledRollback(ibu); err != nil {
 		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
@@ -221,12 +228,43 @@ func exportForUncontrolledRollback(ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	return nil
 }
 
+var getStaterootPath = func(stateroot string) string {
+	return common.PathOutsideChroot(common.GetStaterootPath(stateroot))
+}
+
 var getStaterootVarPath = func(stateroot string) string {
 	return common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
 }
 
 // CheckHealth helper func to call HealthChecks
 var CheckHealth = healthcheck.HealthChecks
+
+// DisableInitMonitor function pointer, allowing UT to replace it
+var DisableInitMonitor = reboot.DisableInitMonitor
+
+// CheckIBUAutoRollbackInjectedFailure function pointer, allowing UT to replace it
+var CheckIBUAutoRollbackInjectedFailure = reboot.CheckIBUAutoRollbackInjectedFailure
+
+// InitiateRollback function pointer, allowing UT to replace it
+var InitiateRollback = reboot.InitiateRollback
+
+func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade) {
+	// Check whether auto-rollback is desired
+	if ibu.Spec.AutoRollbackOnFailure.DisabledForUpgradeCompletion {
+		// Auto-rollback is not enabled, so do nothing
+		return
+	}
+
+	u.Log.Info("Automatically rolling back due to failure")
+
+	if err := InitiateRollback(true, u.Log, u.Executor, u.RPMOstreeClient, u.OstreeClient); err != nil {
+		u.Log.Info(fmt.Sprintf("Unable to auto rollback: %s", err))
+		return
+	}
+
+	// Should never get here
+	return
+}
 
 // postPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
 //
@@ -237,6 +275,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	err := CheckHealth(u.Client, u.Log)
 	if err != nil {
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		u.autoRollbackIfEnabled(ibu)
 		return doNotRequeue(), nil
 	}
 
@@ -254,6 +293,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			u.autoRollbackIfEnabled(ibu)
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while applying extra manifests: %w", err))
@@ -264,6 +304,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			u.autoRollbackIfEnabled(ibu)
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
@@ -275,6 +316,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		// Restore failed
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			u.autoRollbackIfEnabled(ibu)
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
@@ -282,6 +324,18 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if !result.IsZero() {
 		// The restore process has not been completed yet, requeue
 		return result, nil
+	}
+
+	if err := DisableInitMonitor(u.Log, u.Executor); err != nil {
+		// Don't fail the upgrade on failure here, just log it
+		u.Log.Error(err, "unable to disable LCA init monitor")
+	}
+
+	if CheckIBUAutoRollbackInjectedFailure("upgrade_completion") {
+		u.Log.Info("TEST: Injected failure in upgrade completion handler")
+		utils.SetUpgradeStatusFailed(ibu, "TEST: Injected failure in upgrade completion handler")
+		u.autoRollbackIfEnabled(ibu)
+		return doNotRequeue(), nil
 	}
 
 	u.Log.Info("Done handleUpgrade")

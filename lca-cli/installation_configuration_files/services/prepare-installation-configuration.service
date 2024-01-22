@@ -6,6 +6,8 @@ Before=nodeip-configuration.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/prepare-installation-configuration.sh
+ExecStopPost=-/usr/local/bin/lca-cli init-monitor --exec-stop-post config
+EnvironmentFile=-/etc/systemd/system/installation-configuration.env
 
 [Install]
 WantedBy=multi-user.target

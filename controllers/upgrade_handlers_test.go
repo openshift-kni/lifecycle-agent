@@ -705,10 +705,20 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				}()
 				getStaterootVarPath = func(stateroot string) string {
 					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, "/opt"), 0777)
+					return ibuTempDirNew
+				}
+
+				origGetStaterootPath := getStaterootPath
+				defer func() {
+					getStaterootPath = origGetStaterootPath
+				}()
+				getStaterootPath = func(stateroot string) string {
+					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, common.LCAConfigDir), 0777)
 					file, _ := os.OpenFile(filepath.Join(ibuTempDirNew, utils.IBUFilePath), os.O_CREATE, 0777)
 					file.Close()
 					return ibuTempDirNew
 				}
+
 			}
 			ibuTempDirOrig := t.TempDir()
 			if tt.exportIBUCRNew {
@@ -716,7 +726,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				defer func() {
 					ibuPreStaterootPath = origIbuPreStaterootPath
 				}()
-				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, "/opt"), 0777)
+				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, common.LCAConfigDir), 0777)
 				file, _ := os.OpenFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath), os.O_CREATE, 0777)
 				file.Close()
 				ibuPreStaterootPath = filepath.Join(ibuTempDirOrig, utils.IBUFilePath)
@@ -788,6 +798,34 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 	defer func() {
 		mockController.Finish()
 	}()
+
+	// Replace rollback functions for testing
+	oldDisableInitMonitor := DisableInitMonitor
+	defer func() {
+		DisableInitMonitor = oldDisableInitMonitor
+	}()
+
+	DisableInitMonitor = func(log logr.Logger, e ops.Execute) error {
+		return nil
+	}
+
+	oldCheckIBUAutoRollbackInjectedFailure := CheckIBUAutoRollbackInjectedFailure
+	defer func() {
+		CheckIBUAutoRollbackInjectedFailure = oldCheckIBUAutoRollbackInjectedFailure
+	}()
+
+	CheckIBUAutoRollbackInjectedFailure = func(component string) bool {
+		return false
+	}
+
+	oldInitiateRollback := InitiateRollback
+	defer func() {
+		InitiateRollback = oldInitiateRollback
+	}()
+
+	InitiateRollback = func(auto bool, log logr.Logger, e ops.Execute, rpmOstreeClient rpmostreeclient.IClient, ostreeClient ostreeclient.IClient) error {
+		return nil
+	}
 
 	type fields struct {
 		BackupRestore  backuprestore.BackuperRestorer

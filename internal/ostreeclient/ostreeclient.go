@@ -2,9 +2,11 @@ package ostreeclient
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
@@ -17,6 +19,7 @@ type IClient interface {
 	SetDefaultDeployment(index int) error
 	IsOstreeAdminSetDefaultFeatureEnabled() bool
 	GetDeployment(osname string) (string, error)
+	GetDeploymentDir(osname string) (string, error)
 }
 
 type Client struct {
@@ -75,7 +78,7 @@ func (c *Client) Undeploy(ostreeIndex int) error {
 
 func (c *Client) IsOstreeAdminSetDefaultFeatureEnabled() bool {
 	// Quick check to see if the "ostree admin set-default" feature is available
-	args := []string{"admin --help | grep -q set-default"}
+	args := []string{"admin", "--help", "|", "grep", "-q", "set-default"}
 	_, err := c.executor.Execute("ostree", args...)
 	return err == nil
 }
@@ -94,9 +97,19 @@ func (c *Client) SetDefaultDeployment(index int) error {
 func (c *Client) GetDeployment(osname string) (string, error) {
 	args := []string{"admin", "status"}
 	if c.ibi {
-		args = append(args, "--sysroot", "/mnt")
+		args = append(args, "--sysroot", common.OstreeDeployPathPrefix)
 	}
 
-	args = append(args, fmt.Sprintf("| awk /%s/'{print $2}'", osname))
+	args = append(args, "|", "awk", fmt.Sprintf("/%s/'{print $NF ; exit}'", osname))
 	return c.executor.Execute("ostree", strings.Join(args, " "))
+}
+
+func (c *Client) GetDeploymentDir(osname string) (string, error) {
+	deployment, err := c.GetDeployment(osname)
+	if err != nil {
+		return "", err
+	}
+
+	deploymentDir := filepath.Join(common.GetStaterootPath(osname), "deploy", deployment)
+	return deploymentDir, nil
 }

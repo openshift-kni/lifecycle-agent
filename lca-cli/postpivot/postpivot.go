@@ -117,6 +117,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return err
 	}
 
+	// Inject a failure for testing
+	if os.Getenv("LCA_TEST_inject_failure_postpivot") == "yes" {
+		return fmt.Errorf("injecting failure: LCA_TEST_inject_failure_postpivot=yes")
+	}
+
 	if err := p.applyManifests(); err != nil {
 		return err
 	}

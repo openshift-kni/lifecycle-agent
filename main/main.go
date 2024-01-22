@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"sync"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
@@ -131,6 +132,14 @@ func main() {
 
 	mux := &sync.Mutex{}
 
+	// Log any LCA_TEST_ env variables for debug purposes
+	re := regexp.MustCompile(`^LCA_TEST_`)
+	for _, envVar := range os.Environ() {
+		if re.MatchString(envVar) {
+			setupLog.Info(fmt.Sprintf("DEBUG: LCA_TEST var set in environment: %s", envVar))
+		}
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
 		HealthProbeBindAddress:        probeAddr,
@@ -153,6 +162,11 @@ func main() {
 	// in the future we will have only one of them
 	newLogger := logrus.New()
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
+
+	if err := os.MkdirAll(common.PathOutsideChroot(common.LCAConfigDir), 0o700); err != nil {
+		setupLog.Error(err, fmt.Sprintf("unable to create config dir: %s", common.LCAConfigDir))
+		os.Exit(1)
+	}
 
 	executor := ops.NewChrootExecutor(newLogger, true, common.Host)
 	op := ops.NewOps(newLogger, executor)
@@ -203,7 +217,7 @@ func main() {
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 		UpgradeHandler: &controllers.UpgHandler{
 			Client:          mgr.GetClient(),
-			Log:             log.WithName("UpgradHandler"),
+			Log:             log.WithName("UpgradeHandler"),
 			BackupRestore:   backupRestore,
 			ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 			ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},

@@ -71,21 +71,14 @@ func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 	return args, nil
 }
 
-// getDeploymentDirPath return the path to ostree deploy directory e.g:
-// /ostree/deploy/<osname>/deploy/<deployment.id>
-func getDeploymentDirPath(osname, deployment string) string {
-	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", deployment))
-}
-
-// getDeploymentOriginPath return the path to .orign file e.g:
+// getDeploymentOriginPath return the path to .origin file e.g:
 // /ostree/deploy/<osname>/deploy/<deployment.id>.origin
-func getDeploymentOriginPath(osname, deployment string) string {
-	originName := fmt.Sprintf("%s.origin", deployment)
-	return filepath.Join(common.GetStaterootPath(osname), fmt.Sprintf("deploy/%s", originName))
+func getDeploymentOriginPath(deploymentDir string) string {
+	return deploymentDir + ".origin"
 }
 
 // removeETCDeletions remove the files that are listed in etc.deletions
-func removeETCDeletions(mountpoint, osname, deployment string) error {
+func removeETCDeletions(mountpoint, deploymentDir string) error {
 	file, err := os.Open(filepath.Join(common.PathOutsideChroot(mountpoint), "etc.deletions"))
 	if err != nil {
 		return fmt.Errorf("failed to open etc.deletions: %w", err)
@@ -95,7 +88,7 @@ func removeETCDeletions(mountpoint, osname, deployment string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fileToRemove := strings.Trim(scanner.Text(), " ")
-		filePath := common.PathOutsideChroot(filepath.Join(getDeploymentDirPath(osname, deployment), fileToRemove))
+		filePath := common.PathOutsideChroot(filepath.Join(deploymentDir, fileToRemove))
 		err = os.Remove(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to remove %s: %w", filePath, err)
@@ -208,28 +201,14 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 
-	deployment := ""
-	if ibi {
-		// in IBI case rpm-ostree doesn't see mounted ostrees so we need another way
-		deployment, err = ostreeClient.GetDeployment(osname)
-		if err != nil {
-			return fmt.Errorf("failed to get deploymentID: %w", err)
-		}
-
-	} else {
-		deploymentID, err := rpmOstreeClient.GetDeploymentID(osname)
-		if err != nil {
-			return fmt.Errorf("failed to get deploymentID: %w", err)
-		}
-		deployment, err = getDeploymentFromDeploymentID(deploymentID)
-		if err != nil {
-			return err
-		}
+	deploymentDir, err := ostreeClient.GetDeploymentDir(osname)
+	if err != nil {
+		return fmt.Errorf("failed to get deployment dir: %w", err)
 	}
 
 	if err = common.CopyOutsideChroot(
 		filepath.Join(mountpoint, fmt.Sprintf("ostree-%s.origin", seedBootedDeployment)),
-		getDeploymentOriginPath(osname, deployment),
+		getDeploymentOriginPath(deploymentDir),
 	); err != nil {
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
@@ -243,12 +222,12 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	if err := ops.ExtractTarWithSELinux(
 		filepath.Join(mountpoint, "etc.tgz"),
-		getDeploymentDirPath(osname, deployment),
+		deploymentDir,
 	); err != nil {
 		return fmt.Errorf("failed to extract seed etc: %w", err)
 	}
 
-	if err = removeETCDeletions(mountpoint, osname, deployment); err != nil {
+	if err = removeETCDeletions(mountpoint, deploymentDir); err != nil {
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 

@@ -11,11 +11,38 @@ metadata:
             "name": "upgrade"
           },
           "spec": {
+            "additionalImages": {
+              "name": "",
+              "namespace": ""
+            },
+            "autoRollbackOnFailure": {},
+            "extraManifests": [
+              {
+                "name": "sno-extramanifests",
+                "namespace": "openshift-lifecycle-agent"
+              }
+            ],
+            "oadpContent": [
+              {
+                "name": "oadp-cm-sno-backup",
+                "namespace": "openshift-adp"
+              }
+            ],
             "seedImageRef": {
               "image": "quay.io/xyz",
               "version": "4.14.0"
             },
             "stage": "Idle"
+          }
+        },
+        {
+          "apiVersion": "lca.openshift.io/v1alpha1",
+          "kind": "SeedGenerator",
+          "metadata": {
+            "name": "seedimage"
+          },
+          "spec": {
+            "seedImage": "quay.io/myrepo/seedimages:sno-seed-image-xyz"
           }
         }
       ]

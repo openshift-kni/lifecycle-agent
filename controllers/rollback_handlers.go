@@ -81,8 +81,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 
 	// Save the CR for post-reboot restore
 	r.Log.Info("Save the IBU CR to the old state root before pivot")
-	staterootVarPath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
-	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
+	filePath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), utils.IBUFilePath))
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil

@@ -1,0 +1,6 @@
+apiVersion: lca.openshift.io/v1alpha1
+kind: SeedGenerator
+metadata:
+  name: seedimage
+spec:
+  seedImage: quay.io/myrepo/seedimages:sno-seed-image-xyz
