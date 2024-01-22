@@ -62,12 +62,12 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	//+kubebuilder:scaffold:imports
 )
@@ -238,7 +238,7 @@ func main() {
 
 // Seed generator orchestration is done in two stages.
 // In the first stage, the SeedGen CR is saved to filesystem and deleted from etcd,
-// so that it isn't included in the seed image. When the imager is launched in a
+// so that it isn't included in the seed image. When the lca-cli is launched in a
 // separate container to generate the image, it shuts down the pods. Once finished,
 // it restarts kubelet, which restarts the pods.
 // When LCA recovers, it is able to run the second stage by restoring the SeedGen CR,

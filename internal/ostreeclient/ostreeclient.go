@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
 //go:generate mockgen -source=ostreeclient.go -package=ostreeclient -destination=mock_ostreeclient.go

@@ -19,11 +19,11 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	ibipreparation "github.com/openshift-kni/lifecycle-agent/ibu-imager/ibi-preparation"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	ostree "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	ibipreparation "github.com/openshift-kni/lifecycle-agent/lca-cli/ibi-preparation"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
 // ibi represents the ibi preparation command
@@ -54,7 +54,7 @@ func init() {
 func runIBI() {
 	log.Info("IBI preparation process has started")
 	hostCommandsExecutor := ops.NewChrootExecutor(log, true, common.Host)
-	rpmOstreeClient := ostree.NewClient("ibu-imager", hostCommandsExecutor)
+	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
 	ibiRunner := ibipreparation.NewIBIPrepare(log, ops.NewOps(log, hostCommandsExecutor), rpmOstreeClient, ostreeClient, seedImage, authFile, pullSecretFile, seedVersion)

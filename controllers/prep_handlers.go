@@ -32,7 +32,7 @@ import (
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedclusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -82,7 +82,7 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 // current version of the lifecycle-agent by inspecting the OCI image's labels
 // and checking if the specified format version equals the hard-coded one that
 // this version of the lifecycle agent expects. That format version is set by
-// the imager during the image build process, and is only manually bumped by
+// the lca-cli during the image build process, and is only manually bumped by
 // developers when the image format changes in a way that is incompatible with
 // previous versions of the lifecycle-agent.
 func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Context, seedImageRef string) error {
@@ -112,7 +112,7 @@ func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Cont
 	seedFormatLabelValue, ok := inspect[0].Labels[common.SeedFormatOCILabel]
 	if !ok {
 		return fmt.Errorf(
-			"seed image %s is missing the %s label, please build a new image using the latest version of the imager",
+			"seed image %s is missing the %s label, please build a new image using the latest version of the lca-cli",
 			seedImageRef, common.SeedFormatOCILabel)
 	}
 

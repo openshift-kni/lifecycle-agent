@@ -6,9 +6,9 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/ibu-imager/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
 var (

@@ -59,7 +59,7 @@ func init() {
 
 var (
 	rootCmd = &cobra.Command{
-		Use:     "ibu-imager",
+		Use:     "lca-cli",
 		Version: releaseVersion,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if verbose {
@@ -78,15 +78,9 @@ func Execute() error {
 		TimestampFormat: "2006-01-02 15:04:05",
 		FullTimestamp:   true,
 	})
-	fmt.Println(`
- ___ ____  _   _            ___                                 
-|_ _| __ )| | | |          |_ _|_ __ ___   __ _  __ _  ___ _ __ 
- | ||  _ \| | | |   _____   | ||  _   _ \ / _  |/ _  |/ _ \ '__|
- | || |_) | |_| |  |_____|  | || | | | | | (_| | (_| |  __/ |
-|___|____/ \___/           |___|_| |_| |_|\__,_|\__, |\___|_|
-                                                |___/
+	fmt.Println(`lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
 
- A tool to assist in building OCI seed images for Image Based Upgrades (IBU)
+  Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
 	`)
 	return rootCmd.Execute()
 }

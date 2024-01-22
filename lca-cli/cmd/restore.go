@@ -19,9 +19,9 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/ops"
-	"github.com/openshift-kni/lifecycle-agent/ibu-imager/seedrestoration"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedrestoration"
 )
 
 var restoreCmd = &cobra.Command{
