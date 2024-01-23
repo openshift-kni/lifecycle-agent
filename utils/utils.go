@@ -281,3 +281,14 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 	log.Info("Restore successful and saved IBU CR removed")
 	return nil
 }
+
+func ConvertToRawExtension(config any) (runtime.RawExtension, error) {
+	rawIgnConfig, err := json.Marshal(config)
+	if err != nil {
+		return runtime.RawExtension{}, fmt.Errorf("failed to marshal Ignition config: %w", err)
+	}
+
+	return runtime.RawExtension{
+		Raw: rawIgnConfig,
+	}, nil
+}

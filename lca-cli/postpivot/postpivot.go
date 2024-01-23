@@ -10,9 +10,19 @@ import (
 	"strings"
 	"time"
 
+	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/recert"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	v1 "github.com/openshift/api/config/v1"
+
+	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
@@ -20,14 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
-
-	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/recert"
-	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
-	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
-	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 type PostPivot struct {
@@ -51,8 +53,11 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authF
 }
 
 const (
-	nodeIpFile       = "/run/nodeip-configuration/primary-ip"
-	dnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
+	nodeIpFile            = "/run/nodeip-configuration/primary-ip"
+	dnsmasqOverrides      = "/etc/default/sno_dnsmasq_configuration_overrides"
+	sshKeyEarlyAccessFile = "/home/core/.ssh/authorized_keys.d/ib-early-access"
+	userCore              = "core"
+	sshMachineConfig      = "99-%s-ssh"
 )
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
@@ -67,6 +72,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedClusterInfoFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
+	}
+
+	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
+		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
+		return err
 	}
 
 	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
@@ -443,5 +453,69 @@ func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 	}
 
 	seedReconfiguration.NodeIP = ip.String()
+	return nil
+}
+
+// setSSHKey  sets ssh public key provided by user in 2 operations:
+// 1. as file in order to give early access to the node
+// 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
+func (p *PostPivot) setSSHKey(seedReconfiguration *clusterconfig_api.SeedReconfiguration, sshKeyFile string) error {
+	if seedReconfiguration.SSHKey == "" {
+		p.log.Infof("No ssh public key was provided, skipping")
+		return nil
+	}
+
+	p.log.Infof("Creating file %s with ssh keys for early connection", sshKeyFile)
+	if err := os.WriteFile(sshKeyFile, []byte(seedReconfiguration.SSHKey), 0o600); err != nil {
+		return fmt.Errorf("failed to write ssh key to file, err %w", err)
+	}
+
+	p.log.Infof("Setting %s user ownership on %s", userCore, sshKeyFile)
+	if _, err := p.ops.RunInHostNamespace("chown", userCore, sshKeyFile); err != nil {
+		return fmt.Errorf("failed to set %s user ownership on %s, err :%w", userCore, sshKeyFile, err)
+	}
+
+	return p.createSSHKeyMachineConfigs(seedReconfiguration.SSHKey)
+}
+
+func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
+	p.log.Info("Creating worker and master machine configs with provided ssh key, in order to override seed's")
+	ignConfig := map[string]any{
+		"ignition": map[string]string{"version": "3.2.0"},
+		"passwd": map[string]any{
+			"users": []any{
+				map[string]any{
+					"name":              userCore,
+					"sshAuthorizedKeys": []string{sshKey},
+				}},
+		},
+	}
+	rawExt, err := utils.ConvertToRawExtension(ignConfig)
+	if err != nil {
+		return err
+	}
+
+	for _, role := range []string{"master", "worker"} {
+		mc := &mcfgv1.MachineConfig{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: mcfgv1.SchemeGroupVersion.String(),
+				Kind:       "MachineConfig",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf(sshMachineConfig, role),
+				Labels: map[string]string{
+					"machineconfiguration.openshift.io/role": role,
+				},
+			},
+			Spec: mcfgv1.MachineConfigSpec{
+				Config: rawExt,
+			},
+		}
+		if err := utils.MarshalToFile(mc, path.Join(p.workingDir, common.ClusterConfigDir,
+			common.ManifestsDir, fmt.Sprintf(sshMachineConfig, role))); err != nil {
+			return fmt.Errorf("failed to marshal ssh key into file for role %s, err: %w", role, err)
+		}
+	}
+
 	return nil
 }
