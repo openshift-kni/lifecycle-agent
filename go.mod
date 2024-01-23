@@ -3,7 +3,7 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.20
 
 require (
-	github.com/go-logr/logr v1.2.4
+	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.5.9
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
