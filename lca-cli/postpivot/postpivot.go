@@ -16,20 +16,23 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-	v1 "github.com/openshift/api/config/v1"
 
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1 "github.com/openshift/api/config/v1"
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	cp "github.com/otiai10/copy"
-	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+
+	"github.com/google/uuid"
+	cp "github.com/otiai10/copy"
+	"github.com/sirupsen/logrus"
 )
 
 type PostPivot struct {
@@ -377,8 +380,8 @@ func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Cl
 	}
 
 	if seedReconfiguration.ClusterID == "" {
-		// TODO: Generate a fresh cluster ID in case it is empty
-		return fmt.Errorf("cluster id is empty, automatic generation is not yet implemented")
+		seedReconfiguration.ClusterID = uuid.New().String()
+		p.log.Infof("cluster id is empty, generated: %s", seedReconfiguration.ClusterID)
 	}
 
 	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, seedReconfiguration.ClusterID))
