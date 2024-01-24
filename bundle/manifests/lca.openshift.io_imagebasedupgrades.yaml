@@ -23,7 +23,7 @@ spec:
     - jsonPath: .spec.stage
       name: Stage
       type: string
-    - jsonPath: .status.conditions[-1:].type
+    - jsonPath: .status.conditions[-1:].reason
       name: State
       type: string
     - jsonPath: .status.conditions[-1:].message

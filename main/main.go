@@ -158,7 +158,7 @@ func main() {
 
 	var config *rest.Config
 	if _, err := os.Stat(common.PathOutsideChroot(common.KubeconfigFile)); err != nil {
-		setupLog.Error(err, "could not fine KubeconfigFile. Using empty config only for test environment")
+		setupLog.Error(err, "could not find KubeconfigFile. Using empty config only for test environment")
 		config = &rest.Config{}
 	} else {
 		config, err = clientcmd.BuildConfigFromFlags("", common.PathOutsideChroot(common.KubeconfigFile))
