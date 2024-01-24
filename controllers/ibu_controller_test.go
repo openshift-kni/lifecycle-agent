@@ -693,8 +693,8 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			validateFunc: func(t *testing.T, result ctrl.Result, ibu *lcav1alpha1.ImageBasedUpgrade) {
 				idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 				assert.Equal(t, idleCondition.Status, metav1.ConditionTrue)
-				if result != doNotRequeue() {
-					t.Errorf("expect no requeue")
+				if result != requeueImmediately() {
+					t.Errorf("expect requeue immediately")
 				}
 			},
 		},
