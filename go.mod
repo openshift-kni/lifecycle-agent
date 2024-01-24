@@ -25,7 +25,7 @@ require (
 	k8s.io/code-generator v0.28.2
 	open-cluster-management.io/api v0.11.0
 	sigs.k8s.io/controller-runtime v0.16.1
-	sigs.k8s.io/yaml v1.3.0
+	sigs.k8s.io/yaml v1.4.0
 )
 
 require (
