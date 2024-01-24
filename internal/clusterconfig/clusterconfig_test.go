@@ -194,9 +194,9 @@ func TestClusterConfig(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pullSecretName,
-					Namespace: configNamespace,
+					Namespace: common.OpenshiftConfigNamespace,
 				},
-				Data: map[string][]byte{"aaa": []byte("bbb")},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
 				ObjectMeta: metav1.ObjectMeta{
@@ -239,17 +239,6 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, proxyName, proxy.Name)
 				assert.Equal(t, "some-http-proxy", proxy.Spec.HTTPProxy)
 
-				// validate pull secret
-				secret := &corev1.Secret{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, pullSecretFileName), secret); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-
-				testData := map[string][]byte{"aaa": []byte("bbb")}
-				assert.Equal(t, testData, secret.Data)
-				assert.Equal(t, pullSecretName, secret.Name)
-				assert.Equal(t, configNamespace, secret.Namespace)
-
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFileName), idms); err != nil {
@@ -267,6 +256,7 @@ func TestClusterConfig(t *testing.T) {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, "mysno-xsb4m", seedReconfig.InfraID)
+				assert.Equal(t, "pull-secret", seedReconfig.PullSecret)
 				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
 				assert.Equal(t, "test-infra-cluster", seedReconfig.ClusterName)
 				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
@@ -305,8 +295,9 @@ func TestClusterConfig(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pullSecretName,
-					Namespace: configNamespace,
+					Namespace: common.OpenshiftConfigNamespace,
 				},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
 			},
 			idms:       nil,
 			icsps:      nil,
@@ -328,8 +319,9 @@ func TestClusterConfig(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pullSecretName,
-					Namespace: configNamespace,
+					Namespace: common.OpenshiftConfigNamespace,
 				},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
 				ObjectMeta: metav1.ObjectMeta{
@@ -358,7 +350,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 2, len(dir))
+				assert.Equal(t, 1, len(dir))
 			},
 		},
 		{
@@ -366,8 +358,9 @@ func TestClusterConfig(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pullSecretName,
-					Namespace: configNamespace,
+					Namespace: common.OpenshiftConfigNamespace,
 				},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
 				ObjectMeta: metav1.ObjectMeta{
@@ -398,9 +391,9 @@ func TestClusterConfig(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pullSecretName,
-					Namespace: configNamespace,
+					Namespace: common.OpenshiftConfigNamespace,
 				},
-				Data: map[string][]byte{"aaa": []byte("bbb")},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
 			},
 			clusterVersion: &ocpV1.ClusterVersion{
 				ObjectMeta: metav1.ObjectMeta{
@@ -432,7 +425,7 @@ func TestClusterConfig(t *testing.T) {
 				}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
 					RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{{Source: "icspData2"}}}}},
 			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: caBundleCMName,
-				Namespace: configNamespace}, Data: map[string]string{"test": "data"}},
+				Namespace: common.OpenshiftConfigNamespace}, Data: map[string]string{"test": "data"}},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDir(tempDir)
