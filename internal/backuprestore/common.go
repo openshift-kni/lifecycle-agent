@@ -274,7 +274,7 @@ func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 	return false
 }
 
-func patchBackupLabelToObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool) error {
+func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool, payload []byte) error {
 	patchOptions := metav1.PatchOptions{}
 	if isDryRun {
 		patchOptions = metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
@@ -282,7 +282,6 @@ func patchBackupLabelToObj(ctx context.Context, client dynamic.Interface, obj *O
 	resourceClient := client.Resource(schema.GroupVersionResource{
 		Group: obj.Group, Version: obj.Version, Resource: obj.Resource},
 	)
-	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
 	var err error
 	if obj.Namespace != "" {
 		_, err = resourceClient.Namespace(obj.Namespace).Patch(
@@ -290,10 +289,6 @@ func patchBackupLabelToObj(ctx context.Context, client dynamic.Interface, obj *O
 		)
 	} else {
 		_, err = resourceClient.Patch(ctx, obj.Name, types.JSONPatchType, payload, patchOptions)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to apply backup label (dry-run) on obj name:%s namespace:%s resource:%s group:%s version:%s err:%w",
-			obj.Name, obj.Namespace, obj.Resource, obj.Group, obj.Version, err)
 	}
 	return err
 }
@@ -324,13 +319,15 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
+	// Check if we can apply backup label to objects included in apply-backup annotation
+	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
 	for _, backup := range backups {
 		objs, err := getObjsFromAnnotations(backup)
 		if err != nil {
 			return NewBRFailedValidationError("OADP", err.Error())
 		}
 		for _, obj := range objs {
-			err := patchBackupLabelToObj(ctx, h.DynamicClient, &obj, true)
+			err := patchObj(ctx, h.DynamicClient, &obj, true, payload)
 			if err != nil {
 				return NewBRFailedValidationError("OADP", err.Error())
 			}
