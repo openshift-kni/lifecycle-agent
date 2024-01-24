@@ -95,20 +95,6 @@ var (
 
 	seedManifestData = seedreconfig.SeedReconfiguration{BaseDomain: "seed.com", ClusterName: "seed", NodeIP: "192.168.127.10", Hostname: "seed"}
 
-	machineConfigs = []*mcv1.MachineConfig{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   "99-master-ssh",
-				Labels: map[string]string{"machineconfiguration.openshift.io/role": "master"},
-			},
-		},
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   "99-worker-ssh",
-				Labels: map[string]string{"machineconfiguration.openshift.io/role": "worker"},
-			},
-		},
-	}
 	csvDeployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
 		Name: common.CsvDeploymentName, Namespace: common.CsvDeploymentNamespace},
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -190,7 +176,6 @@ func TestClusterConfig(t *testing.T) {
 		icsps          []client.Object
 		node           client.Object
 		proxy          client.Object
-		machineConfigs []*mcv1.MachineConfig
 		expectedErr    bool
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
@@ -226,10 +211,9 @@ func TestClusterConfig(t *testing.T) {
 					HTTPProxy: "some-http-proxy",
 				},
 			},
-			icsps:          nil,
-			caBundleCM:     nil,
-			machineConfigs: machineConfigs,
-			expectedErr:    false,
+			icsps:       nil,
+			caBundleCM:  nil,
+			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDir(tempDir)
 				if err != nil {
@@ -272,6 +256,7 @@ func TestClusterConfig(t *testing.T) {
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), clusterInfo); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+				assert.Equal(t, "ssh-key", clusterInfo.SSHKey)
 				assert.Equal(t, "test-infra-cluster", clusterInfo.ClusterName)
 				assert.Equal(t, "redhat.com", clusterInfo.BaseDomain)
 				assert.Equal(t, "192.168.121.10", clusterInfo.NodeIP)
@@ -298,8 +283,7 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			machineConfigs: machineConfigs,
-			expectedErr:    true,
+			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, errors.IsNotFound(err))
 				assert.Equal(t, true, strings.Contains(err.Error(), "secret"))
@@ -322,7 +306,6 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			machineConfigs: machineConfigs,
 			clusterVersion: &ocpV1.ClusterVersion{},
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -354,8 +337,7 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			machineConfigs: machineConfigs,
-			expectedErr:    false,
+			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				filesDir, err := ucc.configDir(tempDir)
 				if err != nil {
@@ -365,7 +347,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 4, len(dir))
+				assert.Equal(t, 2, len(dir))
 			},
 		},
 		{
@@ -395,8 +377,7 @@ func TestClusterConfig(t *testing.T) {
 					Name: "cluster",
 				},
 			},
-			machineConfigs: machineConfigs,
-			expectedErr:    true,
+			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, strings.Contains(err.Error(), "one master node in sno cluster"))
 			},
@@ -441,8 +422,7 @@ func TestClusterConfig(t *testing.T) {
 					RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{{Source: "icspData2"}}}}},
 			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: caBundleCMName,
 				Namespace: configNamespace}, Data: map[string]string{"test": "data"}},
-			machineConfigs: machineConfigs,
-			expectedErr:    false,
+			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDir(tempDir)
 				if err != nil {
@@ -506,18 +486,14 @@ func TestClusterConfig(t *testing.T) {
 				objs = append(objs, kcro)
 			}
 
-			for _, mc := range tc.machineConfigs {
-				objs = append(objs, mc)
-			}
-
 			if tc.icsps != nil {
 				for _, icsp := range tc.icsps {
 					objs = append(objs, icsp)
 				}
 			}
 
+			hostPath = tmpDir
 			if tc.caBundleCM != nil {
-				hostPath = tmpDir
 				dir := filepath.Join(tmpDir, filepath.Dir(common.CABundleFilePath))
 				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Errorf("unexpected error: %v", err)
@@ -528,6 +504,14 @@ func TestClusterConfig(t *testing.T) {
 					t.Errorf("unexpected error: %v", err)
 				}
 				_ = f.Close()
+			}
+
+			dir := filepath.Join(tmpDir, filepath.Dir(sshKeyFile))
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, sshKeyFile), []byte("ssh-key"), 0o600); err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 
 			fakeClient, err := getFakeClientFromObjects(objs...)

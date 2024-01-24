@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
-	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -49,14 +48,12 @@ const (
 	caBundleFileName = caBundleCMName + ".json"
 
 	networkDir = "/opt/openshift/network-configuration"
+
+	// ssh authorized keys file created by mco from ssh machine configs
+	sshKeyFile = "/home/core/.ssh/authorized_keys.d/ignition"
 )
 
 var (
-	machineConfigNames = []string{
-		"99-master-ssh",
-		"99-worker-ssh",
-	}
-
 	hostPath                = common.Host
 	listOfNetworkFilesPaths = []string{
 		"/etc/NetworkManager/system-connections",
@@ -97,9 +94,6 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	}
 
 	if err := r.fetchClusterInfo(ctx, clusterConfigPath); err != nil {
-		return err
-	}
-	if err := r.fetchMachineConfigs(ctx, manifestsDir); err != nil {
 		return err
 	}
 	if err := r.fetchCABundle(ctx, manifestsDir, clusterConfigPath); err != nil {
@@ -168,39 +162,17 @@ func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDi
 	return utils.MarshalToFile(p, filePath)
 }
 
-func (r *UpgradeClusterConfigGather) fetchMachineConfigs(ctx context.Context, manifestsDir string) error {
-	for _, machineConfigName := range machineConfigNames {
-		r.Log.Info("Fetching MachineConfig", "name", machineConfigName)
-
-		machineConfig := mcv1.MachineConfig{}
-		if err := r.Client.Get(ctx, types.NamespacedName{Name: machineConfigName}, &machineConfig); err != nil {
-			return err
-		}
-
-		mc := mcv1.MachineConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   machineConfig.Name,
-				Labels: machineConfig.Labels,
-			},
-			Spec: machineConfig.Spec,
-		}
-		machineConfigTypeMeta, err := r.typeMetaForObject(&machineConfig)
-		if err != nil {
-			return err
-		}
-		mc.TypeMeta = *machineConfigTypeMeta
-
-		filePath := filepath.Join(manifestsDir, machineConfig.Name+".json")
-		r.Log.Info("Writing MachineConfig to file", "path", filePath)
-		if err := utils.MarshalToFile(mc, filePath); err != nil {
-			return err
-		}
+func (r *UpgradeClusterConfigGather) fetchSSHPublicKey() (string, error) {
+	sshKey, err := os.ReadFile(filepath.Join(hostPath, sshKeyFile))
+	if err != nil {
+		return "", err
 	}
-	return nil
+	return string(sshKey), err
 }
 
 func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
-	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) *seedreconfig.SeedReconfiguration {
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey string) *seedreconfig.SeedReconfiguration {
+
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
 		BaseDomain:                clusterInfo.BaseDomain,
@@ -210,6 +182,7 @@ func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		ReleaseRegistry:           clusterInfo.ReleaseRegistry,
 		Hostname:                  clusterInfo.Hostname,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
+		SSHKey:                    sshKey,
 	}
 }
 
@@ -225,8 +198,12 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 	if err != nil {
 		return fmt.Errorf("failed to get kubeconfig retention from crypto dir: %w", err)
 	}
+	sshKey, err := r.fetchSSHPublicKey()
+	if err != nil {
+		return err
+	}
 
-	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention)
+	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)

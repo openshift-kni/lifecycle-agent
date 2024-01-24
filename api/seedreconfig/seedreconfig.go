@@ -56,6 +56,11 @@ type SeedReconfiguration struct {
 	// being upgraded. In the case of IBI, this material is generated when the
 	// cluster's kubeconfig is being prepared in advance.
 	KubeconfigCryptoRetention KubeConfigCryptoRetention
+
+	// SSHKey is the public Secure Shell (SSH) key to provide access to
+	// instances. Equivalent to install-config.yaml's sshKey. This will replace
+	// the SSH keys of the seed cluster.
+	SSHKey string `json:"ssh_key,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {
