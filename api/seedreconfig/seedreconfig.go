@@ -61,6 +61,12 @@ type SeedReconfiguration struct {
 	// instances. Equivalent to install-config.yaml's sshKey. This will replace
 	// the SSH keys of the seed cluster.
 	SSHKey string `json:"ssh_key,omitempty"`
+
+	// RawNMStateConfig contains nmstate configuration YAML file provided as string.
+	// String will be written to file and will be applied with "nmstatectl apply" command.
+	// Example of nmstate configurations can be found in this link https://nmstate.io/examples.html
+	// This field will be used for IBI process as in IBU we will copy nmconnection files
+	RawNMStateConfig string `json:"raw_nm_state_config,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {
