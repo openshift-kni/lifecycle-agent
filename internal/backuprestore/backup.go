@@ -54,6 +54,10 @@ type BackupTracker struct {
 	FailedValidationBackups []string
 }
 
+const (
+	yamlExt = ".yaml"
+)
+
 // GetSortedBackupsFromConfigmap returns a list of sorted backup CRs extracted from configmap
 func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error) {
 	// no CM listed
@@ -378,7 +382,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		dpa.SetUID("")
 		dpa.SetResourceVersion("")
 
-		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+".yaml")
+		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+yamlExt)
 		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil {
 			return err
 		}
@@ -427,7 +431,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		storageSecret.SetUID("")
 		storageSecret.SetResourceVersion("")
 
-		filePath := filepath.Join(toDir, oadpSecretPath, secretName+".yaml")
+		filePath := filepath.Join(toDir, oadpSecretPath, secretName+yamlExt)
 		if err := utils.MarshalToYamlFile(storageSecret, filePath); err != nil {
 			return err
 		}
@@ -463,7 +467,7 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		}
 
 		for j, restore := range restoreGroup {
-			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + ".yaml"
+			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + yamlExt
 			filePath := filepath.Join(group, restoreFileName)
 			if err := utils.MarshalToYamlFile(restore, filePath); err != nil {
 				return err
