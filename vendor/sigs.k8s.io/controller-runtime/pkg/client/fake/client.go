@@ -334,12 +334,10 @@ func (t versionedTracker) Create(gvr schema.GroupVersionResource, obj runtime.Ob
 // tries to assign whatever it finds into a ListType it gets from schema.New() - Thus we have to ensure
 // we save as the very same type, otherwise subsequent List requests will fail.
 func convertFromUnstructuredIfNecessary(s *runtime.Scheme, o runtime.Object) (runtime.Object, error) {
-	u, isUnstructured := o.(runtime.Unstructured)
-	if !isUnstructured {
-		return o, nil
-	}
 	gvk := o.GetObjectKind().GroupVersionKind()
-	if !s.Recognizes(gvk) {
+
+	u, isUnstructured := o.(runtime.Unstructured)
+	if !isUnstructured || !s.Recognizes(gvk) {
 		return o, nil
 	}
 
@@ -363,7 +361,7 @@ func (t versionedTracker) Update(gvr schema.GroupVersionResource, obj runtime.Ob
 	isStatus := false
 	// We apply patches using a client-go reaction that ends up calling the trackers Update. As we can't change
 	// that reaction, we use the callstack to figure out if this originated from the status client.
-	if bytes.Contains(debug.Stack(), []byte("sigs.k8s.io/controller-runtime/pkg/client/fake.(*fakeSubResourceClient).statusPatch")) {
+	if bytes.Contains(debug.Stack(), []byte("sigs.k8s.io/controller-runtime/pkg/client/fake.(*fakeSubResourceClient).Patch")) {
 		isStatus = true
 	}
 	return t.update(gvr, obj, ns, isStatus, false)
@@ -382,9 +380,12 @@ func (t versionedTracker) update(gvr schema.GroupVersionResource, obj runtime.Ob
 			field.ErrorList{field.Required(field.NewPath("metadata.name"), "name is required")})
 	}
 
-	gvk, err := apiutil.GVKForObject(obj, t.scheme)
-	if err != nil {
-		return err
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Empty() {
+		gvk, err = apiutil.GVKForObject(obj, t.scheme)
+		if err != nil {
+			return err
+		}
 	}
 
 	oldObject, err := t.ObjectTracker.Get(gvr, ns, accessor.GetName())
@@ -399,14 +400,9 @@ func (t versionedTracker) update(gvr schema.GroupVersionResource, obj runtime.Ob
 
 	if t.withStatusSubresource.Has(gvk) {
 		if isStatus { // copy everything but status and metadata.ResourceVersion from original object
-			if err := copyStatusFrom(obj, oldObject); err != nil {
+			if err := copyNonStatusFrom(oldObject, obj); err != nil {
 				return fmt.Errorf("failed to copy non-status field for object with status subresouce: %w", err)
 			}
-			passedRV := accessor.GetResourceVersion()
-			if err := copyFrom(oldObject, obj); err != nil {
-				return fmt.Errorf("failed to restore non-status fields: %w", err)
-			}
-			accessor.SetResourceVersion(passedRV)
 		} else { // copy status from original object
 			if err := copyStatusFrom(oldObject, obj); err != nil {
 				return fmt.Errorf("failed to copy the status for object with status subresource: %w", err)
@@ -463,25 +459,25 @@ func (c *fakeClient) Get(ctx context.Context, key client.ObjectKey, obj client.O
 		return err
 	}
 
-	if _, isUnstructured := obj.(runtime.Unstructured); isUnstructured {
-		gvk, err := apiutil.GVKForObject(obj, c.scheme)
-		if err != nil {
-			return err
-		}
-		ta, err := meta.TypeAccessor(o)
-		if err != nil {
-			return err
-		}
-		ta.SetKind(gvk.Kind)
-		ta.SetAPIVersion(gvk.GroupVersion().String())
+	gvk, err := apiutil.GVKForObject(obj, c.scheme)
+	if err != nil {
+		return err
 	}
+	ta, err := meta.TypeAccessor(o)
+	if err != nil {
+		return err
+	}
+	ta.SetKind(gvk.Kind)
+	ta.SetAPIVersion(gvk.GroupVersion().String())
 
 	j, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}
+	decoder := scheme.Codecs.UniversalDecoder()
 	zero(obj)
-	return json.Unmarshal(j, obj)
+	_, _, err = decoder.Decode(j, nil, obj)
+	return err
 }
 
 func (c *fakeClient) Watch(ctx context.Context, list client.ObjectList, opts ...client.ListOption) (watch.Interface, error) {
@@ -526,21 +522,21 @@ func (c *fakeClient) List(ctx context.Context, obj client.ObjectList, opts ...cl
 		return err
 	}
 
-	if _, isUnstructured := obj.(runtime.Unstructured); isUnstructured {
-		ta, err := meta.TypeAccessor(o)
-		if err != nil {
-			return err
-		}
-		ta.SetKind(originalKind)
-		ta.SetAPIVersion(gvk.GroupVersion().String())
+	ta, err := meta.TypeAccessor(o)
+	if err != nil {
+		return err
 	}
+	ta.SetKind(originalKind)
+	ta.SetAPIVersion(gvk.GroupVersion().String())
 
 	j, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}
+	decoder := scheme.Codecs.UniversalDecoder()
 	zero(obj)
-	if err := json.Unmarshal(j, obj); err != nil {
+	_, _, err = decoder.Decode(j, nil, obj)
+	if err != nil {
 		return err
 	}
 
@@ -587,7 +583,9 @@ func (c *fakeClient) filterList(list []runtime.Object, gvk schema.GroupVersionKi
 }
 
 func (c *fakeClient) filterWithFields(list []runtime.Object, gvk schema.GroupVersionKind, fs fields.Selector) ([]runtime.Object, error) {
-	requiresExact := selector.RequiresExactMatch(fs)
+	// We only allow filtering on the basis of a single field to ensure consistency with the
+	// behavior of the cache reader (which we're faking here).
+	fieldKey, fieldVal, requiresExact := selector.RequiresExactMatch(fs)
 	if !requiresExact {
 		return nil, fmt.Errorf("field selector %s is not in one of the two supported forms \"key==val\" or \"key=val\"",
 			fs)
@@ -596,24 +594,15 @@ func (c *fakeClient) filterWithFields(list []runtime.Object, gvk schema.GroupVer
 	// Field selection is mimicked via indexes, so there's no sane answer this function can give
 	// if there are no indexes registered for the GroupVersionKind of the objects in the list.
 	indexes := c.indexes[gvk]
-	for _, req := range fs.Requirements() {
-		if len(indexes) == 0 || indexes[req.Field] == nil {
-			return nil, fmt.Errorf("List on GroupVersionKind %v specifies selector on field %s, but no "+
-				"index with name %s has been registered for GroupVersionKind %v", gvk, req.Field, req.Field, gvk)
-		}
+	if len(indexes) == 0 || indexes[fieldKey] == nil {
+		return nil, fmt.Errorf("List on GroupVersionKind %v specifies selector on field %s, but no "+
+			"index with name %s has been registered for GroupVersionKind %v", gvk, fieldKey, fieldKey, gvk)
 	}
 
+	indexExtractor := indexes[fieldKey]
 	filteredList := make([]runtime.Object, 0, len(list))
 	for _, obj := range list {
-		matches := true
-		for _, req := range fs.Requirements() {
-			indexExtractor := indexes[req.Field]
-			if !c.objMatchesFieldSelector(obj, indexExtractor, req.Value) {
-				matches = false
-				break
-			}
-		}
-		if matches {
+		if c.objMatchesFieldSelector(obj, indexExtractor, fieldVal) {
 			filteredList = append(filteredList, obj)
 		}
 	}
@@ -868,22 +857,21 @@ func (c *fakeClient) patch(obj client.Object, patch client.Patch, opts ...client
 	if !handled {
 		panic("tracker could not handle patch method")
 	}
-
-	if _, isUnstructured := obj.(runtime.Unstructured); isUnstructured {
-		ta, err := meta.TypeAccessor(o)
-		if err != nil {
-			return err
-		}
-		ta.SetKind(gvk.Kind)
-		ta.SetAPIVersion(gvk.GroupVersion().String())
+	ta, err := meta.TypeAccessor(o)
+	if err != nil {
+		return err
 	}
+	ta.SetKind(gvk.Kind)
+	ta.SetAPIVersion(gvk.GroupVersion().String())
 
 	j, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}
+	decoder := scheme.Codecs.UniversalDecoder()
 	zero(obj)
-	return json.Unmarshal(j, obj)
+	_, _, err = decoder.Decode(j, nil, obj)
+	return err
 }
 
 // Applying a patch results in a deletionTimestamp that is truncated to the nearest second.
@@ -961,6 +949,45 @@ func dryPatch(action testing.PatchActionImpl, tracker testing.ObjectTracker) (ru
 	return obj, nil
 }
 
+func copyNonStatusFrom(old, new runtime.Object) error {
+	newClientObject, ok := new.(client.Object)
+	if !ok {
+		return fmt.Errorf("%T is not a client.Object", new)
+	}
+	// The only thing other than status we have to retain
+	rv := newClientObject.GetResourceVersion()
+
+	oldMapStringAny, err := toMapStringAny(old)
+	if err != nil {
+		return fmt.Errorf("failed to convert old to *unstructured.Unstructured: %w", err)
+	}
+	newMapStringAny, err := toMapStringAny(new)
+	if err != nil {
+		return fmt.Errorf("failed to convert new to *unststructured.Unstructured: %w", err)
+	}
+
+	// delete everything other than status in case it has fields that were not present in
+	// the old object
+	for k := range newMapStringAny {
+		if k != "status" {
+			delete(newMapStringAny, k)
+		}
+	}
+	// copy everything other than status from the old object
+	for k := range oldMapStringAny {
+		if k != "status" {
+			newMapStringAny[k] = oldMapStringAny[k]
+		}
+	}
+
+	if err := fromMapStringAny(newMapStringAny, new); err != nil {
+		return fmt.Errorf("failed to convert back from map[string]any: %w", err)
+	}
+	newClientObject.SetResourceVersion(rv)
+
+	return nil
+}
+
 // copyStatusFrom copies the status from old into new
 func copyStatusFrom(old, new runtime.Object) error {
 	oldMapStringAny, err := toMapStringAny(old)
@@ -975,19 +1002,6 @@ func copyStatusFrom(old, new runtime.Object) error {
 	newMapStringAny["status"] = oldMapStringAny["status"]
 
 	if err := fromMapStringAny(newMapStringAny, new); err != nil {
-		return fmt.Errorf("failed to convert back from map[string]any: %w", err)
-	}
-
-	return nil
-}
-
-// copyFrom copies from old into new
-func copyFrom(old, new runtime.Object) error {
-	oldMapStringAny, err := toMapStringAny(old)
-	if err != nil {
-		return fmt.Errorf("failed to convert old to *unstructured.Unstructured: %w", err)
-	}
-	if err := fromMapStringAny(oldMapStringAny, new); err != nil {
 		return fmt.Errorf("failed to convert back from map[string]any: %w", err)
 	}
 
@@ -1019,7 +1033,6 @@ func fromMapStringAny(u map[string]any, target runtime.Object) error {
 		return fmt.Errorf("failed to serialize: %w", err)
 	}
 
-	zero(target)
 	if err := json.Unmarshal(serialized, &target); err != nil {
 		return fmt.Errorf("failed to deserialize: %w", err)
 	}
@@ -1112,15 +1125,6 @@ func (sw *fakeSubResourceClient) Patch(ctx context.Context, obj client.Object, p
 		body = patchOptions.SubResourceBody
 	}
 
-	// this is necessary to identify that last call was made for status patch, through stack trace.
-	if sw.subResource == "status" {
-		return sw.statusPatch(body, patch, patchOptions)
-	}
-
-	return sw.client.patch(body, patch, &patchOptions.PatchOptions)
-}
-
-func (sw *fakeSubResourceClient) statusPatch(body client.Object, patch client.Patch, patchOptions client.SubResourcePatchOptions) error {
 	return sw.client.patch(body, patch, &patchOptions.PatchOptions)
 }
 
@@ -1254,8 +1258,6 @@ func inTreeResourcesWithStatus() []schema.GroupVersionKind {
 
 		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1beta2", Kind: "FlowSchema"},
 		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1beta2", Kind: "PriorityLevelConfiguration"},
-		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1", Kind: "FlowSchema"},
-		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1", Kind: "PriorityLevelConfiguration"},
 	}
 }
 
