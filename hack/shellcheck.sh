@@ -2,7 +2,9 @@
 
 VERSION="0.7.2"
 
-rootdir=$(git rev-parse --show-toplevel)
+# Temporary workaround until issue in ci-operator with git commands is resolved.
+#rootdir=$(git rev-parse --show-toplevel)
+rootdir=$(dirname $(dirname $(readlink -f $0)))
 if [ -z "${rootdir}" ]; then
     echo "Failed to determine top level directory"
     exit 1
