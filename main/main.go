@@ -119,8 +119,13 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	scheme.AddKnownTypes(ocpV1.GroupVersion, &ocpV1.ClusterVersion{}, &ocpV1.Ingress{},
-		&ocpV1.ImageDigestMirrorSet{})
+
+	scheme.AddKnownTypes(ocpV1.GroupVersion,
+		&ocpV1.ClusterVersion{},
+		&ocpV1.Ingress{},
+		&ocpV1.ImageDigestMirrorSet{},
+		&ocpV1.Infrastructure{},
+	)
 
 	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
 

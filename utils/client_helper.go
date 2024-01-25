@@ -8,7 +8,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	v1 "github.com/openshift/api/config/v1"
+	ocp_config_v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
@@ -75,7 +75,7 @@ type ClusterInfo struct {
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
-	clusterVersion := &v1.ClusterVersion{}
+	clusterVersion := &ocp_config_v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
 		return nil, err
 	}
@@ -186,6 +186,18 @@ func GetCSVDeployment(ctx context.Context, client runtimeclient.Client) (*appsv1
 	return deployment, nil
 }
 
+func GetInfrastructure(ctx context.Context, client runtimeclient.Client) (*ocp_config_v1.Infrastructure, error) {
+	infrastructure := &ocp_config_v1.Infrastructure{}
+	if err := client.Get(ctx,
+		types.NamespacedName{
+			Name: common.OpenshiftInfraCRName},
+		infrastructure); err != nil {
+		return nil, fmt.Errorf("failed to get infra CR: %w", err)
+	}
+
+	return infrastructure, nil
+}
+
 func GetReleaseRegistry(ctx context.Context, client runtimeclient.Client) (string, error) {
 	deployment, err := GetCSVDeployment(ctx, client)
 	if err != nil {
@@ -216,7 +228,7 @@ func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient
 			sourceRegistries = append(sourceRegistries, ExtractRegistryFromImage(rdp.Source))
 		}
 	}
-	currentIdms := v1.ImageDigestMirrorSetList{}
+	currentIdms := ocp_config_v1.ImageDigestMirrorSetList{}
 	if err := client.List(ctx, &currentIdms, &allNamespaces); err != nil {
 		return nil, err
 	}

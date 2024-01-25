@@ -170,14 +170,24 @@ func (r *UpgradeClusterConfigGather) fetchSSHPublicKey() (string, error) {
 	return string(sshKey), err
 }
 
+func (r *UpgradeClusterConfigGather) fetchInfraID(ctx context.Context) (string, error) {
+	infra, err := utils.GetInfrastructure(ctx, r.Client)
+	if err != nil {
+		return "", fmt.Errorf("failed to get infrastructure: %w", err)
+	}
+
+	return infra.Status.InfrastructureName, nil
+}
+
 func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
-	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey string) *seedreconfig.SeedReconfiguration {
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey string, infraID string) *seedreconfig.SeedReconfiguration {
 
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
 		BaseDomain:                clusterInfo.BaseDomain,
 		ClusterName:               clusterInfo.ClusterName,
 		ClusterID:                 clusterInfo.ClusterID,
+		InfraID:                   infraID,
 		NodeIP:                    clusterInfo.NodeIP,
 		ReleaseRegistry:           clusterInfo.ReleaseRegistry,
 		Hostname:                  clusterInfo.Hostname,
@@ -203,7 +213,12 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
-	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey)
+	infraID, err := r.fetchInfraID(ctx)
+	if err != nil {
+		return err
+	}
+
+	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey, infraID)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
