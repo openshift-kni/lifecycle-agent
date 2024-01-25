@@ -86,7 +86,7 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
 
 -> export AUTHFILE=/path/to/pull-secret.json
 -> export SEED_IMG_REFSPEC=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
--> export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:latest
+-> export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:v0
 
 -> podman run --privileged --pid=host --rm --net=host \
     -v /etc:/etc \
@@ -116,7 +116,7 @@ time="2023-11-28 11:56:37" level=info msg="Seed cluster restored successfully!"
 ```
 
 Notice that the `--recert-image` flag is optional (mainly used in disconnected environments), if not provided the
-tool will use `quay.io/edge-infrastructure/recert:latest` as the default recert image.
+tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert image.
 
 > **Note:** For a disconnected environment, first mirror the `lca-cli` and `recert` container images to your local
 > registry using [skopeo](https://github.com/containers/skopeo) or a similar tool.

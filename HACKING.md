@@ -130,7 +130,7 @@ AUTHFILE=/tmp/backup-secret.json
 podman login --authfile ${AUTHFILE} -u ${MY_ID} quay.io/${MY_REPO_ID}
 
 export IMG_REFSPEC=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
-export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:latest
+export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:v0
 
 podman run --privileged --pid=host --rm --net=host \
     -v /etc:/etc \
@@ -369,7 +369,7 @@ metadata:
   name: seedimage
 spec:
   seedImage: quay.io/dpenney/upgbackup:orchestrated-seed-image
-  recertImage: quay.io/edge-infrastructure/recert:latest
+  recertImage: quay.io/edge-infrastructure/recert:v0
 ```
 
 ## Rollbacks
