@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.51.1"
+VERSION="1.55.2"
 
 # Temporary workaround until issue in ci-operator with git commands is resolved.
 #rootdir=$(git rev-parse --show-toplevel)

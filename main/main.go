@@ -79,6 +79,10 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+const (
+	bakExt = ".bak"
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(lcav1alpha1.AddToScheme(scheme))
@@ -342,13 +346,13 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	}
 
 	// Rename files for debugging in case of error
-	os.Remove(seedgenFilePath + ".bak")
-	if err := os.Rename(seedgenFilePath, seedgenFilePath+".bak"); err != nil {
+	os.Remove(seedgenFilePath + bakExt)
+	if err := os.Rename(seedgenFilePath, seedgenFilePath+bakExt); err != nil {
 		return err
 	}
 
-	os.Remove(secretFilePath + ".bak")
-	if err := os.Rename(secretFilePath, secretFilePath+".bak"); err != nil {
+	os.Remove(secretFilePath + bakExt)
+	if err := os.Rename(secretFilePath, secretFilePath+bakExt); err != nil {
 		return err
 	}
 
