@@ -151,7 +151,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
 	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
-	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, labels, staterootVarPath); err != nil {
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
 		return requeueWithError(err)
 	}
 

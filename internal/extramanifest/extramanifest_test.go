@@ -162,7 +162,7 @@ metadata:
   name: ztp-common.p1
   namespace: spoke
   labels:
-    lca.openshift.io/for-ocp-version: "4.16.1"
+    lca.openshift.io/target-ocp-version: "4.16.1"
   annotations:
     ran.openshift.io/ztp-deploy-wave: "1"
 spec:
@@ -208,7 +208,60 @@ spec:
   remediationAction: inform
 `
 
-const policyWithOutLabel = `---
+const policyWithAnnotationAndObjectWithLabel = `---
+kind: Policy
+apiVersion: policy.open-cluster-management.io/v1
+metadata:
+  name: ztp-common.p3
+  namespace: spoke
+  annotations:
+    ran.openshift.io/ztp-deploy-wave: "1"
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: common-cnfdf22-new-config-policy-config
+        spec:
+          evaluationInterval:
+            compliant: 10m
+            noncompliant: 10s
+          namespaceselector:
+            exclude:
+              - kube-*
+            include:
+              - "*"
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: CatalogSource
+                metadata:
+                  name: redhat-operators-new
+                  namespace: openshift-marketplace
+                  annotations:
+                    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+                  labels:
+                    lca.openshift.io/target-ocp-version: "4.15.2"
+                spec:
+                  displayName: Red Hat Operators Catalog
+                  image: registry.redhat.io/redhat/redhat-operator-index:v4.15
+                  publisher: Red Hat
+                  sourceType: grpc
+                  updateStrategy:
+                    registryPoll:
+                      interval: 1h
+                status:
+                  connectionState:
+                    lastObservedState: READY
+          remediationAction: inform
+          severity: low
+  remediationAction: inform
+`
+
+const policyWithoutLabel = `---
 kind: Policy
 apiVersion: policy.open-cluster-management.io/v1
 metadata:
@@ -258,94 +311,151 @@ spec:
 `
 
 func TestExportPolicyManifests(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().Build()
 
-	// Create a temporary directory for testing
-	toDir, err := os.MkdirTemp("", "staterootB")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory: %v", err)
-	}
-	defer os.RemoveAll(toDir)
-
-	labels := map[string]string{"lca.openshift.io/for-ocp-version": "4.16.1"}
-	// Create policies
-	policies := []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithOutLabel)}
-
-	for _, p := range policies {
-		err = fakeClient.Create(context.Background(), p)
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-	}
-
-	handler := &EMHandler{
-		Client: fakeClient,
-		Log:    ctrl.Log.WithName("ExtraManifest"),
-	}
-
-	// Export the manifests to the temporary directory
-	err = handler.ExtractAndExportManifestFromPoliciesToDir(context.Background(),
-		labels, toDir)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	// Check that the manifests were exported to the correct files
-	expectedFilePaths := []string{
-		filepath.Join(toDir, PolicyManifestPath, "0_redhat-operators-new_openshift-marketplace.yaml"),
-	}
-
-	unexpectedFilePaths := []string{
-		filepath.Join(toDir, PolicyManifestPath, "1_redhat-operators_openshift-marketplace.yaml"),
-	}
-
-	expectedObjects := []unstructured.Unstructured{
+	testcases := []struct {
+		name                string
+		policies            []*unstructured.Unstructured
+		policyLabels        map[string]string
+		objectLabels        map[string]string
+		expectedFilePaths   []string
+		unexpectedFilePaths []string
+		expectedObjects     []unstructured.Unstructured
+	}{
 		{
-			Object: map[string]interface{}{
-				"apiVersion": "operators.coreos.com/v1alpha1",
-				"kind":       "CatalogSource",
-				"metadata": map[string]interface{}{
-					"annotations": map[string]interface{}{
-						"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}",
-					},
-					"name":      "redhat-operators-new",
-					"namespace": "openshift-marketplace",
-				},
-				"spec": map[string]interface{}{
-					"displayName": "Red Hat Operators Catalog",
-					"image":       "registry.redhat.io/redhat/redhat-operator-index:v4.16",
-					"publisher":   "Red Hat",
-					"sourceType":  "grpc",
-					"updateStrategy": map[string]interface{}{
-						"registryPoll": map[string]interface{}{
-							"interval": "1h",
+			name:         "Extraction by matching labels on objects",
+			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
+			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2"},
+			expectedFilePaths: []string{
+				filepath.Join(PolicyManifestPath, "0_redhat-operators-new_openshift-marketplace.yaml"),
+			},
+			unexpectedFilePaths: []string{
+				filepath.Join(PolicyManifestPath, "1_redhat-operators_openshift-marketplace.yaml"),
+			},
+			expectedObjects: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"apiVersion": "operators.coreos.com/v1alpha1",
+						"kind":       "CatalogSource",
+						"metadata": map[string]interface{}{
+							"annotations": map[string]interface{}{
+								"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}",
+							},
+							"labels": map[string]interface{}{
+								"lca.openshift.io/target-ocp-version": "4.15.2",
+							},
+							"name":      "redhat-operators-new",
+							"namespace": "openshift-marketplace",
 						},
+						"spec": map[string]interface{}{
+							"displayName": "Red Hat Operators Catalog",
+							"image":       "registry.redhat.io/redhat/redhat-operator-index:v4.15",
+							"publisher":   "Red Hat",
+							"sourceType":  "grpc",
+							"updateStrategy": map[string]interface{}{
+								"registryPoll": map[string]interface{}{
+									"interval": "1h",
+								},
+							},
+						},
+						// status should be empty
+						"status": map[string]interface{}{},
 					},
 				},
-				// status should be empty
-				"status": map[string]interface{}{},
+			},
+		},
+		{
+			name:         "Extraction by matching labels on policies",
+			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
+			policyLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.16.1"},
+			expectedFilePaths: []string{
+				filepath.Join(PolicyManifestPath, "0_redhat-operators-new_openshift-marketplace.yaml"),
+			},
+			unexpectedFilePaths: []string{
+				filepath.Join(PolicyManifestPath, "1_redhat-operators_openshift-marketplace.yaml"),
+			},
+			expectedObjects: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"apiVersion": "operators.coreos.com/v1alpha1",
+						"kind":       "CatalogSource",
+						"metadata": map[string]interface{}{
+							"annotations": map[string]interface{}{
+								"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}",
+							},
+							"name":      "redhat-operators-new",
+							"namespace": "openshift-marketplace",
+						},
+						"spec": map[string]interface{}{
+							"displayName": "Red Hat Operators Catalog",
+							"image":       "registry.redhat.io/redhat/redhat-operator-index:v4.16",
+							"publisher":   "Red Hat",
+							"sourceType":  "grpc",
+							"updateStrategy": map[string]interface{}{
+								"registryPoll": map[string]interface{}{
+									"interval": "1h",
+								},
+							},
+						},
+						// status should be empty
+						"status": map[string]interface{}{},
+					},
+				},
 			},
 		},
 	}
 
-	for i, expectedFile := range expectedFilePaths {
-		if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
-			t.Fatalf("Expected file %s does not exist", expectedFile)
-		}
-		object := &unstructured.Unstructured{}
-		err := utils.ReadYamlOrJSONFile(expectedFile, object)
-		if err != nil {
-			t.Fatalf("Failed to read expected file %s, err: %v", expectedFile, err)
-		}
-		if !equality.Semantic.DeepEqual(object, &expectedObjects[i]) {
-			t.Fatalf("exported CR: \n%v does not match expected: \n%v", object, expectedObjects[i])
-		}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().Build()
 
-	}
-	for _, unexpectedFile := range unexpectedFilePaths {
-		if _, err := os.Stat(unexpectedFile); !os.IsNotExist(err) {
-			t.Fatalf("Unexpected file %s should not exist", unexpectedFile)
-		}
+			// Create a temporary directory for testing
+			toDir, err := os.MkdirTemp("", "staterootB")
+			if err != nil {
+				t.Errorf("Failed to create temporary directory: %v", err)
+			}
+			defer os.RemoveAll(toDir)
+
+			for _, p := range tc.policies {
+				err = fakeClient.Create(context.Background(), p)
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+
+			handler := &EMHandler{
+				Client: fakeClient,
+				Log:    ctrl.Log.WithName("ExtraManifest"),
+			}
+
+			// Export the manifests to the temporary directory
+			err = handler.ExtractAndExportManifestFromPoliciesToDir(context.Background(),
+				tc.policyLabels, tc.objectLabels, toDir)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// Check that the manifests were exported to the correct files
+
+			for i, expectedFile := range tc.expectedFilePaths {
+				if _, err := os.Stat(filepath.Join(toDir, expectedFile)); os.IsNotExist(err) {
+					t.Fatalf("Expected file %s does not exist", expectedFile)
+				}
+				object := &unstructured.Unstructured{}
+				err := utils.ReadYamlOrJSONFile(filepath.Join(toDir, expectedFile), object)
+				if err != nil {
+					t.Fatalf("Failed to read expected file %s, err: %v", expectedFile, err)
+				}
+				if !equality.Semantic.DeepEqual(object, &tc.expectedObjects[i]) {
+					t.Fatalf("exported CR: \n%v does not match expected: \n%v", object, tc.expectedObjects[i])
+				}
+
+			}
+			for _, unexpectedFile := range tc.unexpectedFilePaths {
+				if _, err := os.Stat(filepath.Join(toDir, unexpectedFile)); !os.IsNotExist(err) {
+					t.Fatalf("Unexpected file %s should not exist", unexpectedFile)
+				}
+			}
+		})
 	}
 }
 

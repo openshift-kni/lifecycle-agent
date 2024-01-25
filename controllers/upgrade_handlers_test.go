@@ -686,7 +686,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
 			}
 			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
-				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
+				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
 			}
 			if tt.exportExtraManifestToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExportExtraManifestToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportExtraManifestToDirReturn()).Times(1)

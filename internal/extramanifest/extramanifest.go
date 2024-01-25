@@ -45,7 +45,7 @@ const (
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
-	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, labels map[string]string, toDir string) error
+	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error
 }
 
 // EMHandler handles the extra manifests
@@ -128,19 +128,19 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	return nil
 }
 
-func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, labels map[string]string, toDir string) error {
+func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
 	// Create the directory for the extra manifests
 	if err := os.MkdirAll(filepath.Join(toDir, PolicyManifestPath), 0o700); err != nil {
 		return err
 	}
 
-	policies, err := h.GetPolicies(ctx, labels)
+	policies, err := h.GetPolicies(ctx, policyLabels)
 	if err != nil {
 		return err
 	}
 
 	for i, policy := range policies {
-		objects, err := getConfigurationObjects(policy)
+		objects, err := getConfigurationObjects(policy, objectLabels)
 		if err != nil {
 			return err
 		}

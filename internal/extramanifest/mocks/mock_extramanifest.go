@@ -70,15 +70,15 @@ func (mr *MockEManifestHandlerMockRecorder) ExportExtraManifestToDir(ctx, extraM
 }
 
 // ExtractAndExportManifestFromPoliciesToDir mocks base method.
-func (m *MockEManifestHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, labels map[string]string, toDir string) error {
+func (m *MockEManifestHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtractAndExportManifestFromPoliciesToDir", ctx, labels, toDir)
+	ret := m.ctrl.Call(m, "ExtractAndExportManifestFromPoliciesToDir", ctx, policyLabels, objectLabels, toDir)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ExtractAndExportManifestFromPoliciesToDir indicates an expected call of ExtractAndExportManifestFromPoliciesToDir.
-func (mr *MockEManifestHandlerMockRecorder) ExtractAndExportManifestFromPoliciesToDir(ctx, labels, toDir any) *gomock.Call {
+func (mr *MockEManifestHandlerMockRecorder) ExtractAndExportManifestFromPoliciesToDir(ctx, policyLabels, objectLabels, toDir any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractAndExportManifestFromPoliciesToDir", reflect.TypeOf((*MockEManifestHandler)(nil).ExtractAndExportManifestFromPoliciesToDir), ctx, labels, toDir)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractAndExportManifestFromPoliciesToDir", reflect.TypeOf((*MockEManifestHandler)(nil).ExtractAndExportManifestFromPoliciesToDir), ctx, policyLabels, objectLabels, toDir)
 }

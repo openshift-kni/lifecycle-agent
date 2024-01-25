@@ -35,7 +35,8 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 
 	var policyWaveMap = make(map[*policiesv1.Policy]int)
 
-	for _, policy := range policies.Items {
+	for i := range policies.Items {
+		policy := &policies.Items[i]
 		// CRs from enforce mode policy gets applied by ACM policy engine
 		// We only care about the inform ones that typically get enforced by TALM through the ZTP CGU
 		if strings.EqualFold(string(policy.Spec.RemediationAction), "enforce") {
@@ -55,7 +56,7 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 				h.Log.Info(fmt.Sprintf("Ignoring policy %s with invalid name", policy.Name))
 				continue
 			}
-			policyWaveMap[&policy] = deployWaveInt
+			policyWaveMap[policy] = deployWaveInt
 		}
 	}
 
@@ -63,7 +64,7 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 }
 
 // Gets encapsulated objects from policy
-func getConfigurationObjects(policy *policiesv1.Policy) ([]unstructured.Unstructured, error) {
+func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]string) ([]unstructured.Unstructured, error) {
 	var uobjects []unstructured.Unstructured
 
 	var objects []runtime.RawExtension
@@ -86,11 +87,40 @@ func getConfigurationObjects(policy *policiesv1.Policy) ([]unstructured.Unstruct
 			if !strings.EqualFold(string(ot.ComplianceType), string(policyv1.MustHave)) {
 				continue
 			}
+
 			var object unstructured.Unstructured
 			err = object.UnmarshalJSON(ot.ObjectDefinition.DeepCopy().Raw)
 			if err != nil {
 				return uobjects, err
 			}
+
+			if len(objectLabels) > 0 {
+				if metadata, exists := object.Object["metadata"].(map[string]interface{}); exists {
+					if labels, exists := metadata["labels"].(map[string]interface{}); exists {
+						labelsFound := true
+						for label, value := range objectLabels {
+							if value == "" {
+								_, exists := labels[label]
+								if !exists {
+									labelsFound = false
+									break
+								}
+							} else if value != labels[label] {
+								labelsFound = false
+								break
+							}
+						}
+						if !labelsFound {
+							continue
+						}
+					} else {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
+
 			object.Object["status"] = map[string]interface{}{} // remove status, we can't apply it
 			uobjects = append(uobjects, object)
 		}
