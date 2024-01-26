@@ -128,6 +128,7 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	return nil
 }
 
+// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
 func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
 	// Create the directory for the extra manifests
 	if err := os.MkdirAll(filepath.Join(toDir, PolicyManifestPath), 0o700); err != nil {

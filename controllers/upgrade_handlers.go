@@ -150,6 +150,9 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
+	// Extract from policies can be done by matching labels on the policy or the CR itself
+	// Currently we expect user to properly label CRs with site specific content
+	// as those policies should/can not be applied on the seed
 	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
 	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
 		return requeueWithError(err)
