@@ -23,7 +23,6 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
-	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -77,11 +76,6 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 
 	if err := s.cleanupServiceUnits(); err != nil {
 		s.log.Errorf("Error cleaning up systemd service files: %v", err)
-		errors = append(errors, err)
-	}
-
-	if err := s.cleanupScriptFiles(); err != nil {
-		s.log.Errorf("Error cleaning up script files: %v", err)
 		errors = append(errors, err)
 	}
 
@@ -140,18 +134,4 @@ func (s *SeedRestoration) cleanupServiceUnits() error {
 	})
 
 	return err
-}
-
-func (s *SeedRestoration) cleanupScriptFiles() error {
-	dir := filepath.Join(common.InstallationConfigurationFilesDir, "scripts")
-	return utils.HandleFilesWithCallback(dir, func(path string) error {
-		scriptName := filepath.Base(path)
-
-		s.log.Infof("Removing script file %s", scriptName)
-		if err := os.Remove(filepath.Join("/var/usrlocal/bin/", scriptName)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("error removing %s file: %w", scriptName, err)
-		}
-
-		return nil
-	})
 }

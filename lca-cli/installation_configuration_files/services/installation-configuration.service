@@ -1,6 +1,5 @@
 [Unit]
 Description=Image base SNO configuration script
-After=prepare-installation-configuration.service NetworkManager-wait-online.service
 
 [Service]
 Type=oneshot

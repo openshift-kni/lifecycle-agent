@@ -40,6 +40,14 @@ type Ops interface {
 	UnmountAndRemoveImage(img string) error
 	RecertFullFlow(recertContainerImage, authFile, configFile string,
 		preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error
+	ListBlockDevices() ([]BlockDevice, error)
+	Mount(deviceName, mountFolder string) error
+	Umount(deviceName string) error
+}
+
+type BlockDevice struct {
+	Name  string
+	Label string
 }
 
 type ops struct {
@@ -311,5 +319,46 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 		}
 	}
 
+	return nil
+}
+
+// ListBlockDevices runs lsblk command and not using go library cause
+// each library that i was looking into doesn't show label for block device and shows labels only for partitions
+func (o *ops) ListBlockDevices() ([]BlockDevice, error) {
+	o.log.Info("Listing block devices")
+	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f",
+		"--json", "--output", "NAME,LABEL")
+	if err != nil {
+		return nil, fmt.Errorf("failed to run lsblk, err: %w", err)
+	}
+	blockDevices := map[string][]BlockDevice{}
+	err = json.Unmarshal([]byte(lsblkOutput), &blockDevices)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal lsblk output, err %w", err)
+	}
+	blockDeviceList, ok := blockDevices["blockdevices"]
+	if !ok {
+		return nil, fmt.Errorf("failed to find blockdevices in lsblk output")
+	}
+
+	return blockDeviceList, nil
+}
+
+func (o *ops) Mount(deviceName, mountFolder string) error {
+	o.log.Infof("Mounting %s into %s", deviceName, mountFolder)
+	if err := os.MkdirAll(mountFolder, 0o700); err != nil {
+		return fmt.Errorf("failed to create %s, err: %w", mountFolder, err)
+	}
+	if _, err := o.RunInHostNamespace("mount", fmt.Sprintf("/dev/%s", deviceName), mountFolder); err != nil {
+		return fmt.Errorf("failed to mount %s into %s, err: %w", deviceName, mountFolder, err)
+	}
+	return nil
+}
+
+func (o *ops) Umount(deviceName string) error {
+	o.log.Infof("Unmounting %s", deviceName)
+	if _, err := o.RunInHostNamespace("umount", fmt.Sprintf("/dev/%s", deviceName)); err != nil {
+		return fmt.Errorf("failed to unmount %s, err: %w", deviceName, err)
+	}
 	return nil
 }

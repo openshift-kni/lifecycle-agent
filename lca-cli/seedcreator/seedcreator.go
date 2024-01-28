@@ -157,18 +157,8 @@ func (s *SeedCreator) CreateSeedImage() error {
 }
 
 func (s *SeedCreator) copyConfigurationFiles() error {
-	// copy scripts
-	err := s.copyConfigurationScripts()
-	if err != nil {
-		return err
-	}
 
 	return s.handleServices()
-}
-
-func (s *SeedCreator) copyConfigurationScripts() error {
-	s.log.Infof("Copying installation_configuration_files/scripts to local/bin")
-	return cp.Copy(filepath.Join(common.InstallationConfigurationFilesDir, "scripts"), "/var/usrlocal/bin", cp.Options{AddPermission: os.FileMode(0o777)})
 }
 
 func (s *SeedCreator) handleServices() error {
@@ -335,6 +325,16 @@ func (s *SeedCreator) backupEtc() error {
 	s.log.Info("Backing up /etc")
 
 	// Execute 'ostree admin config-diff' command and backup etc.deletions
+	excludePatterns := []string{
+		"/etc/NetworkManager/system-connections",
+	}
+	tarArgs := []string{"tar", "czf", path.Join(s.backupDir + "/etc.tgz")}
+	for _, pattern := range excludePatterns {
+		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
+		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
+	}
+	tarArgs = append(tarArgs, "--selinux", "-T", "-")
+
 	args := []string{"admin", "config-diff", "|", "awk", `'$1 == "D" {print "/etc/" $2}'`, ">",
 		path.Join(s.backupDir, "/etc.deletions")}
 	_, err := s.ops.RunBashInHostNamespace("ostree", args...)
@@ -343,8 +343,8 @@ func (s *SeedCreator) backupEtc() error {
 	}
 
 	args = []string{"admin", "config-diff", "|", "grep", "-v", "'cni/multus'",
-		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|", "tar", "czf",
-		path.Join(s.backupDir + "/etc.tgz"), "--selinux", "-T", "-"}
+		"|", "awk", `'$1 != "D" {print "/etc/" $2}'`, "|"}
+	args = append(args, tarArgs...)
 
 	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {

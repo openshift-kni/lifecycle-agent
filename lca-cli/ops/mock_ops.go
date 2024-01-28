@@ -95,6 +95,35 @@ func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
 }
 
+// ListBlockDevices mocks base method.
+func (m *MockOps) ListBlockDevices() ([]BlockDevice, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBlockDevices")
+	ret0, _ := ret[0].([]BlockDevice)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBlockDevices indicates an expected call of ListBlockDevices.
+func (mr *MockOpsMockRecorder) ListBlockDevices() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlockDevices", reflect.TypeOf((*MockOps)(nil).ListBlockDevices))
+}
+
+// Mount mocks base method.
+func (m *MockOps) Mount(deviceName, mountFolder string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Mount", deviceName, mountFolder)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Mount indicates an expected call of Mount.
+func (mr *MockOpsMockRecorder) Mount(deviceName, mountFolder any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Mount", reflect.TypeOf((*MockOps)(nil).Mount), deviceName, mountFolder)
+}
+
 // RecertFullFlow mocks base method.
 func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
 	m.ctrl.T.Helper()
@@ -233,6 +262,20 @@ func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
+}
+
+// Umount mocks base method.
+func (m *MockOps) Umount(deviceName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Umount", deviceName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Umount indicates an expected call of Umount.
+func (mr *MockOpsMockRecorder) Umount(deviceName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Umount", reflect.TypeOf((*MockOps)(nil).Umount), deviceName)
 }
 
 // UnmountAndRemoveImage mocks base method.

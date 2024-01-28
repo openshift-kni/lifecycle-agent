@@ -79,6 +79,9 @@ const (
 
 	PullSecretName           = "pull-secret"
 	OpenshiftConfigNamespace = "openshift-config"
+
+	NMConnectionFolder = "/etc/NetworkManager/system-connections"
+	NetworkDir         = "network-configuration"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
