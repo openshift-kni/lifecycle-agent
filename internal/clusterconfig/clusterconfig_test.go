@@ -572,7 +572,7 @@ func TestNetworkConfig(t *testing.T) {
 				"/etc/NetworkManager/system-connections/scripts/test1.txt"},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tmpDir string, err error, files []string, unc UpgradeClusterConfigGather) {
-				dir := filepath.Join(tmpDir, networkDir)
+				dir := filepath.Join(tmpDir, common.NetworkDir)
 				counter := 0
 				for _, file := range files {
 					err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {

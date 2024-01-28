@@ -76,6 +76,12 @@ const (
 	// Bump this every time the seed format changes in a backwards incompatible way
 	SeedFormatVersion  = 3
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
+
+	PullSecretName           = "pull-secret"
+	OpenshiftConfigNamespace = "openshift-config"
+
+	NMConnectionFolder = "/etc/NetworkManager/system-connections"
+	NetworkDir         = OptOpenshift + "/networkDir"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
