@@ -57,6 +57,8 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 				continue
 			}
 			policyWaveMap[policy] = deployWaveInt
+		} else {
+			h.Log.Info(fmt.Sprintf("Ignoring policy %s without the %s annotation", policy.Name, ztpDeployWaveAnnotation))
 		}
 	}
 
