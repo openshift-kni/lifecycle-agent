@@ -350,11 +350,20 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 				idleCondition == nil {
 				utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
 			} else {
+				msg := "Abort or finalize not allowed"
+				if isAfterPivot {
+					rollbackInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackInProgress))
+					if rollbackInProgressCondition != nil && rollbackInProgressCondition.Status == metav1.ConditionTrue {
+						msg = "Transition to Idle not allowed - Rollback is in progress"
+					} else {
+						msg = "Transition to Idle not allowed - Stage must be set to Rollback"
+					}
+				}
 				utils.SetStatusCondition(&ibu.Status.Conditions,
 					utils.ConditionTypes.Idle,
 					utils.ConditionReasons.InvalidTransition,
 					metav1.ConditionFalse,
-					"Abort or finalize not allowed",
+					msg,
 					ibu.Generation,
 				)
 				return false
