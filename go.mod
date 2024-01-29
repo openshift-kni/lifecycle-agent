@@ -23,7 +23,7 @@ require (
 	k8s.io/apimachinery v0.28.2
 	k8s.io/client-go v0.28.2
 	k8s.io/code-generator v0.28.2
-	open-cluster-management.io/api v0.11.0
+	open-cluster-management.io/api v0.12.0
 	sigs.k8s.io/controller-runtime v0.16.1
 	sigs.k8s.io/yaml v1.4.0
 )
