@@ -354,6 +354,13 @@ spec:
           - list
           - watch
         - apiGroups:
+          - policy.open-cluster-management.io
+          resources:
+          - policies
+          verbs:
+          - get
+          - list
+        - apiGroups:
           - rbac.authorization.k8s.io
           resources:
           - clusterrolebindings

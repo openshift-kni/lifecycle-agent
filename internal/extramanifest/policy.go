@@ -18,6 +18,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list
+
 // This annotation helps with the ordering as well as whether the policy should be applied. This is the same expectation as
 // the normal ZTP process post non-image-based cluster installation.
 const ztpDeployWaveAnnotation = "ran.openshift.io/ztp-deploy-wave"
