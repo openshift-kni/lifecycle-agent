@@ -37,11 +37,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const ExtraManifestPath = "/opt/extra-manifests"
+const (
+	ExtraManifestPath  = "/opt/extra-manifests"
+	PolicyManifestPath = "/opt/policy-manifests"
+)
 
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
+	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error
 }
 
 // EMHandler handles the extra manifests
@@ -121,6 +125,35 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		}
 	}
 
+	return nil
+}
+
+// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
+func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
+	// Create the directory for the extra manifests
+	if err := os.MkdirAll(filepath.Join(toDir, PolicyManifestPath), 0o700); err != nil {
+		return err
+	}
+
+	policies, err := h.GetPolicies(ctx, policyLabels)
+	if err != nil {
+		return err
+	}
+
+	for i, policy := range policies {
+		objects, err := getConfigurationObjects(policy, objectLabels)
+		if err != nil {
+			return err
+		}
+		for _, object := range objects {
+			fileName := fmt.Sprintf("%d_%s_%s.yaml", i, object.GetName(), object.GetNamespace())
+			filePath := filepath.Join(toDir, PolicyManifestPath, fileName)
+			err = utils.MarshalToYamlFile(&object, filePath)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

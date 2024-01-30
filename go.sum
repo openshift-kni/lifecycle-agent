@@ -57,8 +57,7 @@ github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/
 github.com/google/gofuzz v1.1.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
 github.com/google/gofuzz v1.2.0 h1:xRy4A+RhZaiKjJ1bPfwQ8sedCA+YS2YcCHW6ec7JMi0=
 github.com/google/gofuzz v1.2.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
-github.com/google/pprof v0.0.0-20230323073829-e72429f035bd h1:r8yyd+DJDmsUhGrRBxH5Pj7KeFK5l+Y3FsgT8keqKtk=
-github.com/google/pprof v0.0.0-20230323073829-e72429f035bd/go.mod h1:79YE0hCXdHag9sBkw2o+N/YnZtTkXi0UT9Nnixa5eYk=
+github.com/google/pprof v0.0.0-20230502171905-255e3b9b56de h1:6bMcLOeKoNo0+mTOb1ee3McF6CCKGixjLR3EDQY1Jik=
 github.com/google/uuid v1.3.1 h1:KjJaJ9iWZ3jOFZIf1Lqf4laDRCasjl0BCmnEGxkdLb4=
 github.com/google/uuid v1.3.1/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/imdario/mergo v0.3.16 h1:wwQJbIsHYGMUyLSPrEq1CT16AhnhNJQ51+4fdHUnCl4=
@@ -273,6 +272,12 @@ k8s.io/utils v0.0.0-20230726121419-3b25d923346b h1:sgn3ZU783SCgtaSJjpcVVlRqd6GSn
 k8s.io/utils v0.0.0-20230726121419-3b25d923346b/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
 open-cluster-management.io/api v0.12.0 h1:sNkj4k2XyWA/GLsTiFg82bLIZ7JDZKkLLLyZjJUlJMs=
 open-cluster-management.io/api v0.12.0/go.mod h1:/CZhelEH+30/pX7vXGSZOzLMX0zvjthYOkT/5ZTzVTQ=
+open-cluster-management.io/config-policy-controller v0.12.0 h1:YQKv/esFuiaWaJ/UcAEX2Sy/uhHYbjiHHzf3+bpRKQs=
+open-cluster-management.io/config-policy-controller v0.12.0/go.mod h1:qAqUAmQAv86Jur4rPAZES2WTp8q7C565Zr1OyflXpXk=
+open-cluster-management.io/governance-policy-propagator v0.12.0 h1:jwIsJKme9AjtU1e1OKbUU3ciok+nQ0VMe8YVkz8a00E=
+open-cluster-management.io/governance-policy-propagator v0.12.0/go.mod h1:NUrvYqTPwXdPWjcaaIeNRTM8XIEHTargv43kg14wksw=
+open-cluster-management.io/multicloud-operators-subscription v0.11.0 h1:OLpohu92lMEmWk4LriTyxD1SIJrzHOvuhS3UsnEOElk=
+open-cluster-management.io/multicloud-operators-subscription v0.11.0/go.mod h1:0YDADTwQiNoLc7ihyHhTaCNAxx9VSVvrTUQf3W+AyGk=
 sigs.k8s.io/controller-runtime v0.16.1 h1:+15lzrmHsE0s2kNl0Dl8cTchI5Cs8qofo5PGcPrV9z0=
 sigs.k8s.io/controller-runtime v0.16.1/go.mod h1:vpMu3LpI5sYWtujJOa2uPK61nB5rbwlN7BAB8aSLvGU=
 sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd h1:EDPBXCAspyGV4jQlpZSudPeMmr1bNJefnuqLsRAsHZo=
