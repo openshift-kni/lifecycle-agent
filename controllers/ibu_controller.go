@@ -204,11 +204,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					return
 				}
 			}
-			nextReconcile, err = r.handleStage(ctx, ibu, ibu.Spec.Stage)
-			if err != nil {
-				_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
-				return
-			}
+			nextReconcile = requeueImmediately()
 		}
 	}
 
