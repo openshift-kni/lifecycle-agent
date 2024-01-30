@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list
+// +kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list;watch
 
 // This annotation helps with the ordering as well as whether the policy should be applied. This is the same expectation as
 // the normal ZTP process post non-image-based cluster installation.
