@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/sirupsen/logrus"
-	stringslices "k8s.io/utils/strings/slices"
 )
 
 // Execute is an interface for executing external commands and capturing their output.
@@ -49,13 +48,6 @@ func (e *executor) execute(liveLogger io.Writer, root, command string, args ...s
 	return stdoutBytesTrimmed, nil
 }
 
-func (e *executor) executeBash(writer io.Writer, root, command string, args ...string) (string, error) {
-	commandBase := "/usr/bin/env"
-	args = append([]string{command}, args...)
-	arguments := []string{"--", "bash", "-c", strings.Join(args, " ")}
-	return e.execute(writer, root, commandBase, arguments...)
-}
-
 type regularExecutor struct {
 	executor
 }
@@ -65,10 +57,6 @@ func NewRegularExecutor(logger *logrus.Logger, verbose bool) Execute {
 }
 
 func (e *regularExecutor) Execute(command string, args ...string) (string, error) {
-	if stringslices.Contains(args, "|") {
-		// The command includes a pipe, so run it with bash -c
-		e.executor.executeBash(nil, "", command, args...)
-	}
 	return e.executor.execute(nil, "", command, args...)
 }
 
@@ -128,10 +116,19 @@ func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute
 	return &chrootExecutor{executor: executor{logger, verbose}, root: root}
 }
 
+// Running a command with chroot using exec.Command runs into issues with exec.LookPath,
+// if an absolute path is not used for the "command", as it does not account for the chroot dir.
+// To workaround this issue, prefix the command with /usr/bin/env.
+func (e *chrootExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
+	commandBase := "/usr/bin/env"
+	args = append([]string{"--", command}, args...)
+	return e.executor.execute(writer, e.root, commandBase, args...)
+}
+
 func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
-	return e.executor.executeBash(nil, e.root, command, args...)
+	return e.baseExecute(nil, command, args...)
 }
 
 func (e *chrootExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.executor.executeBash(e.executor.log.Writer(), e.root, command, args...)
+	return e.baseExecute(e.executor.log.Writer(), command, args...)
 }

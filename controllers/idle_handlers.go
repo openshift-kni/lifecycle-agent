@@ -205,7 +205,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 	if _, err := osStat(common.PathOutsideChroot(staterootPath)); err != nil {
 		return nil
 	}
-	if _, err := r.Executor.Execute("unshare", "-m", "/bin/sh", "-c",
+	if _, err := r.Ops.RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
 		fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", staterootPath)); err != nil {
 		return fmt.Errorf("removing stateroot %s failed: %w", stateroot, err)
 	}

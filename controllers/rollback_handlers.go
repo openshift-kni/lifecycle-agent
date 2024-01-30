@@ -41,7 +41,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 		return doNotRequeue(), nil
 	}
 
-	if _, err := r.Executor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+	if err := r.Ops.RemountSysroot(); err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}

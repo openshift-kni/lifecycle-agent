@@ -104,6 +104,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 			ostreeclientMock := ostreeclient.NewMockIClient(ctrl)
 			rpmostreeclientMock := rpmostreeclient.NewMockIClient(ctrl)
 			executorMock := ops.NewMockExecute(ctrl)
+			mockOps := ops.NewMockOps(ctrl)
 
 			rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
 				Deployments: tt.deployments}, nil)
@@ -111,7 +112,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 				ostreeclientMock.EXPECT().Undeploy(x)
 			}
 			if tt.expectToRemove != "" {
-				executorMock.EXPECT().Execute("unshare", "-m", "/bin/sh", "-c",
+				mockOps.EXPECT().RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
 					fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf /ostree/deploy/%s\"",
 						tt.expectToRemove))
 			}
@@ -120,6 +121,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 				RPMOstreeClient: rpmostreeclientMock,
 				Executor:        executorMock,
 				OstreeClient:    ostreeclientMock,
+				Ops:             mockOps,
 			}
 			osStat = func(name string) (os.FileInfo, error) {
 				return os.Stat(".")
@@ -201,6 +203,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 			ostreeclientMock := ostreeclient.NewMockIClient(ctrl)
 			rpmostreeclientMock := rpmostreeclient.NewMockIClient(ctrl)
 			executorMock := ops.NewMockExecute(ctrl)
+			mockOps := ops.NewMockOps(ctrl)
 
 			rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
 				Deployments: tt.deployments}, nil)
@@ -210,7 +213,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 			for _, stateroot := range tt.staterootsToRemove {
 				rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
 					Deployments: tt.deployments}, nil)
-				executorMock.EXPECT().Execute("unshare", "-m", "/bin/sh", "-c",
+				mockOps.EXPECT().RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
 					fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf /ostree/deploy/%s\"",
 						stateroot))
 			}
@@ -219,6 +222,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 				RPMOstreeClient: rpmostreeclientMock,
 				Executor:        executorMock,
 				OstreeClient:    ostreeclientMock,
+				Ops:             mockOps,
 			}
 			osStat = func(name string) (os.FileInfo, error) {
 				return os.Stat(".")
