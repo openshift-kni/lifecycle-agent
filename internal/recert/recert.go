@@ -39,7 +39,12 @@ type RecertConfig struct {
 // that will run recert command with them
 func CreateRecertConfigFile(clusterInfo *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder string) error {
 	config := createBasicEmptyRecertConfig()
+
 	config.ClusterRename = fmt.Sprintf("%s:%s", clusterInfo.ClusterName, clusterInfo.BaseDomain)
+	if clusterInfo.InfraID != "" {
+		config.ClusterRename = fmt.Sprintf("%s:%s", config.ClusterRename, clusterInfo.InfraID)
+	}
+
 	config.SummaryFile = SummaryFile
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
 	clusterFullDomain := fmt.Sprintf("%s.%s", clusterInfo.ClusterName, clusterInfo.BaseDomain)

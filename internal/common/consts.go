@@ -62,6 +62,7 @@ const (
 	InstallConfigCM = "cluster-config-v1"
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
+	OpenshiftInfraCRName     = "cluster"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
 	SeedFormatVersion  = 3

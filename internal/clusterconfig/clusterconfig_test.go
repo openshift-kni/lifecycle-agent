@@ -138,6 +138,15 @@ var (
 			Data: map[string][]byte{"tls.key": []byte("test")},
 		},
 	}
+
+	infrastructure = &ocpV1.Infrastructure{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Status: ocpV1.InfrastructureStatus{
+			InfrastructureName: "mysno-xsb4m",
+		},
+	}
 )
 
 func init() {
@@ -147,6 +156,7 @@ func init() {
 		&ocpV1.ImageDigestMirrorSet{},
 		&ocpV1.ImageDigestMirrorSetList{},
 		&ocpV1.Proxy{},
+		&ocpV1.Infrastructure{},
 		&mcv1.MachineConfig{},
 		&ocpV1.ImageContentPolicy{},
 		&ocpV1.ImageContentPolicyList{})
@@ -252,15 +262,16 @@ func TestClusterConfig(t *testing.T) {
 
 				// validate manifest json
 
-				clusterInfo := &seedreconfig.SeedReconfiguration{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), clusterInfo); err != nil {
+				seedReconfig := &seedreconfig.SeedReconfiguration{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), seedReconfig); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, "ssh-key", clusterInfo.SSHKey)
-				assert.Equal(t, "test-infra-cluster", clusterInfo.ClusterName)
-				assert.Equal(t, "redhat.com", clusterInfo.BaseDomain)
-				assert.Equal(t, "192.168.121.10", clusterInfo.NodeIP)
-				assert.Equal(t, "mirror.redhat.com:5005", clusterInfo.ReleaseRegistry)
+				assert.Equal(t, "mysno-xsb4m", seedReconfig.InfraID)
+				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
+				assert.Equal(t, "test-infra-cluster", seedReconfig.ClusterName)
+				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
+				assert.Equal(t, "192.168.121.10", seedReconfig.NodeIP)
+				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
 			},
 		},
 		{
@@ -480,7 +491,7 @@ func TestClusterConfig(t *testing.T) {
 				Data: map[string]string{"install-config": clusterCmData},
 			}
 			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
-				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment}
+				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment, infrastructure}
 
 			for _, kcro := range kubeconfigRetentionObjects {
 				objs = append(objs, kcro)
