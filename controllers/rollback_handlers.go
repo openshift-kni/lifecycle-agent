@@ -20,8 +20,6 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
-
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -89,7 +87,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 
 	// Write an event to indicate reboot attempt
 	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot for rollback")
-	err = reboot.RebootToNewStateRoot("rollback", r.Log, r.Executor)
+	err = r.RebootClient.RebootToNewStateRoot("rollback")
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		r.Log.Error(err, "")
@@ -109,7 +107,7 @@ func (r *ImageBasedUpgradeReconciler) finishRollback(ctx context.Context, ibu *l
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	origStaterootBooted, err := reboot.IsOrigStaterootBooted(ibu, r.RPMOstreeClient, r.Log)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		utils.SetRollbackStatusFailed(ibu, err.Error())

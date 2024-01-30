@@ -61,6 +61,7 @@ type (
 		Recorder        record.EventRecorder
 		RPMOstreeClient rpmostreeclient.IClient
 		OstreeClient    ostreeclient.IClient
+		RebootClient    reboot.RebootIntf
 	}
 )
 
@@ -70,7 +71,7 @@ const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	origStaterootBooted, err := reboot.IsOrigStaterootBooted(ibu, r.RPMOstreeClient, r.Log)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
@@ -206,7 +207,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 
 	// Write an event to indicate reboot attempt
 	u.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
-	err = reboot.RebootToNewStateRoot("upgrade", u.Log, u.Executor)
+	err = u.RebootClient.RebootToNewStateRoot("upgrade")
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		u.Log.Error(err, "")
@@ -239,15 +240,6 @@ var getStaterootVarPath = func(stateroot string) string {
 // CheckHealth helper func to call HealthChecks
 var CheckHealth = healthcheck.HealthChecks
 
-// DisableInitMonitor function pointer, allowing UT to replace it
-var DisableInitMonitor = reboot.DisableInitMonitor
-
-// CheckIBUAutoRollbackInjectedFailure function pointer, allowing UT to replace it
-var CheckIBUAutoRollbackInjectedFailure = reboot.CheckIBUAutoRollbackInjectedFailure
-
-// InitiateRollback function pointer, allowing UT to replace it
-var InitiateRollback = reboot.InitiateRollback
-
 func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade) {
 	// Check whether auto-rollback is desired
 	if ibu.Spec.AutoRollbackOnFailure.DisabledForUpgradeCompletion {
@@ -257,7 +249,7 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade) {
 
 	u.Log.Info("Automatically rolling back due to failure")
 
-	if err := InitiateRollback(true, u.Log, u.Executor, u.RPMOstreeClient, u.OstreeClient); err != nil {
+	if err := u.RebootClient.InitiateRollback(true); err != nil {
 		u.Log.Info(fmt.Sprintf("Unable to auto rollback: %s", err))
 		return
 	}
@@ -326,12 +318,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		return result, nil
 	}
 
-	if err := DisableInitMonitor(u.Log, u.Executor); err != nil {
+	if err := u.RebootClient.DisableInitMonitor(); err != nil {
 		// Don't fail the upgrade on failure here, just log it
 		u.Log.Error(err, "unable to disable LCA init monitor")
 	}
 
-	if CheckIBUAutoRollbackInjectedFailure("upgrade_completion") {
+	if u.RebootClient.CheckIBUAutoRollbackInjectedFailure("upgrade_completion") {
 		u.Log.Info("TEST: Injected failure in upgrade completion handler")
 		utils.SetUpgradeStatusFailed(ibu, "TEST: Injected failure in upgrade completion handler")
 		u.autoRollbackIfEnabled(ibu)

@@ -67,6 +67,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -172,6 +173,7 @@ func main() {
 	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor, false)
+	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient)
 
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
@@ -213,6 +215,7 @@ func main() {
 		Executor:        executor,
 		OstreeClient:    ostreeClient,
 		Ops:             op,
+		RebootClient:    rebootClient,
 		BackupRestore:   backupRestore,
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 		UpgradeHandler: &controllers.UpgHandler{
@@ -226,6 +229,7 @@ func main() {
 			Recorder:        mgr.GetEventRecorderFor("ImageBasedUpgrade"),
 			RPMOstreeClient: rpmOstreeClient,
 			OstreeClient:    ostreeClient,
+			RebootClient:    rebootClient,
 		},
 		Mux: mux,
 	}).SetupWithManager(mgr); err != nil {

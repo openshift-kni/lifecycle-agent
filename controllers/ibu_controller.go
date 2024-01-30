@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -63,6 +64,7 @@ type ImageBasedUpgradeReconciler struct {
 	Executor        ops.Execute
 	OstreeClient    ostreeclient.IClient
 	Ops             ops.Ops
+	RebootClient    reboot.RebootIntf
 	PrepTask        *Task
 	Mux             *sync.Mutex
 }

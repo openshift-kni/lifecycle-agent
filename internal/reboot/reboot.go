@@ -30,6 +30,39 @@ type IBUAutoRollbackConfig struct {
 	LcaTestVars        map[string]string `json:"lca_test_vars,omitempty"`
 }
 
+// RebootIntf is an interface for LCA reboot and rollback commands.
+//
+//go:generate mockgen -source=reboot.go -package=reboot -destination=mock_reboot.go
+type RebootIntf interface {
+	WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error
+	ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error)
+	CheckIBUAutoRollbackInjectedFailure(component string) bool
+	DisableInitMonitor() error
+	RebootToNewStateRoot(rationale string) error
+	IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error)
+	InitiateRollback(auto bool) error
+}
+
+type RebootClient struct {
+	log                  *logr.Logger
+	hostCommandsExecutor ops.Execute
+	rpmOstreeClient      rpmostreeclient.IClient
+	ostreeClient         ostreeclient.IClient
+}
+
+// NewRebootClient creates and returns a RebootIntf interface for reboot and rollback commands
+func NewRebootClient(log *logr.Logger,
+	hostCommandsExecutor ops.Execute,
+	rpmOstreeClient rpmostreeclient.IClient,
+	ostreeClient ostreeclient.IClient) RebootIntf {
+	return &RebootClient{
+		log:                  log,
+		hostCommandsExecutor: hostCommandsExecutor,
+		rpmOstreeClient:      rpmOstreeClient,
+		ostreeClient:         ostreeClient,
+	}
+}
+
 func writeInstallationConfigurationEnvFile(ostreeClient ostreeclient.IClient, stateroot, content string) error {
 	deploymentDir, err := ostreeClient.GetDeploymentDir(stateroot)
 	if err != nil {
@@ -50,7 +83,7 @@ func writeInstallationConfigurationEnvFile(ostreeClient ostreeclient.IClient, st
 	return nil
 }
 
-func WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade, ostreeClient ostreeclient.IClient) error {
+func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	stateroot := common.GetStaterootName(ibu.Spec.SeedImageRef.Version)
 	staterootPath := common.GetStaterootPath(stateroot)
 	cfgfile := common.PathOutsideChroot(filepath.Join(staterootPath, common.IBUAutoRollbackConfigFile))
@@ -87,7 +120,7 @@ func WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade, ostreeCl
 	}
 
 	if envFileContent != "" {
-		if err := writeInstallationConfigurationEnvFile(ostreeClient, stateroot, envFileContent); err != nil {
+		if err := writeInstallationConfigurationEnvFile(c.ostreeClient, stateroot, envFileContent); err != nil {
 			return err
 		}
 	}
@@ -95,7 +128,7 @@ func WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade, ostreeCl
 	return lcautils.MarshalToFile(rollbackCfg, cfgfile)
 }
 
-func ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
+func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
 	rollbackCfg := &IBUAutoRollbackConfig{
 		EnabledComponents: make(map[string]bool),
 		LcaTestVars:       make(map[string]string),
@@ -116,8 +149,8 @@ func ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
 	return rollbackCfg, nil
 }
 
-func CheckIBUAutoRollbackInjectedFailure(component string) bool {
-	if rollbackCfg, err := ReadIBUAutoRollbackConfigFile(); err == nil {
+func (c *RebootClient) CheckIBUAutoRollbackInjectedFailure(component string) bool {
+	if rollbackCfg, err := c.ReadIBUAutoRollbackConfigFile(); err == nil {
 		tag := "LCA_TEST_inject_failure_" + component
 		return (rollbackCfg.LcaTestVars[tag] == "yes")
 	}
@@ -125,15 +158,15 @@ func CheckIBUAutoRollbackInjectedFailure(component string) bool {
 	return false
 }
 
-func DisableInitMonitor(log logr.Logger, e ops.Execute) error {
-	if _, err := e.Execute("systemctl", "is-active", common.IBUInitMonitorService); err == nil {
-		if _, err := e.Execute("systemctl", "stop", common.IBUInitMonitorService); err != nil {
+func (c *RebootClient) DisableInitMonitor() error {
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-active", common.IBUInitMonitorService); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute("systemctl", "stop", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to stop %s: %w", common.IBUInitMonitorService, err)
 		}
 	}
 
-	if _, err := e.Execute("systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
-		if _, err := e.Execute("systemctl", "disable", common.IBUInitMonitorService); err != nil {
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute("systemctl", "disable", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to disable %s: %w", common.IBUInitMonitorService, err)
 		}
 	}
@@ -142,55 +175,55 @@ func DisableInitMonitor(log logr.Logger, e ops.Execute) error {
 		return fmt.Errorf("failed to delete %s: %w", common.IBUInitMonitorServiceFile, err)
 	}
 
-	if _, err := e.Execute("systemctl", "daemon-reload"); err != nil {
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload failed after deleting %s: %w", common.IBUInitMonitorServiceFile, err)
 	}
 
 	return nil
 }
 
-func RebootToNewStateRoot(rationale string, log logr.Logger, e ops.Execute) error {
-	log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
+func (c *RebootClient) RebootToNewStateRoot(rationale string) error {
+	c.log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
 
-	_, err := e.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
+	_, err := c.hostCommandsExecutor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
 		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
 		"systemctl", "--message=\"Image Based Upgrade\"", "reboot")
 	if err != nil {
 		return err
 	}
 
-	log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
+	c.log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
 	time.Sleep(defaultRebootTimeout)
 
 	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
 }
 
-func IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade, r rpmostreeclient.IClient, log logr.Logger) (bool, error) {
-	currentStaterootName, err := r.GetCurrentStaterootName()
+func (c *RebootClient) IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error) {
+	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName()
 	if err != nil {
 		return false, err
 	}
-	log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", common.GetDesiredStaterootName(ibu))
+	c.log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", common.GetDesiredStaterootName(ibu))
 	return currentStaterootName != common.GetDesiredStaterootName(ibu), nil
 }
 
-func InitiateRollback(auto bool, log logr.Logger, e ops.Execute, rpmOstreeClient rpmostreeclient.IClient, ostreeClient ostreeclient.IClient) error {
-	if !ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+func (c *RebootClient) InitiateRollback(auto bool) error {
+	if !c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
 		return fmt.Errorf("automatic rollback not supported in this release")
 	}
 
-	log.Info("Iniating rollback")
+	c.log.Info("Iniating rollback")
 
-	deploymentIndex, err := rpmOstreeClient.GetUnbootedDeploymentIndex()
+	deploymentIndex, err := c.rpmOstreeClient.GetUnbootedDeploymentIndex()
 	if err != nil {
 		return fmt.Errorf("unable to get unbooted deployment for automatic rollback: %w", err)
 	}
 
-	if err = ostreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+	if err = c.ostreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
 		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 	}
 
-	if err = RebootToNewStateRoot("rollback", log, e); err != nil {
+	if err = c.RebootToNewStateRoot("rollback"); err != nil {
 		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 	}
 

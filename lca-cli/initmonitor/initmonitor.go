@@ -24,22 +24,27 @@ type InitMonitor struct {
 	component            string
 	rpmOstreeClient      *rpmostreeclient.Client
 	ostreeClient         ostreeclient.IClient
+	rebootClient         reboot.RebootIntf
 }
 
 func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExecutor ops.Execute, ops ops.Ops, component string) *InitMonitor {
+	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
+	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
+	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient)
 	return &InitMonitor{
 		scheme:               scheme,
 		log:                  log,
 		hostCommandsExecutor: hostCommandsExecutor,
 		ops:                  ops,
 		component:            component,
-		rpmOstreeClient:      rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor),
-		ostreeClient:         ostreeclient.NewClient(hostCommandsExecutor, false),
+		rpmOstreeClient:      rpmOstreeClient,
+		ostreeClient:         ostreeClient,
+		rebootClient:         rebootClient,
 	}
 }
 
 func (m *InitMonitor) RunInitMonitor() error {
-	rollbackCfg, err := reboot.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -59,7 +64,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 
 	m.log.Infof("Automatically rolling back due to LCA Init Monitor timeout, after %d seconds", rollbackCfg.InitMonitorTimeout)
 
-	if err := reboot.InitiateRollback(true, logr.Logger{}, m.hostCommandsExecutor, m.rpmOstreeClient, m.ostreeClient); err != nil {
+	if err := m.rebootClient.InitiateRollback(true); err != nil {
 		m.log.Infof("Unable to auto rollback: %s", err)
 		return err
 	}
@@ -68,7 +73,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 }
 
 func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
-	rollbackCfg, err := reboot.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false
@@ -97,7 +102,7 @@ func (m *InitMonitor) RunExitStopPostCheck() error {
 	if m.checkSvcUnitRollbackNeeded() {
 		m.log.Info(fmt.Sprintf("Automatically rolling back due to service-unit failure: component %s", m.component))
 
-		if err := reboot.InitiateRollback(true, logr.Logger{}, m.hostCommandsExecutor, m.rpmOstreeClient, m.ostreeClient); err != nil {
+		if err := m.rebootClient.InitiateRollback(true); err != nil {
 			m.log.Infof("Unable to auto rollback: %s", err)
 			return err
 		}
