@@ -17,6 +17,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 		mockController      = gomock.NewController(t)
 		mockRpmostreeclient = rpmostreeclient.NewMockIClient(mockController)
 		mockOstreeclient    = ostreeclient.NewMockIClient(mockController)
+		mockOps             = ops.NewMockOps(mockController)
 		mockExec            = ops.NewMockExecute(mockController)
 	)
 
@@ -28,6 +29,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 		ibu          *v1alpha1.ImageBasedUpgrade
 		r            rpmostreeclient.IClient
 		ostreeClient ostreeclient.IClient
+		ops          *ops.MockOps
 		executor     ops.Execute
 		log          logr.Logger
 	}
@@ -46,6 +48,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 				}}},
 				r:            mockRpmostreeclient,
 				ostreeClient: mockOstreeclient,
+				ops:          mockOps,
 				executor:     mockExec,
 			},
 			currentStateRoot: "rhcos_4.14",
@@ -55,7 +58,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rebootClient := NewRebootClient(&tt.args.log, tt.args.executor, tt.args.r, tt.args.ostreeClient)
+			rebootClient := NewRebootClient(&tt.args.log, tt.args.executor, tt.args.r, tt.args.ostreeClient, tt.args.ops)
 			mockRpmostreeclient.EXPECT().GetCurrentStaterootName().Return(tt.currentStateRoot, nil).Times(1)
 			got, err := rebootClient.IsOrigStaterootBooted(tt.args.ibu)
 			if (err != nil) != tt.wantErr {

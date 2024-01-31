@@ -4,9 +4,8 @@ After=prepare-installation-configuration.service NetworkManager-wait-online.serv
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
+RemainAfterExit=no
 ExecStart=/usr/local/bin/lca-cli post-pivot
-ExecStopPost=-/usr/local/bin/lca-cli init-monitor --exec-stop-post postpivot
 EnvironmentFile=-/etc/systemd/system/installation-configuration.env
 
 Restart=on-failure

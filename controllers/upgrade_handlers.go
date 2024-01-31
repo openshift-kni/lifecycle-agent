@@ -224,7 +224,7 @@ func exportForUncontrolledRollback(ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	ibuCopy := ibu.DeepCopy()
 	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
 	if err := lcautils.MarshalToFile(ibuCopy, ibuPreStaterootPath); err != nil {
-		return err
+		return fmt.Errorf("failed to save copy of IBU CR for rollback: %w", err)
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ var getStaterootVarPath = func(stateroot string) string {
 // CheckHealth helper func to call HealthChecks
 var CheckHealth = healthcheck.HealthChecks
 
-func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 	// Check whether auto-rollback is desired
 	if ibu.Spec.AutoRollbackOnFailure.DisabledForUpgradeCompletion {
 		// Auto-rollback is not enabled, so do nothing
@@ -249,7 +249,7 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade) {
 
 	u.Log.Info("Automatically rolling back due to failure")
 
-	if err := u.RebootClient.InitiateRollback(true); err != nil {
+	if err := u.RebootClient.InitiateRollback(msg); err != nil {
 		u.Log.Info(fmt.Sprintf("Unable to auto rollback: %s", err))
 		return
 	}
@@ -267,7 +267,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	err := CheckHealth(u.Client, u.Log)
 	if err != nil {
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
-		u.autoRollbackIfEnabled(ibu)
+		u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to health check failure: %s", err))
 		return doNotRequeue(), nil
 	}
 
@@ -285,7 +285,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu)
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying extra-manifests: %s", err))
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while applying extra manifests: %w", err))
@@ -296,7 +296,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu)
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to backup storage failure: %s", err))
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
@@ -308,7 +308,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		// Restore failed
 		if backuprestore.IsBRFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu)
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
@@ -326,7 +326,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if u.RebootClient.CheckIBUAutoRollbackInjectedFailure("upgrade_completion") {
 		u.Log.Info("TEST: Injected failure in upgrade completion handler")
 		utils.SetUpgradeStatusFailed(ibu, "TEST: Injected failure in upgrade completion handler")
-		u.autoRollbackIfEnabled(ibu)
+		u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to injected failure: %s", err))
 		return doNotRequeue(), nil
 	}
 

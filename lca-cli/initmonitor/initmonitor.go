@@ -30,7 +30,7 @@ type InitMonitor struct {
 func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExecutor ops.Execute, ops ops.Ops, component string) *InitMonitor {
 	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
-	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient)
+	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
 	return &InitMonitor{
 		scheme:               scheme,
 		log:                  log,
@@ -54,17 +54,29 @@ func (m *InitMonitor) RunInitMonitor() error {
 		return err
 	}
 
-	if !rollbackCfg.InitMonitorEnabled || rollbackCfg.InitMonitorTimeout <= 0 {
+	if !rollbackCfg.InitMonitorEnabled {
+		m.log.Info("LCA Init Monitor automatic rollback is disabled in IBU configuration")
 		return nil
 	}
 
-	time.Sleep(time.Duration(rollbackCfg.InitMonitorTimeout) * time.Second)
+	if rollbackCfg.InitMonitorTimeout <= 0 {
+		// This shouldn't happen, as value of <= 0 is treated as "use default" when config file is written
+		m.log.Infof("LCA Init Monitor timeout value must be greater than 0: current value %d", rollbackCfg.InitMonitorTimeout)
+		return nil
+	}
+
+	timeout := time.Duration(rollbackCfg.InitMonitorTimeout) * time.Second
+
+	m.log.Infof("Launching LCA Init Monitor timeout. Automatic rollback will occur in %s if upgrade is not completed successfully within that time", timeout)
+
+	time.Sleep(timeout)
 
 	// If we reach this point, the init monitor was not shut down by the Upgrade handler, so trigger rollback
 
-	m.log.Infof("Automatically rolling back due to LCA Init Monitor timeout, after %d seconds", rollbackCfg.InitMonitorTimeout)
+	msg := fmt.Sprintf("Rollback due to LCA Init Monitor timeout, after %s", timeout)
+	m.log.Info(msg)
 
-	if err := m.rebootClient.InitiateRollback(true); err != nil {
+	if err := m.rebootClient.InitiateRollback(msg); err != nil {
 		m.log.Infof("Unable to auto rollback: %s", err)
 		return err
 	}
@@ -83,14 +95,22 @@ func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
 		return false
 	}
 
-	// Get the systemd service-unit rc
-	rc, ok := os.LookupEnv("SERVICE_RESULT")
+	if !rollbackCfg.EnabledComponents[m.component] {
+		// Auto-rollback is disabled, so do nothing
+		m.log.Info(fmt.Sprintf("LCA Init Monitor Auto-rollback is disabled for component %s", m.component))
+		return false
+	}
+
+	// Get the systemd service-unit serviceResult
+	serviceResult, ok := os.LookupEnv("SERVICE_RESULT")
 	if !ok {
 		m.log.Info("SERVICE_RESULT variable is not set")
 		return false
 	}
 
-	if rc == "0" || !rollbackCfg.EnabledComponents[m.component] {
+	m.log.Info(fmt.Sprintf("LCA Init Monitor: component %s exited with SERVICE_RESULT=%s", m.component, serviceResult))
+
+	if serviceResult == "success" {
 		// The service-unit succeeded, or auto-rollback is disabled, so do nothing
 		return false
 	}
@@ -100,9 +120,10 @@ func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
 
 func (m *InitMonitor) RunExitStopPostCheck() error {
 	if m.checkSvcUnitRollbackNeeded() {
-		m.log.Info(fmt.Sprintf("Automatically rolling back due to service-unit failure: component %s", m.component))
+		msg := fmt.Sprintf("Rollback due to service-unit failure: component %s", m.component)
+		m.log.Info(msg)
 
-		if err := m.rebootClient.InitiateRollback(true); err != nil {
+		if err := m.rebootClient.InitiateRollback(msg); err != nil {
 			m.log.Infof("Unable to auto rollback: %s", err)
 			return err
 		}

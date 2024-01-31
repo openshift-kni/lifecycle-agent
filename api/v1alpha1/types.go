@@ -31,6 +31,7 @@ import (
 // +kubebuilder:validation:XValidation:message="can not change spec.seedImageRef while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef) && oldSelf.spec.seedImageRef==self.spec.seedImageRef || !has(self.spec.seedImageRef) && !has(oldSelf.spec.seedImageRef)"
 // +kubebuilder:validation:XValidation:message="can not change spec.oadpContent while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.oadpContent) && has(self.spec.oadpContent) && oldSelf.spec.oadpContent==self.spec.oadpContent || !has(self.spec.oadpContent) && !has(oldSelf.spec.oadpContent)"
 // +kubebuilder:validation:XValidation:message="can not change spec.extraManifests while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests) && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests) && !has(oldSelf.spec.extraManifests)"
+// +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +operator-sdk:csv:customresourcedefinitions:displayName="Image-based Cluster Upgrade",resources={{Namespace, v1},{Deployment,apps/v1}}
 // ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
 type ImageBasedUpgrade struct {
@@ -78,10 +79,10 @@ type SeedImageRef struct {
 }
 
 type AutoRollbackOnFailure struct {
-	DisabledForPostRebootConfig  bool `json:"disabledForPostRebootConfig,omitempty"`
-	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"`
-	DisabledInitMonitor          bool `json:"disabledInitMonitor,omitempty"`
-	InitMonitorTimeoutSeconds    int  `json:"initMonitorTimeoutSeconds,omitempty"`
+	DisabledForPostRebootConfig  bool `json:"disabledForPostRebootConfig,omitempty"`  // If true, disable auto-rollback for post-reboot config service-unit(s)
+	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"` // If true, disable auto-rollback for Upgrade completion handler
+	DisabledInitMonitor          bool `json:"disabledInitMonitor,omitempty"`          // If true, disable LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
+	InitMonitorTimeoutSeconds    int  `json:"initMonitorTimeoutSeconds,omitempty"`    // LCA Init Monitor watchdog timeout, in seconds. Value <= 0 is treated as "use default" when writing config file in Prep stage
 }
 
 // ConfigMapRef defines a reference to a config map

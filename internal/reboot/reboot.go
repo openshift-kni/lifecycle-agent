@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -21,6 +22,11 @@ import (
 
 var (
 	defaultRebootTimeout = 60 * time.Minute
+)
+
+const (
+	PostPivotComponent                 = "postpivot"
+	InstallationConfigurationComponent = "config"
 )
 
 type IBUAutoRollbackConfig struct {
@@ -40,7 +46,8 @@ type RebootIntf interface {
 	DisableInitMonitor() error
 	RebootToNewStateRoot(rationale string) error
 	IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error)
-	InitiateRollback(auto bool) error
+	InitiateRollback(msg string) error
+	AutoRollbackIfEnabled(component, msg string)
 }
 
 type RebootClient struct {
@@ -48,18 +55,21 @@ type RebootClient struct {
 	hostCommandsExecutor ops.Execute
 	rpmOstreeClient      rpmostreeclient.IClient
 	ostreeClient         ostreeclient.IClient
+	ops                  ops.Ops
 }
 
 // NewRebootClient creates and returns a RebootIntf interface for reboot and rollback commands
 func NewRebootClient(log *logr.Logger,
 	hostCommandsExecutor ops.Execute,
 	rpmOstreeClient rpmostreeclient.IClient,
-	ostreeClient ostreeclient.IClient) RebootIntf {
+	ostreeClient ostreeclient.IClient,
+	ops ops.Ops) RebootIntf {
 	return &RebootClient{
 		log:                  log,
 		hostCommandsExecutor: hostCommandsExecutor,
 		rpmOstreeClient:      rpmOstreeClient,
 		ostreeClient:         ostreeClient,
+		ops:                  ops,
 	}
 }
 
@@ -105,8 +115,8 @@ func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBase
 		LcaTestVars:        make(map[string]string),
 	}
 
-	rollbackCfg.EnabledComponents["config"] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
-	rollbackCfg.EnabledComponents["postpivot"] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
+	rollbackCfg.EnabledComponents[InstallationConfigurationComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
+	rollbackCfg.EnabledComponents[PostPivotComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
 
 	// Check environ for LCA_TEST_* vars and add them
 	envFileContent := ""
@@ -130,20 +140,19 @@ func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBase
 
 func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
 	rollbackCfg := &IBUAutoRollbackConfig{
-		EnabledComponents: make(map[string]bool),
-		LcaTestVars:       make(map[string]string),
+		InitMonitorEnabled: false,
+		InitMonitorTimeout: common.IBUAutoRollbackInitMonitorTimeoutDefaultSeconds,
+		EnabledComponents:  make(map[string]bool),
+		LcaTestVars:        make(map[string]string),
 	}
 
-	filename := common.IBUAutoRollbackConfigFile
+	filename := common.PathOutsideChroot(common.IBUAutoRollbackConfigFile)
 	if _, err := os.Stat(filename); err != nil {
-		filename = common.PathOutsideChroot(common.IBUAutoRollbackConfigFile)
-		if _, err := os.Stat(filename); err != nil {
-			return nil, err
-		}
+		return rollbackCfg, err
 	}
 
 	if err := lcautils.ReadYamlOrJSONFile(filename, rollbackCfg); err != nil {
-		return nil, fmt.Errorf("failed to read and decode auto-rollback config file: %w", err)
+		return rollbackCfg, fmt.Errorf("failed to read and decode auto-rollback config file: %w", err)
 	}
 
 	return rollbackCfg, nil
@@ -159,12 +168,16 @@ func (c *RebootClient) CheckIBUAutoRollbackInjectedFailure(component string) boo
 }
 
 func (c *RebootClient) DisableInitMonitor() error {
+	// Check whether service-unit is active before stopping. The "stop" command will exit with 0 if already stopped,
+	// but would return a failure if the service-unit doesn't exist (for whatever reason).
 	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-active", common.IBUInitMonitorService); err == nil {
 		if _, err := c.hostCommandsExecutor.Execute("systemctl", "stop", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to stop %s: %w", common.IBUInitMonitorService, err)
 		}
 	}
 
+	// Check whether service-unit is enabled before dsiabling. The "disable" command will exit with 0 if already disabled,
+	// but would return a failure if the service-unit doesn't exist (for whatever reason).
 	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
 		if _, err := c.hostCommandsExecutor.Execute("systemctl", "disable", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to disable %s: %w", common.IBUInitMonitorService, err)
@@ -207,9 +220,32 @@ func (c *RebootClient) IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (b
 	return currentStaterootName != common.GetDesiredStaterootName(ibu), nil
 }
 
-func (c *RebootClient) InitiateRollback(auto bool) error {
+func (c *RebootClient) InitiateRollback(msg string) error {
 	if !c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
 		return fmt.Errorf("automatic rollback not supported in this release")
+	}
+
+	c.log.Info("Updating saved IBU CR with status msg for rollback")
+	stateroot, err := c.rpmOstreeClient.GetUnbootedStaterootName()
+	if err != nil {
+		return fmt.Errorf("unable to determine stateroot path for rollback: %w", err)
+	}
+
+	if err := c.ops.RemountSysroot(); err != nil {
+		return fmt.Errorf("unable to remount sysroot: %w", err)
+	}
+
+	filePath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), utils.IBUFilePath))
+
+	savedIbu := &lcav1alpha1.ImageBasedUpgrade{}
+	if err := lcautils.ReadYamlOrJSONFile(filePath, savedIbu); err != nil {
+		return fmt.Errorf("unable to read saved IBU CR from %s: %w", filePath, err)
+	}
+
+	utils.SetUpgradeStatusFailed(savedIbu, msg)
+
+	if err := lcautils.MarshalToFile(savedIbu, filePath); err != nil {
+		return fmt.Errorf("unable to save updated ibu CR to %s: %w", filePath, err)
 	}
 
 	c.log.Info("Iniating rollback")
@@ -229,4 +265,29 @@ func (c *RebootClient) InitiateRollback(auto bool) error {
 
 	// Should never get here
 	return nil
+}
+
+func (c *RebootClient) AutoRollbackIfEnabled(component, msg string) {
+	rollbackCfg, err := c.ReadIBUAutoRollbackConfigFile()
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Config file doesn't exist, so do nothing
+			return
+		}
+
+		c.log.Info(fmt.Sprintf("Unable to read auto-rollback config: %s", err))
+		return
+	}
+
+	if !rollbackCfg.EnabledComponents[component] {
+		c.log.Info(fmt.Sprintf("Auto-rollback is disabled for component: %s", component))
+		return
+	}
+
+	c.log.Info(fmt.Sprintf("Auto-rollback is enabled for component: %s", component))
+	if err = c.InitiateRollback(msg); err != nil {
+		c.log.Info(fmt.Sprintf("Unable to initiate rollback: %s", err))
+	}
+
+	return
 }

@@ -19,6 +19,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,8 +42,23 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 )
 
-// TODO: Need a better way to change this but will require relatively big refactoring
-var OstreeDeployPathPrefix = ""
+var (
+	// TODO: Need a better way to change this but will require relatively big refactoring
+	OstreeDeployPathPrefix = ""
+
+	hostDirExists = true
+)
+
+func init() {
+	if _, err := os.Stat(Host); err != nil {
+		hostDirExists = false
+	}
+}
+
+// HostDirExists returns a cached check if the /host dir exists to avoid repeated os.Stat calls
+func HostDirExists() bool {
+	return hostDirExists
+}
 
 // GetConfigMap retrieves the configmap from cluster
 func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.ConfigMapRef) (*corev1.ConfigMap, error) {
@@ -75,7 +91,10 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
-	return filepath.Join(Host, filename)
+	if hostDirExists {
+		return filepath.Join(Host, filename)
+	}
+	return filename
 }
 
 func CopyOutsideChroot(src, dest string) error {

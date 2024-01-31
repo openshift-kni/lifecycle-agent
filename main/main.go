@@ -173,7 +173,7 @@ func main() {
 	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor, false)
-	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient)
+	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient, op)
 
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")

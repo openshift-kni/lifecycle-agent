@@ -38,6 +38,18 @@ func (m *MockRebootIntf) EXPECT() *MockRebootIntfMockRecorder {
 	return m.recorder
 }
 
+// AutoRollbackIfEnabled mocks base method.
+func (m *MockRebootIntf) AutoRollbackIfEnabled(component, msg string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "AutoRollbackIfEnabled", component, msg)
+}
+
+// AutoRollbackIfEnabled indicates an expected call of AutoRollbackIfEnabled.
+func (mr *MockRebootIntfMockRecorder) AutoRollbackIfEnabled(component, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AutoRollbackIfEnabled", reflect.TypeOf((*MockRebootIntf)(nil).AutoRollbackIfEnabled), component, msg)
+}
+
 // CheckIBUAutoRollbackInjectedFailure mocks base method.
 func (m *MockRebootIntf) CheckIBUAutoRollbackInjectedFailure(component string) bool {
 	m.ctrl.T.Helper()
@@ -67,17 +79,17 @@ func (mr *MockRebootIntfMockRecorder) DisableInitMonitor() *gomock.Call {
 }
 
 // InitiateRollback mocks base method.
-func (m *MockRebootIntf) InitiateRollback(auto bool) error {
+func (m *MockRebootIntf) InitiateRollback(msg string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InitiateRollback", auto)
+	ret := m.ctrl.Call(m, "InitiateRollback", msg)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InitiateRollback indicates an expected call of InitiateRollback.
-func (mr *MockRebootIntfMockRecorder) InitiateRollback(auto any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) InitiateRollback(msg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitiateRollback", reflect.TypeOf((*MockRebootIntf)(nil).InitiateRollback), auto)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitiateRollback", reflect.TypeOf((*MockRebootIntf)(nil).InitiateRollback), msg)
 }
 
 // IsOrigStaterootBooted mocks base method.
