@@ -131,26 +131,25 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 // ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
 func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
 	// Create the directory for the extra manifests
-	if err := os.MkdirAll(filepath.Join(toDir, PolicyManifestPath), 0o700); err != nil {
-		return err
+	manifestsDir := filepath.Join(toDir, PolicyManifestPath)
+	if err := os.MkdirAll(manifestsDir, 0o700); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", manifestsDir, err)
 	}
 
 	policies, err := h.GetPolicies(ctx, policyLabels)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get policies: %w", err)
 	}
 
 	for i, policy := range policies {
 		objects, err := getConfigurationObjects(policy, objectLabels)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get configuration objects: %w", err)
 		}
 		for _, object := range objects {
-			fileName := fmt.Sprintf("%d_%s_%s.yaml", i, object.GetName(), object.GetNamespace())
-			filePath := filepath.Join(toDir, PolicyManifestPath, fileName)
-			err = utils.MarshalToYamlFile(&object, filePath)
-			if err != nil {
-				return err
+			manifestFilePath := filepath.Join(manifestsDir, fmt.Sprintf("%d_%s_%s.yaml", i, object.GetName(), object.GetNamespace()))
+			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil {
+				return fmt.Errorf("failed to marshal object to file %s: %w", manifestFilePath, err)
 			}
 		}
 	}

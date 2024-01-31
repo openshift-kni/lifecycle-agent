@@ -116,7 +116,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 			utils.SetUpgradeStatusInProgress(ibu, err.Error())
 			return requeueWithMediumInterval(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while handling backup: %w", err))
 	}
 	if !ctrlResult.IsZero() {
 		// The backup process has not been completed yet, requeue
@@ -125,7 +125,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 
 	u.Log.Info("Remounting sysroot")
 	if err := u.Ops.RemountSysroot(); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
 	}
 
 	stateroot := common.GetDesiredStaterootName(ibu)
@@ -137,7 +137,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while exporting OADP configuration: %w", err))
 	}
 
 	u.Log.Info("Writing Restore CRs into new stateroot")
@@ -146,7 +146,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 			utils.SetUpgradeStatusInProgress(ibu, err.Error())
 			return requeueWithMediumInterval(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while exporting restores: %w", err))
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
@@ -155,21 +155,21 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	// as those policies must not be applied on the seed
 	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
 	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while exporting manifests from policies: %w", err))
 	}
 
 	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
 	}
 
 	u.Log.Info("Writing cluster-configuration into new stateroot")
 	if err := u.ClusterConfig.FetchClusterConfig(ctx, staterootVarPath); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while fetching cluster configuration: %w", err))
 	}
 
 	u.Log.Info("Writing lvm-configuration into new stateroot")
 	if err := u.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while fetching LVM configuration: %w", err))
 	}
 
 	// Clear any error status that may have been previously set
@@ -178,12 +178,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
 	filePath := filepath.Join(staterootVarPath, utils.IBUFilePath)
 	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while saving IBU CR to the new state root: %w", err))
 	}
 
 	u.Log.Info("Save a copy of the IBU in the current stateroot")
 	if err := exportForUncontrolledRollback(ibu); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
 
 	// Set the new default deployment
@@ -193,7 +193,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
 		}
 		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
-			return requeueWithError(fmt.Errorf("failed to set default deployment for pivot to"))
+			return requeueWithError(fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err))
 		}
 	}
 
@@ -247,7 +247,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while applying policy extra manifests: %w", err))
 	}
 
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
@@ -256,7 +256,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while applying extra manifests: %w", err))
 	}
 
 	// Recovering OADP configuration
@@ -266,7 +266,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
 	}
 
 	// Handling restores with OADP operator
@@ -277,7 +277,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
 	}
 	if !result.IsZero() {
 		// The restore process has not been completed yet, requeue
@@ -293,7 +293,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	sortedBackupGroups, err := u.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
 	if err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while getting sorted backups from configmap: %w", err))
 	}
 
 	if len(sortedBackupGroups) == 0 {
@@ -306,7 +306,7 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBas
 		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
 		backupTracker, err := u.BackupRestore.StartOrTrackBackup(ctx, backups)
 		if err != nil {
-			return requeueWithError(err)
+			return requeueWithError(fmt.Errorf("error while starting or tracking backup: %w", err))
 		}
 
 		// The current backup group has done, work on the next group
@@ -338,7 +338,7 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 	// Load restore CRs from files
 	sortedRestoreGroups, err := u.BackupRestore.LoadRestoresFromOadpRestorePath()
 	if err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while loading restores from OADP restore path: %w", err))
 	}
 
 	if len(sortedRestoreGroups) == 0 {
@@ -350,7 +350,7 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 		u.Log.Info("Processing restore", "groupIndex", index+1, "totalGroups", len(sortedRestoreGroups))
 		restoreTracker, err := u.BackupRestore.StartOrTrackRestore(ctx, restores)
 		if err != nil {
-			return requeueWithError(err)
+			return requeueWithError(fmt.Errorf("error while starting or tracking restore: %w", err))
 		}
 
 		// The current restore group has done, work on the next group
@@ -375,7 +375,7 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 
 	u.Log.Info("All restores succeeded")
 	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
-		return requeueWithError(err)
+		return requeueWithError(fmt.Errorf("error while removing OADP path: %w", err))
 	}
 	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
 	return doNotRequeue(), nil
