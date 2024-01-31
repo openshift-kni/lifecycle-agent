@@ -323,13 +323,6 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		u.Log.Error(err, "unable to disable LCA init monitor")
 	}
 
-	if u.RebootClient.CheckIBUAutoRollbackInjectedFailure("upgrade_completion") {
-		u.Log.Info("TEST: Injected failure in upgrade completion handler")
-		utils.SetUpgradeStatusFailed(ibu, "TEST: Injected failure in upgrade completion handler")
-		u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to injected failure: %s", err))
-		return doNotRequeue(), nil
-	}
-
 	u.Log.Info("Done handleUpgrade")
 	utils.SetUpgradeStatusCompleted(ibu)
 	return doNotRequeue(), nil

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -30,10 +28,9 @@ const (
 )
 
 type IBUAutoRollbackConfig struct {
-	InitMonitorEnabled bool              `json:"monitor_enabled,omitempty"`
-	InitMonitorTimeout int               `json:"monitor_timeout,omitempty"`
-	EnabledComponents  map[string]bool   `json:"enabled_components,omitempty"`
-	LcaTestVars        map[string]string `json:"lca_test_vars,omitempty"`
+	InitMonitorEnabled bool            `json:"monitor_enabled,omitempty"`
+	InitMonitorTimeout int             `json:"monitor_timeout,omitempty"`
+	EnabledComponents  map[string]bool `json:"enabled_components,omitempty"`
 }
 
 // RebootIntf is an interface for LCA reboot and rollback commands.
@@ -42,7 +39,6 @@ type IBUAutoRollbackConfig struct {
 type RebootIntf interface {
 	WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error
 	ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error)
-	CheckIBUAutoRollbackInjectedFailure(component string) bool
 	DisableInitMonitor() error
 	RebootToNewStateRoot(rationale string) error
 	IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error)
@@ -73,26 +69,6 @@ func NewRebootClient(log *logr.Logger,
 	}
 }
 
-func writeInstallationConfigurationEnvFile(ostreeClient ostreeclient.IClient, stateroot, content string) error {
-	deploymentDir, err := ostreeClient.GetDeploymentDir(stateroot)
-	if err != nil {
-		return fmt.Errorf("unable to determine deployment dir: %w", err)
-	}
-
-	envFile := common.PathOutsideChroot(filepath.Join(deploymentDir, common.InstallationConfigurationEnvFile))
-	f, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("unable to open env file %s: %w", envFile, err)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(content); err != nil {
-		return fmt.Errorf("unable to write to env file %s: %w", envFile, err)
-	}
-
-	return nil
-}
-
 func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	stateroot := common.GetStaterootName(ibu.Spec.SeedImageRef.Version)
 	staterootPath := common.GetStaterootPath(stateroot)
@@ -112,28 +88,10 @@ func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBase
 		InitMonitorEnabled: !ibu.Spec.AutoRollbackOnFailure.DisabledInitMonitor,
 		InitMonitorTimeout: monitorTimeout,
 		EnabledComponents:  make(map[string]bool),
-		LcaTestVars:        make(map[string]string),
 	}
 
 	rollbackCfg.EnabledComponents[InstallationConfigurationComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
 	rollbackCfg.EnabledComponents[PostPivotComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
-
-	// Check environ for LCA_TEST_* vars and add them
-	envFileContent := ""
-	re := regexp.MustCompile(`^LCA_TEST_`)
-	for _, envVar := range os.Environ() {
-		if re.MatchString(envVar) {
-			pair := strings.SplitN(envVar, "=", 2)
-			rollbackCfg.LcaTestVars[pair[0]] = pair[1]
-			envFileContent += envVar + "\n"
-		}
-	}
-
-	if envFileContent != "" {
-		if err := writeInstallationConfigurationEnvFile(c.ostreeClient, stateroot, envFileContent); err != nil {
-			return err
-		}
-	}
 
 	return lcautils.MarshalToFile(rollbackCfg, cfgfile)
 }
@@ -143,7 +101,6 @@ func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, 
 		InitMonitorEnabled: false,
 		InitMonitorTimeout: common.IBUAutoRollbackInitMonitorTimeoutDefaultSeconds,
 		EnabledComponents:  make(map[string]bool),
-		LcaTestVars:        make(map[string]string),
 	}
 
 	filename := common.PathOutsideChroot(common.IBUAutoRollbackConfigFile)
@@ -156,15 +113,6 @@ func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, 
 	}
 
 	return rollbackCfg, nil
-}
-
-func (c *RebootClient) CheckIBUAutoRollbackInjectedFailure(component string) bool {
-	if rollbackCfg, err := c.ReadIBUAutoRollbackConfigFile(); err == nil {
-		tag := "LCA_TEST_inject_failure_" + component
-		return (rollbackCfg.LcaTestVars[tag] == "yes")
-	}
-
-	return false
 }
 
 func (c *RebootClient) DisableInitMonitor() error {

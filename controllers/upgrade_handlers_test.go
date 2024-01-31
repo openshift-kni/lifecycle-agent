@@ -826,7 +826,6 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
 		initiateRollbackReturn            func() error
 		disableInitMonitorReturn          func() error
-		checkIBUInjectedFailureReturn     func() bool
 		wantConditions                    []metav1.Condition
 	}{
 		{
@@ -980,9 +979,6 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			disableInitMonitorReturn: func() error {
 				return nil
 			},
-			checkIBUInjectedFailureReturn: func() bool {
-				return false
-			},
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -1038,9 +1034,6 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.disableInitMonitorReturn != nil {
 				mockRebootClient.EXPECT().DisableInitMonitor().Return(tt.disableInitMonitorReturn()).Times(1)
-			}
-			if tt.checkIBUInjectedFailureReturn != nil {
-				mockRebootClient.EXPECT().CheckIBUAutoRollbackInjectedFailure(gomock.Any()).Return(tt.checkIBUInjectedFailureReturn()).Times(1)
 			}
 
 			got, err := uh.PostPivot(tt.args.ctx, tt.args.ibu)

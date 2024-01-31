@@ -59,8 +59,6 @@ const (
 	IBUInitMonitorService                           = "lca-init-monitor.service"
 	IBUInitMonitorServiceFile                       = "/etc/systemd/system/" + IBUInitMonitorService
 
-	InstallationConfigurationEnvFile = "/etc/systemd/system/installation-configuration.env"
-
 	LcaNamespace = "openshift-lifecycle-agent"
 	Host         = "/host"
 

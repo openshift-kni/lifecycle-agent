@@ -450,29 +450,6 @@ Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` se
     disabledForUpgradeCompletion: true
 ```
 
-For test purposes, failure points can be injected into the post-reboot configuration service-units by setting
-environment variables in the LCA manager pod:
-
-```console
-# Inject failure into the prepare-installation-configuration service-unit, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_config=yes
-
-# Remove injected failure from the prepare-installation-configuration service-unit, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_config-
-
-# Inject failure into the installation-configuration service-unit, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_postpivot=yes
-
-# Remove injected failure from the installation-configuration service-unit, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_postpivot-
-
-# Inject failure into the upgrade stage completion handler, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_upgrade_completion=yes
-
-# Remove injected failure from the upgrade stage completion handler, prior to setting Prep stage
-oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager LCA_TEST_inject_failure_upgrade_completion-
-```
-
 In addition, there is an `lca-init-monitor.service` that runs post-reboot with a configurable timeout. When LCA marks
 the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the
 init-monitor will trigger an automatic rollback. This can be configured via the `.spec.autoRollbackOnFailure` fields:

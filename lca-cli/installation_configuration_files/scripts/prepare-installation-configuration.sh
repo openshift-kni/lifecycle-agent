@@ -68,9 +68,3 @@ systemctl disable prepare-installation-configuration.service
 if [[ -n "${DEVICE}" ]]; then
     umount_config "${DEVICE}"
 fi
-
-if [ "${LCA_TEST_inject_failure_config:-no}" = "yes" ]; then
-    echo "Injecting failure, LCA_TEST_inject_failure_config=yes"
-    exit 1
-fi
-

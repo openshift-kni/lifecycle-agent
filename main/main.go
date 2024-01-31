@@ -21,7 +21,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"regexp"
 	"sync"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
@@ -132,14 +131,6 @@ func main() {
 	le := leaderelection.LeaderElectionSNOConfig(configv1.LeaderElection{})
 
 	mux := &sync.Mutex{}
-
-	// Log any LCA_TEST_ env variables for debug purposes
-	re := regexp.MustCompile(`^LCA_TEST_`)
-	for _, envVar := range os.Environ() {
-		if re.MatchString(envVar) {
-			setupLog.Info(fmt.Sprintf("DEBUG: LCA_TEST var set in environment: %s", envVar))
-		}
-	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
