@@ -31,7 +31,7 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 
 	policies := &policiesv1.PolicyList{}
 	if err := h.Client.List(ctx, policies, listOpts...); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list policies: %w", err)
 	}
 
 	var policyWaveMap = make(map[*policiesv1.Policy]int)
