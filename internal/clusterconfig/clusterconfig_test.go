@@ -18,6 +18,7 @@ package clusterconfig
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,14 @@ var (
 			InfrastructureName: "mysno-xsb4m",
 		},
 	}
+
+	kubeadminSecret = &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubeadmin",
+			Namespace: "kube-system",
+		},
+		Data: map[string][]byte{"kubeadmin": []byte(`$2a$10$20Q4iRLy7cWZkjn/D07bF.RZQZonKwstyRGH0qiYbYRkx5Pe4Ztyi`)},
+	}
 )
 
 func init() {
@@ -213,16 +222,17 @@ func TestClusterConfig(t *testing.T) {
 		},
 	}
 	testcases := []struct {
-		testCaseName   string
-		pullSecret     client.Object
-		caBundleCM     client.Object
-		clusterVersion client.Object
-		idms           client.Object
-		icsps          []client.Object
-		node           client.Object
-		proxy          client.Object
-		expectedErr    bool
-		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
+		testCaseName    string
+		pullSecret      client.Object
+		caBundleCM      client.Object
+		clusterVersion  client.Object
+		idms            client.Object
+		icsps           []client.Object
+		node            client.Object
+		proxy           client.Object
+		deleteKubeadmin bool
+		expectedErr     bool
+		validateFunc    func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
 		{
 			testCaseName:   "Validate success flow",
@@ -259,12 +269,12 @@ func TestClusterConfig(t *testing.T) {
 					assert.Equal(t, "data", idms.Items[0].Spec.ImageDigestMirrors[0].Source)
 				}
 
-				// validate manifest json
-
-				seedReconfig := &seedreconfig.SeedReconfiguration{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), seedReconfig); err != nil {
+				seedReconfig, err := getSeedReconfigFromUcc(ucc, tempDir)
+				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+
+				assert.Equal(t, "$2a$10$20Q4iRLy7cWZkjn/D07bF.RZQZonKwstyRGH0qiYbYRkx5Pe4Ztyi", seedReconfig.KubeadminPasswordHash)
 				assert.Equal(t, "mysno-xsb4m", seedReconfig.InfraID)
 				assert.Equal(t, "pull-secret", seedReconfig.PullSecret)
 				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
@@ -275,7 +285,7 @@ func TestClusterConfig(t *testing.T) {
 			},
 		},
 		{
-			testCaseName:   "no secret found",
+			testCaseName:   "no pull secret found",
 			pullSecret:     noPullSecret,
 			clusterVersion: defaultClusterVersion,
 			idms:           nil,
@@ -287,6 +297,25 @@ func TestClusterConfig(t *testing.T) {
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, errors.IsNotFound(err))
 				assert.Equal(t, true, strings.Contains(err.Error(), "secret"))
+			},
+		},
+		{
+			testCaseName:    "no kubeadmin secret found",
+			pullSecret:      defaultPullSecret,
+			clusterVersion:  defaultClusterVersion,
+			idms:            nil,
+			icsps:           nil,
+			caBundleCM:      nil,
+			node:            validMasterNode,
+			proxy:           defaultProxy,
+			expectedErr:     false,
+			deleteKubeadmin: true,
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				seedReconfig, err := getSeedReconfigFromUcc(ucc, tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				assert.Equal(t, "", seedReconfig.KubeadminPasswordHash)
 			},
 		},
 		{
@@ -419,6 +448,10 @@ func TestClusterConfig(t *testing.T) {
 			objs := []client.Object{tc.pullSecret, tc.clusterVersion, installConfig, tc.node,
 				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment, infrastructure}
 
+			if !tc.deleteKubeadmin {
+				objs = append(objs, kubeadminSecret)
+			}
+
 			for _, kcro := range kubeconfigRetentionObjects {
 				objs = append(objs, kcro)
 			}
@@ -483,6 +516,18 @@ func TestClusterConfig(t *testing.T) {
 			tc.validateFunc(t, tmpDir, err, ucc)
 		})
 	}
+}
+
+func getSeedReconfigFromUcc(ucc UpgradeClusterConfigGather, tempDir string) (*seedreconfig.SeedReconfiguration, error) {
+	clusterConfigPath, err := ucc.configDir(tempDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster config path, error: %w", err)
+	}
+	seedReconfig := &seedreconfig.SeedReconfiguration{}
+	if err := utils.ReadYamlOrJSONFile(filepath.Join(clusterConfigPath, common.SeedClusterInfoFileName), seedReconfig); err != nil {
+		return nil, fmt.Errorf("failed to read seed manifest, error: %w", err)
+	}
+	return seedReconfig, nil
 }
 
 func TestNetworkConfig(t *testing.T) {

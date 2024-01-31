@@ -152,8 +152,28 @@ func (r *UpgradeClusterConfigGather) fetchInfraID(ctx context.Context) (string, 
 	return infra.Status.InfrastructureName, nil
 }
 
+func (r *UpgradeClusterConfigGather) GetKubeadminPasswordHash(ctx context.Context) (string, error) {
+	kubeadminPasswordHash, err := utils.GetSecretData(ctx, "kubeadmin", "kube-system", "kubeadmin", r.Client)
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return "", fmt.Errorf("failed to get kubeadmin password hash: %w", err)
+		}
+
+		// No kubeadmin password secret found, this is fine (see
+		// https://docs.openshift.com/container-platform/4.14/authentication/remove-kubeadmin.html)
+		//
+		// An empty string will signal to the seed LCA that it should delete
+		// the kubeadmin password secret of the seed cluster, to ensure we
+		// don't accept a password in the reconfigured seed.
+		return "", nil
+
+	}
+
+	return kubeadminPasswordHash, nil
+}
+
 func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
-	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey, infraID, pullSecret string) *seedreconfig.SeedReconfiguration {
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey, infraID, pullSecret, kubeadminPasswordHash string) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
 		BaseDomain:                clusterInfo.BaseDomain,
@@ -166,6 +186,7 @@ func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
 		SSHKey:                    sshKey,
 		PullSecret:                pullSecret,
+		KubeadminPasswordHash:     kubeadminPasswordHash,
 	}
 }
 
@@ -181,6 +202,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 	if err != nil {
 		return fmt.Errorf("failed to get kubeconfig retention from crypto dir: %w", err)
 	}
+
 	sshKey, err := r.fetchSSHPublicKey()
 	if err != nil {
 		return err
@@ -196,8 +218,17 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
-	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey,
-		infraID, pullSecret)
+	kubeadminPasswordHash, err := r.GetKubeadminPasswordHash(ctx)
+	if err != nil {
+		return err
+	}
+
+	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention,
+		sshKey,
+		infraID,
+		pullSecret,
+		kubeadminPasswordHash,
+	)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
