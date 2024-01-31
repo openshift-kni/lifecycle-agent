@@ -37,23 +37,55 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav
 	r.Log.Info("Starting handleAbort")
 
 	if successful, errMsg := r.cleanup(ctx, false, ibu); successful {
-		r.Log.Info("Finished handleAbort")
+		r.Log.Info("Finished handleAbort successfully")
+		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+		return doNotRequeue(), nil
 	} else {
-
 		utils.SetStatusCondition(&ibu.Status.Conditions,
 			utils.ConditionTypes.Idle,
 			utils.ConditionReasons.AbortFailed,
 			metav1.ConditionFalse,
-			errMsg,
+			errMsg+fmt.Sprintf("Perform cleanup manually then add '%s' annotation to ibu CR to transition back to Idle",
+				utils.ManualCleanupAnnotation),
 			ibu.Generation,
 		)
 	}
-	return doNotRequeue(), nil
+	return requeueWithLongInterval(), nil
 }
 
-//nolint:unparam
+func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	if done, err := r.checkManualCleanup(ctx, ibu); err != nil {
+		return requeueWithShortInterval(), err
+	} else if done {
+		r.Log.Info("Manual cleanup annotation is found, removed annotation and running handleFinalize again for verification")
+		return r.handleFinalize(ctx, ibu)
+	}
+	r.Log.Info("Manual cleanup annotation is not set, requeue again")
+	return requeueWithLongInterval(), nil
+}
+
 func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	return doNotRequeue(), nil
+	if done, err := r.checkManualCleanup(ctx, ibu); err != nil {
+		return requeueWithShortInterval(), err
+	} else if done {
+		r.Log.Info("Manual cleanup annotation is found, removed annotation and running handleAbort again for verification")
+		return r.handleAbort(ctx, ibu)
+	}
+	r.Log.Info("Manual cleanup annotation is not set, requeue again")
+	return requeueWithLongInterval(), nil
+}
+
+// checkManualCleanup looks for ManualCleanupAnnotation in the ibu CR, if it is present removes the annotation and returns true
+// if it is not present returns false
+func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+	if _, ok := ibu.Annotations[utils.ManualCleanupAnnotation]; ok {
+		delete(ibu.Annotations, utils.ManualCleanupAnnotation)
+		if err := r.Client.Update(ctx, ibu); err != nil {
+			return false, fmt.Errorf("failed to remove manual cleanup annotation from ibu: %w", err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 //nolint:unparam
@@ -61,25 +93,20 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 	r.Log.Info("Starting handleFinalize")
 
 	if successful, errMsg := r.cleanup(ctx, true, ibu); successful {
-		r.Log.Info("Finished handleFinalize")
+		r.Log.Info("Finished handleFinalize successfully")
+		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+		return doNotRequeue(), nil
 	} else {
 		utils.SetStatusCondition(&ibu.Status.Conditions,
 			utils.ConditionTypes.Idle,
 			utils.ConditionReasons.FinalizeFailed,
 			metav1.ConditionFalse,
-			errMsg,
+			errMsg+fmt.Sprintf("Perform cleanup manually then add '%s' annotation to ibu CR to transition back to Idle",
+				utils.ManualCleanupAnnotation),
 			ibu.Generation,
 		)
 	}
-	return doNotRequeue(), nil
-}
-
-//nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-
-	// TODO actual steps
-	// If succeeds, return doNotRequeue
-	return doNotRequeue(), nil
+	return requeueWithLongInterval(), nil
 }
 
 // cleanup cleans stateroots, precache, backup, ibu files

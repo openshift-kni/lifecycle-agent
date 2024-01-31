@@ -10,6 +10,8 @@ const (
 	IBUName     string = "upgrade"
 	IBUFilePath string = "/opt/ibu.json"
 
+	ManualCleanupAnnotation string = "lca.openshift.io/manualCleanupDone"
+
 	// SeedGenName defines the valid name of the CR for the controller to reconcile
 	SeedGenName          string = "seedimage"
 	SeedGenSecretName    string = "seedgen"
