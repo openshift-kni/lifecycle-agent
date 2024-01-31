@@ -256,8 +256,9 @@ catalog-push: ## Push a catalog image.
 cli-run: common-deps-update fmt vet ## Run the lca-cli tool from your host.
 	go run main/lca-cli/main.go
 
-cli-build: common-deps-update fmt vet ## Build the lca-cli tool from your host.
+cli-build: common-deps-update fmt vet ## Build the lca-cli and ib-cli tools from your host.
 	go build -o bin/lca-cli main/lca-cli/main.go
+	go build -o bin/ib-cli main/ib-cli/main.go
 
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
