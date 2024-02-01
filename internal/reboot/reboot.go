@@ -93,7 +93,11 @@ func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBase
 	rollbackCfg.EnabledComponents[InstallationConfigurationComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
 	rollbackCfg.EnabledComponents[PostPivotComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
 
-	return lcautils.MarshalToFile(rollbackCfg, cfgfile)
+	if err := lcautils.MarshalToFile(rollbackCfg, cfgfile); err != nil {
+		return fmt.Errorf("failed to write rollback config file in %s: %w", cfgfile, err)
+	}
+
+	return nil
 }
 
 func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
@@ -150,7 +154,7 @@ func (c *RebootClient) RebootToNewStateRoot(rationale string) error {
 		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
 		"systemctl", "--message=\"Image Based Upgrade\"", "reboot")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to reboot with systemd :%w", err)
 	}
 
 	c.log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
@@ -162,7 +166,7 @@ func (c *RebootClient) RebootToNewStateRoot(rationale string) error {
 func (c *RebootClient) IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error) {
 	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to get current stateroot name: %w", err)
 	}
 	c.log.Info("stateroots", "current stateroot:", currentStaterootName, "desired stateroot", common.GetDesiredStaterootName(ibu))
 	return currentStaterootName != common.GetDesiredStaterootName(ibu), nil

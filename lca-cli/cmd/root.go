@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -82,5 +83,9 @@ func Execute() error {
 		TimestampFormat: "2006-01-02 15:04:05",
 		FullTimestamp:   true,
 	})
-	return rootCmd.Execute()
+
+	if err := rootCmd.Execute(); err != nil {
+		return fmt.Errorf("failed to exec root lca-cli: %w", err)
+	}
+	return nil
 }

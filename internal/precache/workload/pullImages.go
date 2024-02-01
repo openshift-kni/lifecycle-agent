@@ -62,8 +62,10 @@ func podmanImgPull(image, authFile string) error {
 	if authFile != "" {
 		args = append(args, []string{"--authfile", authFile}...)
 	}
-	_, err := Executor.ExecuteWithLiveLogger("podman", args...)
-	return err
+	if _, err := Executor.ExecuteWithLiveLogger("podman", args...); err != nil {
+		return fmt.Errorf("failed podman pull with args %s: %w", args, err)
+	}
+	return nil
 }
 
 // pullImage attempts to pull an image via podman CLI
@@ -98,8 +100,7 @@ func GetAuthFile() (string, error) {
 
 	// Check if authFile exists
 	if _, err := os.Stat(authFile); os.IsNotExist(err) {
-		log.Errorf("Missing auth file for podman")
-		return "", err
+		return "", fmt.Errorf("failed to get authfile for podman: %w", err)
 	}
 	log.Info("Auth file for podman found.")
 

@@ -71,11 +71,19 @@ func (o *ops) SystemctlAction(action string, args ...string) (string, error) {
 
 func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, error) {
 	args = append([]string{command}, args...)
-	return o.hostCommandsExecutor.Execute("bash", "-c", strings.Join(args, " "))
+	execute, err := o.hostCommandsExecutor.Execute("bash", "-c", strings.Join(args, " "))
+	if err != nil {
+		return "", fmt.Errorf("failed to run bash in host namespace with args %s: %w", args, err)
+	}
+	return execute, nil
 }
 
 func (o *ops) RunInHostNamespace(command string, args ...string) (string, error) {
-	return o.hostCommandsExecutor.Execute(command, args...)
+	execute, err := o.hostCommandsExecutor.Execute(command, args...)
+	if err != nil {
+		return "", fmt.Errorf("failed to run in host namespace with args %s: %w", args, err)
+	}
+	return execute, nil
 }
 
 func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
@@ -129,7 +137,7 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	o.log.Infof("Getting image from %s static pod file", common.EtcdStaticPodFile)
 	etcdImage, err := utils.ReadImageFromStaticPodDefinition(common.EtcdStaticPodFile, common.EtcdStaticPodContainer)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get image from %s static pod file: %w", common.EtcdStaticPodFile, err)
 	}
 
 	o.log.Info("Run unauthenticated etcd server for recert tool")
@@ -212,12 +220,12 @@ func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
 	_, err := o.hostCommandsExecutor.Execute(
 		"tar", "xzf", srcPath, "-C", destPath, "--selinux",
 	)
-	return err
+	return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 }
 
 func (o *ops) RemountSysroot() error {
 	_, err := o.hostCommandsExecutor.Execute("mount", "/sysroot", "-o", "remount,rw")
-	return err
+	return fmt.Errorf("failed to remount sysroot: %w", err)
 }
 
 func (o *ops) ImageExists(img string) (bool, error) {
@@ -228,9 +236,9 @@ func (o *ops) ImageExists(img string) (bool, error) {
 			if exitError.ExitCode() == 1 {
 				return false, nil
 			}
-			return false, err
+			return false, fmt.Errorf("failed to run podman image exists: %w", err)
 		} else {
-			return false, err
+			return false, fmt.Errorf("failed to run podman image exists with an unknown erorr: %w", err)
 		}
 	}
 	return true, nil
@@ -245,11 +253,11 @@ type PodmanImage struct {
 func (o *ops) IsImageMounted(imgName string) (bool, error) {
 	output, err := o.hostCommandsExecutor.Execute("podman", "image", "mount", "--format", "json")
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to mount podamn image: %w", err)
 	}
 	var images []PodmanImage
 	if err := json.Unmarshal([]byte(output), &images); err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to unmarshall podamn images: %w", err)
 	}
 	for _, img := range images {
 		for _, tag := range img.Repositories {

@@ -105,13 +105,13 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
 		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
-		return err
+		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
 
 	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFileAndManifest,
 		seedReconfiguration.PullSecret, common.ImageRegistryAuthFile, path.Join(p.workingDir, common.ClusterConfigDir,
 			common.ManifestsDir, pullSecretFileName)); err != nil {
-		return err
+		return fmt.Errorf("failed to run once pull-secret for post pivot: %w", err)
 	}
 
 	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
@@ -119,11 +119,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
-		return err
+		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
 	}
 
 	if err := p.copyClusterConfigFiles(); err != nil {
-		return err
+		return fmt.Errorf("failed copy cluster config files: %w", err)
 	}
 
 	client, err := utils.CreateKubeClient(p.scheme, p.kubeconfig)
@@ -132,35 +132,35 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	if _, err := p.ops.SystemctlAction("enable", "kubelet", "--now"); err != nil {
-		return err
+		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}
 	p.waitForApi(ctx, client)
 
 	if err := p.deleteAllOldMirrorResources(ctx, client); err != nil {
-		return err
+		return fmt.Errorf("failed to all old mirror resources: %w", err)
 	}
 
 	// We move back seed pull secret that we saved aside (if it exists), right before applying new PS secret
 	// in order for MCO not to be degraded and apply new rendered master machine config
 	if err := utils.MoveFileIfExists(common.ImageRegistryAuthFile+seedPullSecretSuffix,
 		common.ImageRegistryAuthFile); err != nil {
-		return err
+		return fmt.Errorf("failed move back seed pull secret: %w", err)
 	}
 	if err := p.applyManifests(); err != nil {
-		return err
+		return fmt.Errorf("failed apply manifests: %w", err)
 	}
 
 	if err := p.changeRegistryInCSVDeployment(ctx, client, seedReconfiguration, seedClusterInfo); err != nil {
-		return err
+		return fmt.Errorf("failed change registry in CSV deployment: %w", err)
 	}
 
 	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, seedReconfiguration); err != nil {
-		return err
+		return fmt.Errorf("failed to run once set_cluster_id for post pivot: %w", err)
 	}
 
 	// Restore lvm devices
 	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
-		return err
+		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
 	}
 
 	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
@@ -184,7 +184,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 
 	if err := recert.CreateRecertConfigFile(seedReconfiguration, seedClusterInfo, kubeconfigCryptoDir,
 		p.workingDir); err != nil {
-		return err
+		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -203,7 +203,11 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		nil,
 		func() error { return p.postRecertCommands(ctx, seedReconfiguration, seedClusterInfo) },
 		"-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
-	return err
+	if err != nil {
+		return fmt.Errorf("failed recert full flow: %w", err)
+	}
+
+	return nil
 }
 
 func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfigurationInfo *clusterconfig_api.SeedReconfiguration) error {
@@ -213,7 +217,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfiguration
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed start new etcd client: %w", err)
 	}
 	defer cli.Close()
 
@@ -264,9 +268,10 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 
 func (p *PostPivot) applyManifests() error {
 	p.log.Infof("Applying manifests from %s", path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
-	dir, err := os.ReadDir(path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
+	mPath := path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir)
+	dir, err := os.ReadDir(mPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read dir for extra manifest in %s: %w", mPath, err)
 	}
 	if len(dir) == 0 {
 		p.log.Infof("No manifests to apply were found, skipping")
@@ -297,7 +302,7 @@ func (p *PostPivot) recoverLvmDevices() error {
 	p.log.Infof("Recovering lvm devices from %s", lvmDevicesPath)
 	if err := cp.Copy(lvmDevicesPath, common.LvmDevicesPath); err != nil {
 		if !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("failed to copy lvm devices devices in %s: %w", lvmDevicesPath, err)
 		}
 	}
 
@@ -311,8 +316,11 @@ func (p *PostPivot) recoverLvmDevices() error {
 }
 
 func (p *PostPivot) copyClusterConfigFiles() error {
-	return utils.CopyFileIfExists(path.Join(p.workingDir, common.ClusterConfigDir, path.Base(common.CABundleFilePath)),
-		common.CABundleFilePath)
+	if err := utils.CopyFileIfExists(path.Join(p.workingDir, common.ClusterConfigDir, path.Base(common.CABundleFilePath)),
+		common.CABundleFilePath); err != nil {
+		return fmt.Errorf("failed to copy cluster config file in %s: %w", common.ClusterConfigDir, err)
+	}
+	return nil
 }
 
 func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runtimeclient.Client) error {
@@ -353,13 +361,13 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	// in case we should not override we can skip
 	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client,
 		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry); !shouldOverride || err != nil {
-		return err
+		return err //nolint:wrapcheck
 	}
 
 	p.log.Info("Changing release registry in csv deployment")
 	csvD, err := utils.GetCSVDeployment(ctx, client)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get CSV deployment: %w", err)
 	}
 
 	if seedReconfiguration.ReleaseRegistry == seedClusterInfo.ReleaseRegistry {
@@ -371,7 +379,8 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	newImage, err := utils.ReplaceImageRegistry(csvD.Spec.Template.Spec.Containers[0].Image,
 		seedReconfiguration.ReleaseRegistry, seedClusterInfo.ReleaseRegistry)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to replace image registry from %s to %s: %w",
+			seedClusterInfo.ReleaseRegistry, seedReconfiguration.ReleaseRegistry, err)
 	}
 
 	var newArgs []string
@@ -383,7 +392,7 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 	}
 	newArgsStr, err := json.Marshal(newArgs)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshall newArgs %s: %w", newArgs, err)
 	}
 	patch := []byte(fmt.Sprintf(`{"spec":{"template":{"spec": {"containers": [{"name": "%s", "image":"%s", "args": %s}]}}}}`,
 		csvD.Spec.Template.Spec.Containers[0].Name, newImage, newArgsStr))
@@ -399,14 +408,18 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 
 func (p *PostPivot) cleanup() error {
 	p.log.Info("Cleaning up")
-	return utils.RemoveListOfFolders(p.log, []string{p.workingDir, common.SeedDataDir})
+	listOfDirs := []string{p.workingDir, common.SeedDataDir}
+	if err := utils.RemoveListOfFolders(p.log, listOfDirs); err != nil {
+		return fmt.Errorf("failed to cleanup in postpivot %s: %w", listOfDirs, err)
+	}
+	return nil
 }
 
 func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	p.log.Info("Set new cluster id")
 	clusterVersion := &v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return err
+		return fmt.Errorf("failed to get cluseterVersion: %w", err)
 	}
 
 	if seedReconfiguration.ClusterID == "" {
@@ -515,7 +528,7 @@ func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 	}
 	rawExt, err := utils.ConvertToRawExtension(ignConfig)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to convert ign config to raw ext: %w", err)
 	}
 
 	for _, role := range []string{"master", "worker"} {
@@ -571,7 +584,7 @@ func (p *PostPivot) createPullSecretFileAndManifest(pullSecret, pullSecretFile, 
 	}
 	p.log.Infof("Move seed PS file aside")
 	if err := utils.MoveFileIfExists(pullSecretFile, pullSecretFile+seedPullSecretSuffix); err != nil {
-		return err
+		return fmt.Errorf("failed to move seed PS file aside: %w", err)
 	}
 
 	p.log.Infof("Writing provided pull secret to %s", pullSecretFile)
@@ -631,7 +644,11 @@ func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, bloc
 		return false, nil
 	})
 
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to wait for configuration: %w", err)
+	}
+
+	return nil
 }
 
 // setupConfigurationFolder mounts device to mountFolder and copies everything to configFolder
@@ -643,7 +660,7 @@ func (p *PostPivot) setupConfigurationFolder(deviceName, mountFolder, configFold
 	defer os.RemoveAll(mountFolder)
 
 	if err := p.ops.Mount(deviceName, mountFolder); err != nil {
-		return err
+		return fmt.Errorf("failed to mount %s: %w", mountFolder, err)
 	}
 	defer p.ops.Umount(deviceName)
 

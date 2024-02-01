@@ -88,7 +88,12 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
 	}
 
-	return utils.MarshalToFile(config, filepath.Join(recertConfigFolder, RecertConfigFile))
+	p := filepath.Join(recertConfigFolder, RecertConfigFile)
+	if err := utils.MarshalToFile(config, p); err != nil {
+		return fmt.Errorf("failed to marshal recert config file to %s: %w", p, err)
+	}
+
+	return nil
 }
 
 func CreateRecertConfigFileForSeedCreation(path string) error {
@@ -96,7 +101,12 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
 	config.KubeadminPasswordHash = "$2a$10$seed-placeholder-password-hash"
-	return utils.MarshalToFile(config, path)
+
+	if err := utils.MarshalToFile(config, path); err != nil {
+		return fmt.Errorf("failed create recert config file for sed creatation in %s: %w", path, err)
+	}
+
+	return nil
 }
 
 func CreateRecertConfigFileForSeedRestoration(path string) error {
@@ -110,8 +120,10 @@ func CreateRecertConfigFileForSeedRestoration(path string) error {
 		fmt.Sprintf("ingresskey-ingress-operator %s/ingresskey-ingress-operator.key", common.BackupCertsDir),
 	}
 	config.UseCertRules = []string{filepath.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt")}
-
-	return utils.MarshalToFile(config, path)
+	if err := utils.MarshalToFile(config, path); err != nil {
+		return fmt.Errorf("failed to marshall recert config file for seed restoration: %w", err)
+	}
+	return nil
 }
 
 func createBasicEmptyRecertConfig() RecertConfig {

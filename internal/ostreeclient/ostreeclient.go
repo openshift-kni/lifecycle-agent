@@ -39,8 +39,11 @@ func (c *Client) PullLocal(repoPath string) error {
 	if c.ibi {
 		args = append(args, "--repo", "/mnt/ostree/repo")
 	}
-	_, err := c.executor.Execute("ostree", append(args, repoPath)...)
-	return err
+	if _, err := c.executor.Execute("ostree", append(args, repoPath)...); err != nil {
+		return fmt.Errorf("failed to pull local ostree with args %s, %w", args, err)
+	}
+
+	return nil
 }
 
 func (c *Client) OSInit(osname string) error {
@@ -49,8 +52,10 @@ func (c *Client) OSInit(osname string) error {
 		args = append(args, "--sysroot", "/mnt")
 	}
 
-	_, err := c.executor.Execute("ostree", append(args, osname)...)
-	return err
+	if _, err := c.executor.Execute("ostree", append(args, osname)...); err != nil {
+		return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
+	}
+	return nil
 }
 
 func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
@@ -66,8 +71,10 @@ func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
 
 	// Run the command in bash to preserve the quoted kargs
 	args = append([]string{"ostree"}, args...)
-	_, err := c.executor.Execute("bash", "-c", strings.Join(args, " "))
-	return err
+	if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
+		return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
+	}
+	return nil
 }
 
 func (c *Client) Undeploy(ostreeIndex int) error {
@@ -75,8 +82,11 @@ func (c *Client) Undeploy(ostreeIndex int) error {
 	if c.ibi {
 		args = append(args, "--sysroot", "/mnt")
 	}
-	_, err := c.executor.Execute("ostree", append(args, fmt.Sprint(ostreeIndex))...)
-	return err
+	args = append(args, fmt.Sprint(ostreeIndex))
+	if _, err := c.executor.Execute("ostree", args...); err != nil {
+		return fmt.Errorf("failed to run Undeploy with args %s: %w", args, err)
+	}
+	return nil
 }
 
 func (c *Client) IsOstreeAdminSetDefaultFeatureEnabled() bool {
@@ -96,8 +106,11 @@ func (c *Client) SetDefaultDeployment(index int) error {
 	}
 
 	args := []string{"admin", "set-default", strconv.Itoa(index)}
-	_, err := c.executor.Execute("ostree", args...)
-	return err
+	if _, err := c.executor.Execute("ostree", args...); err != nil {
+		return fmt.Errorf("failed run ostree set-default with args %s: %w", args, err)
+	}
+
+	return nil
 }
 
 func (c *Client) GetDeployment(stateroot string) (string, error) {
