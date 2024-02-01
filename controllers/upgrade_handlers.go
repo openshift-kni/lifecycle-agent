@@ -276,6 +276,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying policy extra-manifests: %s", err))
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while applying policy extra manifests: %w", err))
