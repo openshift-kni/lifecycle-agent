@@ -63,7 +63,7 @@ func (i *IBIPrepare) Run() error {
 	// Setup state root
 	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
 		i.seedImage, i.seedExpectedVersion, imageListFile, true); err != nil {
-		return err
+		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
 	if i.precacheDisabled {
@@ -90,5 +90,8 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 	i.log.Infof("chroot %s successful", common.Host)
-	return workload.Precache(imageList, i.pullSecretFile, i.precacheBestEffort)
+	if err := workload.Precache(imageList, i.pullSecretFile, i.precacheBestEffort); err != nil {
+		return fmt.Errorf("failed to start precache: %w", err)
+	}
+	return nil
 }

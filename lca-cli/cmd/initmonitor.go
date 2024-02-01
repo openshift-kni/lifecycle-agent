@@ -54,9 +54,15 @@ func initMonitor() error {
 
 	initMonitorRunner := initmonitor.NewInitMonitor(scheme, log, hostCommandsExecutor, ops.NewOps(log, hostCommandsExecutor), monitorSvcUnitComponentTag)
 	if launchMonitor {
-		return initMonitorRunner.RunInitMonitor()
+		if err := initMonitorRunner.RunInitMonitor(); err != nil {
+			return fmt.Errorf("failed to run init monitor: %w", err)
+		}
+		return nil
 	} else if monitorSvcUnitComponentTag != "" {
-		return initMonitorRunner.RunExitStopPostCheck()
+		if err := initMonitorRunner.RunExitStopPostCheck(); err != nil {
+			return fmt.Errorf("failed to run exit stop post check: %w", err)
+		}
+		return nil
 	}
 
 	return fmt.Errorf("must specify either --monitor or --exec-stop-post")

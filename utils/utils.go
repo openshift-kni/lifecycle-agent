@@ -37,9 +37,13 @@ import (
 func MarshalToFile(data any, filePath string) error {
 	marshaled, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshall data: %w", err)
 	}
-	return os.WriteFile(filePath, marshaled, 0o600)
+	err = os.WriteFile(filePath, marshaled, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to write file to %s: %w", filePath, err)
+	}
+	return nil
 }
 
 // MarshalToYamlFile marshals any object to YAML and writes it to the given file path
@@ -47,16 +51,19 @@ func MarshalToFile(data any, filePath string) error {
 func MarshalToYamlFile(data any, filePath string) error {
 	marshaled, err := k8syaml.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed marshall file to yaml %s: %w", filePath, err)
 	}
-	return os.WriteFile(filePath, marshaled, 0o600)
+	if err := os.WriteFile(filePath, marshaled, 0o600); err != nil {
+		return fmt.Errorf("failed to write file in %s: %w", filePath, err)
+	}
+	return nil
 }
 
 // TypeMetaForObject returns the given object's TypeMeta or an error otherwise.
 func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMeta, error) {
 	gvks, unversioned, err := scheme.ObjectKinds(o)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get ObjectKinds: %w", err)
 	}
 	if unversioned || len(gvks) == 0 {
 		return nil, fmt.Errorf("unable to find API version for object")
@@ -92,7 +99,7 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 		},
 	)})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed list nodes: %w", err)
 	}
 	if len(nodesList.Items) != 1 {
 		return nil, fmt.Errorf("we should have one master node in sno cluster, current number is %d", len(nodesList.Items))
@@ -103,11 +110,15 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 func ReadYamlOrJSONFile(filePath string, into any) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return err
+		return err // nolint:wrapcheck
 	}
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
-	return decoder.Decode(into)
+	if err := decoder.Decode(into); err != nil {
+		return fmt.Errorf("failed to decode %s: %w", filePath, err)
+	}
+
+	return nil
 }
 
 func IsIpv6(provideIp string) bool {
@@ -121,10 +132,15 @@ func IsIpv6(provideIp string) bool {
 func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to build config from flags for kube client: %w", err)
 	}
-	return runtimeclient.New(config, runtimeclient.Options{Scheme: scheme,
+
+	rc, err := runtimeclient.New(config, runtimeclient.Options{Scheme: scheme,
 		WarningHandler: runtimeclient.WarningHandlerOptions{SuppressWarnings: true}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create runtimeclient for kube: %w", err)
+	}
+	return rc, nil
 }
 
 func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) error {
@@ -152,7 +168,7 @@ func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) err
 
 	_, err = os.Create(doneFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create RunOnce file: %w", err)
 	}
 
 	return nil
@@ -176,9 +192,9 @@ func ReadImageFromStaticPodDefinition(podFile, containerName string) (string, er
 }
 
 func HandleFilesWithCallback(folder string, action func(string) error) error {
-	return filepath.Walk(folder, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(folder, func(path string, info os.FileInfo, err error) error { //nolint:wrapcheck
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to walk path %s: %w", path, err)
 		}
 
 		if info.IsDir() {
@@ -190,7 +206,7 @@ func HandleFilesWithCallback(folder string, action func(string) error) error {
 }
 
 func CopyFileIfExists(source, dest string) error {
-	return cp.Copy(source, dest, cp.Options{OnError: func(src, dest string, err error) error {
+	return cp.Copy(source, dest, cp.Options{OnError: func(src, dest string, err error) error { //nolint:wrapcheck
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -214,7 +230,7 @@ func RemoveListOfFolders(log *logrus.Logger, folders []string) error {
 	for _, folder := range folders {
 		log.Infof("Removing %s folder", folder)
 		if err := os.RemoveAll(folder); err != nil {
-			return err
+			return fmt.Errorf("failed to remove %s folder: %w", folder, err)
 		}
 	}
 	return nil
@@ -234,9 +250,9 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 				},
 			}
 			if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-				return client.IgnoreAlreadyExists(c.Create(ctx, ibu))
+				return client.IgnoreAlreadyExists(c.Create(ctx, ibu)) //nolint:wrapcheck
 			}); err != nil {
-				return err
+				return fmt.Errorf("failed to create IBU during init: %w", err)
 			}
 			log.Info("Initial IBU created")
 			return nil
@@ -249,31 +265,31 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 
 	log.Info("Saved IBU CR found, restoring ...")
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, ibu))
+		return client.IgnoreNotFound(c.Delete(ctx, ibu)) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to delete IBU during restore: %w", err)
 	}
 
 	// Save status as the ibu structure gets over-written by the create call
 	// with the result which has no status
 	status := ibu.Status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, ibu)
+		return c.Create(ctx, ibu) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to create IBU to restore: %w", err)
 	}
 
 	// Put the saved status into the newly create ibu with the right resource
 	// version which is required for the update call to work
 	ibu.Status = status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, ibu)
+		return c.Status().Update(ctx, ibu) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to update IBU during restore: %w", err)
 	}
 
 	if err := os.Remove(filePath); err != nil {
-		return err
+		return fmt.Errorf("failed to remove IBU in %s: %w", filePath, err)
 	}
 	log.Info("Restore successful and saved IBU CR removed")
 	return nil
@@ -312,7 +328,7 @@ func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dock
 	}
 
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Update(ctx, newPullSecret)
+		return c.Update(ctx, newPullSecret) //nolint:wrapcheck
 	}); err != nil {
 		return nil, fmt.Errorf("failed to update pull-secret resource: %w", err)
 	}

@@ -154,38 +154,33 @@ func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVar
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
 	clusterRegistry, err := commonUtils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
-		r.Log.Error(err, "Failed to get cluster registry")
-		return false, err
+		return false, fmt.Errorf("failed to get cluster registry: %w", err)
 	}
 	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(common.GetDesiredStaterootName(ibu))))
 	if err != nil {
-		r.Log.Error(err, "Failed to read seed info")
-		return false, err
+		return false, fmt.Errorf("failed to read seed info: %w", err)
 	}
 	shouldOverrideRegistry, err := commonUtils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to check ShouldOverrideSeedRegistry %w", err)
 	}
 
 	imageList, err := prep.ReadPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
 	if err != nil {
-		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
-		return false, err
+		return false, fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 	}
 
 	envVars, err := r.getPodEnvVars(ctx)
 	if err != nil {
-		err = fmt.Errorf("failed to get pod env vars: %w", err)
-		return false, err
+		return false, fmt.Errorf("failed to get pod env vars: %w", err)
 	}
 
 	// Create pre-cache config using default values
 	config := precache.NewConfig(imageList, envVars)
 	err = r.Precache.CreateJob(ctx, config)
 	if err != nil {
-		r.Log.Error(err, "Failed to create precaching job")
-		return false, err
+		return false, fmt.Errorf("failed to create precaching job: %w", err)
 	}
 
 	return true, nil
@@ -227,7 +222,7 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context)
 func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string) error {
 	if err := prep.SetupStateroot(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient, ibu.Spec.SeedImageRef.Image,
 		ibu.Spec.SeedImageRef.Version, imageListFile, false); err != nil {
-		return err
+		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
 	if err := r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
@@ -290,13 +285,11 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		// Pull seed image
 		select {
 		case <-derivedCtx.Done():
-			r.Log.Info("Context canceled before pulling seed image")
-			return derivedCtx.Err()
+			return fmt.Errorf("context canceled before pulling seed image: %w", derivedCtx.Err())
 		default:
 			r.PrepTask.Progress = "Pulling seed image"
 			if err = r.getSeedImage(derivedCtx, ibu); err != nil {
-				r.Log.Error(err, "failed to pull seed image")
-				return err
+				return fmt.Errorf("failed to pull seed image: %w", err)
 			}
 			r.Log.Info("Successfully pulled seed image")
 			r.PrepTask.Progress = "Successfully pulled seed image"
@@ -305,13 +298,11 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		// Setup state-root
 		select {
 		case <-derivedCtx.Done():
-			r.Log.Info("Context canceled before setting up stateroot")
-			return derivedCtx.Err()
+			return fmt.Errorf("context canceled before setting up stateroot: %w", derivedCtx.Err())
 		default:
 			r.PrepTask.Progress = "Setting up stateroot"
 			if err = r.SetupStateroot(derivedCtx, ibu, imageListFile); err != nil {
-				r.Log.Error(err, "failed to setup stateroot")
-				return err
+				return fmt.Errorf("failed to setup stateroot with prep stage worker: %w", err)
 			}
 			r.Log.Info("Successfully setup stateroot")
 			r.PrepTask.Progress = "Successfully setup stateroot"
@@ -320,14 +311,12 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		// Launch precaching job
 		select {
 		case <-derivedCtx.Done():
-			r.Log.Info("Context canceled before creating precaching job")
-			return derivedCtx.Err()
+			return fmt.Errorf("context canceled before creating precaching job: %w", derivedCtx.Err())
 		default:
 			r.PrepTask.Progress = "Creating precaching job"
 			ok, err = r.launchPrecaching(derivedCtx, imageListFile, ibu)
 			if err != nil {
-				r.Log.Info("Failed to launch pre-caching phase")
-				return err
+				return fmt.Errorf("failed to launch pre-caching phase: %w", err)
 			}
 			if !ok {
 				return fmt.Errorf("failed to create precaching job")
@@ -340,8 +329,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		r.PrepTask.Progress = "Waiting for precaching job to complete"
 		interval := 30 * time.Second
 		if err = wait.PollUntilContextCancel(derivedCtx, interval, false, r.verifyPrecachingCompleteFunc(5, interval)); err != nil {
-			r.Log.Info("Failed to precache images")
-			return err
+			return fmt.Errorf("failed to precache images: %w", err)
 		}
 
 		// Fetch final precaching job report summary
@@ -357,9 +345,8 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 	})
 
 	if err := errGroup.Wait(); err != nil {
-		r.Log.Info("Encountered error while running prep-stage worker goroutine", "error", err)
 		r.PrepTask.Progress = fmt.Sprintf("Prep failed with error: %v", err)
-		return err
+		return fmt.Errorf("encountered error while running prep-stage worker goroutine: %w", err)
 	}
 
 	return nil

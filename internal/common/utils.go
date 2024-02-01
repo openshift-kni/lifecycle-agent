@@ -53,7 +53,7 @@ func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.Confi
 		Name:      configMap.Name,
 		Namespace: configMap.Namespace,
 	}, cm); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get configMap %w", err)
 	}
 
 	return cm, nil
@@ -93,7 +93,10 @@ func PathOutsideChroot(filename string) string {
 }
 
 func CopyOutsideChroot(src, dest string) error {
-	return cp.Copy(PathOutsideChroot(src), PathOutsideChroot(dest))
+	if err := cp.Copy(PathOutsideChroot(src), PathOutsideChroot(dest)); err != nil {
+		return fmt.Errorf("failed to copy outsidechroot src:%s dest:%s: %w", src, dest, err)
+	}
+	return nil
 }
 
 func GetStaterootPath(osname string) string {
@@ -120,23 +123,23 @@ func NewDynamicClientAndRESTMapper() (dynamic.Interface, meta.RESTMapper, error)
 	// Read kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", PathOutsideChroot(KubeconfigFile))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to read kubeconfig for NewDynamicClientAndRESTMapper: %w", err)
 	}
 
 	// Create dynamic client
 	client, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to create a new dynamic client: %w", err)
 	}
 
 	// Create dynamic REST mapper
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to create discovery client: %w", err)
 	}
 	groupResources, err := restmapper.GetAPIGroupResources(discoveryClient)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed group resources: %w", err)
 	}
 	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
 
@@ -148,7 +151,7 @@ func isConflictOrRetriable(err error) bool {
 }
 
 func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
-	return retry.OnError(backoff, isConflictOrRetriable, fn)
+	return retry.OnError(backoff, isConflictOrRetriable, fn) //nolint:wrapcheck
 }
 
 func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {

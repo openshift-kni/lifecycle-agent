@@ -69,11 +69,13 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	// but still cleanup as much as possible.
 	var errors []error
 
+	s.log.Info("Removing seed image")
 	if _, err := s.ops.RunInHostNamespace("podman", []string{"rmi", s.containerRegistry}...); err != nil {
 		s.log.Errorf("failed to remove seed image: %v", err)
 		errors = append(errors, err)
 	}
 
+	s.log.Info("Cleaning up systemd service units")
 	if err := s.cleanupServiceUnits(); err != nil {
 		s.log.Errorf("Error cleaning up systemd service files: %v", err)
 		errors = append(errors, err)
@@ -82,6 +84,7 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping restoring crypto via recert tool")
 	} else {
+		s.log.Info("Restoring crypto via recert tool")
 		recertFilePath := filepath.Join(common.BackupChecksDir, "recert.done")
 		if _, err := os.Stat(recertFilePath); err == nil && !os.IsNotExist(err) {
 			if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
@@ -132,6 +135,9 @@ func (s *SeedRestoration) cleanupServiceUnits() error {
 
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("failed to cleanup service units: %w", err)
+	}
 
-	return err
+	return nil
 }

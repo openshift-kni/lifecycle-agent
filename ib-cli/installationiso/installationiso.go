@@ -79,7 +79,7 @@ func (r *InstallationIso) validate() error {
 	if err != nil && os.IsNotExist(err) {
 		return fmt.Errorf("work dir doesn't exists %w", err)
 	}
-	return err
+	return nil
 }
 
 func (r *InstallationIso) createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, installationDisk string) error {
@@ -113,7 +113,13 @@ func (r *InstallationIso) renderIgnitionFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to render ignition from config: %w", err)
 	}
-	return os.WriteFile(path.Join(r.workDir, ibiIgnitionFileName), []byte(ignitionContent), 0o644) //nolint:gosec
+
+	p := path.Join(r.workDir, ibiIgnitionFileName)
+	err = os.WriteFile(p, []byte(ignitionContent), 0o644) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("failed write %s: %w", p, err)
+	}
+	return nil
 }
 
 func (r *InstallationIso) embedIgnitionToIso() error {
@@ -136,7 +142,7 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 	}
 
 	if _, err := r.ops.RunInHostNamespace(command, args...); err != nil {
-		return err
+		return fmt.Errorf("failed to embed ign with args %s: %w", args, err)
 	}
 	return nil
 }
@@ -188,7 +194,7 @@ func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, p
 	}
 
 	if err := utils.RenderTemplateFile(string(template), templateData, path.Join(r.workDir, butaneConfigFile), 0o644); err != nil {
-		return err
+		return fmt.Errorf("failed to render %s: %w", butaneConfigFile, err)
 	}
 	return nil
 }
@@ -228,13 +234,13 @@ func (r *InstallationIso) downloadLiveIso(url string) error {
 
 	isoFile, err := os.Create(rhcosIsoPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to rhcos iso path in %s: %w", rhcosIsoPath, err)
 	}
 	defer isoFile.Close()
 
 	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to make http get call to %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -242,6 +248,9 @@ func (r *InstallationIso) downloadLiveIso(url string) error {
 		return fmt.Errorf("failed to download ISO from URL, status: %s", resp.Status)
 	}
 
-	_, err = io.Copy(isoFile, resp.Body)
-	return err
+	if _, err := io.Copy(isoFile, resp.Body); err != nil {
+		return fmt.Errorf("failed iso file from resp: %w", err)
+	}
+
+	return nil
 }
