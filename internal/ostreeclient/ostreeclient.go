@@ -108,7 +108,7 @@ func (c *Client) GetDeployment(stateroot string) (string, error) {
 
 	output, err := c.executor.Execute("ostree", args...)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("unable to get deployment, ostree command failed: %w", err)
 	}
 
 	// Example output:
@@ -144,7 +144,7 @@ func (c *Client) GetDeployment(stateroot string) (string, error) {
 func (c *Client) GetDeploymentDir(stateroot string) (string, error) {
 	deployment, err := c.GetDeployment(stateroot)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("unable to get determine deployment dir: %w", err)
 	}
 
 	deploymentDir := filepath.Join(common.GetStaterootPath(stateroot), "deploy", deployment)

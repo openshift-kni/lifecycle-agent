@@ -370,9 +370,10 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 
 	result = doNotRequeue()
 
-	if !common.HostDirExists() {
+	_, err = os.Stat(common.Host)
+	if err != nil {
 		// fail without /host
-		err = fmt.Errorf("host dir does not exist")
+		err = fmt.Errorf("host dir does not exist: %w", err)
 		return
 	}
 

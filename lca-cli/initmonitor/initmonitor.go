@@ -50,8 +50,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 			return nil
 		}
 
-		m.log.Error(err, "failed to read rollback config file")
-		return err
+		return fmt.Errorf("failed to read rollback config file: %w", err)
 	}
 
 	if !rollbackCfg.InitMonitorEnabled {
@@ -77,8 +76,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 	m.log.Info(msg)
 
 	if err := m.rebootClient.InitiateRollback(msg); err != nil {
-		m.log.Infof("Unable to auto rollback: %s", err)
-		return err
+		return fmt.Errorf("unable to auto rollback: %w", err)
 	}
 
 	return nil
@@ -124,8 +122,7 @@ func (m *InitMonitor) RunExitStopPostCheck() error {
 		m.log.Info(msg)
 
 		if err := m.rebootClient.InitiateRollback(msg); err != nil {
-			m.log.Infof("Unable to auto rollback: %s", err)
-			return err
+			return fmt.Errorf("unable to auto rollback: %w", err)
 		}
 	}
 

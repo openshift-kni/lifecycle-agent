@@ -105,7 +105,7 @@ func (c *RebootClient) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, 
 
 	filename := common.PathOutsideChroot(common.IBUAutoRollbackConfigFile)
 	if _, err := os.Stat(filename); err != nil {
-		return rollbackCfg, err
+		return rollbackCfg, fmt.Errorf("unable to find auto-rollback config file (%s): %w", filename, err)
 	}
 
 	if err := lcautils.ReadYamlOrJSONFile(filename, rollbackCfg); err != nil {
