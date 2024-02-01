@@ -30,9 +30,11 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -130,6 +132,16 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 
 // ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
 func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := h.Client.Get(ctx, types.NamespacedName{Name: "policies.policy.open-cluster-management.io"}, crd); err != nil {
+		if k8serrors.IsNotFound(err) {
+			h.Log.Info("Skipping extraction from policies as the policy CRD is not found. This is expected if the cluster is not managed by ACM")
+			return nil
+		} else {
+			return fmt.Errorf("error while check policy CRD: %w", err)
+		}
+	}
+
 	// Create the directory for the extra manifests
 	manifestsDir := filepath.Join(toDir, PolicyManifestPath)
 	if err := os.MkdirAll(manifestsDir, 0o700); err != nil {
@@ -144,12 +156,12 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 	for i, policy := range policies {
 		objects, err := getConfigurationObjects(policy, objectLabels)
 		if err != nil {
-			return fmt.Errorf("failed to get configuration objects: %w", err)
+			return fmt.Errorf("failed to extract manifests from policies: %w", err)
 		}
 		for _, object := range objects {
 			manifestFilePath := filepath.Join(manifestsDir, fmt.Sprintf("%d_%s_%s.yaml", i, object.GetName(), object.GetNamespace()))
 			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil {
-				return fmt.Errorf("failed to marshal object to file %s: %w", manifestFilePath, err)
+				return fmt.Errorf("failed to save manifests to file %s: %w", manifestFilePath, err)
 			}
 		}
 	}

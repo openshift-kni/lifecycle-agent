@@ -25,6 +25,7 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -43,6 +44,7 @@ var (
 func init() {
 	testscheme.AddKnownTypes(policiesv1.GroupVersion, &policiesv1.Policy{})
 	testscheme.AddKnownTypes(policiesv1.GroupVersion, &policiesv1.PolicyList{})
+	testscheme.AddKnownTypes(apiextensionsv1.SchemeGroupVersion, &apiextensionsv1.CustomResourceDefinition{})
 }
 
 const sriovnodepolicies = `
@@ -414,6 +416,17 @@ func TestExportPolicyManifests(t *testing.T) {
 				t.Errorf("Failed to create temporary directory: %v", err)
 			}
 			defer os.RemoveAll(toDir)
+
+			crd := &apiextensionsv1.CustomResourceDefinition{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "policies.policy.open-cluster-management.io",
+				},
+			}
+
+			err = fakeClient.Create(context.Background(), crd)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
 
 			for _, p := range tc.policies {
 				err = fakeClient.Create(context.Background(), p)
