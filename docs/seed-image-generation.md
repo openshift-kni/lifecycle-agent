@@ -42,7 +42,10 @@ The seed SNO configuration has some pre-requisites:
 
 ### Shared Container Storage
 
-Image Based Upgrade (IBU) requires that container storage (`/var/lib/containers`) is setup to be shared between stateroots. This can be done by creating a separate partition for container storage when the node is installed. Please see this [blog article](https://cloud.redhat.com/blog/a-guide-to-creating-a-separate-disk-partition-at-installation-time) for more information on how this is done using a `MachineConfig`.
+Image Based Upgrade (IBU) requires that container storage (`/var/lib/containers`) is setup to be shared between
+stateroots. This can be done by creating a separate partition for container storage when the node is installed. Please
+see this [blog article](https://cloud.redhat.com/blog/a-guide-to-creating-a-separate-disk-partition-at-installation-time) for more
+information on how this is done using a `MachineConfig`.
 
 With ZTP GitOps, the `MachineConfig` can be added as `extra-manifests` under the site-config. For example:
 
@@ -95,7 +98,12 @@ spec:
 
 ### Required dnsmasq Configuration
 
-Image Based Upgrade (IBU) requires that dnsmasq is configured such that it is able to use updated cluster name, domain, and IP address, as these will all be different for the target SNO compared to the seed SNO. The dnsmasq configuration is managed by a `MachineConfig` created during installation by the assisted-installer named `50-master-dnsmasq-configuration`. The changes required for IBU are not yet available in a GA ACM release, however, so a workaround is needed to override this `MachineConfig` until such time as we can define a minimum ACM version requirement.
+Image Based Upgrade (IBU) requires that dnsmasq is configured such that it is able to use updated cluster name, domain,
+and IP address, as these will all be different for the target SNO compared to the seed SNO. The dnsmasq configuration is
+managed by a `MachineConfig` created during installation by the assisted-installer named
+`50-master-dnsmasq-configuration`. The changes required for IBU are not yet available in a GA ACM release, however, so a
+workaround is needed to override this `MachineConfig` until such time as we can define a minimum ACM version
+requirement.
 
 A helper script, [generate-dnsmasq-site-policy-section.sh](../hack/generate-dnsmasq-site-policy-section.sh), is provided to aid in creating a cluster-specific site-policy subsection or `MachineConfig`.
 
@@ -239,7 +247,7 @@ The `seedgen` `Secret`, created in the `openshift-lifecycle-agent` namespace, al
 - `hubKubeconfig`: (Optional) base64-encoded kubeconfig for admin access to the hub, in order to deregister the seed
   cluster from ACM. If this is not present in the secret, the ACM cleanup will be skipped.
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > This `Secret` must be named `seedgen` and must be created in the `openshift-lifecycle-agent` namespace.
 
 The `seedAuth` is the base64-encoded auth file containing credentials with write-access to the registry to which the seed image is to be published. The auth file itself can be created with limited credentials by running a `podman login` command, such as:
@@ -276,7 +284,7 @@ The `seedimage` `SeedGenerator` CR allows the user to provide the following info
 
 - `seedImage`: The pullspec (ie. registry/repo:tag) for the generated image
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > This `SeedGenerator` CR must be named `seedimage`.
 
 Example:
@@ -295,13 +303,16 @@ spec:
 
 Creating the `seedimage` `SeedGenerator` will trigger the LCA operator to launch the seed image generation.
 
-First, the orchestrator will run its system config validation checks to ensure the required seed SNO configuration is present. If the validation fails, the CR will be updated with conditions and status message noting the image could not be generated and provide a rejection message. The LCA operator manager logs will also provide the rejection message, along with related log messages.
+First, the orchestrator will run its system config validation checks to ensure the required seed SNO configuration is
+present. If the validation fails, the CR will be updated with conditions and status message noting the image could not
+be generated and provide a rejection message. The LCA operator manager logs will also provide the rejection message,
+along with related log messages.
 
 *TODO*: Provide example of CR with rejection message.
 
 After the system config has been validated successfully, the orchestor will perform any necessary cleanup and launch the lca-cli tool to generate and publish the image.
 
-> [!WARNING]  
+> [!WARNING]
 > As part of preparing the generate the seed image, the lca-cli will shut down all running operators and pods. Once the lca-cli is complete, it will restart kubelet to trigger recovery of the operators.
 
 ### Monitoring Progress
@@ -320,10 +331,19 @@ podman logs -f lca_image_builder
 
 ## ACM and ZTP GitOps Considerations
 
-If you provide a `hubKubeconfig` in your `seedgen` `Secret`, the orchestrator will interact with the hub to verify whether the `ManagedCluster` exists for the seed SNO. If it exists, the orchestrator will detach the cluster from ACM by deleting the `ManagedCluster`, saving the CR to be restored as part of the recovery.
+If you provide a `hubKubeconfig` in your `seedgen` `Secret`, the orchestrator will interact with the hub to verify
+whether the `ManagedCluster` exists for the seed SNO. If it exists, the orchestrator will detach the cluster from ACM by
+deleting the `ManagedCluster`, saving the CR to be restored as part of the recovery.
 
-> [!WARNING]  
-> When the orchestrator deletes the `ManagedCluster`, ArgoCD will mark the site-config "out of sync". If you have the `selfHeal` option enabled in ArgoCD, it will automatically sync and recreate the CR, triggering ACM to reimport the seed SNO while it is preparing to generate the image. This means you must drop the site-config in gitops prior to triggering the seed image generation, rather than providing the `hubKubeconfig`. Similarly, if you are using a shared hub, a sync could be triggered by someone else.
+> [!WARNING]
+> When the orchestrator deletes the `ManagedCluster`, ArgoCD will mark the site-config "out of sync". If you have the
+> `selfHeal` option enabled in ArgoCD, it will automatically sync and recreate the CR, triggering ACM to reimport the
+> seed SNO while it is preparing to generate the image. This means you must drop the site-config in gitops prior to
+> triggering the seed image generation, rather than providing the `hubKubeconfig`. Similarly, if you are using a shared
+> hub, a sync could be triggered by someone else.
 
-> [!IMPORTANT]  
-> If you are using gitops to deploy your seed SNO, it is highly recommended that you do not provide a `hubKubeconfig`, due to the potential race condition of resyncing, regardless of whether `selfHeal` is enabled in ArgoCD. Rather, you should drop the site-config from gitops and sync/prune the cluster first. Once the cluster has been removed from the hub, you can safely trigger the seed image generation.
+> [!IMPORTANT]
+> If you are using gitops to deploy your seed SNO, it is highly recommended that you do not provide a `hubKubeconfig`,
+> due to the potential race condition of resyncing, regardless of whether `selfHeal` is enabled in ArgoCD. Rather, you
+> should drop the site-config from gitops and sync/prune the cluster first. Once the cluster has been removed from the
+> hub, you can safely trigger the seed image generation.

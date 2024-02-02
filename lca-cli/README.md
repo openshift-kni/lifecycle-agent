@@ -37,7 +37,7 @@ In that direction, the tool does the following at a high level:
 Building the binary locally.
 
 ```shell
--> make cli-build 
+-> make cli-build
 go mod tidy
 Running go fmt
 go fmt ./...
@@ -57,7 +57,7 @@ To see the tool's help on your local host, run the following command:
 lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
 
   Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
-        
+
 Usage:
   lca-cli [command]
 

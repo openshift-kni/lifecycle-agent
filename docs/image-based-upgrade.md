@@ -5,25 +5,30 @@
   - [Handling Site Specific Artifacts](#handling-site-specific-artifacts)
     - [Extra Manifests](#extra-manifests)
     - [Backup and Restore](#backup-and-restore)
-  - [Target SNO Pre-Requisites](#target-sno-prerequisites)
+  - [Target SNO Prerequisites](#target-sno-prerequisites)
   - [ImageBasedUpgrade CR](#imagebasedupgrade-cr)
   - [Image Based Upgrade Walkthrough](#image-based-upgrade-walkthrough)
     - [Success Path](#success-path)
-        - [Starting the prep stage](#starting-the-prep-stage)
-        - [Starting the upgrade stage](#starting-the-upgrade-stage)
+      - [Starting the Prep stage](#starting-the-prep-stage)
+      - [Starting the Upgrade stage](#starting-the-upgrade-stage)
     - [Rollback after Pivot](#rollback-after-pivot)
     - [Finalizing or Aborting](#finalizing-or-aborting)
     - [Monitoring Progress](#monitoring-progress)
 
-
 ## Overview
 
-Image Based Upgrade (IBU) is a mechanism that allows a SNO to be upgraded via a seed image. The seed is an OCI image generated from a SNO system installed with the target OCP version with most of the configuration for the target cluster profile baked in. The seed image is installed onto a target SNO as a new ostree stateroot. Prior to booting this new stateroot, application artifacts are backed up. After pivoting into the new release, the cluster is reconfigured with the original cluster configuration, re-registered with ACM if applicable, and restored with the backed up application artifacts. This results in a system functionally identical running a new release of OCP. The dual state root mechanism facilitates easy rollbacks in the event of an upgrade failure.
+Image Based Upgrade (IBU) is a mechanism that allows a SNO to be upgraded via a seed image. The seed is an OCI image
+generated from a SNO system installed with the target OCP version with most of the configuration for the target cluster
+profile baked in. The seed image is installed onto a target SNO as a new ostree stateroot. Prior to booting this new
+stateroot, application artifacts are backed up. After pivoting into the new release, the cluster is reconfigured with
+the original cluster configuration, re-registered with ACM if applicable, and restored with the backed up application
+artifacts. This results in a system functionally identical running a new release of OCP. The dual state root mechanism
+facilitates easy rollbacks in the event of an upgrade failure.
 
 The Lifecycle Agent provides orchestration of an IBU on the target SNO via the `ImageBasedUpgrade` CR. An upgrade is performed by patching the IBU CR through a series of stages.
 
 - Idle
-  - This is the initial stage, as well as the end stage of an upgrade flow (whether successful or not). 
+  - This is the initial stage, as well as the end stage of an upgrade flow (whether successful or not).
   - The IBU CR is always auto created with the idle stage when the LCA is installed the first time.
   - When transitioning from other stages back to Idle, LCA performs different cleanup logic specific to the stage, making sure the node is ready for another image based upgrade.
 
@@ -32,43 +37,54 @@ The Lifecycle Agent provides orchestration of an IBU on the target SNO via the `
   - During this stage, LCA does as much preparation as possible for the upgrade without impacting the current running version. This includes downloading the seed image, unpacking it as a new ostree stateroot and pulling all images specified by the image list built into the seed image, refer to [precache-plugin](precache-plugin.md)
 
 - Upgrade
-  - This stage can only be set if the prep stage completed successfully. 
+  - This stage can only be set if the prep stage completed successfully.
   - This is where the actual upgrade happens. It consists of three main steps: pre-pivot, pivot and post-pivot.
-    - Before pivoting the new state root, LCA collects the required cluster specific info/artifacts and store them in the new state root. It also performs [backups](backup-and-restore). Additionally, it exports CRs specified by the `extraManifests` field in the IBU spec as well as the CRs described in the ZTP policies bound to the cluster for the target OCP version.
+    - Before pivoting the new state root, LCA collects the required cluster specific info/artifacts and store them in
+      the new state root. It also performs [backups](backup-and-restore). Additionally, it exports CRs specified by the
+`extraManifests` field in the IBU spec as well as the CRs described in the ZTP policies bound to the cluster for the
+target OCP version.
     - Once pre pivot step is completed, LCA makes the new state root the default and reboots the node.
-    - After booting from the new state root, LCA reconfigures the cluster so it looks like the original cluster by applying cluster specific info saved in the pre-pivot step (ref recert?). It and applies all saved CRs, and restores the [backups](backup-and-restore). 
+    - After booting from the new state root, LCA reconfigures the cluster so it looks like the original cluster by applying cluster specific info saved in the pre-pivot step (ref recert?). It and applies all saved CRs, and restores the [backups](backup-and-restore).
 
 - Rollback
-  - This is an optional stage. It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress. The LCA performs the rollback by setting the original state root as default and rebooting the node. 
+  - This is an optional stage. It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress. The LCA performs the rollback by setting the original state root as default and rebooting the node.
 
 TODO Insert the state transition diagram
 
-## Handling Site Specific Artifacts 
+## Handling Site Specific Artifacts
 
-Two mechanisms are provided for the admin to apply site specific artifacts to the SNO following the pivot to the new version. 
+Two mechanisms are provided for the admin to apply site specific artifacts to the SNO following the pivot to the new version.
 
 ### Extra Manifests
 
-In order to optimize the downtime of IBU, the intent is to apply as much configuration as possible to the seed image. Some manifests contain site specific data that cannot be part of the seed image. Furthermore, these manifests may be OCP version specific so cannot be simply backed up and restored. The Life Cycle Agent provides a mechanism to apply a set of extra manifests after pivoting to the new OCP version. These manifests are stored in configmap(s) and specified by the `extraManifests` field [IBU CR](#imagebasedupgrade-cr)  
+In order to optimize the downtime of IBU, the intent is to apply as much configuration as possible to the seed image.
+Some manifests contain site specific data that cannot be part of the seed image. Furthermore, these manifests may be OCP
+version specific so cannot be simply backed up and restored. The Life Cycle Agent provides a mechanism to apply a set of
+extra manifests after pivoting to the new OCP version. These manifests are stored in configmap(s) and specified by the
+`extraManifests` field [IBU CR](#imagebasedupgrade-cr)
 
 ### Backup and Restore
 
-This is another mechanism provided to apply site specific artifacts to the new OCP version. This is mainly intended for the applications running on the SNO whose artifacts will not change as a result of the OCP version change. It will also be used for a small number of platform artifacts that will not change over the upgrade (ex. ACM klusterlet). The OADP operator is used to implement the backup and restore functionality. A configmap(s) is applied to the cluster and specified by the `oadpContent` field in [IBU CR](#imagebasedupgrade-cr). This configmap will contain a set of OADP backup and restore CR. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
-
+This is another mechanism provided to apply site specific artifacts to the new OCP version. This is mainly intended for
+the applications running on the SNO whose artifacts will not change as a result of the OCP version change. It will also
+be used for a small number of platform artifacts that will not change over the upgrade (ex. ACM klusterlet). The OADP
+operator is used to implement the backup and restore functionality. A configmap(s) is applied to the cluster and
+specified by the `oadpContent` field in [IBU CR](#imagebasedupgrade-cr). This configmap will contain a set of OADP
+backup and restore CR. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 
 ## Target SNO Prerequisites
 
-The target SNO has the following prerequisites: 
+The target SNO has the following prerequisites:
 
 - A compatible seed image has been generated [Seed Image Generation](seed-image-generation.md) and pushed to a registry accessible from the SNO
 - The CPU topology must align with the seed SNO.
   - Same number of cores.
   - Same performance tuning (i.e., reserved CPUs).
-- LCA operator must be deployed, version must be compatible with the seed. 
+- LCA operator must be deployed, version must be compatible with the seed.
 - The OADP operator is installed along with a DataProtectionApplication CR. OADP has connectivity to a S3 backend
 
-
 ## ImageBasedUpgrade CR
+
 The spec fields include:
 
 - stage: defines the desired stage for the IBU (Idle, Prep, Upgrade or Rollback)
@@ -78,13 +94,13 @@ The spec fields include:
 
 The IBU CR status includes a list of conditions that indicates the progress of each stage:
 
--   Idle
--   PrepInProgress
--   PrepCompleted
--   UpgradeInProgress
--   UpgradeCompleted
--   RollbackInProgress
--   RollbackCompleted
+- Idle
+- PrepInProgress
+- PrepCompleted
+- UpgradeInProgress
+- UpgradeCompleted
+- RollbackInProgress
+- RollbackCompleted
 
 When LCA is installed, the IBU CR is auto-created:
 
@@ -108,19 +124,22 @@ status:
 ```
 
 ## Image Based Upgrade Walkthrough
+
 The Lifecycle Agent provides orchestration of the image based upgrade, triggered by patching the `ImageBasedUpgrade` CR through a series of stages.
 
 ### Success Path
 
-The success path upgrade will progress through the following stages: 
+The success path upgrade will progress through the following stages:
 
-Idle -> Prep -> Upgrade -> Idle  
+Idle -> Prep -> Upgrade -> Idle
 
 #### Starting the Prep stage
-The administrator patches the imagebasedupgrade CR: 
-- Set the stage to "Prep" 
-- Update the seedImageRef to the desired version and the seed image path  
-- Optional: Provide a reference to a configmap(s) of OADP backup and restore CRs, oadpContent 
+
+The administrator patches the imagebasedupgrade CR:
+
+- Set the stage to "Prep"
+- Update the seedImageRef to the desired version and the seed image path
+- Optional: Provide a reference to a configmap(s) of OADP backup and restore CRs, oadpContent
 - Optional: Provide a reference to a configmap(s) of extra manifests, extraManifests
 
 ```console
@@ -140,22 +159,24 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
     }
   }
 ]'
-
 ```
-The "Prep" stage will: 
+
+The "Prep" stage will:
+
 - Pull the seed image
-- Perform the following validations: 
-    - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
-    - Validate that the desired upgrade version matches the version of the seed image
-    - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
+- Perform the following validations:
+  - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
+  - Validate that the desired upgrade version matches the version of the seed image
+  - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
 - Unpack the seed image and create a new ostree stateroot
-- Pull all images specified by the image list built into the seed image. Refer to [precache-plugin](precache-plugin.md) 
+- Pull all images specified by the image list built into the seed image. Refer to [precache-plugin](precache-plugin.md)
 
-Upon completion, the condition will be updated to "Prep Completed" 
+Upon completion, the condition will be updated to "Prep Completed"
 
-Condition samples: 
+Condition samples:
 
-Prep in progress
+Prep in progress:
+
 ```console
   conditions:
   - lastTransitionTime: "2024-01-19T06:26:06Z"
@@ -188,7 +209,8 @@ Prep in progress
   observedGeneration: 2
 ```
 
-Prep completed
+Prep completed:
+
 ```console
   conditions:
   - lastTransitionTime: "2024-01-19T06:26:06Z"
@@ -211,18 +233,20 @@ Prep completed
     type: PrepCompleted
   observedGeneration: 2
 ```
+
 #### Starting the Upgrade stage
 
 This is where the actual upgrade happens. It consists of three main steps: pre-pivot, pivot and post-pivot.
 This stage can only be applied if the prep stage completed successfully.
 
-The administrator patches the imagebasedupgrade CR to set the stage to "Upgrade" 
+The administrator patches the imagebasedupgrade CR to set the stage to "Upgrade"
 
 ```console
 oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Upgrade"}}' --type=merge
 ```
 
 Pre-pivot:
+
 - LCA collects the required cluster specific info/artifacts and stores them in the new state root. This includes hostname, nmconnection files, cluster ID, NodeIP and various OCP platform CRs from etcd.
 - Applies OADP backup CRs as specified by the `oadpContent` field in the IBU spec. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 - Stores OADP restore CRs as specified by the `oadpContent` field in the IBU spec to the new state root. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
@@ -232,13 +256,15 @@ Pre-pivot:
 - Set the new default deployment.
 
 Pivot
-- Initiate a controlled reboot. 
+
+- Initiate a controlled reboot.
 
 Post-Pivot
+
 - Before OCP is started, a systemd service will run which will restore the basic platform configuration and regenerate the platform certificates using the [recert tool](https://github.com/rh-ecosystem-edge/recert).
 - Once LCA starts it will restore the saved IBU CR.
 - Restore the remaining platform configuration.
-- Wait for the platform to recover - Cluster/day2 operators and MCP are stable. 
+- Wait for the platform to recover - Cluster/day2 operators and MCP are stable.
 - Apply extra manifests that were saved pre-pivot.
 - Apply any OADP restore CRs that were saved pre-pivot. Platform artifacts will be restored first including ACM artifacts if the system is managed by ACM.
 
@@ -246,11 +272,12 @@ Upon completion, the condition will be updated to "Upgrade Completed".
 
 After the upgrade has been completed, the upgrade needs to be finalized. This can be done at anytime prior to the next upgrade attempt.
 This is the point of no return, it will be no longer be possible to rollback/abort once the finalize has been done.
-Refer to [Finalizing or Aborting](#finalizing-or-aborting) 
+Refer to [Finalizing or Aborting](#finalizing-or-aborting)
 
 Condition samples:
 
-Upgrade in progress
+Upgrade in progress:
+
 ```console
   conditions:
   - lastTransitionTime: "2024-01-19T06:26:06Z"
@@ -280,7 +307,8 @@ Upgrade in progress
   observedGeneration: 3
 ```
 
-Upgrade completed
+Upgrade completed:
+
 ```console
   conditions:
   - lastTransitionTime: "2024-01-19T06:26:06Z"
@@ -316,13 +344,13 @@ Upgrade completed
   observedGeneration: 1
 ```
 
-### Rollback after Pivot 
+### Rollback after Pivot
 
 Upgrade(post-pivot) -> Rollback
 
-It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress. 
+It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress.
 LCA performs the rollback by setting the original state root as default and rebooting the node.
- 
+
 ```console
 oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Rollback"}}' --type=merge
 ```
@@ -331,14 +359,13 @@ After the rollback has been completed, the system will be running the original s
 It will be necessary to finalize the rollback to attempt another upgrade.
 Refer to [Finalizing or Aborting](#finalizing-or-aborting)
 
-
 ### Finalizing or Aborting
 
-After a successful upgrade or rollback the stage must be set to "Idle" to cleanup and prepare for the next upgrade. 
+After a successful upgrade or rollback the stage must be set to "Idle" to cleanup and prepare for the next upgrade.
 
 It is also possible to abort the upgrade at any point prior to the pivot by setting the stage to "Idle" .
 
-Transitions: 
+Transitions:
 
 - Prep or Upgrade(pre-pivot) -> Idle
 - Rollback -> Idle
@@ -349,6 +376,7 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Idl
 ```
 
 This will:
+
 - Remove the old state root
 - Cleanup precaching resources
 - Delete OADP backups CRs
@@ -363,4 +391,3 @@ LCA Operator logs:
 ```console
 oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/component=lifecycle-agent --container manager --follow
 ```
-`

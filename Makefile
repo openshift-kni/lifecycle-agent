@@ -41,7 +41,8 @@ endif
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # openshift.io/lifecycle-agent-bundle:$VERSION and openshift.io/lifecycle-agent-catalog:$VERSION.
-IMAGE_TAG_BASE ?= quay.io/openshift-kni/lifecycle-agent-operator
+IMAGE_NAME ?= lifecycle-agent-operator
+IMAGE_TAG_BASE ?= quay.io/openshift-kni/$(IMAGE_NAME)
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -262,6 +263,24 @@ cli-build: common-deps-update fmt vet ## Build the lca-cli tool from your host.
 TEST_FORMAT ?= standard-verbose
 GOTEST_FLAGS = --format=$(TEST_FORMAT)
 GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
+
+# markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
+.PHONY: markdownlint-image
+markdownlint-image:  ## Build local container markdownlint-image
+	$(ENGINE) image build -f ./hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest
+
+.PHONY: markdownlint-image-clean
+markdownlint-image-clean:  ## Remove locally cached markdownlint-image
+	$(ENGINE) image rm $(IMAGE_NAME)-markdownlint:latest
+
+markdownlint: markdownlint-image  ## run the markdown linter
+	$(ENGINE) run \
+		--rm=true \
+		--env RUN_LOCAL=true \
+		--env VALIDATE_MARKDOWN=true \
+		--env PULL_BASE_SHA=$(PULL_BASE_SHA) \
+		-v $$(pwd):/workdir:Z \
+		$(IMAGE_NAME)-markdownlint:latest
 
 help:   ## Shows this message.
 	@echo "Available targets:"
