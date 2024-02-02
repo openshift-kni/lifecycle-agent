@@ -13,16 +13,20 @@ To see all `make` targets, run `make help`
 
 As of this writing, three linters are run by the `make ci-job` command:
 
-* golangci-lint
-* shellcheck
-* bashate
+- golangci-lint
+- shellcheck
+- bashate
 
 These tests will be run automatically as part of the ci-job test post a pull request an update. Failures will mean your pull request
 cannot be merged. It is recommended that you run `make ci-job` regularly as part of development.
 
+Additionally, markdownlint can be run manually using `make markdownlint` or `make ENGINE=podman markdownlint`. This
+`Makefile` target will build a local container image with the markdownlint tool, which is then run to validate the
+markdown files in the repo.
+
 ## GO formatting
 
-GO has automated formatting. To update code and ensure it is formatted properly, run:<br>`make fmt`
+GO has automated formatting. To update code and ensure it is formatted properly, run: `make fmt`
 
 ## Building and deploying image
 
@@ -47,7 +51,7 @@ Alternatively, you can also build your own bundle image and deploy it through OL
 ```console
 make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=latest ENGINE=podman \
     bundle-push \
-    bundle-run 
+    bundle-run
 ```
 
 To watch LCA logs:
@@ -84,6 +88,7 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Idl
 ```
 
 ## Cleanup
+
 ```console
 # Delete LCA resources
 make undeploy
@@ -143,7 +148,7 @@ podman run --privileged --pid=host --rm --net=host \
                                                  --recert-image ${IMG_RECERT_TOOL}
 ```
 
-#### Disconnected environments
+## Disconnected environments
 
 For disconnected environments, first mirror the `lifecycle-agent` container image to your local registry using
 [skopeo](https://github.com/containers/skopeo) or a similar tool.
@@ -159,11 +164,11 @@ skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTR
 
 ### minio + oadp oprator
 
-Consider using podman if you have a HV 
-```shell
-podman run --name minio -d -p 9000:9000 -p 9001:9001 quay.io/minio/minio server /data --console-address ":9001" 
-```
+Consider using podman if you have a HV
 
+```shell
+podman run --name minio -d -p 9000:9000 -p 9001:9001 quay.io/minio/minio server /data --console-address ":9001"
+```
 
 ```yaml
 apiVersion: v1
@@ -250,6 +255,7 @@ spec:
 ```
 
 ### setup DataProtectionApplication CR
+
 ```yaml
 # before applying this setup creds for the bucket access + create bucket
 # create bucket: aws s3api create-bucket --bucket test-backups --profile minio
@@ -292,7 +298,8 @@ spec:
 ```
 
 ## How to view Pre-caching logs (from the Prep stage)
-The precaching functionality is implemented as a Kubernetes job. Therefore, The precaching logs are separate from the 
+
+The precaching functionality is implemented as a Kubernetes job. Therefore, The precaching logs are separate from the
 lifecycle-agent operator logs. The precaching logs can be viewed as shown below.
 
 ```shell
@@ -302,9 +309,10 @@ oc logs -f --tail=-1 --timestamps --prefix --selector job-name=lca-precache-job 
 Note that the logs are available until the user triggers a clean-up through an abort process.
 
 ## Setting Pre-caching to 'best-effort'
+
 By default, the pre-caching job is configured to fail if it encounters any error, or it fails to pull one or more images.
 
-Should you wish to change the pre-caching mode to exit successfully even though there was a failure to pull an image, 
+Should you wish to change the pre-caching mode to exit successfully even though there was a failure to pull an image,
 you can re-configure the pre-caching to `best-effort` by setting `PRECACHE_BEST_EFFORT=TRUE` in the LCA deployment
 environment variables..
 
@@ -324,10 +332,10 @@ oc rsh -n openshift-lifecycle-agent -c manager \
 oc set env -n openshift-lifecycle-agent deployments.apps/lifecycle-agent-controller-manager -c manager PRECACHE_BEST_EFFORT-
 ```
 
-Note that the patching will result in the termination of the current lifecycle-agent-controller-manager pod and the 
-creation of a new one. The leader election may take a few minutes to complete. 
+Note that the patching will result in the termination of the current lifecycle-agent-controller-manager pod and the
+creation of a new one. The leader election may take a few minutes to complete.
 
-Once the pod is up and running (with leader election completed), you may proceed to create the IBU CR as part of the 
+Once the pod is up and running (with leader election completed), you may proceed to create the IBU CR as part of the
 normal workflow.
 
 ## Generating Seed Image via LCA Orchestration
@@ -374,17 +382,28 @@ spec:
 
 ## Rollbacks
 
-After the cluster has rebooted to the new release as part of the Upgrade stage handling, a controlled Rollback can be triggered by setting the IBU stage to "Rollback". LCA will automatically pivot to the original stateroot, if supported (manual pivot is required otherwise), and reboot the cluster. Once the cluster recovers on the original stateroot, LCA will update the CR to indicate that the rollback is complete. At this point, the rollback can be finalized by setting the stage to Idle, triggering cleanup of the upgrade stateroot.
+After the cluster has rebooted to the new release as part of the Upgrade stage handling, a controlled Rollback can be
+triggered by setting the IBU stage to "Rollback". LCA will automatically pivot to the original stateroot, if supported
+(manual pivot is required otherwise), and reboot the cluster. Once the cluster recovers on the original stateroot, LCA
+will update the CR to indicate that the rollback is complete. At this point, the rollback can be finalized by setting
+the stage to Idle, triggering cleanup of the upgrade stateroot.
 
-In the case of an uncontrolled rollback, such as a manual reboot to the original stateroot, LCA will update the CR to indicate that the upgrade has failed. The stage can then be set to Idle to trigger the abort handler.
+In the case of an uncontrolled rollback, such as a manual reboot to the original stateroot, LCA will update the CR to
+indicate that the upgrade has failed. The stage can then be set to Idle to trigger the abort handler.
 
 ### Manually setting new default deployment
 
-The `ostree admin set-default` command is used to set a new default (ie. next boot) deployment. It is available as of 4.14.7. If available, LCA will automatically set the new default deployment as part of triggering the rollback.
+The `ostree admin set-default` command is used to set a new default (ie. next boot) deployment. It is available as of
+4.14.7. If available, LCA will automatically set the new default deployment as part of triggering the rollback.
 
-If the `set-default` command is not available, LCA is unable to set the new default deployment automatically, requiring it to be set manually. As a workaround for earlier releases without this command, a dev image has been built with the newer ostree cli that can be used.
+If the `set-default` command is not available, LCA is unable to set the new default deployment automatically, requiring
+it to be set manually. As a workaround for earlier releases without this command, a dev image has been built with the
+newer ostree cli that can be used.
 
-Note that deployment 0 is the default deployment, when viewing `ostree admin status` output. The argument passed to the `set-default` command is the deployment index. So to select the second deployment in the list as the new default, run `ostree admin set-default 1`. Also note that `/sysroot` and `/boot` must be remounted with write-access if using the dev image workaround for earlier releases.
+Note that deployment 0 is the default deployment, when viewing `ostree admin status` output. The argument passed to the
+`set-default` command is the deployment index. So to select the second deployment in the list as the new default, run
+`ostree admin set-default 1`. Also note that `/sysroot` and `/boot` must be remounted with write-access if using the dev
+image workaround for earlier releases.
 
 ```console
 # Using "ostree admin set-default"
@@ -423,11 +442,11 @@ In an IBU, the LCA provides capability for automatic rollback upon failure at ce
 Upgrade stage reboot. The automatic rollback feature is enabled by default in an IBU. To disable it, there are
 configuration options in the `ImageBasedUpgrade` CRD that can be defined:
 
-* In the `prepare-installation-configuration` systemd service-unit (`prepare-installation-configuration`). Disabled by
+- In the `prepare-installation-configuration` systemd service-unit (`prepare-installation-configuration`). Disabled by
   setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
-* In the `installation-configuration` systemd service-unit (`lca-cli postpivot`). Disabled by
+- In the `installation-configuration` systemd service-unit (`lca-cli postpivot`). Disabled by
   setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
-* In the LCA IBU post-reboot Upgrade stage handler. Disabled by
+- In the LCA IBU post-reboot Upgrade stage handler. Disabled by
   setting `.spec.autoRollbackOnFailure.disabledForUpgradeCompletion: true` in the IBU `upgrade` CR
 
 These values can be set via patch command, for example:
@@ -444,6 +463,7 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "re
 ```
 
 Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
+
 ```yaml
   autoRollbackOnFailure:
     disabledForPostRebootConfig: true
@@ -454,8 +474,8 @@ In addition, there is an `lca-init-monitor.service` that runs post-reboot with a
 the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the
 init-monitor will trigger an automatic rollback. This can be configured via the `.spec.autoRollbackOnFailure` fields:
 
-* To disable the init-monitor automatic rollback, set `.spec.autoRollbackOnFailure.disabledInitMonitor` to `true`
-* Configure the timeout value, in seconds, by setting `.spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`
+- To disable the init-monitor automatic rollback, set `.spec.autoRollbackOnFailure.disabledInitMonitor` to `true`
+- Configure the timeout value, in seconds, by setting `.spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`
 
 These values can be set via patch command, for example:
 
@@ -474,9 +494,9 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "re
 ```
 
 Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
+
 ```yaml
   autoRollbackOnFailure:
     disabledInitMonitor: true
     initMonitorTimeoutSeconds: 3600
 ```
-
