@@ -16,7 +16,7 @@ require (
 	github.com/vmware-tanzu/velero v1.12.0
 	go.etcd.io/etcd/client/v3 v3.5.10
 	go.uber.org/mock v0.3.0
-	golang.org/x/sync v0.5.0
+	golang.org/x/sync v0.6.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.1
 	k8s.io/apiextensions-apiserver v0.29.1
