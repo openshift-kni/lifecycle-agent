@@ -12,6 +12,8 @@
       - [Starting the Prep stage](#starting-the-prep-stage)
       - [Starting the Upgrade stage](#starting-the-upgrade-stage)
     - [Rollback after Pivot](#rollback-after-pivot)
+    - [Automatic Rollback on Upgrade Failure](#automatic-rollback-on-upgrade-failure)
+      - [Configuring Automatic Rollback](#configuring-automatic-rollback)
     - [Finalizing or Aborting](#finalizing-or-aborting)
     - [Monitoring Progress](#monitoring-progress)
 
@@ -91,6 +93,17 @@ The spec fields include:
 - seedImageRef: defines the target OCP version, the seed image to be used and the secret required for accessing the image
 - oadpContent: defines the list of config maps where the OADP backup / restore CRs are stored. This is optional
 - extraManifests: defines the list of config maps where the additional CRs to be re-applied are stored
+- autoRollbackOnFailure: configures the auto-rollback feature for upgrade failure, which is enabled by default
+  - disabledForPostRebootConfig: set to `true` to disable auto-reboot for the LCA post-reboot config service-units
+    - Service unit `prepare-installation-configuration.service` performs network configuration updates
+    - Service unit `installation-configuration.service` transforms cluster data from the seed image to the target
+      cluster
+  - disabledForUpgradeCompletion: set to `true` to disable auto-reboot for the LCA Upgrade completion handler, which
+    performs tasks such as data restore and application of extra-manifests
+  - disabledInitMonitor: set to `true` to disable the LCA Init Monitor, which is a post-reboot watchdog that triggers a
+    rollback if the upgrade is not completed within the configured timeout
+  - initMonitorTimeoutSeconds: set the LCA Init Monitor timeout duration, in seconds. The default value is 1800 (30 minutes).
+    Setting a value less than or equal to 0 will use the default
 
 The IBU CR status includes a list of conditions that indicates the progress of each stage:
 
@@ -111,6 +124,7 @@ metadata:
   generation: 1
   name: upgrade
 spec:
+  autoRollbackOnFailure: {}
   stage: Idle
 status:
   conditions:
@@ -152,8 +166,8 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
       "extraManifests": [{"name": "test-extramanifests", "namespace": "openshift-lifecycle-agent"}],
       "stage": "Prep",
       "seedImageRef": {
-        "version": "4.14.8,
-        "image": "quay.io/user/upgbackup:lca-test-seed-v1",
+        "version": "4.15.0,
+        "image": "quay.io/user/seedimage:lca-test-seed-v1",
         "pullSecretRef": {"name": "seed-pull-secret"}
       }
     }
@@ -358,6 +372,80 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Rol
 After the rollback has been completed, the system will be running the original state root.
 It will be necessary to finalize the rollback to attempt another upgrade.
 Refer to [Finalizing or Aborting](#finalizing-or-aborting)
+
+### Automatic Rollback on Upgrade Failure
+
+In an IBU, the LCA provides capability for automatic rollback upon failure at certain points of the upgrade, after the
+Upgrade stage reboot. The automatic rollback feature is enabled by default in an IBU.
+
+In the case of an upgrade failure that automatically triggers a rollback, the IBU CR status will be updated to indicate
+the reason for the rollback. This may include information about the specific error that occurred to help
+troubleshooting.
+
+See [Automatic Rollback Examples](examples.md#automatic-rollback-examples) for examples of IBU CR after an automatic rollback.
+
+#### Configuring Automatic Rollback
+
+To disable automatic rollback, there are configuration options in the `ImageBasedUpgrade` CRD that can be defined:
+
+- In the `prepare-installation-configuration.service` systemd service-unit (`prepare-installation-configuration`). Disabled by
+  setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
+- In the `installation-configuration.service` systemd service-unit (`lca-cli postpivot`). Disabled by
+  setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
+- In the LCA IBU post-reboot Upgrade stage handler. Disabled by
+  setting `.spec.autoRollbackOnFailure.disabledForUpgradeCompletion: true` in the IBU `upgrade` CR
+
+These values can be set via patch command, for example:
+
+```console
+# Disable automatic rollback for the post-reboot config service-units
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledForPostRebootConfig": true}}}'
+
+# Disable automatic rollback for the post-reboot Upgrade stage handler
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledForUpgradeCompletion": true}}}'
+
+# Reset to default
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "replace", "path": "/spec/autoRollbackOnFailure", "value": {} }]'
+```
+
+Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
+
+```yaml
+  autoRollbackOnFailure:
+    disabledForPostRebootConfig: true
+    disabledForUpgradeCompletion: true
+```
+
+In addition, there is an `lca-init-monitor.service` that runs post-reboot with a configurable timeout. When LCA marks
+the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the
+init-monitor will trigger an automatic rollback. This can be configured via the `.spec.autoRollbackOnFailure` fields:
+
+- To disable the init-monitor automatic rollback, set `.spec.autoRollbackOnFailure.disabledInitMonitor` to `true`
+- Configure the timeout value, in seconds, by setting `.spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`
+
+These values can be set via patch command, for example:
+
+```console
+# Disable automatic rollback for the init-monitor
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledInitMonitor": true}}}'
+
+# Set the init-monitor timeout to one hour. The default timeout is 30 minutes (1800 seconds)
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"initMonitorTimeoutSeconds": 3600}}}'
+
+# Set the init-monitor timeout to five minutes. The default timeout is 30 minutes (1800 seconds)
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"initMonitorTimeoutSeconds": 300}}}'
+
+# Reset to default
+oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "replace", "path": "/spec/autoRollbackOnFailure", "value": {} }]'
+```
+
+Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
+
+```yaml
+  autoRollbackOnFailure:
+    disabledInitMonitor: true
+    initMonitorTimeoutSeconds: 3600
+```
 
 ### Finalizing or Aborting
 
