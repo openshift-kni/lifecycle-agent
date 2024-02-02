@@ -18,6 +18,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	mock_extramanifest "github.com/openshift-kni/lifecycle-agent/internal/extramanifest/mocks"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/stretchr/testify/assert"
@@ -311,6 +312,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		mockRpmostreeclient = rpmostreeclient.NewMockIClient(mockController)
 		ostreeclientMock    = ostreeclient.NewMockIClient(mockController)
 		mockExec            = ops.NewMockExecute(mockController)
+		mockRebootClient    = reboot.NewMockRebootIntf(mockController)
 	)
 
 	defer func() {
@@ -335,7 +337,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		fetchLvmConfigReturn                            func() error
 		exportIBUCRNew                                  bool
 		exportIBUCROrig                                 bool
-		rebootToNewStateRootReturn                      func() (string, error)
+		rebootToNewStateRootReturn                      func() error
 		isOstreeAdminSetDefaultFeatureEnabledReturn     *bool
 		want                                            controllerruntime.Result
 		wantErr                                         assert.ErrorAssertionFunc
@@ -647,8 +649,8 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			exportIBUCRNew:  true,
 			exportIBUCROrig: true,
 			isOstreeAdminSetDefaultFeatureEnabledReturn: BoolPointer(false),
-			rebootToNewStateRootReturn: func() (string, error) {
-				return "", fmt.Errorf("reboot failed")
+			rebootToNewStateRootReturn: func() error {
+				return fmt.Errorf("reboot failed")
 			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
@@ -705,10 +707,20 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				}()
 				getStaterootVarPath = func(stateroot string) string {
 					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, "/opt"), 0777)
+					return ibuTempDirNew
+				}
+
+				origGetStaterootPath := getStaterootPath
+				defer func() {
+					getStaterootPath = origGetStaterootPath
+				}()
+				getStaterootPath = func(stateroot string) string {
+					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, common.LCAConfigDir), 0777)
 					file, _ := os.OpenFile(filepath.Join(ibuTempDirNew, utils.IBUFilePath), os.O_CREATE, 0777)
 					file.Close()
 					return ibuTempDirNew
 				}
+
 			}
 			ibuTempDirOrig := t.TempDir()
 			if tt.exportIBUCRNew {
@@ -716,7 +728,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				defer func() {
 					ibuPreStaterootPath = origIbuPreStaterootPath
 				}()
-				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, "/opt"), 0777)
+				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, common.LCAConfigDir), 0777)
 				file, _ := os.OpenFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath), os.O_CREATE, 0777)
 				file.Close()
 				ibuPreStaterootPath = filepath.Join(ibuTempDirOrig, utils.IBUFilePath)
@@ -725,7 +737,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				ostreeclientMock.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(*tt.isOstreeAdminSetDefaultFeatureEnabledReturn).Times(1)
 			}
 			if tt.rebootToNewStateRootReturn != nil {
-				mockExec.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
+				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
 			}
 			uh := &UpgHandler{
 				Client:          nil,
@@ -738,6 +750,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				Recorder:        record.NewFakeRecorder(1),
 				RPMOstreeClient: mockRpmostreeclient,
 				OstreeClient:    ostreeclientMock,
+				RebootClient:    mockRebootClient,
 			}
 
 			got, err := uh.PrePivot(context.Background(), &tt.args.ibu)
@@ -784,6 +797,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		mockController    = gomock.NewController(t)
 		mockExtramanifest = mock_extramanifest.NewMockEManifestHandler(mockController)
 		mockBackuprestore = mock_backuprestore.NewMockBackuperRestorer(mockController)
+		mockRebootClient  = reboot.NewMockRebootIntf(mockController)
 	)
 	defer func() {
 		mockController.Finish()
@@ -810,6 +824,8 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		restoreOadpConfigurationsReturn   func() error
 		loadRestoresFromOadpRestoreReturn func() ([][]*velerov1.Restore, error)
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
+		initiateRollbackReturn            func() error
+		disableInitMonitorReturn          func() error
 		wantConditions                    []metav1.Condition
 	}{
 		{
@@ -817,6 +833,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
 				return fmt.Errorf("any error from hc")
+			},
+			initiateRollbackReturn: func() error {
+				return nil
 			},
 			wantConditions: []metav1.Condition{
 				{
@@ -835,7 +854,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			wantErr: assert.NoError,
 		},
 		{
-			name: "healthchecks return error",
+			name: "extraManifests return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
 				return nil
@@ -845,6 +864,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			applyExtraManifestsReturn: func() error {
 				return extramanifest.NewEMFailedError("Test error EM")
+			},
+			initiateRollbackReturn: func() error {
+				return nil
 			},
 			wantConditions: []metav1.Condition{
 				{
@@ -876,6 +898,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			},
 			restoreOadpConfigurationsReturn: func() error {
 				return backuprestore.NewBRStorageBackendUnavailableError("error RestoreOadpConfigurations")
+			},
+			initiateRollbackReturn: func() error {
+				return nil
 			},
 			wantConditions: []metav1.Condition{
 				{
@@ -914,6 +939,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			startOrTrackRestoreReturn: func() (*backuprestore.RestoreTracker, error) {
 				return &backuprestore.RestoreTracker{FailedRestores: []string{"name-failed"}}, nil
 			},
+			initiateRollbackReturn: func() error {
+				return nil
+			},
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
@@ -948,6 +976,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			loadRestoresFromOadpRestoreReturn: func() ([][]*velerov1.Restore, error) {
 				return nil, nil
 			},
+			disableInitMonitorReturn: func() error {
+				return nil
+			},
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -973,6 +1004,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				Log:           logr.Logger{},
 				BackupRestore: mockBackuprestore,
 				ExtraManifest: mockExtramanifest,
+				RebootClient:  mockRebootClient,
 			}
 
 			oldHC := CheckHealth
@@ -996,6 +1028,12 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.startOrTrackRestoreReturn != nil {
 				mockBackuprestore.EXPECT().StartOrTrackRestore(gomock.Any(), gomock.Any()).Return(tt.startOrTrackRestoreReturn()).Times(1)
+			}
+			if tt.initiateRollbackReturn != nil {
+				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
+			}
+			if tt.disableInitMonitorReturn != nil {
+				mockRebootClient.EXPECT().DisableInitMonitor().Return(tt.disableInitMonitorReturn()).Times(1)
 			}
 
 			got, err := uh.PostPivot(tt.args.ctx, tt.args.ibu)

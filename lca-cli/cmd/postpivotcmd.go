@@ -18,10 +18,16 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/postpivot"
+
+	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 )
 
@@ -52,11 +58,17 @@ func postPivot() {
 	} else {
 		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
 	}
+	opsClient := ops.NewOps(log, hostCommandsExecutor)
+	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
+	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
+	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, opsClient)
 
-	postPivotRunner := postpivot.NewPostPivot(scheme, log, ops.NewOps(log, hostCommandsExecutor),
+	postPivotRunner := postpivot.NewPostPivot(scheme, log, opsClient,
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
 	if err := postPivotRunner.PostPivotConfiguration(context.TODO()); err != nil {
-		log.Fatal(err)
+		log.Error(err)
+		rebootClient.AutoRollbackIfEnabled(reboot.PostPivotComponent, fmt.Sprintf("Rollback due to postpivot failure: %s", err))
+		log.Fatal("Post pivot operation failed")
 	}
 
 	log.Info("Post pivot operation finished successfully!")

@@ -234,6 +234,10 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
 	}
 
+	if err := r.RebootClient.WriteIBUAutoRollbackConfigFile(ibu); err != nil {
+		return fmt.Errorf("failed to write auto-rollback config: %w", err)
+	}
+
 	if err := commonUtils.BackupKubeconfigCrypto(ctx, r.Client, common.GetStaterootCertsDir(ibu)); err != nil {
 		return fmt.Errorf("failed to backup cerificaties: %w", err)
 	}
@@ -369,6 +373,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 	_, err = os.Stat(common.Host)
 	if err != nil {
 		// fail without /host
+		err = fmt.Errorf("host dir does not exist: %w", err)
 		return
 	}
 

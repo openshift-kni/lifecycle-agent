@@ -1,11 +1,14 @@
 package reboot
 
 import (
+	"testing"
+
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"go.uber.org/mock/gomock"
-	"testing"
 )
 
 func TestIsOrigStaterootBooted(t *testing.T) {
@@ -13,6 +16,9 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	var (
 		mockController      = gomock.NewController(t)
 		mockRpmostreeclient = rpmostreeclient.NewMockIClient(mockController)
+		mockOstreeclient    = ostreeclient.NewMockIClient(mockController)
+		mockOps             = ops.NewMockOps(mockController)
+		mockExec            = ops.NewMockExecute(mockController)
 	)
 
 	defer func() {
@@ -20,9 +26,12 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	}()
 
 	type args struct {
-		ibu *v1alpha1.ImageBasedUpgrade
-		r   rpmostreeclient.IClient
-		log logr.Logger
+		ibu          *v1alpha1.ImageBasedUpgrade
+		r            rpmostreeclient.IClient
+		ostreeClient ostreeclient.IClient
+		ops          *ops.MockOps
+		executor     ops.Execute
+		log          logr.Logger
 	}
 	tests := []struct {
 		name             string
@@ -37,7 +46,10 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 				ibu: &v1alpha1.ImageBasedUpgrade{Spec: v1alpha1.ImageBasedUpgradeSpec{SeedImageRef: v1alpha1.SeedImageRef{
 					Version: "4.14",
 				}}},
-				r: mockRpmostreeclient,
+				r:            mockRpmostreeclient,
+				ostreeClient: mockOstreeclient,
+				ops:          mockOps,
+				executor:     mockExec,
 			},
 			currentStateRoot: "rhcos_4.14",
 			want:             false,
@@ -46,8 +58,9 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			rebootClient := NewRebootClient(&tt.args.log, tt.args.executor, tt.args.r, tt.args.ostreeClient, tt.args.ops)
 			mockRpmostreeclient.EXPECT().GetCurrentStaterootName().Return(tt.currentStateRoot, nil).Times(1)
-			got, err := IsOrigStaterootBooted(tt.args.ibu, tt.args.r, tt.args.log)
+			got, err := rebootClient.IsOrigStaterootBooted(tt.args.ibu)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("IsOrigStaterootBooted() error = %v, wantErr %v", err, tt.wantErr)
 				return

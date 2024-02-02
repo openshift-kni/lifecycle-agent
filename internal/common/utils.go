@@ -19,6 +19,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,6 +76,9 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
+	if _, err := os.Stat(Host); err != nil {
+		return filename
+	}
 	return filepath.Join(Host, filename)
 }
 

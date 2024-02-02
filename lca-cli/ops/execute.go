@@ -116,11 +116,13 @@ func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute
 	return &chrootExecutor{executor: executor{logger, verbose}, root: root}
 }
 
+// Running a command with chroot using exec.Command runs into issues with exec.LookPath,
+// if an absolute path is not used for the "command", as it does not account for the chroot dir.
+// To workaround this issue, prefix the command with /usr/bin/env.
 func (e *chrootExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
 	commandBase := "/usr/bin/env"
-	args = append([]string{command}, args...)
-	arguments := []string{"--", "bash", "-c", strings.Join(args, " ")}
-	return e.executor.execute(writer, e.root, commandBase, arguments...)
+	args = append([]string{"--", command}, args...)
+	return e.executor.execute(writer, e.root, commandBase, args...)
 }
 
 func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {

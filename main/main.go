@@ -66,6 +66,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
+	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -154,10 +155,16 @@ func main() {
 	newLogger := logrus.New()
 	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
+	if err := os.MkdirAll(common.PathOutsideChroot(common.LCAConfigDir), 0o700); err != nil {
+		setupLog.Error(err, fmt.Sprintf("unable to create config dir: %s", common.LCAConfigDir))
+		os.Exit(1)
+	}
+
 	executor := ops.NewChrootExecutor(newLogger, true, common.Host)
 	op := ops.NewOps(newLogger, executor)
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor, false)
+	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient, op)
 
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
@@ -199,11 +206,12 @@ func main() {
 		Executor:        executor,
 		OstreeClient:    ostreeClient,
 		Ops:             op,
+		RebootClient:    rebootClient,
 		BackupRestore:   backupRestore,
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 		UpgradeHandler: &controllers.UpgHandler{
 			Client:          mgr.GetClient(),
-			Log:             log.WithName("UpgradHandler"),
+			Log:             log.WithName("UpgradeHandler"),
 			BackupRestore:   backupRestore,
 			ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
 			ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
@@ -212,6 +220,7 @@ func main() {
 			Recorder:        mgr.GetEventRecorderFor("ImageBasedUpgrade"),
 			RPMOstreeClient: rpmOstreeClient,
 			OstreeClient:    ostreeClient,
+			RebootClient:    rebootClient,
 		},
 		Mux: mux,
 	}).SetupWithManager(mgr); err != nil {

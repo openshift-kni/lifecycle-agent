@@ -1,0 +1,10 @@
+[Unit]
+Description=Lifecycle Agent initialization monitor
+After=NetworkManager-wait-online.service
+
+[Service]
+ExecStart=/usr/local/bin/lca-cli init-monitor --monitor
+ExecStopPost=systemctl disable lca-init-monitor.service
+
+[Install]
+WantedBy=multi-user.target

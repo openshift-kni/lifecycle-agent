@@ -53,6 +53,12 @@ const (
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
 	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 
+	LCAConfigDir                                    = "/var/lib/lca"
+	IBUAutoRollbackConfigFile                       = LCAConfigDir + "/autorollback_config.json"
+	IBUAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800
+	IBUInitMonitorService                           = "lca-init-monitor.service"
+	IBUInitMonitorServiceFile                       = "/etc/systemd/system/" + IBUInitMonitorService
+
 	LcaNamespace = "openshift-lifecycle-agent"
 	Host         = "/host"
 
@@ -63,6 +69,9 @@ const (
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
 	OpenshiftInfraCRName     = "cluster"
+
+	// Env var to configure auto rollback for post-reboot config failure
+	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
 	SeedFormatVersion  = 3

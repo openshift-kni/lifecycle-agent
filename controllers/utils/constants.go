@@ -2,18 +2,20 @@ package utils
 
 import (
 	"path/filepath"
+
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
 const (
-	IBUWorkspacePath string = "/var/ibu"
+	IBUWorkspacePath string = common.LCAConfigDir + "/workspace"
 	// IBUName defines the valid name of the CR for the controller to reconcile
 	IBUName     string = "upgrade"
-	IBUFilePath string = "/opt/ibu.json"
+	IBUFilePath string = common.LCAConfigDir + "/ibu.json"
 
 	// SeedGenName defines the valid name of the CR for the controller to reconcile
 	SeedGenName          string = "seedimage"
 	SeedGenSecretName    string = "seedgen"
-	SeedgenWorkspacePath string = "/var/tmp/ibu-seedgen-orch" // The /var/tmp folder is excluded from the var.tgz backup in seed image creation
+	SeedgenWorkspacePath string = common.LCAConfigDir + "/ibu-seedgen-orch" // The LCAConfigDir folder is excluded from the var.tgz backup in seed image creation
 )
 
 var (

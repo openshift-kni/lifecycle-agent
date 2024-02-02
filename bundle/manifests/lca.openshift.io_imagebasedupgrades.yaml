@@ -60,6 +60,17 @@ spec:
                 - name
                 - namespace
                 type: object
+              autoRollbackOnFailure:
+                properties:
+                  disabledForPostRebootConfig:
+                    type: boolean
+                  disabledForUpgradeCompletion:
+                    type: boolean
+                  disabledInitMonitor:
+                    type: boolean
+                  initMonitorTimeoutSeconds:
+                    type: integer
+                type: object
               extraManifests:
                 items:
                   description: ConfigMapRef defines a reference to a config map
@@ -212,6 +223,11 @@ spec:
             && c.status==''True'') || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests)
             && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests)
             && !has(oldSelf.spec.extraManifests)'
+        - message: can not change spec.autoRollbackOnFailure while ibu is in progress
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure)
+            && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure
+            || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)'
     served: true
     storage: true
     subresources:
