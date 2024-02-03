@@ -10,3 +10,6 @@ Node Openshift (SNO) clusters.
 * make install run
 * make install deploy
 * make bundle-run
+
+Testing a PR
+
