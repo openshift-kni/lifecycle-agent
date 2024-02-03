@@ -277,6 +277,8 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	storedCRFound := false
 	storedSecretCRFound := false
 
+	log.Info("DPENNEY: Testing")
+
 	seedgenFilePath := common.PathOutsideChroot(utils.SeedGenStoredCR)
 	secretFilePath := common.PathOutsideChroot(utils.SeedGenStoredSecretCR)
 
