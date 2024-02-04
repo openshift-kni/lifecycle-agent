@@ -256,8 +256,9 @@ catalog-push: ## Push a catalog image.
 cli-run: common-deps-update fmt vet ## Run the lca-cli tool from your host.
 	go run main/lca-cli/main.go
 
-cli-build: common-deps-update fmt vet ## Build the lca-cli tool from your host.
+cli-build: common-deps-update fmt vet ## Build the lca-cli and ib-cli tools from your host.
 	go build -o bin/lca-cli main/lca-cli/main.go
+	go build -o bin/ib-cli main/ib-cli/main.go
 
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
@@ -267,7 +268,7 @@ GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 # markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
 .PHONY: markdownlint-image
 markdownlint-image:  ## Build local container markdownlint-image
-	$(ENGINE) image build -f ./hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest
+	$(ENGINE) image build -f ./hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest ./hack
 
 .PHONY: markdownlint-image-clean
 markdownlint-image-clean:  ## Remove locally cached markdownlint-image

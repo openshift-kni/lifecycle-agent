@@ -13,12 +13,6 @@ import (
 	"regexp"
 	"text/template"
 
-	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	cp "github.com/otiai10/copy"
-	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -29,6 +23,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
+
+	"github.com/go-logr/logr"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	cp "github.com/otiai10/copy"
+	"github.com/sirupsen/logrus"
 )
 
 // MarshalToFile marshals anything and writes it to the given file path. file only readable by root
@@ -68,7 +69,7 @@ func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMe
 }
 
 // RenderTemplateFile render template file
-func RenderTemplateFile(srcTemplate string, params map[string]any, dest string, perm os.FileMode) error {
+func RenderTemplateFile(srcTemplate string, params any, dest string, perm os.FileMode) error {
 	templateData, err := os.ReadFile(srcTemplate)
 	if err != nil {
 		return fmt.Errorf("error occurred while trying to read %s: %w", srcTemplate, err)
