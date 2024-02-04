@@ -293,3 +293,12 @@ func ConvertToRawExtension(config any) (runtime.RawExtension, error) {
 		Raw: rawIgnConfig,
 	}, nil
 }
+
+func MoveFileIfExists(source, dest string) error {
+	if _, err := os.Stat(source); err == nil {
+		if err := os.Rename(source, dest); err != nil {
+			return fmt.Errorf("failed to move %s to %s, err :%w", source, dest, err)
+		}
+	}
+	return nil
+}

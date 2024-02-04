@@ -74,6 +74,9 @@ type SeedReconfiguration struct {
 	// Example of nmstate configurations can be found in this link https://nmstate.io/examples.html
 	// This field will be used for IBI process as in IBU we will copy nmconnection files
 	RawNMStateConfig string `json:"raw_nm_state_config,omitempty"`
+
+	// PullSecret is the secret to use when pulling images. Equivalent to install-config.yaml's pullSecret.
+	PullSecret string `json:"pull_secret,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {

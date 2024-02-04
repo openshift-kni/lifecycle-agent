@@ -3,7 +3,6 @@ package postpivot
 import (
 	"context"
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/utils"
 	"os"
 	"path"
 	"strings"
@@ -12,9 +11,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 func TestSetNodeIPIfNotProvided(t *testing.T) {
@@ -233,6 +236,70 @@ interfaces:
 			} else {
 				assert.Equal(t, err != nil, tc.expectedError)
 			}
+		})
+	}
+}
+
+func TestCreatePullSecretFile(t *testing.T) {
+	var (
+		mockController = gomock.NewController(t)
+		mockOps        = ops.NewMockOps(mockController)
+		scheme         = runtime.NewScheme()
+	)
+
+	defer func() {
+		mockController.Finish()
+	}()
+
+	testcases := []struct {
+		name       string
+		pullSecret string
+	}{
+		{
+			name:       "Happy flow, pull secret was set",
+			pullSecret: "pull-secret",
+		},
+		{
+			name:       "Pull secret was not set",
+			pullSecret: "",
+		},
+	}
+
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pullSecretFile := path.Join(tmpDir, "config.json")
+			pullSecretManifestFile := path.Join(tmpDir, pullSecretFileName)
+			clientgoscheme.AddToScheme(scheme)
+			pp := NewPostPivot(scheme, log, mockOps, "", tmpDir, "")
+			err := pp.createPullSecretFileAndManifest(tc.pullSecret, pullSecretFile, pullSecretManifestFile)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if tc.pullSecret != "" {
+				secret := &corev1.Secret{}
+				err = utils.ReadYamlOrJSONFile(pullSecretManifestFile, secret)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				ps, ok := secret.Data[corev1.DockerConfigJsonKey]
+				if !ok {
+					t.Errorf("pull secret was not found: %v", err)
+				}
+				assert.Equal(t, "pull-secret", string(ps))
+
+				ps, err = os.ReadFile(pullSecretFile)
+				if err != nil {
+					t.Errorf("unexpected error while reading pull secret file: %v", err)
+				}
+				assert.Equal(t, "pull-secret", string(ps))
+
+			} else if _, err := os.Stat(pullSecretFile); err == nil {
+				t.Errorf("expected no pull secret file to be created")
+			}
+
 		})
 	}
 }

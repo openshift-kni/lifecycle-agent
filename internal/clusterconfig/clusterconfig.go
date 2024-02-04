@@ -36,10 +36,7 @@ const (
 	proxyName     = "cluster"
 	proxyFileName = "proxy.json"
 
-	pullSecretName     = "pull-secret"
-	pullSecretFileName = "pullsecret.json"
-
-	configNamespace = "openshift-config"
+	pullSecretName = "pull-secret"
 
 	idmsFileName  = "image-digest-mirror-set.json"
 	icspsFileName = "image-content-source-policy-list.json"
@@ -83,9 +80,6 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	}
 	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
-	if err := r.fetchPullSecret(ctx, manifestsDir); err != nil {
-		return err
-	}
 	if err := r.fetchProxy(ctx, manifestsDir); err != nil {
 		return err
 	}
@@ -110,31 +104,10 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context, manifestsDir string) error {
-	r.Log.Info("Fetching pull-secret", "name", pullSecretName, "namespace", configNamespace)
-
-	secret := corev1.Secret{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: pullSecretName, Namespace: configNamespace}, &secret); err != nil {
-		return err
-	}
-
-	s := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secret.Name,
-			Namespace: secret.Namespace,
-		},
-		Data: secret.Data,
-		Type: secret.Type,
-	}
-	typeMeta, err := r.typeMetaForObject(&s)
-	if err != nil {
-		return err
-	}
-	s.TypeMeta = *typeMeta
-
-	filePath := filepath.Join(manifestsDir, pullSecretFileName)
-	r.Log.Info("Writing pull-secret to file", "path", filePath)
-	return utils.MarshalToFile(s, filePath)
+func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context) (string, error) {
+	r.Log.Info("Fetching pull-secret")
+	return utils.GetSecretData(
+		ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
 }
 
 func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDir string) error {
@@ -180,8 +153,7 @@ func (r *UpgradeClusterConfigGather) fetchInfraID(ctx context.Context) (string, 
 }
 
 func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
-	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey string, infraID string) *seedreconfig.SeedReconfiguration {
-
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey, infraID, pullSecret string) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
 		BaseDomain:                clusterInfo.BaseDomain,
@@ -193,6 +165,7 @@ func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		Hostname:                  clusterInfo.Hostname,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
 		SSHKey:                    sshKey,
+		PullSecret:                pullSecret,
 	}
 }
 
@@ -218,7 +191,13 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
-	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey, infraID)
+	pullSecret, err := r.fetchPullSecret(ctx)
+	if err != nil {
+		return err
+	}
+
+	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention, sshKey,
+		infraID, pullSecret)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
@@ -355,7 +334,7 @@ func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifest
 	r.Log.Info("Fetching user ca bundle")
 	caBundle := &corev1.ConfigMap{}
 	err := r.Client.Get(ctx, types.NamespacedName{Name: caBundleCMName,
-		Namespace: configNamespace}, caBundle)
+		Namespace: common.OpenshiftConfigNamespace}, caBundle)
 	if err != nil && errors.IsNotFound(err) {
 		return nil
 	}
