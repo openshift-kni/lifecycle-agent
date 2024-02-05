@@ -303,14 +303,15 @@ func (s *SeedCreator) backupVar() error {
 
 	// Define the 'exclude' patterns
 	excludePatterns := []string{
+		"*/.bash_history",
 		"/var/tmp/*",
-		"/var/lib/log/*",
 		"/var/log/*",
+		"/var/lib/lca",
+		"/var/lib/log/*",
+		"/var/lib/cni/bin/*",
 		"/var/lib/containers/*",
 		"/var/lib/kubelet/pods/*",
-		"/var/lib/cni/bin/*",
-		"/var/lib/ovn-ic/etc/ovnkube-node-certs/*",
-		"/var/lib/lca",
+		common.OvnNodeCerts + "/*",
 	}
 
 	// Build the tar command
