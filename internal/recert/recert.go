@@ -25,6 +25,7 @@ type RecertConfig struct {
 	ForceExpire       bool     `json:"force_expire,omitempty"`
 	EtcdEndpoint      string   `json:"etcd_endpoint,omitempty"`
 	ClusterRename     string   `json:"cluster_rename,omitempty"`
+	Hostname          string   `json:"hostname,omitempty"`
 	SummaryFile       string   `json:"summary_file,omitempty"`
 	SummaryFileClean  string   `json:"summary_file_clean,omitempty"`
 	StaticDirs        []string `json:"static_dirs,omitempty"`
@@ -43,6 +44,10 @@ func CreateRecertConfigFile(clusterInfo *seedreconfig.SeedReconfiguration, seedC
 	config.ClusterRename = fmt.Sprintf("%s:%s", clusterInfo.ClusterName, clusterInfo.BaseDomain)
 	if clusterInfo.InfraID != "" {
 		config.ClusterRename = fmt.Sprintf("%s:%s", config.ClusterRename, clusterInfo.InfraID)
+	}
+
+	if clusterInfo.Hostname != seedClusterInfo.SNOHostname {
+		config.Hostname = clusterInfo.Hostname
 	}
 
 	config.SummaryFile = SummaryFile
