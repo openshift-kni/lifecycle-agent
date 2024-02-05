@@ -20,6 +20,7 @@ After the cluster is rebooted to the new stateroot:
 
 - A S3-compatible object storage must be set up and ensure that it's configured and accessible
 - OADP operator must be installed on both target and seed SNOs
+- OADP DataProtectionApplication CR and its secret must be installed on target SNOs
 
 ## LCA apply wave annotation
 
@@ -339,6 +340,8 @@ apiVersion: velero.io/v1
 kind: Backup
 metadata:
   name: acm-klusterlet
+  annotations:
+    lca.openshift.io/apply-label: "apps/v1/deployments/open-cluster-management-agent/klusterlet,v1/secrets/open-cluster-management-agent/bootstrap-hub-kubeconfig,rbac.authorization.k8s.io/v1/clusterroles/klusterlet,v1/serviceaccounts/open-cluster-management-agent/klusterlet,rbac.authorization.k8s.io/v1/clusterroles/open-cluster-management:klusterlet-admin-aggregate-clusterrole,rbac.authorization.k8s.io/v1/clusterrolebindings/klusterlet,operator.open-cluster-management.io/v1/klusterlets/klusterlet,apiextensions.k8s.io/v1/customresourcedefinitions/klusterlets.operator.open-cluster-management.io,v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials"
   labels:
     velero.io/storage-location: default
   namespace: openshift-adp
@@ -350,6 +353,10 @@ spec:
   - clusterclaims.cluster.open-cluster-management.io
   - clusterroles
   - clusterrolebindings
+  includedNamespaceScopedResources:
+  - deployments
+  - serviceaccounts
+  - secrets
 ```
 
 backup_localvolume.yaml
@@ -466,6 +473,8 @@ configMapGenerator:
   - restore_acm_klusterlet.yaml
   - restore_localvolume.yaml
   - restore_app.yaml
+generatorOptions:
+  disableNameSuffixHash: true
 ```
 
 ```console
@@ -557,4 +566,21 @@ Watch the backup or restore CRs:
 watch -n 5 'oc get backups -n openshift-adp -o custom-columns=NAME:.metadata.name,Status:.status.phase,Reason:.status.failureReason'
 
 watch -n 5 'oc get restores -n openshift-adp -o custom-columns=NAME:.metadata.name,Status:.status.phase,Reason:.status.failureReason'
+```
+
+## Debugging on a failed backup or restore CR
+
+Install velero CLI by following the [installation guide](https://velero.io/docs/main/basic-install/#install-the-cli).
+
+Describe the backup/resource CR with errors:
+
+```console
+velero describe backup -n openshift-adp backup-acm-klusterlet --details
+velero describe restore -n openshift-adp restore-acm-klusterlet --details
+```
+
+Download the backed up resources to a local directory:
+
+```console
+velero backup download -n openshift-adp backup-acm-klusterlet -o ~/backup-acm-klusterlet.tar.gz
 ```
