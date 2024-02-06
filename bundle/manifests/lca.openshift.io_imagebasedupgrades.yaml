@@ -21,7 +21,7 @@ spec:
       name: Age
       type: date
     - jsonPath: .spec.stage
-      name: Stage
+      name: Desired Stage
       type: string
     - jsonPath: .status.conditions[-1:].reason
       name: State

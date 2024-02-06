@@ -97,7 +97,7 @@ func SetStatusCondition(existingConditions *[]metav1.Condition, conditionType Co
 	conditions := *existingConditions
 	condition := meta.FindStatusCondition(*existingConditions, string(conditionType))
 	if condition != nil &&
-		condition.Status != conditionStatus &&
+		(condition.Status != conditionStatus || condition.Type == string(ConditionTypes.Idle)) &&
 		conditions[len(conditions)-1].Type != string(conditionType) {
 		meta.RemoveStatusCondition(existingConditions, string(conditionType))
 	}
