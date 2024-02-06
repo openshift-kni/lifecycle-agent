@@ -177,9 +177,44 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 }
 
 func TestClusterConfig(t *testing.T) {
+	defaultPullSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pullSecretName,
+			Namespace: common.OpenshiftConfigNamespace,
+		},
+		Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
+	}
+
+	noPullSecret := &corev1.Secret{}
+
+	defaultClusterVersion := &ocpV1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: ocpV1.ClusterVersionSpec{
+			ClusterID: "1",
+		},
+	}
+
+	emptyClusterVersion := &ocpV1.ClusterVersion{}
+
+	defaultIDMS := &ocpV1.ImageDigestMirrorSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "any",
+		},
+		Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
+	}
+	defaultProxy := &ocpV1.Proxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Spec: ocpV1.ProxySpec{
+			HTTPProxy: "some-http-proxy",
+		},
+	}
 	testcases := []struct {
-		name           string
-		secret         client.Object
+		testCaseName   string
+		pullSecret     client.Object
 		caBundleCM     client.Object
 		clusterVersion client.Object
 		idms           client.Object
@@ -190,40 +225,15 @@ func TestClusterConfig(t *testing.T) {
 		validateFunc   func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
 	}{
 		{
-			name: "Validate success flow",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: common.OpenshiftConfigNamespace,
-				},
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			idms: &ocpV1.ImageDigestMirrorSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "any",
-				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
-			},
-			node: validMasterNode,
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-				Spec: ocpV1.ProxySpec{
-					HTTPProxy: "some-http-proxy",
-				},
-			},
-			icsps:       nil,
-			caBundleCM:  nil,
-			expectedErr: false,
+			testCaseName:   "Validate success flow",
+			pullSecret:     defaultPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           defaultIDMS,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
+			icsps:          nil,
+			caBundleCM:     nil,
+			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDir(tempDir)
 				if err != nil {
@@ -265,82 +275,44 @@ func TestClusterConfig(t *testing.T) {
 			},
 		},
 		{
-			name:   "no secret found",
-			secret: &corev1.Secret{},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			idms:       nil,
-			icsps:      nil,
-			caBundleCM: nil,
-			node:       validMasterNode,
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-			},
-			expectedErr: true,
+			testCaseName:   "no secret found",
+			pullSecret:     noPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           nil,
+			icsps:          nil,
+			caBundleCM:     nil,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
+			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, errors.IsNotFound(err))
 				assert.Equal(t, true, strings.Contains(err.Error(), "secret"))
 			},
 		},
 		{
-			name: " clusterversion error",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: common.OpenshiftConfigNamespace,
-				},
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
-			},
-			idms:       nil,
-			icsps:      nil,
-			caBundleCM: nil,
-			node:       validMasterNode,
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{},
+			testCaseName:   " clusterversion error",
+			pullSecret:     defaultPullSecret,
+			idms:           nil,
+			icsps:          nil,
+			caBundleCM:     nil,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
+			clusterVersion: emptyClusterVersion,
 			expectedErr:    true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, strings.Contains(err.Error(), "clusterversion"))
 			},
 		},
 		{
-			name: "idm not found, should still succeed",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: common.OpenshiftConfigNamespace,
-				},
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			idms:       nil,
-			icsps:      nil,
-			caBundleCM: nil,
-			node:       validMasterNode,
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-			},
-			expectedErr: false,
+			testCaseName:   "idm not found, should still succeed",
+			pullSecret:     defaultPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           nil,
+			icsps:          nil,
+			caBundleCM:     nil,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
+			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				filesDir, err := ucc.configDir(tempDir)
 				if err != nil {
@@ -354,67 +326,28 @@ func TestClusterConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "master not found, should fail",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: common.OpenshiftConfigNamespace,
-				},
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			idms:       nil,
-			icsps:      nil,
-			caBundleCM: nil,
+			testCaseName:   "master not found, should fail",
+			pullSecret:     defaultPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           nil,
+			icsps:          nil,
+			caBundleCM:     nil,
 			node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker:": ""}},
 				Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
 					{Type: corev1.NodeInternalIP, Address: "192.168.121.10"}}}},
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-			},
+			proxy:       defaultProxy,
 			expectedErr: true,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				assert.Equal(t, true, strings.Contains(err.Error(), "one master node in sno cluster"))
 			},
 		},
 		{
-			name: "Validate mirror values",
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pullSecretName,
-					Namespace: common.OpenshiftConfigNamespace,
-				},
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("pull-secret")},
-			},
-			clusterVersion: &ocpV1.ClusterVersion{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "version",
-				},
-				Spec: ocpV1.ClusterVersionSpec{
-					ClusterID: "1",
-				},
-			},
-			idms: &ocpV1.ImageDigestMirrorSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "any",
-				},
-				Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
-			},
-			node: validMasterNode,
-			proxy: &ocpV1.Proxy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cluster",
-				},
-			},
+			testCaseName:   "Validate mirror values",
+			pullSecret:     defaultPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           defaultIDMS,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
 			icsps: []client.Object{&operatorv1alpha1.ImageContentSourcePolicy{ObjectMeta: metav1.ObjectMeta{
 				Name: "1",
 			}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
@@ -475,7 +408,7 @@ func TestClusterConfig(t *testing.T) {
 
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.testCaseName, func(t *testing.T) {
 			installConfig := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      common.InstallConfigCM,
@@ -483,7 +416,7 @@ func TestClusterConfig(t *testing.T) {
 				},
 				Data: map[string]string{"install-config": clusterCmData},
 			}
-			objs := []client.Object{tc.secret, tc.clusterVersion, installConfig, tc.node,
+			objs := []client.Object{tc.pullSecret, tc.clusterVersion, installConfig, tc.node,
 				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment, infrastructure}
 
 			for _, kcro := range kubeconfigRetentionObjects {
