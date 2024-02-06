@@ -253,19 +253,7 @@ func (o *ops) IsImageMounted(imgName string) (bool, error) {
 	return false, nil
 }
 
-func (o *ops) UnmountAndRemoveImage(img string) error {
-	mounted, err := o.IsImageMounted(img)
-	if err != nil {
-		return fmt.Errorf("failed to check if image is mounted: %w", err)
-	}
-	if !mounted {
-		return nil
-	}
-	if _, err := o.hostCommandsExecutor.Execute(
-		"podman", "image", "umount", img,
-	); err != nil {
-		return fmt.Errorf("failed to unmount image: %w", err)
-	}
+func (o *ops) removeImage(img string) error {
 	exist, err := o.ImageExists(img)
 	if err != nil {
 		return fmt.Errorf("failed to check if image exist: %w", err)
@@ -279,6 +267,20 @@ func (o *ops) UnmountAndRemoveImage(img string) error {
 		return fmt.Errorf("failed to remove image: %w", err)
 	}
 	return nil
+}
+
+func (o *ops) UnmountAndRemoveImage(img string) error {
+	if mounted, err := o.IsImageMounted(img); err != nil {
+		return fmt.Errorf("failed to check if image is mounted: %w", err)
+	} else if mounted {
+		if _, err := o.hostCommandsExecutor.Execute(
+			"podman", "image", "umount", img,
+		); err != nil {
+			return fmt.Errorf("failed to unmount image: %w", err)
+		}
+	}
+
+	return o.removeImage(img)
 }
 
 func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
