@@ -22,6 +22,8 @@ import (
 func GetSecretData(ctx context.Context, name, namespace, key string, client runtimeclient.Client) (string, error) {
 	secret := &corev1.Secret{}
 	if err := client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
+		// NOTE: The error is intentionally left unwrapped here, so the caller
+		// can check client.IgnoreNotFound on it
 		return "", err
 	}
 
