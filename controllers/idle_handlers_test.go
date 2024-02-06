@@ -197,6 +197,12 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 			staterootsToRemove: []string{"rhcos_4.10.11"},
 		},
 	}
+	osStat = func(name string) (os.FileInfo, error) {
+		return os.Stat(".")
+	}
+	osReadDir = func(name string) ([]os.DirEntry, error) {
+		return []os.DirEntry{}, nil
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -223,9 +229,6 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 				Executor:        executorMock,
 				OstreeClient:    ostreeclientMock,
 				Ops:             mockOps,
-			}
-			osStat = func(name string) (os.FileInfo, error) {
-				return os.Stat(".")
 			}
 
 			if err := r.cleanupUnbootedStateroots(); (err != nil) != tt.wantErr {
