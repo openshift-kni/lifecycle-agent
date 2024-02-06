@@ -16,7 +16,6 @@ import (
 	cp "github.com/otiai10/copy"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,12 +106,6 @@ func (s *SeedCreator) CreateSeedImage() error {
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	}
-
-	if err := utils.RunOnce("delete_node", common.BackupChecksDir, s.log, s.deleteNode, ctx); err != nil {
-		return err
-	}
-
-	_ = utils.RunOnce("wait_for_ovn_to_go_down", common.BackupChecksDir, s.log, s.waitTillOvnKubeNodeIsDown, ctx)
 
 	if err := s.stopServices(); err != nil {
 		return err
@@ -459,44 +452,6 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	}
 	s.log.Info("Backup of .origin created successfully.")
 	return nil
-}
-
-func (s *SeedCreator) deleteNode(ctx context.Context) error {
-	s.log.Info("Deleting node")
-	node, err := utils.GetSNOMasterNode(ctx, s.client)
-	if err != nil {
-		return err
-	}
-
-	s.log.Info("Deleting node ", node.Name)
-	err = s.client.Delete(ctx, node)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *SeedCreator) waitTillOvnKubeNodeIsDown(ctx context.Context) {
-	ovnKubeNode := "ovnkube-node"
-	s.log.Infof("Waiting for %s to stop in order to give ovn to cleanup network", ovnKubeNode)
-	// we will wait for 5 minutes and exit, we don't want to fail as it is not critical
-	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 5*time.Minute)
-	_ = wait.PollUntilContextCancel(deadlineCtx, 10*time.Second, true, func(ctx context.Context) (done bool, err error) {
-		s.log.Infof("waiting for %s to stop", ovnKubeNode)
-		pods := &corev1.PodList{}
-		err = s.client.List(ctx, pods, &runtime.ListOptions{Namespace: "openshift-ovn-kubernetes"})
-		if err != nil {
-			return false, nil
-		}
-		for _, pod := range pods.Items {
-			if strings.HasPrefix(pod.Name, "ovnkube-node") {
-				return false, nil
-			}
-		}
-
-		return true, nil
-	})
-	defer deadlineCancel()
 }
 
 // filterCatalogImages filters catalog source images as catalog sources have pull always policy
