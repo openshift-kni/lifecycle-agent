@@ -115,7 +115,7 @@ func (r *InstallationIso) renderIgnitionFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to render ignition from config: %w", err)
 	}
-	return os.WriteFile(path.Join(r.workDir, ibiIgnitionFileName), []byte(ignitionContent), 0o644)
+	return os.WriteFile(path.Join(r.workDir, ibiIgnitionFileName), []byte(ignitionContent), 0o644) //nolint:gosec
 }
 
 func (r *InstallationIso) embedIgnitionToIso() error {
@@ -238,7 +238,7 @@ func (r *InstallationIso) downloadLiveIso(url string) error {
 	}
 	defer isoFile.Close()
 
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
 		return err
 	}

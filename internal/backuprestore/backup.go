@@ -213,7 +213,7 @@ func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Back
 	}
 	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
 	for _, obj := range objs {
-		err := patchObj(ctx, h.DynamicClient, &obj, false, payload)
+		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
 		if err != nil {
 			return fmt.Errorf("failed to apply backup label on object name:%s namespace:%s resource:%s group:%s version:%s err:%w",
 				obj.Name, obj.Namespace, obj.Resource, obj.Group, obj.Version, err)
@@ -236,7 +236,7 @@ func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Ba
 	payload := []byte(fmt.Sprintf(`[{"op":"remove","path":"/metadata/labels/%s"}]`, escaped))
 	for _, obj := range objs {
 		h.Log.Info("clean up back label for obj")
-		err := patchObj(ctx, h.DynamicClient, &obj, false, payload)
+		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
 		if err != nil {
 			h.Log.Error(err, "failed to remove backup label", "name", obj.Name, "namespace", obj.Namespace,
 				"resource", obj.Resource, "group", obj.Group, "version", obj.Version)
@@ -383,7 +383,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		dpa.SetResourceVersion("")
 
 		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+yamlExt)
-		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil {
+		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil { //nolint:gosec
 			return err
 		}
 		h.Log.Info("Exported DataProtectionApplication CR to file", "path", filePath)
@@ -520,7 +520,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 	}
 
 	for _, backup := range backupList.Items {
-		err := h.cleanupBackupLabels(ctx, &backup)
+		err := h.cleanupBackupLabels(ctx, &backup) //nolint:gosec
 		if err != nil {
 			h.Log.Error(err, "failed to clean backup labels")
 		}

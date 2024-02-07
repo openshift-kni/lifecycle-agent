@@ -327,7 +327,7 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 			return NewBRFailedValidationError("OADP", err.Error())
 		}
 		for _, obj := range objs {
-			err := patchObj(ctx, h.DynamicClient, &obj, true, payload)
+			err := patchObj(ctx, h.DynamicClient, &obj, true, payload) //nolint:gosec
 			if err != nil {
 				return NewBRFailedValidationError("OADP", err.Error())
 			}

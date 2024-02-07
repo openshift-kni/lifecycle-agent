@@ -61,7 +61,7 @@ func (p *Progress) Log() {
 
 func (p *Progress) Persist(filename string) {
 	data, _ := json.Marshal(p)
-	if err := os.WriteFile(filename, data, 0o700); err != nil {
+	if err := os.WriteFile(filename, data, 0o600); err != nil {
 		logrus.Errorf("Failed to update progress file for precaching, err: %v", err)
 	}
 }

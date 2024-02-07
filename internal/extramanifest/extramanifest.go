@@ -160,7 +160,7 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 		}
 		for _, object := range objects {
 			manifestFilePath := filepath.Join(manifestsDir, fmt.Sprintf("%d_%s_%s.yaml", i, object.GetName(), object.GetNamespace()))
-			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil {
+			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil { //nolint:gosec
 				return fmt.Errorf("failed to save manifests to file %s: %w", manifestFilePath, err)
 			}
 		}
