@@ -302,3 +302,24 @@ func MoveFileIfExists(source, dest string) error {
 	}
 	return nil
 }
+
+func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
+	newPullSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      common.PullSecretName,
+			Namespace: common.OpenshiftConfigNamespace,
+		},
+		Data: map[string][]byte{
+			".dockerconfigjson": dockerConfigJSON,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+	}
+
+	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
+		return c.Update(ctx, newPullSecret)
+	}); err != nil {
+		return nil, fmt.Errorf("failed to update pull-secret resource: %w", err)
+	}
+
+	return newPullSecret, nil
+}

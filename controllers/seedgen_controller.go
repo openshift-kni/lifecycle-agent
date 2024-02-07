@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -256,6 +257,30 @@ func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdLis
 	return
 }
 
+func (r *SeedGeneratorReconciler) sanitizePullSecret(ctx context.Context) error {
+	// Sanitize cluster's pull-secret from sensitive data
+	sanitizedPullSecret, _ := lcautils.UpdatePullSecretFromDockerConfig(ctx, r.Client, []byte(common.PullSecretEmptyData))
+
+	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer deadlineCancel()
+	err := wait.PollUntilContextCancel(deadlineCtx, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		r.Log.Info("Waiting for MCO to override pull-secret file")
+		dockerConfigJSON, err := os.ReadFile(filepath.Join(common.Host, common.ImageRegistryAuthFile))
+		if err != nil {
+			r.Log.Info(fmt.Sprintf("Failed to read %s file with error %s, will retry",
+				common.ImageRegistryAuthFile, err))
+			return false, nil
+		}
+		r.Log.Info(fmt.Sprintf("%s data is %s", common.ImageRegistryAuthFile, strings.TrimSpace(string(dockerConfigJSON))))
+		return strings.TrimSpace(string(dockerConfigJSON)) == string(sanitizedPullSecret.Data[".dockerconfigjson"]), nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for MCO to override pull-secret file: %w", err)
+	}
+
+	return nil
+}
+
 // Clean up ACM and other resources on the cluster
 func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) error {
 	// Ensure that the dependent resources are deleted
@@ -368,6 +393,11 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 		}}
 	if err := r.Client.Delete(ctx, observabilitySecret, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete observability secret: %w", err)
+	}
+
+	r.Log.Info("Sanitize cluster's pull-secret before seed creation")
+	if err := r.sanitizePullSecret(ctx); err != nil {
+		return fmt.Errorf("failed sanitizing cluster's pull-secret: %w", err)
 	}
 
 	return nil
@@ -644,6 +674,17 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		}
 	} else {
 		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
+	}
+
+	// Get the cluster's pull-secret
+	clusterPullSecretData, err := lcautils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
+	if err != nil {
+		return fmt.Errorf("could not access pull-secret %s in %s: %w", common.PullSecretName, common.OpenshiftConfigNamespace, err)
+	}
+
+	// Save the cluster's pull-secret in order to restore it after the lca-cli is complete
+	if err := os.WriteFile(common.PathOutsideChroot(utils.StoredPullSecret), []byte(clusterPullSecretData), 0o600); err != nil {
+		return fmt.Errorf("failed to write pull-secret to %s: %w", utils.StoredPullSecret, err)
 	}
 
 	// Clean up cluster resources

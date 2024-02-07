@@ -21,4 +21,6 @@ const (
 var (
 	SeedGenStoredCR       = filepath.Join(SeedgenWorkspacePath, "seedgen-cr.json")
 	SeedGenStoredSecretCR = filepath.Join(SeedgenWorkspacePath, "seedgen-secret.json")
+
+	StoredPullSecret = filepath.Join(SeedgenWorkspacePath, "pull-secret.json")
 )
