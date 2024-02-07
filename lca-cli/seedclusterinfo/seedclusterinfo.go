@@ -60,9 +60,17 @@ type SeedClusterInfo struct {
 	// certificates, so it has already proven to run successfully on the seed
 	// data).
 	RecertImagePullSpec string `json:"recert_image_pull_spec,omitempty"`
+
+	// Whether the seed has a proxy configured or not. Seed clusters without a
+	// proxy cannot be used to upgrade or install clusters with a proxy. So
+	// whether or not the seed has a proxy configured is important for LCA to
+	// know so it can optionally deny the upgrade or installation of clusters
+	// with a proxy from seeds that don't have one. Similarly, installing a
+	// cluster without a proxy from a seed with a proxy is also not supported.
+	HasProxy bool `json:"has_proxy"`
 }
 
-func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string) *SeedClusterInfo {
+func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string, hasProxy bool) *SeedClusterInfo {
 	return &SeedClusterInfo{
 		SeedClusterOCPVersion:    clusterInfo.OCPVersion,
 		BaseDomain:               clusterInfo.BaseDomain,
@@ -72,6 +80,7 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string
 		SNOHostname:              clusterInfo.Hostname,
 		MirrorRegistryConfigured: clusterInfo.MirrorRegistryConfigured,
 		RecertImagePullSpec:      seedImagePullSpec,
+		HasProxy:                 hasProxy,
 	}
 }
 
