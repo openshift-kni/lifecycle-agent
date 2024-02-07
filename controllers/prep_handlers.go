@@ -69,22 +69,57 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
-	r.Log.Info("Checking seed image compatibility")
-	if err := r.checkSeedImageCompatibility(ctx, ibu.Spec.SeedImageRef.Image); err != nil {
+	labels, err := r.getLabelsForSeedImage(ibu.Spec.SeedImageRef.Image)
+	if err != nil {
+		return fmt.Errorf("failed to get seed image labels: %w", err)
+	}
+
+	r.Log.Info("Checking seed image version compatibility")
+	if err := checkSeedImageVersionCompatibility(labels); err != nil {
+		return fmt.Errorf("checking seed image compatibility: %w", err)
+	}
+
+	seedInfo, err := getSeedConfigFromLabel(labels)
+	if err != nil {
+		return fmt.Errorf("failed to get seed cluster info from label: %w", err)
+	}
+
+	seedHasProxy := false
+	if seedInfo == nil {
+		// Older images may not have the seed cluster info label, in which case
+		// we assume no proxy so that if the current cluster has proxy, it will
+		// fail the compatibility check.
+		seedHasProxy = seedInfo.HasProxy
+	}
+
+	clusterHasProxy, err := lcautils.HasProxy(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("failed to check if cluster has proxy: %w", err)
+	}
+
+	r.Log.Info("Checking seed image proxy compatibility")
+	if err := checkSeedImageProxyCompatibility(seedHasProxy, clusterHasProxy); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
 	return nil
 }
 
-// checkSeedImageCompatibility checks if the seed image is compatible with the
-// current version of the lifecycle-agent by inspecting the OCI image's labels
-// and checking if the specified format version equals the hard-coded one that
-// this version of the lifecycle agent expects. That format version is set by
-// the lca-cli during the image build process, and is only manually bumped by
-// developers when the image format changes in a way that is incompatible with
-// previous versions of the lifecycle-agent.
-func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Context, seedImageRef string) error {
+func getSeedConfigFromLabel(labels map[string]string) (*seedclusterinfo.SeedClusterInfo, error) {
+	seedFormatLabelValue, ok := labels[common.SeedClusterInfoOCILabel]
+	if !ok {
+		return nil, nil
+	}
+
+	var seedInfo seedclusterinfo.SeedClusterInfo
+	if err := json.Unmarshal([]byte(seedFormatLabelValue), &seedInfo); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal seed cluster info: %w", err)
+	}
+
+	return &seedInfo, nil
+}
+
+func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(seedImageRef string) (map[string]string, error) {
 	inspectArgs := []string{
 		"inspect",
 		"--format", "json",
@@ -97,31 +132,61 @@ func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Cont
 
 	// TODO: use the context when execute supports it
 	if inspectRaw, err := r.Executor.Execute("podman", inspectArgs...); err != nil || inspectRaw == "" {
-		return fmt.Errorf("failed to inspect image: %w", err)
+		return nil, fmt.Errorf("failed to inspect image: %w", err)
 	} else {
 		if err := json.Unmarshal([]byte(inspectRaw), &inspect); err != nil {
-			return fmt.Errorf("failed to unmarshal image inspect output: %w", err)
+			return nil, fmt.Errorf("failed to unmarshal image inspect output: %w", err)
 		}
 	}
 
 	if len(inspect) != 1 {
-		return fmt.Errorf("expected 1 image inspect result, got %d", len(inspect))
+		return nil, fmt.Errorf("expected 1 image inspect result, got %d", len(inspect))
 	}
 
-	seedFormatLabelValue, ok := inspect[0].Labels[common.SeedFormatOCILabel]
+	return inspect[0].Labels, nil
+}
+
+// checkSeedImageVersionCompatibility checks if the seed image is compatible with the
+// current version of the lifecycle-agent by inspecting the OCI image's labels
+// and checking if the specified format version equals the hard-coded one that
+// this version of the lifecycle agent expects. That format version is set by
+// the LCA during the image build process to the value of the code constant,
+// and the code constant is only manually bumped by developers when the image
+// format changes in a way that is incompatible with previous versions of the
+// lifecycle-agent.
+func checkSeedImageVersionCompatibility(labels map[string]string) error {
+	seedFormatLabelValue, ok := labels[common.SeedFormatOCILabel]
 	if !ok {
 		return fmt.Errorf(
-			"seed image %s is missing the %s label, please build a new image using the latest version of the lca-cli",
-			seedImageRef, common.SeedFormatOCILabel)
+			"seed image is missing the %s label, please build a new image using the latest version of the lca-cli",
+			common.SeedFormatOCILabel)
 	}
 
 	// Hard equal since we don't have backwards compatibility guarantees yet.
 	// In the future we might want to have backwards compatibility code to
 	// handle older seed formats and in that case we'll look at the version
-	// number and do the right thing.
+	// number and do the right thing accordingly.
 	if seedFormatLabelValue != fmt.Sprintf("%d", common.SeedFormatVersion) {
 		return fmt.Errorf("seed image format version mismatch: expected %d, got %s",
 			common.SeedFormatVersion, seedFormatLabelValue)
+	}
+
+	return nil
+}
+
+// checkSeedImageProxyCompatibility checks for proxy configuration
+// compatibility of the seed image vs the current cluster. If the seed image
+// has a proxy and the cluster being upgraded doesn't, we cannot proceed as
+// recert does not support proxy rename under those conditions. Similarly, we
+// cannot proceed if the cluster being upgraded has a proxy but the seed image
+// doesn't.
+func checkSeedImageProxyCompatibility(seedHasProxy, hasProxy bool) error {
+	if seedHasProxy && !hasProxy {
+		return fmt.Errorf("seed image has a proxy but the cluster being upgraded does not, this combination is not supported")
+	}
+
+	if !seedHasProxy && hasProxy {
+		return fmt.Errorf("seed image does not have a proxy but the cluster being upgraded does, this combination is not supported")
 	}
 
 	return nil

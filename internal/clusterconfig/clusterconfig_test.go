@@ -213,6 +213,7 @@ func TestClusterConfig(t *testing.T) {
 		},
 		Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
 	}
+
 	defaultProxy := &ocpV1.Proxy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
@@ -220,7 +221,19 @@ func TestClusterConfig(t *testing.T) {
 		Spec: ocpV1.ProxySpec{
 			HTTPProxy: "some-http-proxy",
 		},
+		Status: ocpV1.ProxyStatus{
+			HTTPProxy: "some-http-proxy-status",
+		},
 	}
+
+	installConfig := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      common.InstallConfigCM,
+			Namespace: common.InstallConfigCMNamespace,
+		},
+		Data: map[string]string{"install-config": clusterCmData},
+	}
+
 	testcases := []struct {
 		testCaseName    string
 		pullSecret      client.Object
@@ -251,14 +264,6 @@ func TestClusterConfig(t *testing.T) {
 				}
 				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
-				// validate proxy
-				proxy := &ocpV1.Proxy{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, proxyFileName), proxy); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				assert.Equal(t, proxyName, proxy.Name)
-				assert.Equal(t, "some-http-proxy", proxy.Spec.HTTPProxy)
-
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
 				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFileName), idms); err != nil {
@@ -282,6 +287,8 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
 				assert.Equal(t, "192.168.121.10", seedReconfig.NodeIP)
 				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
+				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
+				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
 			},
 		},
 		{
@@ -351,7 +358,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				assert.Equal(t, 1, len(dir))
+				assert.Equal(t, 0, len(dir))
 			},
 		},
 		{
@@ -435,36 +442,13 @@ func TestClusterConfig(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testcases {
-		tmpDir := t.TempDir()
-		t.Run(tc.testCaseName, func(t *testing.T) {
-			installConfig := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      common.InstallConfigCM,
-					Namespace: common.InstallConfigCMNamespace,
-				},
-				Data: map[string]string{"install-config": clusterCmData},
-			}
-			objs := []client.Object{tc.pullSecret, tc.clusterVersion, installConfig, tc.node,
-				tc.idms, tc.proxy, tc.caBundleCM, csvDeployment, infrastructure}
+	for _, testCase := range testcases {
+		clusterConfigDir := t.TempDir()
+		t.Run(testCase.testCaseName, func(t *testing.T) {
+			hostPath = clusterConfigDir
 
-			if !tc.deleteKubeadmin {
-				objs = append(objs, kubeadminSecret)
-			}
-
-			for _, kcro := range kubeconfigRetentionObjects {
-				objs = append(objs, kcro)
-			}
-
-			if tc.icsps != nil {
-				for _, icsp := range tc.icsps {
-					objs = append(objs, icsp)
-				}
-			}
-
-			hostPath = tmpDir
-			if tc.caBundleCM != nil {
-				dir := filepath.Join(tmpDir, filepath.Dir(common.CABundleFilePath))
+			if testCase.caBundleCM != nil {
+				dir := filepath.Join(clusterConfigDir, filepath.Dir(common.CABundleFilePath))
 				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -476,44 +460,62 @@ func TestClusterConfig(t *testing.T) {
 				_ = f.Close()
 			}
 
-			dir := filepath.Join(tmpDir, filepath.Dir(sshKeyFile))
-			if err := os.MkdirAll(dir, 0o700); err != nil {
+			sshKeyDir := filepath.Join(clusterConfigDir, filepath.Dir(sshKeyFile))
+			if err := os.MkdirAll(sshKeyDir, 0o700); err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			if err := os.WriteFile(filepath.Join(tmpDir, sshKeyFile), []byte("ssh-key"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(clusterConfigDir, sshKeyFile), []byte("ssh-key"), 0o600); err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
 
-			fakeClient, err := getFakeClientFromObjects(objs...)
+			k8sResources := []client.Object{
+				testCase.pullSecret, testCase.clusterVersion, installConfig, testCase.node,
+				testCase.idms, testCase.proxy, testCase.caBundleCM, csvDeployment, infrastructure,
+			}
+
+			if !testCase.deleteKubeadmin {
+				k8sResources = append(k8sResources, kubeadminSecret)
+			}
+
+			for _, kcro := range kubeconfigRetentionObjects {
+				k8sResources = append(k8sResources, kcro)
+			}
+
+			if testCase.icsps != nil {
+				for _, icsp := range testCase.icsps {
+					k8sResources = append(k8sResources, icsp)
+				}
+			}
+
+			fakeK8sClient, err := getFakeClientFromObjects(k8sResources...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
 			}
 
-			ucc := UpgradeClusterConfigGather{
-				Client: fakeClient,
-				Log:    logr.Discard(),
-				Scheme: fakeClient.Scheme(),
-			}
-
-			if err := os.MkdirAll(filepath.Join(tmpDir, common.OptOpenshift), 0o700); err != nil {
+			if err := os.MkdirAll(filepath.Join(clusterConfigDir, common.OptOpenshift), 0o700); err != nil {
 				t.Errorf("failed to create opt dir, error: %v", err)
 			}
-			if err := os.MkdirAll(filepath.Join(tmpDir, common.SeedDataDir), 0o700); err != nil {
+			if err := os.MkdirAll(filepath.Join(clusterConfigDir, common.SeedDataDir), 0o700); err != nil {
 				t.Errorf("failed to create %s dir, error: %v", common.SeedDataDir, err)
 			}
-			err = utils.MarshalToFile(seedManifestData, filepath.Join(tmpDir, common.SeedDataDir, common.SeedClusterInfoFileName))
+			err = utils.MarshalToFile(seedManifestData, filepath.Join(clusterConfigDir, common.SeedDataDir, common.SeedClusterInfoFileName))
 			if err != nil {
 				t.Errorf("failed to create seed manifest, error: %v", err)
 			}
 
-			err = ucc.FetchClusterConfig(context.TODO(), tmpDir)
-			if !tc.expectedErr && err != nil {
+			ucc := UpgradeClusterConfigGather{
+				Client: fakeK8sClient,
+				Log:    logr.Discard(),
+				Scheme: fakeK8sClient.Scheme(),
+			}
+			err = ucc.FetchClusterConfig(context.TODO(), clusterConfigDir)
+			if !testCase.expectedErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			if tc.expectedErr && err == nil {
+			if testCase.expectedErr && err == nil {
 				t.Errorf("expected error but it didn't happened")
 			}
-			tc.validateFunc(t, tmpDir, err, ucc)
+			testCase.validateFunc(t, clusterConfigDir, err, ucc)
 		})
 	}
 }
