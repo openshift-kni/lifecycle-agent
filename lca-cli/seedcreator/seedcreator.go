@@ -229,8 +229,9 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
-	images = append(images, s.recertContainerImage)
+	images = utils.AppendToListIfNotExists(images, s.recertContainerImage)
 
 	s.log.Infof("Creating %s file", containersListFileName)
 	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o600); err != nil {
