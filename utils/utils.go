@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"text/template"
 
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -322,4 +323,11 @@ func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dock
 	}
 
 	return newPullSecret, nil
+}
+
+func AppendToListIfNotExists(list []string, value string) []string {
+	if lo.Contains(list, value) {
+		return list
+	}
+	return append(list, value)
 }
