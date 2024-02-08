@@ -191,7 +191,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 	defer cancel()
 	_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
 		p.log.Info("pulling recert image")
-		if _, err := p.ops.RunInHostNamespace("podman", "pull", seedClusterInfo.RecertImagePullSpec); err != nil {
+		if _, err := p.ops.RunInHostNamespace("podman", "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
 			p.log.Warnf("failed to pull recert image, will retry, err: %s", err.Error())
 			return false, nil
 		}
