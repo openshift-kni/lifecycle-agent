@@ -48,7 +48,7 @@ func getJob(ctx context.Context, c client.Client, name, namespace string) (*batc
 		if k8serrors.IsNotFound(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to list jobs: %w", err)
+		return nil, err
 	}
 
 	return job, nil
@@ -83,7 +83,7 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 		Namespace: common.LcaNamespace,
 	})
 	if err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get precache configMap: %w", err)
+		return err
 	}
 	if cm != nil {
 		return errors.New("precaching configmap already exists, cannot create new job")
@@ -265,7 +265,7 @@ func deleteConfigMap(ctx context.Context, c client.Client, name, namespace strin
 		if k8serrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to get delete configMap: %w", err)
+		return err
 	}
 
 	if cm == nil {
@@ -276,7 +276,7 @@ func deleteConfigMap(ctx context.Context, c client.Client, name, namespace strin
 		if k8serrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to delete configMaps: %w", err)
+		return err
 	}
 
 	return nil
@@ -297,7 +297,7 @@ func deleteJob(ctx context.Context, c client.Client, name, namespace string) err
 		if k8serrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to job: %w", err)
+		return err
 	}
 
 	return nil

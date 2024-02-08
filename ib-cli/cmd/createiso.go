@@ -103,8 +103,5 @@ func Execute() error {
 
   Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/ib-cli/README.md
 	`)
-	if err := rootCmd.Execute(); err != nil {
-		return fmt.Errorf("failed to run root cmd for iso: %w", err)
-	}
-	return nil
+	return rootCmd.Execute()
 }

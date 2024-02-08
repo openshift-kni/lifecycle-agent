@@ -14,7 +14,7 @@ func LoadSecretData(ctx context.Context, c client.Client, secretName, namespace,
 	s := &corev1.Secret{}
 	err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, s)
 	if err != nil {
-		return "", fmt.Errorf("failed to load secret: %w", err)
+		return "", err
 	}
 	retStr, ok := s.Data[dataKey]
 	if !ok {

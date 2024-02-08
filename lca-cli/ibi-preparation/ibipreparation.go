@@ -59,7 +59,7 @@ func (i *IBIPrepare) Run() error {
 	// Setup state root
 	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
 		i.seedImage, i.seedExpectedVersion, imageListFile, true); err != nil {
-		return fmt.Errorf("failed to setup stateroot: %w", err)
+		return err
 	}
 
 	// TODO: add support for mirror registry
@@ -81,10 +81,10 @@ func (i *IBIPrepare) Run() error {
 
 	status, err := workload.PullImages(imageList, i.pullSecretFile)
 	if err != nil {
-		return fmt.Errorf("failed to pull images from imageList: %w", err)
+		return err
 	}
 	if err := workload.ValidatePrecache(status, false); err != nil {
-		return fmt.Errorf("failed to validate precache: %w", err)
+		return err
 	}
 	return nil
 }

@@ -104,11 +104,8 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 
 func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context) (string, error) {
 	r.Log.Info("Fetching pull-secret")
-	sd, err := utils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
-	if err != nil {
-		return "", fmt.Errorf("failed to get pull-secret: %w", err)
-	}
-	return sd, nil
+	return utils.GetSecretData(
+		ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
 }
 
 func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDir string) error {
@@ -116,7 +113,7 @@ func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDi
 
 	proxy := v1.Proxy{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, &proxy); err != nil {
-		return fmt.Errorf("failed to get proxy: %w", err)
+		return err
 	}
 
 	p := v1.Proxy{
@@ -133,17 +130,13 @@ func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDi
 
 	filePath := filepath.Join(manifestsDir, proxyFileName)
 	r.Log.Info("Writing proxy to file", "path", filePath)
-	err = utils.MarshalToFile(p, filePath)
-	if err != nil {
-		return fmt.Errorf("filed to write proxy to file to path %s :%w", filePath, err)
-	}
-	return nil
+	return utils.MarshalToFile(p, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchSSHPublicKey() (string, error) {
 	sshKey, err := os.ReadFile(filepath.Join(hostPath, sshKeyFile))
 	if err != nil {
-		return "", fmt.Errorf("failed to read sshKey: %w", err)
+		return "", err
 	}
 	return string(sshKey), err
 }
@@ -200,7 +193,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	clusterInfo, err := utils.GetClusterInfo(ctx, r.Client)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster info: %w", err)
+		return err
 	}
 
 	seedReconfigurationKubeconfigRetention, err := utils.SeedReconfigurationKubeconfigRetentionFromCluster(ctx, r.Client)
@@ -237,18 +230,14 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
 	r.Log.Info("Writing ClusterInfo to file", "path", filePath)
-	if err := utils.MarshalToFile(seedReconfiguration, filePath); err != nil {
-		return fmt.Errorf("failed to write cluster info to %s: %w", filePath, err)
-	}
-
-	return nil
+	return utils.MarshalToFile(seedReconfiguration, filePath)
 }
 
 func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir string) error {
 	r.Log.Info("Fetching IDMS")
 	idms, err := r.getIDMSs(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to fetch IDMS")
+		return err
 	}
 
 	if len(idms.Items) < 1 {
@@ -258,11 +247,7 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 
 	filePath := filepath.Join(manifestsDir, idmsFileName)
 	r.Log.Info("Writing IDMS to file", "path", filePath)
-	if err := utils.MarshalToFile(idms, filePath); err != nil {
-		return fmt.Errorf("failed to write IDMS to file %s: %w", filePath, err)
-	}
-
-	return nil
+	return utils.MarshalToFile(idms, filePath)
 }
 
 // configDirs creates and returns the directory for the given cluster configuration.
@@ -270,7 +255,7 @@ func (r *UpgradeClusterConfigGather) configDir(ostreeVarDir string) (string, err
 	filesDir := filepath.Join(ostreeVarDir, common.OptOpenshift, common.ClusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
 	if err := os.MkdirAll(filepath.Join(filesDir, manifestDir), 0o700); err != nil {
-		return "", fmt.Errorf("failed to create cluster configuration folder and subfolder in %s: %w", manifestDir, err)
+		return "", err
 	}
 	return filesDir, nil
 }
@@ -279,7 +264,7 @@ func (r *UpgradeClusterConfigGather) configDir(ostreeVarDir string) (string, err
 func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav1.TypeMeta, error) {
 	gvks, unversioned, err := r.Scheme.ObjectKinds(o)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get objectKinds: %w", err)
+		return nil, err
 	}
 	if unversioned || len(gvks) == 0 {
 		return nil, fmt.Errorf("unable to find API version for object")
@@ -304,7 +289,7 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 	idmsList := v1.ImageDigestMirrorSetList{}
 	currentIdms := v1.ImageDigestMirrorSetList{}
 	if err := r.Client.List(ctx, &currentIdms); err != nil {
-		return v1.ImageDigestMirrorSetList{}, fmt.Errorf("failed to list ImageDigestMirrorSet: %w", err)
+		return v1.ImageDigestMirrorSetList{}, err
 	}
 
 	for _, idms := range currentIdms.Items {
@@ -337,7 +322,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	iscpsList := &operatorv1alpha1.ImageContentSourcePolicyList{}
 	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
 	if err := r.Client.List(ctx, currentIcps); err != nil {
-		return fmt.Errorf("failed list ImageContentSourcePolicy: %w", err)
+		return err
 	}
 
 	if len(currentIcps.Items) < 1 {

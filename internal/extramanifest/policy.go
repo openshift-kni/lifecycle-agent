@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,7 +83,8 @@ func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]
 		var pol policyv1.ConfigurationPolicy
 		err := json.Unmarshal(ob.DeepCopy().Raw, &pol)
 		if err != nil {
-			return uobjects, fmt.Errorf("failed to unmarshal ConfigurationPolicy: %w", err)
+			log.Print(err)
+			return uobjects, err
 		}
 		for _, ot := range pol.Spec.ObjectTemplates {
 			if !strings.EqualFold(string(ot.ComplianceType), string(policyv1.MustHave)) {
@@ -92,7 +94,7 @@ func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]
 			var object unstructured.Unstructured
 			err = object.UnmarshalJSON(ot.ObjectDefinition.DeepCopy().Raw)
 			if err != nil {
-				return uobjects, fmt.Errorf("failed to unmarshal ObjectTemplate: %w", err)
+				return uobjects, err
 			}
 
 			if len(objectLabels) > 0 {
