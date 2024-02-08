@@ -18,7 +18,6 @@ package clusterconfig
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -30,7 +29,7 @@ func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeD
 	r.Log.Info("Fetching node lvm files")
 	lvmConfigPath := filepath.Join(ostreeDir, common.OptOpenshift, common.LvmConfigDir)
 	if err := os.MkdirAll(lvmConfigPath, 0o700); err != nil {
-		return fmt.Errorf("failed to make dir in %s: %w", lvmConfigPath, err)
+		return err
 	}
 
 	r.Log.Info("Copying lvm devices file", "file", common.LvmDevicesPath, "to", lvmConfigPath)
@@ -42,7 +41,7 @@ func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeD
 			r.Log.Info("lvm devices file does not exist")
 			return nil
 		}
-		return fmt.Errorf("failed to lvm devices file: %w", err)
+		return err
 	}
 	r.Log.Info("Done fetching node lvm files")
 	return nil

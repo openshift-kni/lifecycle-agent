@@ -1,8 +1,6 @@
 package seedclusterinfo
 
 import (
-	"fmt"
-
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -78,8 +76,5 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string
 func ReadSeedClusterInfoFromFile(path string) (*SeedClusterInfo, error) {
 	data := &SeedClusterInfo{}
 	err := utils.ReadYamlOrJSONFile(path, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create seed cluster info from file %w", err)
-	}
-	return data, nil
+	return data, err
 }

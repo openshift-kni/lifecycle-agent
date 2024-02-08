@@ -24,7 +24,6 @@ linters:
     - unused
     - errorlint
     - loggercheck
-    - wrapcheck
 linters-settings:
   revive:
     rules:
@@ -144,16 +143,3 @@ linters-settings:
         deny:
           - pkg: "github.com/pkg/errors"
             desc: Should be replaced by standard lib errors package
-  wrapcheck:
-    ignoreSigs:
-      # defaults
-      - .Errorf(
-      - errors.New(
-      - errors.Unwrap(
-      - .Wrap(
-      - .Wrapf(
-      - .WithMessage(
-      - .WithMessagef(
-      - .WithStack(
-      # from kyaml's errors package
-      - .WrapPrefixf(

@@ -82,18 +82,10 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	// WARNING: the pod may not know if we are boot loop (for now)
 	if origStaterootBooted {
 		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
-		prePivot, err := r.UpgradeHandler.PrePivot(ctx, ibu)
-		if err != nil {
-			return prePivot, fmt.Errorf("failed to run pre pivots without errors: %w", err)
-		}
-		return prePivot, nil
+		return r.UpgradeHandler.PrePivot(ctx, ibu)
 	} else {
 		r.Log.Info("Pivot successful, starting post pivot steps")
-		postPivot, err := r.UpgradeHandler.PostPivot(ctx, ibu)
-		if err != nil {
-			return postPivot, fmt.Errorf("failed to run post pivot without errors: %w", err)
-		}
-		return postPivot, nil
+		return r.UpgradeHandler.PostPivot(ctx, ibu)
 	}
 }
 

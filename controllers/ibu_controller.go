@@ -412,7 +412,7 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 				utils.SetPrepStatusFailed(ibu, err.Error())
 				return false, nil
 			}
-			return false, fmt.Errorf("failed to validate oadp configMap: %w", err)
+			return false, err
 		}
 
 		err = r.BackupRestore.CheckOadpOperatorAvailability(ctx)
@@ -421,7 +421,7 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 				utils.SetPrepStatusFailed(ibu, err.Error())
 				return false, nil
 			}
-			return false, fmt.Errorf("failed to check oadp operator availability: %w", err)
+			return false, err
 		}
 	}
 	return true, nil
@@ -431,7 +431,6 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("ImageBasedUpgrade")
 
-	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lcav1alpha1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
@@ -448,7 +447,7 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				if de.Object.GetName() == utils.IBUName {
 					filePath := common.PathOutsideChroot(utils.IBUFilePath)
 					if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-						return lcautils.MarshalToFile(de.Object, filePath) //nolint:wrapcheck
+						return lcautils.MarshalToFile(de.Object, filePath)
 					}); err != nil {
 						fmt.Printf("Failed to save deleted IBU: %v", err)
 					}

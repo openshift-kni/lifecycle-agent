@@ -96,19 +96,16 @@ func HealthChecks(c client.Reader, l logr.Logger) error {
 			finalErrs = errors.Join(finalErrs, err)
 		}
 	}
-	if finalErrs != nil {
-		return fmt.Errorf("one or more health checks failed: %w", finalErrs)
-	}
 
 	l.Info("Health checks done")
-	return nil
+	return finalErrs
 }
 
 func clusterServiceVersionReady(c client.Reader, l logr.Logger) error {
 	l.Info("Waiting for all ClusterServiceVersion (csv) to be ready")
 	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isClusterServiceVersionReady(c, l))
 	if err != nil {
-		return fmt.Errorf("failed to wait for all ClusterServiceVersion (csv) to be ready: %w", err)
+		return err
 	}
 
 	return nil
@@ -143,7 +140,7 @@ func clusterVersionReady(c client.Reader, l logr.Logger) error {
 	l.Info("Waiting for ClusterVersion to be ready")
 	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isClusterVersionReady(c, l))
 	if err != nil {
-		return fmt.Errorf("failed to wait for ClusterVersion to be ready: %w", err)
+		return err
 	}
 
 	return nil
@@ -175,7 +172,7 @@ func machineConfigPoolReady(c client.Reader, l logr.Logger) error {
 	l.Info("Waiting for MachineConfigPool (mcp) to be ready")
 	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isMachineConfigPoolReady(c, l))
 	if err != nil {
-		return fmt.Errorf("failed to wait for MachineConfigPool (mcp) to be ready: %w", err)
+		return err
 	}
 
 	return nil
@@ -206,7 +203,7 @@ func clusterOperatorsReady(c client.Reader, l logr.Logger) error {
 	l.Info("Waiting for all ClusterOperator (co) to be ready")
 	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, areClusterOperatorsReady(c, l))
 	if err != nil {
-		return fmt.Errorf("failed to wait for all ClusterOperator (co) to be ready: %w", err)
+		return err
 	}
 
 	return nil
@@ -257,7 +254,7 @@ func nodesReady(c client.Reader, l logr.Logger) error {
 	l.Info("Waiting for Node to be ready")
 	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isNodeReady(c, l))
 	if err != nil {
-		return fmt.Errorf("failed to watit for Node to be ready: %w", err)
+		return err
 	}
 
 	return nil

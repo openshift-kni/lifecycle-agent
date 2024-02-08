@@ -149,7 +149,7 @@ func cleanupIBUFiles() error {
 func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 	status, err := r.RPMOstreeClient.QueryStatus()
 	if err != nil {
-		return fmt.Errorf("failed to query status with rpmostree: %w", err)
+		return err
 	}
 
 	bootedStateroot := ""
@@ -202,7 +202,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string) error {
 	status, err := r.RPMOstreeClient.QueryStatus()
 	if err != nil {
-		return fmt.Errorf("failed to query status with rpmostree during stateroot cleanup: %w", err)
+		return err
 	}
 
 	// since undeploy shifts the order, undeploy in the reverse order

@@ -73,7 +73,7 @@ func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content [
 			h.Log.Error(nil, errMsg)
 			return nil, NewBRNotFoundError(errMsg)
 		}
-		return nil, fmt.Errorf("failed to get oadp configMaps : %w", err)
+		return nil, err
 	}
 
 	// extract backup CRs from configmaps
@@ -256,7 +256,7 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 		return fmt.Errorf("failed to apply backup labels: %w", err)
 	}
 	if err := h.Create(ctx, backup); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
+		return err
 	}
 
 	h.Log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
@@ -338,7 +338,7 @@ func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps 
 
 				backup := velerov1.Backup{}
 				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &backup); err != nil {
-					return nil, fmt.Errorf("failed to convert to backup CR %s from unstructured to typed: %w", backup.GetName(), err)
+					return nil, err
 				}
 				backups = append(backups, &backup)
 			}
@@ -360,7 +360,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 			// If the CRD is not discovered, it means that OADP is not installed
 			return nil
 		}
-		return fmt.Errorf("failed to list oadp: %w", err)
+		return err
 	}
 	if len(dpaList.Items) == 0 {
 		return nil
@@ -372,9 +372,8 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 	}
 
 	// Create the directory for DPA
-	dpaDir := filepath.Join(toDir, oadpDpaPath)
-	if err := os.MkdirAll(dpaDir, 0o700); err != nil {
-		return fmt.Errorf("failed to make dir for DPA in %s: %w", dpaDir, err)
+	if err := os.MkdirAll(filepath.Join(toDir, oadpDpaPath), 0o700); err != nil {
+		return err
 	}
 
 	var secrets []string
@@ -385,7 +384,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 
 		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+yamlExt)
 		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil {
-			return fmt.Errorf("failed to marshal DPA yaml to %s: %w", filePath, err)
+			return err
 		}
 		h.Log.Info("Exported DataProtectionApplication CR to file", "path", filePath)
 
@@ -416,7 +415,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 	}
 	// Create the directory for secrets
 	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretPath), 0o700); err != nil {
-		return fmt.Errorf("failed to make oadp secret path in %s: %w", oadpDpaPath, err)
+		return err
 	}
 
 	// Write secrets
@@ -426,7 +425,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 			Name:      secretName,
 			Namespace: oadpNamespace,
 		}, storageSecret); err != nil {
-			return fmt.Errorf("failed to get storageSecret: %w", err)
+			return err
 		}
 
 		storageSecret.SetUID("")
@@ -434,7 +433,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 
 		filePath := filepath.Join(toDir, oadpSecretPath, secretName+yamlExt)
 		if err := utils.MarshalToYamlFile(storageSecret, filePath); err != nil {
-			return fmt.Errorf("failed to marshal oadp secret %s: %w", filePath, err)
+			return err
 		}
 		h.Log.Info("Exported secret to file", "path", filePath)
 	}
@@ -446,17 +445,17 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, configMaps)
 	if err != nil {
-		return fmt.Errorf("failed to get configMaps: %w", err)
+		return err
 	}
 
 	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
 	if err != nil {
-		return fmt.Errorf("failed to get restore CR from configmaps: %w", err)
+		return err
 	}
 
 	sortedRestores, err := sortByApplyWaveRestoreCrs(restores)
 	if err != nil {
-		return fmt.Errorf("failed to sort restore CRs: %w", err)
+		return err
 	}
 
 	for i, restoreGroup := range sortedRestores {
@@ -464,14 +463,14 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		group := filepath.Join(toDir, OadpRestorePath, "restore"+strconv.Itoa(i+1))
 		// If the directory already exists, it does nothing
 		if err := os.MkdirAll(group, 0o700); err != nil {
-			return fmt.Errorf("failed make dir in %s: %w", group, err)
+			return err
 		}
 
 		for j, restore := range restoreGroup {
 			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + yamlExt
 			filePath := filepath.Join(group, restoreFileName)
 			if err := utils.MarshalToYamlFile(restore, filePath); err != nil {
-				return fmt.Errorf("failed marshal file %s: %w", filePath, err)
+				return err
 			}
 			h.Log.Info("Exported restore CR to file", "path", filePath)
 		}
@@ -499,7 +498,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 			h.Log.Info("Backup CR is not installed, nothing to cleanup")
 			return true, nil
 		}
-		return false, fmt.Errorf("failed to list Backup: %w", err)
+		return false, err
 	}
 
 	// Create deleteBackupRequest CR to delete the backup in the object storage
@@ -515,7 +514,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		}
 
 		if err := h.Create(ctx, deleteBackupRequest); err != nil {
-			return false, fmt.Errorf("could not apply deleltebackup request: %w", err)
+			return false, err
 		}
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
 	}
@@ -542,7 +541,7 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 				}, &velerov1.Backup{})
 				if err != nil {
 					if !k8serrors.IsNotFound(err) {
-						return false, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
+						return false, err
 					}
 				} else {
 					// Backup still exists
@@ -563,7 +562,8 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 			h.Log.Error(err, "Timeout waiting for backups to be deleted")
 			return false, nil
 		}
-		return false, fmt.Errorf("api call errors when tring to ensure backup deletion: %w", err)
+		// API call errors
+		return false, err
 	}
 	return true, nil
 }
