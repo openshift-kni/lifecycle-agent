@@ -16,6 +16,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -130,8 +131,6 @@ func TestSetDnsMasqConfiguration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
 			pp := NewPostPivot(nil, log, mockOps, "", "", "")
-			mockOps.EXPECT().SystemctlAction("restart", "NetworkManager.service").Return("", nil)
-			mockOps.EXPECT().SystemctlAction("restart", "dnsmasq.service").Return("", nil)
 			confFile := path.Join(tmpDir, "override")
 			err := pp.setDnsMasqConfiguration(tc.seedReconfiguration, confFile)
 			if !tc.expectedError && err != nil {
@@ -277,7 +276,6 @@ func TestCreatePullSecretFile(t *testing.T) {
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-
 			if tc.pullSecret != "" {
 				secret := &corev1.Secret{}
 				err = utils.ReadYamlOrJSONFile(pullSecretManifestFile, secret)
@@ -299,7 +297,170 @@ func TestCreatePullSecretFile(t *testing.T) {
 			} else if _, err := os.Stat(pullSecretFile); err == nil {
 				t.Errorf("expected no pull secret file to be created")
 			}
+		})
+	}
+}
 
+func TestSetHostname(t *testing.T) {
+	var (
+		mockController = gomock.NewController(t)
+		mockOps        = ops.NewMockOps(mockController)
+	)
+	defer func() {
+		mockController.Finish()
+	}()
+
+	testcases := []struct {
+		name     string
+		hostname string
+	}{
+		{
+			name:     "Happy flow",
+			hostname: "test",
+		},
+	}
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, mockOps, "", "", "")
+			err := pp.setHostname(tc.hostname, path.Join(tmpDir+"hostname"))
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			data, err := os.ReadFile(path.Join(tmpDir + "hostname"))
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			assert.Equal(t, "test", string(data))
+		})
+	}
+}
+
+func TestWaifForConfiguration(t *testing.T) {
+	var deviceName = "testDevice"
+	testcases := []struct {
+		name                      string
+		configurationFolderExists bool
+		expectedError             bool
+		listBlockDevicesSucceeds  bool
+		mountSucceeds             bool
+	}{
+		{
+			name:                      "Configuration folder exists",
+			configurationFolderExists: true,
+			expectedError:             false,
+		},
+		{
+			name:                      "Block device with label was added",
+			configurationFolderExists: false,
+			listBlockDevicesSucceeds:  true,
+			mountSucceeds:             true,
+			expectedError:             false,
+		},
+		{
+			name:                      "Failed to list block devices",
+			configurationFolderExists: false,
+			listBlockDevicesSucceeds:  false,
+			expectedError:             true,
+		},
+		{
+			name:                      "Failed to mount block device and it will exit wait function",
+			configurationFolderExists: false,
+			listBlockDevicesSucceeds:  true,
+			mountSucceeds:             false,
+			expectedError:             true,
+		},
+	}
+
+	for _, tc := range testcases {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		log := &logrus.Logger{}
+		pp := NewPostPivot(nil, log, mockOps, "", "", "")
+		ctx, cancel := context.WithCancel(context.TODO())
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			configFolder := path.Join(tmpDir, "config")
+			if tc.configurationFolderExists {
+				if err := os.MkdirAll(configFolder, 0o700); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+			if tc.listBlockDevicesSucceeds {
+				mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: deviceName, Label: blockDeviceLabel}}, nil).Times(1)
+				if tc.mountSucceeds {
+					mockOps.EXPECT().Mount(deviceName, gomock.Any()).Return(nil).Times(1)
+					mockOps.EXPECT().Umount(deviceName).Return(nil).Times(1)
+				} else {
+					mockOps.EXPECT().Mount(deviceName, gomock.Any()).Return(fmt.Errorf("dummy")).Times(1)
+				}
+			} else if !tc.configurationFolderExists {
+				mockOps.EXPECT().ListBlockDevices().Return(nil, fmt.Errorf("dummy")).Do(cancel).Times(1)
+			}
+
+			err := pp.waifForConfiguration(ctx, configFolder, configFolder)
+			assert.Equal(t, tc.expectedError, err != nil)
+		})
+	}
+}
+
+func TestNetworkConfiguration(t *testing.T) {
+	seedReconfiguration := &clusterconfig_api.SeedReconfiguration{
+		BaseDomain:  "new.com",
+		ClusterName: "new_name",
+		NodeIP:      "192.167.127.10",
+	}
+
+	testcases := []struct {
+		name                  string
+		expectedError         bool
+		restartNMSuccess      bool
+		restartDNSMASQSuccess bool
+	}{
+		{
+			name:                  "Happy flow",
+			restartNMSuccess:      true,
+			restartDNSMASQSuccess: true,
+			expectedError:         false,
+		},
+		{
+			name:                  "Restart nm failed",
+			restartNMSuccess:      false,
+			restartDNSMASQSuccess: true,
+			expectedError:         true,
+		},
+		{
+			name:                  "Restart dnsmasq failed",
+			restartNMSuccess:      true,
+			restartDNSMASQSuccess: false,
+			expectedError:         true,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
+			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
+			hostnameFile = path.Join(tmpDir, "hostname")
+			dnsmasqOverrides = path.Join(tmpDir, "dnsmasqoverrides")
+
+			if tc.restartNMSuccess {
+				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(1)
+				if tc.restartDNSMASQSuccess {
+					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", nil).Times(1)
+				} else {
+					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", fmt.Errorf("dummy")).Times(1)
+				}
+			} else {
+				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", fmt.Errorf("dummy")).Times(1)
+			}
+
+			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
+			assert.Equal(t, tc.expectedError, err != nil, err)
 		})
 	}
 }

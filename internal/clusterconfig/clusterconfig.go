@@ -44,8 +44,6 @@ const (
 	caBundleCMName   = "user-ca-bundle"
 	caBundleFileName = caBundleCMName + ".json"
 
-	networkDir = "/opt/openshift/network-configuration"
-
 	// ssh authorized keys file created by mco from ssh machine configs
 	sshKeyFile = "/home/core/.ssh/authorized_keys.d/ignition"
 )
@@ -53,7 +51,7 @@ const (
 var (
 	hostPath                = common.Host
 	listOfNetworkFilesPaths = []string{
-		"/etc/NetworkManager/system-connections",
+		common.NMConnectionFolder,
 	}
 )
 
@@ -399,7 +397,7 @@ func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifest
 // gather network files and copy them
 func (r *UpgradeClusterConfigGather) fetchNetworkConfig(ostreeDir string) error {
 	r.Log.Info("Fetching node network files")
-	dir := filepath.Join(ostreeDir, networkDir)
+	dir := filepath.Join(ostreeDir, filepath.Join(common.OptOpenshift, common.NetworkDir))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create network folder %s, err %w", dir, err)
 	}

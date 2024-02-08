@@ -80,6 +80,9 @@ const (
 	PullSecretName           = "pull-secret"
 	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}"
 	OpenshiftConfigNamespace = "openshift-config"
+
+	NMConnectionFolder = "/etc/NetworkManager/system-connections"
+	NetworkDir         = "network-configuration"
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
