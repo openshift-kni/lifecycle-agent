@@ -95,6 +95,7 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
+	config.KubeadminPasswordHash = "$2a$10$seed-placeholder-password-hash"
 	return utils.MarshalToFile(config, path)
 }
 
