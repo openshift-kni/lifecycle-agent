@@ -337,7 +337,7 @@ func TestSetHostname(t *testing.T) {
 	}
 }
 
-func TestWaifForConfiguration(t *testing.T) {
+func TestWaitForConfiguration(t *testing.T) {
 	var deviceName = "testDevice"
 	testcases := []struct {
 		name                      string
@@ -399,7 +399,7 @@ func TestWaifForConfiguration(t *testing.T) {
 				mockOps.EXPECT().ListBlockDevices().Return(nil, fmt.Errorf("dummy")).Do(cancel).Times(1)
 			}
 
-			err := pp.waifForConfiguration(ctx, configFolder, configFolder)
+			err := pp.waitForConfiguration(ctx, configFolder, configFolder)
 			assert.Equal(t, tc.expectedError, err != nil)
 		})
 	}

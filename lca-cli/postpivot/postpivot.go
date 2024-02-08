@@ -21,6 +21,7 @@ import (
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/samber/lo"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	cp "github.com/otiai10/copy"
@@ -70,7 +71,9 @@ const (
 	pullSecretFileName   = "pull-secret.json"
 	seedPullSecretSuffix = "_seed"
 
-	blockDeviceLabel       = "relocation-config"
+	blockDeviceLabel = "cluster-config"
+	// TODO: change after all the components will move to blockDeviceLabel
+	OldblockDeviceLabel    = "relocation-config"
 	blockDeviceMountFolder = "/mnt/config"
 
 	nmService      = "NetworkManager.service"
@@ -79,7 +82,7 @@ const (
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
-	if err := p.waifForConfiguration(ctx, filepath.Join(common.OptOpenshift, common.ClusterConfigDir), blockDeviceMountFolder); err != nil {
+	if err := p.waitForConfiguration(ctx, filepath.Join(common.OptOpenshift, common.ClusterConfigDir), blockDeviceMountFolder); err != nil {
 		return err
 	}
 
@@ -602,9 +605,9 @@ func (p *PostPivot) createPullSecretManifest(pullSecret, pullSecretManifest stri
 	return nil
 }
 
-// waifForConfiguration waits till configuration folder exists or till device with label "relocation-config" is added.
+// waitForConfiguration waits till configuration folder exists or till device with label "relocation-config" is added.
 // in case device was provided we are mounting it and copying files to configFolder
-func (p *PostPivot) waifForConfiguration(ctx context.Context, configFolder, blockDeviceMountFolder string) error {
+func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, blockDeviceMountFolder string) error {
 	err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 		p.log.Infof("waiting for block device with label %s or for configuration folder %s", blockDeviceLabel, configFolder)
 		if _, err := os.Stat(configFolder); err == nil {
@@ -616,7 +619,8 @@ func (p *PostPivot) waifForConfiguration(ctx context.Context, configFolder, bloc
 			return false, nil
 		}
 		for _, bd := range blockDevices {
-			if bd.Label == blockDeviceLabel {
+			// TODO: change after all the components will move to blockDeviceLabel
+			if lo.Contains([]string{blockDeviceLabel, OldblockDeviceLabel}, bd.Label) {
 				// in case of error while mounting device we exit wait and return the error
 				if err := p.setupConfigurationFolder(bd.Name, blockDeviceMountFolder, filepath.Dir(configFolder)); err != nil {
 					return true, err
