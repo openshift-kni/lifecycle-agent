@@ -32,8 +32,7 @@ if [ ! -f "${golangci_lint}" ]; then
     get_tool
 else
     current_ver=$("${golangci_lint}" version)
-    pattern="golangci-lint has version ${VERSION} built from"
-    if ! [[ "${current_ver}" =~ ${pattern} ]]; then
+    if ! [[ "${current_ver}" =~ ${VERSION} ]]; then
         get_tool
     fi
 fi

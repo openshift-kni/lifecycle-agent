@@ -65,7 +65,7 @@ func (h *BRHandler) StartOrTrackRestore(ctx context.Context, restores []*velerov
 			// Restore CR has not been created yet
 			if !k8serrors.IsNotFound(err) {
 				// API error
-				return rt, err
+				return rt, fmt.Errorf("failed to get restore: %w", err)
 			}
 
 			// We expect the backup to be auto-created by velero after
@@ -82,7 +82,7 @@ func (h *BRHandler) StartOrTrackRestore(ctx context.Context, restores []*velerov
 				rt.MissingBackups = append(rt.MissingBackups, restore.Spec.BackupName)
 			} else {
 				if err := h.Create(ctx, restore); err != nil {
-					return rt, err
+					return rt, fmt.Errorf("failed to create restore: %w", err)
 				}
 				h.Log.Info("Restore created", "name", restore.Name, "namespace", restore.Namespace)
 				rt.ProgressingRestores = append(rt.ProgressingRestores, restore.Name)
@@ -151,12 +151,12 @@ func (h *BRHandler) extractRestoreFromConfigmaps(ctx context.Context, configmaps
 
 				err = h.createObjectWithDryRun(ctx, &resource, cm.Name)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to create resource obj with dry-run: %w", err)
 				}
 
 				restore := velerov1.Restore{}
 				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &restore); err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to convert to type restore from unstructure: %w", err)
 				}
 				restores = append(restores, &restore)
 			}
@@ -213,12 +213,13 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 	var sortedRestores [][]*velerov1.Restore
 
 	// The returned list of entries are sorted by name alphabetically
-	restoreSubDirs, err := os.ReadDir(filepath.Join(hostPath, OadpRestorePath))
+	oP := filepath.Join(hostPath, OadpRestorePath)
+	restoreSubDirs, err := os.ReadDir(oP)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to read oadp restore subdirs in %s: %w", oP, err)
 	}
 
 	for _, restoreSubDir := range restoreSubDirs {
@@ -233,7 +234,7 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 		restoreDirPath := filepath.Join(OadpRestorePath, restoreSubDir.Name())
 		restoreYamls, err := os.ReadDir(filepath.Join(hostPath, restoreDirPath))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed get restore yamls in %s: %w", restoreYamls, err)
 		}
 
 		var restores []*velerov1.Restore
@@ -249,7 +250,7 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 			restore := &velerov1.Restore{}
 			err := utils.ReadYamlOrJSONFile(restoreFilePath, restore)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to read restore file in %s: %w", restoreFilePath, err)
 			}
 			restores = append(restores, restore)
 		}
@@ -278,7 +279,7 @@ func (h *BRHandler) restoreSecrets(ctx context.Context) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("failed to read secret dir in %s: %w", secretYamlDir, err)
 	}
 
 	h.Log.Info("Recovering OADP secret")
@@ -298,7 +299,7 @@ func (h *BRHandler) restoreSecrets(ctx context.Context) error {
 		secret := &corev1.Secret{}
 		err := utils.ReadYamlOrJSONFile(secretYamlPath, secret)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read restore secret in %s: %w", secretYamlPath, err)
 		}
 
 		h.Log.Info("Creating secret from file", "path", secretYamlPath)
@@ -309,19 +310,19 @@ func (h *BRHandler) restoreSecrets(ctx context.Context) error {
 		}, existingSecret)
 		if err != nil {
 			if !k8serrors.IsNotFound(err) {
-				return err
+				return fmt.Errorf("failed to get secret: %w", err)
 			}
 			// Create the secret if it does not exist
 			if err := h.Create(ctx, secret); err != nil {
 				if !k8serrors.IsAlreadyExists(err) {
-					return err
+					return fmt.Errorf("failed to create secret: %w", err)
 				}
 			}
 			h.Log.Info("Secret restored", "name", secret.GetName(), "namespace", secret.GetNamespace())
 		} else {
 			secret.SetResourceVersion(existingSecret.GetResourceVersion())
 			if err := h.Update(ctx, secret); err != nil {
-				return err
+				return fmt.Errorf("failed to update secret: %w", err)
 			}
 			h.Log.Info("Secret updated", "name", secret.GetName(), "namespace", secret.GetNamespace())
 		}
@@ -329,7 +330,7 @@ func (h *BRHandler) restoreSecrets(ctx context.Context) error {
 
 	// Cleanup the oadp secret path
 	if err := os.RemoveAll(secretYamlDir); err != nil {
-		return err
+		return fmt.Errorf("failed to clean oadp secret in %s: %w", secretYamlDir, err)
 	}
 	h.Log.Info("OADP secret path removed", "path", secretYamlDir)
 	return nil
@@ -344,7 +345,7 @@ func (h *BRHandler) restoreDataProtectionApplication(ctx context.Context) error 
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("failed to read DPA yaml in %s: %w", dpaYamls, err)
 	}
 
 	h.Log.Info("Recovering OADP DataProtectionApplication")
@@ -365,7 +366,7 @@ func (h *BRHandler) restoreDataProtectionApplication(ctx context.Context) error 
 		dpa.SetGroupVersionKind(dpaGvk)
 		err := utils.ReadYamlOrJSONFile(dpaYamlPath, dpa)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create DPA unstructure using %s: %w", dpaYamlPath, err)
 		}
 		// Although Create() and Update() will not restore the object status,
 		// remove the status field from the DPA CR just in case
@@ -380,19 +381,19 @@ func (h *BRHandler) restoreDataProtectionApplication(ctx context.Context) error 
 		}, existingDpa)
 		if err != nil {
 			if !k8serrors.IsNotFound(err) {
-				return err
+				return fmt.Errorf("could not get DataProtectionApplication: %w", err)
 			}
 			// Create the DPA if it does not exist
 			if err := h.Create(ctx, dpa); err != nil {
 				if !k8serrors.IsAlreadyExists(err) {
-					return err
+					return fmt.Errorf("failed to create DPA: %w", err)
 				}
 			}
 			h.Log.Info("DataProtectionApplication restored", "name", dpa.GetName(), "namespace", dpa.GetNamespace())
 		} else {
 			dpa.SetResourceVersion(existingDpa.GetResourceVersion())
 			if err := h.Update(ctx, dpa); err != nil {
-				return err
+				return fmt.Errorf("failed to update dpa: %w", err)
 			}
 			h.Log.Info("DataProtectionApplication updated", "name", dpa.GetName(), "namespace", dpa.GetNamespace())
 		}
@@ -400,19 +401,19 @@ func (h *BRHandler) restoreDataProtectionApplication(ctx context.Context) error 
 		// Ensure the DPA is reconciled successfully
 		err = h.ensureDPAReconciled(ctx, dpa.GetName(), dpa.GetNamespace())
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to ensure DPA reconcilde successfully: %w", err)
 		}
 	}
 
 	// Ensure the storage backends are created and available
 	// after the restore of DataProtectionApplications
 	if err := h.ensureStorageBackendAvailable(ctx, OadpNs); err != nil {
-		return err
+		return fmt.Errorf("failed to ensure StorageBackend availability: %w", err)
 	}
 
 	// Cleanup the oadp DPA path
 	if err := os.RemoveAll(dpaYamlDir); err != nil {
-		return err
+		return fmt.Errorf("failed remove oadp DPA path %s: %w", dpaYamls, err)
 	}
 	h.Log.Info("OADP DataProtectionApplication path removed", "path", dpaYamlDir)
 	return nil
@@ -491,7 +492,7 @@ func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs 
 			h.Log.Error(err, errMsg)
 			return NewBRStorageBackendUnavailableError(errMsg)
 		}
-		return err
+		return err //nolint:wrapcheck
 	}
 
 	return nil

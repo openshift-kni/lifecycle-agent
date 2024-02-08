@@ -91,12 +91,13 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, extraManifestCMs)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get configMaps to export extraManifest to dir: %w", err)
 	}
 
 	// Create the directory for the extra manifests
-	if err := os.MkdirAll(filepath.Join(toDir, ExtraManifestPath), 0o700); err != nil {
-		return err
+	exMDirPath := filepath.Join(toDir, ExtraManifestPath)
+	if err := os.MkdirAll(exMDirPath, 0o700); err != nil {
+		return fmt.Errorf("failed to create directory for extra manifests in %s: %w", exMDirPath, err)
 	}
 
 	for i, cm := range configmaps {
@@ -110,7 +111,7 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 						// Reach the end of the data, exit the loop
 						break
 					}
-					return err
+					return fmt.Errorf("failed to decode manifest: %w", err)
 				}
 				// In case it contains the UID and ResourceVersion, remove them
 				manifest.SetUID("")
@@ -120,7 +121,7 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 				filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
 				err = utils.MarshalToYamlFile(&manifest, filePath)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to marshal manifest %s to yaml: %w", manifest.GetName(), err)
 				}
 				h.Log.Info("Exported manifest to file", "path", filePath)
 			}
@@ -175,7 +176,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("failed to read extraManifest from dir %s: %w", fromDir, err)
 	}
 
 	h.Log.Info("Applying extra manifests")
@@ -186,7 +187,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 
 	c, mapper, err := common.NewDynamicClientAndRESTMapper()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get NewDynamicClientAndRESTMapper for extraManifests: %w", err)
 	}
 
 	for _, manifestYaml := range manifestYamls {
@@ -198,12 +199,12 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 
 		manifest := &unstructured.Unstructured{}
 		if err := utils.ReadYamlOrJSONFile(manifestYamlPath, manifest); err != nil {
-			return err
+			return fmt.Errorf("failed to read manifest: %w", err)
 		}
 		// Mapping resource GVK to CVR
 		mapping, err := mapper.RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get RESTMapping for %+v-%s: %w", manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version, err)
 		}
 
 		h.Log.Info("Applying manifest from file", "path", manifestYamlPath)
@@ -214,7 +215,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		existingManifest, err = resource.Get(ctx, manifest.GetName(), metav1.GetOptions{})
 		if err != nil {
 			if !k8serrors.IsNotFound(err) {
-				return err
+				return fmt.Errorf("failed to get extramanifest called %s: %w", manifest.GetName(), err)
 			}
 			// Create if it doesn't exist
 			if _, err := resource.Create(ctx, manifest, metav1.CreateOptions{}); err != nil {
@@ -225,7 +226,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 					h.Log.Error(nil, errMsg)
 					return NewEMFailedError(errMsg)
 				}
-				return err
+				return fmt.Errorf("failed to create extramanifest called %s: %w", manifest.GetName(), err)
 			}
 			h.Log.Info("Created manifest", "manifest", manifest.GetName())
 		} else {
@@ -238,7 +239,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 					h.Log.Error(nil, errMsg)
 					return NewEMFailedError(errMsg)
 				}
-				return err
+				return fmt.Errorf("failed to update manifest %s: %w", manifest.GetName(), err)
 			}
 			h.Log.Info("Updated manifest", "manifest", manifest.GetName())
 		}
@@ -246,7 +247,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 
 	// Remove the extra manifests directory
 	if err := os.RemoveAll(fromDir); err != nil {
-		return err
+		return fmt.Errorf("failed to remove manifests from %s: %w", fromDir, err)
 	}
 	h.Log.Info("Extra manifests path removed", "path", fromDir)
 	return nil

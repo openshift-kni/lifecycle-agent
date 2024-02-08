@@ -305,7 +305,7 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("unable to read secret from file for init seedGen in %s: %w", secretFilePath, err)
 	}
 
 	// Strip the ResourceVersion, otherwise the restore fails
@@ -316,7 +316,7 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("unable to read seedGen CR from file for init seedGen in %s: %w", seedgenFilePath, err)
 	}
 
 	// Strip the ResourceVersion, otherwise the restore fails
@@ -325,53 +325,53 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	// Restore Secret CR
 	log.Info("Saved SeedGenerator Secret CR found, restoring ...")
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, secret))
+		return client.IgnoreNotFound(c.Delete(ctx, secret)) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed delete SeedGenerator Secret: %w", err)
 	}
 
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, secret)
+		return c.Create(ctx, secret) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to create SeedGenerator Secret: %w", err)
 	}
 
 	// Restore SeedGenerator CR
 
 	log.Info("Saved SeedGenerator CR found, restoring ...")
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, seedgen))
+		return client.IgnoreNotFound(c.Delete(ctx, seedgen)) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to delete SeedGenerator: %w", err)
 	}
 
 	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, seedgen)
+		return c.Create(ctx, seedgen) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to create seedgen: %w", err)
 	}
 
 	// Put the saved status into the newly create seedgen with the right resource
 	// version which is required for the update call to work
 	seedgen.Status = status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, seedgen)
+		return c.Status().Update(ctx, seedgen) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}
 
 	// Rename files for debugging in case of error
 	os.Remove(seedgenFilePath + bakExt)
 	if err := os.Rename(seedgenFilePath, seedgenFilePath+bakExt); err != nil {
-		return err
+		return fmt.Errorf("failed to rename %s: %w", seedgenFilePath, err)
 	}
 
 	os.Remove(secretFilePath + bakExt)
 	if err := os.Rename(secretFilePath, secretFilePath+bakExt); err != nil {
-		return err
+		return fmt.Errorf("failed to rename %s: %w", secretFilePath, err)
 	}
 
 	// Restore original pull-secret after seed creation.
