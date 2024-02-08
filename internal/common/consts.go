@@ -78,6 +78,7 @@ const (
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 
 	PullSecretName           = "pull-secret"
+	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}"
 	OpenshiftConfigNamespace = "openshift-config"
 )
 

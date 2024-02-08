@@ -374,6 +374,19 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 		return err
 	}
 
+	// Restore original pull-secret after seed creation.
+	// During seed creation, the pull-secret was removed; it needs to be restored back
+	// to allow the cluster operators to fully recover in the seed cluster.
+	log.Info("Restore original pull-secret after seed creation")
+	dockerConfigJSON, err := os.ReadFile(common.PathOutsideChroot(utils.StoredPullSecret))
+	if err != nil {
+		return fmt.Errorf("failed to read original pull-secret from %s file: %w", utils.StoredPullSecret, err)
+	}
+
+	if _, err := lcautils.UpdatePullSecretFromDockerConfig(ctx, c, dockerConfigJSON); err != nil {
+		return fmt.Errorf("failed to restore original pull-secret in seed cluster: %w", err)
+	}
+
 	log.Info("Restore successful and saved SeedGenerator CR removed")
 	return nil
 }
