@@ -339,7 +339,7 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 	}
 
 	for _, catalogSource := range catalogSources.Items {
-		if err := client.Delete(ctx, &catalogSource); err != nil {
+		if err := client.Delete(ctx, &catalogSource); err != nil { //nolint:gosec
 			return fmt.Errorf("failed to delete all catalogueSources %w", err)
 		}
 	}

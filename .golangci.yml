@@ -24,6 +24,7 @@ linters:
     - unused
     - errorlint
     - loggercheck
+    - gosec
 linters-settings:
   revive:
     rules:

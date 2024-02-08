@@ -167,7 +167,7 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for etcd")
 		case <-ticker.C:
-			resp, err := http.Get(healthzEndpoint)
+			resp, err := http.Get(healthzEndpoint) //nolint:gosec
 			if err != nil {
 				o.log.Infof("Waiting for etcd: %s", err)
 				continue

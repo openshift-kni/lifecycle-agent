@@ -338,7 +338,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 			},
 			Spec: icp.Spec,
 		}
-		typeMeta, err := r.typeMetaForObject(&icp)
+		typeMeta, err := r.typeMetaForObject(&icp) //nolint:gosec
 		if err != nil {
 			return err
 		}
