@@ -31,6 +31,8 @@ import (
 )
 
 var osStat = os.Stat
+var osReadDir = os.ReadDir
+var osRemoveAll = os.RemoveAll
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
@@ -172,6 +174,25 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 			failures += 1
 		}
 	}
+
+	// remove stateroots that are not listed in rpm-ostree, e.g failed deployments
+	files, err := osReadDir(getStaterootPath(""))
+	if err != nil {
+		return fmt.Errorf("failed to list stateroots: %w", err)
+	}
+	for _, fileInfo := range files {
+		if fileInfo.IsDir() {
+			if fileInfo.Name() == bootedStateroot {
+				continue
+			}
+			err := osRemoveAll(getStaterootPath(fileInfo.Name()))
+			if err != nil {
+				r.Log.Error(err, "failed to remove undeployed stateroot", "stateroot", fileInfo.Name())
+				failures += 1
+			}
+		}
+	}
+
 	if failures == 0 {
 		return nil
 	}
