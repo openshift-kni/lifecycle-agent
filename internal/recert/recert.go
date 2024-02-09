@@ -26,7 +26,6 @@ type RecertConfig struct {
 	EtcdEndpoint     string `json:"etcd_endpoint,omitempty"`
 	ClusterRename    string `json:"cluster_rename,omitempty"`
 	Hostname         string `json:"hostname,omitempty"`
-	IP               string `json:"ip,omitempty"`
 	// We intentionally don't omitEmpty this field because an empty string here
 	// means "delete the kubeadmin password secret" while a complete omission
 	// of the field means "don't touch the secret". We never want the latter,
@@ -54,10 +53,6 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 
 	if seedReconfig.Hostname != seedClusterInfo.SNOHostname {
 		config.Hostname = seedReconfig.Hostname
-	}
-
-	if seedReconfig.NodeIP != seedClusterInfo.NodeIP {
-		config.IP = seedReconfig.NodeIP
 	}
 
 	config.SummaryFile = SummaryFile
