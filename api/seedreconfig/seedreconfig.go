@@ -4,6 +4,8 @@ type PEM string
 
 const (
 	SeedReconfigurationVersion = 1
+	// BlockDeviceLabel is a configuration volume label to set while providing iso with configuration files
+	BlockDeviceLabel = "cluster-config"
 )
 
 // SeedReconfiguration contains all the information that is required to

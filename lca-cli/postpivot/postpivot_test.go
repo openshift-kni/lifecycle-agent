@@ -388,7 +388,8 @@ func TestWaitForConfiguration(t *testing.T) {
 				}
 			}
 			if tc.listBlockDevicesSucceeds {
-				mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: deviceName, Label: blockDeviceLabel}}, nil).Times(1)
+				mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: deviceName,
+					Label: clusterconfig_api.BlockDeviceLabel}}, nil).Times(1)
 				if tc.mountSucceeds {
 					mockOps.EXPECT().Mount(deviceName, gomock.Any()).Return(nil).Times(1)
 					mockOps.EXPECT().Umount(deviceName).Return(nil).Times(1)
