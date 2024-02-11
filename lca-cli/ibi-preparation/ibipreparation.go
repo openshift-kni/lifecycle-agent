@@ -78,13 +78,5 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 	i.log.Infof("chroot %s successful", common.Host)
-
-	status, err := workload.PullImages(imageList, i.pullSecretFile)
-	if err != nil {
-		return err
-	}
-	if err := workload.ValidatePrecache(status, false); err != nil {
-		return err
-	}
-	return nil
+	return workload.Precache(imageList, i.pullSecretFile, false)
 }
