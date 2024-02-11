@@ -18,6 +18,8 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
+const imageListFile = "var/tmp/imageListFile"
+
 type IBIPrepare struct {
 	log                 *logrus.Logger
 	ops                 ops.Ops
@@ -27,10 +29,13 @@ type IBIPrepare struct {
 	ostreeClient        ostreeclient.IClient
 	seedExpectedVersion string
 	pullSecretFile      string
+	precacheBestEffort  bool
+	precacheDisabled    bool
 }
 
 func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreeclient.IClient,
-	ostreeClient ostreeclient.IClient, seedImage, authFile, pullSecretFile, seedExpectedVersion string) *IBIPrepare {
+	ostreeClient ostreeclient.IClient, seedImage, authFile, pullSecretFile, seedExpectedVersion string,
+	precacheBestEffort, precacheDisabled bool) *IBIPrepare {
 	return &IBIPrepare{
 		log:                 log,
 		ops:                 ops,
@@ -40,13 +45,12 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 		rpmostreeClient:     rpmostreeClient,
 		ostreeClient:        ostreeClient,
 		seedExpectedVersion: seedExpectedVersion,
+		precacheDisabled:    precacheDisabled,
+		precacheBestEffort:  precacheBestEffort,
 	}
 }
 
 func (i *IBIPrepare) Run() error {
-	var imageList []string
-	imageListFile := "var/tmp/imageListFile"
-
 	// Pull seed image
 	i.log.Info("Pulling seed image")
 	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", i.authFile, i.seedImage); err != nil {
@@ -62,6 +66,14 @@ func (i *IBIPrepare) Run() error {
 		return err
 	}
 
+	if i.precacheDisabled {
+		i.log.Info("Precache disabled, skipping it")
+		return nil
+	}
+	return i.precacheFlow(imageListFile)
+}
+
+func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 	// TODO: add support for mirror registry
 	imageList, err := prep.ReadPrecachingList(imageListFile, "", "", false)
 	if err != nil {
@@ -78,5 +90,5 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 	i.log.Infof("chroot %s successful", common.Host)
-	return workload.Precache(imageList, i.pullSecretFile, false)
+	return workload.Precache(imageList, i.pullSecretFile, i.precacheBestEffort)
 }

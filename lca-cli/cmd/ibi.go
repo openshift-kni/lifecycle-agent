@@ -38,6 +38,8 @@ var ibi = &cobra.Command{
 var seedImage string
 var seedVersion string
 var pullSecretFile string
+var precacheBestEffort bool
+var precacheDisabled bool
 
 func init() {
 
@@ -48,7 +50,12 @@ func init() {
 	ibi.Flags().StringVarP(&seedVersion, "seed-version", "", "", "Seed version.")
 	ibi.Flags().StringVarP(&authFile, "authfile", "a", "", "The path to the authentication file of the container registry of seed image.")
 	ibi.Flags().StringVarP(&pullSecretFile, "pullSecretFile", "p", "", "The path to the pull secret file for precache process.")
-
+	ibi.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "pb", false, "Set image precache to best effort mode")
+	ibi.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "pd", false, "Disable precaching, no image precaching will run")
+	ibi.MarkFlagRequired("seed-image")
+	ibi.MarkFlagRequired("seed-version")
+	ibi.MarkFlagRequired("authfile")
+	ibi.MarkFlagRequired("pullSecretFile")
 }
 
 func runIBI() {
@@ -57,7 +64,8 @@ func runIBI() {
 	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
-	ibiRunner := ibipreparation.NewIBIPrepare(log, ops.NewOps(log, hostCommandsExecutor), rpmOstreeClient, ostreeClient, seedImage, authFile, pullSecretFile, seedVersion)
+	ibiRunner := ibipreparation.NewIBIPrepare(log, ops.NewOps(log, hostCommandsExecutor), rpmOstreeClient, ostreeClient,
+		seedImage, authFile, pullSecretFile, seedVersion, precacheBestEffort, precacheDisabled)
 	if err := ibiRunner.Run(); err != nil {
 		log.Fatal(err)
 	}
