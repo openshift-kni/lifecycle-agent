@@ -69,20 +69,15 @@ func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMe
 }
 
 // RenderTemplateFile render template file
-func RenderTemplateFile(srcTemplate string, params any, dest string, perm os.FileMode) error {
-	templateData, err := os.ReadFile(srcTemplate)
-	if err != nil {
-		return fmt.Errorf("error occurred while trying to read %s: %w", srcTemplate, err)
-	}
-
+func RenderTemplateFile(templateData string, params any, dest string, perm os.FileMode) error {
 	tmpl := template.New("template")
-	tmpl = template.Must(tmpl.Parse(string(templateData)))
+	tmpl = template.Must(tmpl.Parse(templateData))
 	var buf bytes.Buffer
-	if err = tmpl.Execute(&buf, params); err != nil {
+	if err := tmpl.Execute(&buf, params); err != nil {
 		return fmt.Errorf("failed to render controller template: %w", err)
 	}
 
-	if err = os.WriteFile(dest, buf.Bytes(), perm); err != nil {
+	if err := os.WriteFile(dest, buf.Bytes(), perm); err != nil {
 		return fmt.Errorf("error occurred while trying to write rendered data to %s: %w", dest, err)
 	}
 	return nil

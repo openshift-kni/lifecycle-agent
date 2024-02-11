@@ -66,25 +66,29 @@ Use "ib-cli [command] --help" for more information about a command.
 To create an installation ISO out of your Single Node OpenShift (SNO) OCI seed image, run the following command from your workstation:
 
 ```shell
--> export LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
--> export AUTH_FILE=/path/to/see-image-pull-secret.json
--> export PS_FILE=/path/to/release-pull-secret.json
--> export SEED_IMAGE=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
--> export IMG_RECERT_TOOL=quay.io/edge-infrastructure/recert:v0
+export LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
+export SEED_IMAGE=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
+export WORKDIR=~/ibi-data/
+mkdir ${WORKDIR}
+# Place the ssh public key, pull secret and the auth file inside the work dir
+export AUTH_FILE=/path/to/seed-image-pull-secret.json
+export PS_FILE=/path/to/release-pull-secret.json
+export SSH_PUBLIC_KEY=~/.ssh/id_rsa.pub
+cp ${SSH_PUBLIC_KEY} ${WORKDIR}/id_rsa.pub
+cp ${AUTH_FILE} ${WORKDIR}/seed-image-pull-secret.json
+cp ${PS_FILE} ${WORKDIR}release-pull-secret.json
+   
 
 -> podman run --privileged --pid=host --rm --net=host \
-    -v /var/run:/var/run \
-    -v ${AUTHFILE}:${AUTHFILE} \
-    -v ${AUTHFILE}:${AUTHFILE} \
-    -v ${AUTHFILE}:${AUTHFILE} \
+    -v ${WORKDIR}:${WORKDIR} \
     --entrypoint ib-cli ${LCA_IMAGE} create-iso create-iso --installation-disk /dev/vda \
                                                            --lca-image ${LCA_IMAGE} \
-                                                           --authfile ${AUTHFILE} \
-                                                           --pullSecretFile ${PS_FILE} \
-                                                           --seed-image ${SEED_IAMGE} \
+                                                           --seed-image ${SEED_IMAGE} \
                                                            --seed-version 4.14.6 \
-                                                           --ssh-public-key-file ~/.ssh/id_rsa.pub \
-                                                           --dir ./data
+                                                           --auth-file ${WORKDIR}/seed-image-pull-secret.json \
+                                                           --pullsecret-file ${WORKDIR}/release-pull-secret.json \
+                                                           --ssh-public-key-file ${WORKDIR}/id_rsa.pub \
+                                                           --dir ${WORKDIR}
 
 ib-cli assists Image Based Install (IBI).
 

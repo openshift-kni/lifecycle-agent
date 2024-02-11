@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
-	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -162,41 +160,37 @@ func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, p
 	// We could apply the template data using the files content (referenced in the butane config as inline)
 	// but that might result unmarshal errors while translating the config
 	// hence we are copying the files to the butaneDataDir to be referenced as local files
-	seedInstallScriptInButane := path.Join(butaneDataDir, "seedInstallScript")
-	if err := r.copyFileToButaneDir(seedInstallScriptFilePath, seedInstallScriptInButane); err != nil {
+	seedInstallScriptInButane := path.Join(butaneFiles, "seedInstallScript")
+	if err := r.copyFileToButaneDir(seedInstallScriptFilePath, path.Join(r.workDir, seedInstallScriptInButane)); err != nil {
 		return err
 	}
-	pullSecretInButane := path.Join(butaneDataDir, "pullSecret")
-	if err := r.copyFileToButaneDir(pullSecretFile, pullSecretInButane); err != nil {
+	pullSecretInButane := path.Join(butaneFiles, "pullSecret")
+	if err := r.copyFileToButaneDir(pullSecretFile, path.Join(r.workDir, pullSecretInButane)); err != nil {
 		return err
 	}
-	backupSecretInButane := path.Join(butaneDataDir, "backupSecret")
-	if err := r.copyFileToButaneDir(authFile, backupSecretInButane); err != nil {
+	backupSecretInButane := path.Join(butaneFiles, "backupSecret")
+	if err := r.copyFileToButaneDir(authFile, path.Join(r.workDir, backupSecretInButane)); err != nil {
 		return err
 	}
 
 	templateData := IgnitionData{SeedImage: seedImage,
 		SeedVersion:       seedVersion,
-		BackupSecret:      removeFirstDirectory(backupSecretInButane),
-		PullSecret:        removeFirstDirectory(pullSecretInButane),
+		BackupSecret:      backupSecretInButane,
+		PullSecret:        pullSecretInButane,
 		SshPublicKey:      string(sshPublicKey),
-		InstallSeedScript: removeFirstDirectory(seedInstallScriptInButane),
+		InstallSeedScript: seedInstallScriptInButane,
 		LCAImage:          lcaImage,
 		InstallationDisk:  installationDisk}
 
-	if err := utils.RenderTemplateFile(ibiButaneTemplateFilePath, templateData, path.Join(r.workDir, butaneConfigFile), 0o644); err != nil {
+	template, err := folder.ReadFile(ibiButaneTemplateFilePath)
+	if err != nil {
+		return fmt.Errorf("error occurred while trying to read %s: %w", ibiButaneTemplateFilePath, err)
+	}
+
+	if err := utils.RenderTemplateFile(string(template), templateData, path.Join(r.workDir, butaneConfigFile), 0o644); err != nil {
 		return err
 	}
 	return nil
-}
-
-func removeFirstDirectory(path string) string {
-	parts := strings.Split(path, string(filepath.Separator))
-	if len(parts) > 1 {
-		// Remove the first element (directory) and join the rest
-		return filepath.Join(parts[1:]...)
-	}
-	return path
 }
 
 func (r *InstallationIso) copyFileToButaneDir(sourceFile, target string) error {
