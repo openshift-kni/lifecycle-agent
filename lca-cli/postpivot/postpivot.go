@@ -71,7 +71,6 @@ const (
 	pullSecretFileName   = "pull-secret.json"
 	seedPullSecretSuffix = "_seed"
 
-	blockDeviceLabel = "cluster-config"
 	// TODO: change after all the components will move to blockDeviceLabel
 	OldblockDeviceLabel    = "relocation-config"
 	blockDeviceMountFolder = "/mnt/config"
@@ -620,7 +619,8 @@ func (p *PostPivot) createPullSecretManifest(pullSecret, pullSecretManifest stri
 // in case device was provided we are mounting it and copying files to configFolder
 func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, blockDeviceMountFolder string) error {
 	err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
-		p.log.Infof("waiting for block device with label %s or for configuration folder %s", blockDeviceLabel, configFolder)
+		p.log.Infof("waiting for block device with label %s or for configuration folder %s",
+			clusterconfig_api.BlockDeviceLabel, configFolder)
 		if _, err := os.Stat(configFolder); err == nil {
 			return true, nil
 		}
@@ -630,8 +630,8 @@ func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, bloc
 			return false, nil
 		}
 		for _, bd := range blockDevices {
-			// TODO: change after all the components will move to blockDeviceLabel
-			if lo.Contains([]string{blockDeviceLabel, OldblockDeviceLabel}, bd.Label) {
+			// TODO: change after all the components will move to clusterconfig_api.BlockDeviceLabel
+			if lo.Contains([]string{clusterconfig_api.BlockDeviceLabel, OldblockDeviceLabel}, bd.Label) {
 				// in case of error while mounting device we exit wait and return the error
 				if err := p.setupConfigurationFolder(bd.Name, blockDeviceMountFolder, filepath.Dir(configFolder)); err != nil {
 					return true, err
