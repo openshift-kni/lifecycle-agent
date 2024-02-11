@@ -107,10 +107,10 @@ func GetAuthFile() (string, error) {
 }
 
 // PullImages pulls a list of images using podman
-func PullImages(precacheSpec []string, authFile string) (progress *precache.Progress, err error) {
+func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 
 	// Initialize progress tracking
-	progress = &precache.Progress{
+	progress := &precache.Progress{
 		Total:   len(precacheSpec),
 		Pulled:  0,
 		Skipped: 0,
@@ -171,7 +171,7 @@ func PullImages(precacheSpec []string, authFile string) (progress *precache.Prog
 	// Store final precache progress report to file
 	progress.Persist(precache.StatusFile)
 
-	return progress, nil
+	return progress
 }
 
 func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
@@ -182,9 +182,23 @@ func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 			log.Info(image)
 		}
 		if bestEffort {
+			log.Info("Failed to precache, running in best-effort mode, skip error")
 			return nil
 		}
 		return fmt.Errorf("failed to pre-cache one or more images")
 	}
+	return nil
+}
+
+func Precache(precacheSpec []string, authFile string, bestEffort bool) error {
+	// Pre-cache images
+	status := PullImages(precacheSpec, authFile)
+	log.Info("Completed executing pre-caching")
+
+	if err := ValidatePrecache(status, bestEffort); err != nil {
+		return fmt.Errorf("failed to pre-cache one or more images")
+	}
+
+	log.Info("Pre-cached images successfully.")
 	return nil
 }

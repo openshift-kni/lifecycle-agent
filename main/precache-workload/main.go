@@ -106,16 +106,7 @@ func main() {
 	if err != nil {
 		terminateOnError(err)
 	}
-	// Pre-cache images
-	status, err := workload.PullImages(precacheSpec, authFile)
-	if err != nil {
-		terminateOnError(fmt.Errorf("encountered error while pre-caching images, error: %w", err))
+	if err := workload.Precache(precacheSpec, authFile, bestEffort); err != nil {
+		terminateOnError(err)
 	}
-	log.Info("Completed executing pre-caching, no errors encountered!")
-
-	if err := workload.ValidatePrecache(status, bestEffort); err != nil {
-		terminateOnError(fmt.Errorf("failed to pre-cache one or more images"))
-	}
-
-	log.Info("Pre-cached images successfully.")
 }
