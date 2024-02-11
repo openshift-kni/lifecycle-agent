@@ -28,15 +28,17 @@ import (
 )
 
 var (
-	seedImage        string
-	seedVersion      string
-	pullSecretFile   string
-	authFile         string
-	sshPublicKeyFile string
-	lcaImage         string
-	rhcosLiveIso     string
-	installationDisk string
-	workDir          string
+	seedImage          string
+	seedVersion        string
+	pullSecretFile     string
+	authFile           string
+	sshPublicKeyFile   string
+	lcaImage           string
+	rhcosLiveIso       string
+	installationDisk   string
+	workDir            string
+	precacheBestEffort bool
+	precacheDisabled   bool
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -49,6 +51,8 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&rhcosLiveIso, "rhcos-live-iso", "r", "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso", "The URL to the rhcos-live-iso for generating the ISO.")
 	cmd.Flags().StringVarP(&installationDisk, "installation-disk", "i", "", "The disk that will be used for the installation.")
 	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")
+	cmd.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "", false, "Set image precache to best effort mode")
+	cmd.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("dir")
 	cmd.MarkFlagRequired("seed-image")
@@ -89,7 +93,8 @@ func createIso() error {
 		return err
 	}
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
-	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso, installationDisk); err != nil {
+	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso,
+		installationDisk, precacheBestEffort, precacheDisabled); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
 		log.Errorf(err.Error())
 		return err

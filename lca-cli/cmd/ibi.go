@@ -35,11 +35,13 @@ var ibi = &cobra.Command{
 	},
 }
 
-var seedImage string
-var seedVersion string
-var pullSecretFile string
-var precacheBestEffort bool
-var precacheDisabled bool
+var (
+	seedImage          string
+	seedVersion        string
+	pullSecretFile     string
+	precacheBestEffort bool
+	precacheDisabled   bool
+)
 
 func init() {
 

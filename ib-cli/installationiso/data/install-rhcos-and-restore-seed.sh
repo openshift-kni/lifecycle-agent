@@ -28,4 +28,13 @@ else
 fi
 mount -o bind /mnt/sysroot/containers /var/lib/containers
 
-podman run --privileged --rm --pid=host --authfile "${authfile}" -v /:/host --entrypoint /usr/local/bin/lca-cli "${lca_image}" ibi --seed-image "${seed_image}" --authfile "${authfile}" --seed-version "${seed_version}" --pullSecretFile "${pull_secret}"
+additional_flags=""
+if [ -n "${PRECACHE_DISABLED}" ]; then
+    additional_flags="${additional_flags} --precache-disabled"
+fi
+
+if [ -n "${PRECACHE_BEST_EFFORT}" ]; then
+    additional_flags="${additional_flags} --precache-best-effort"
+fi
+
+podman run --privileged --rm --pid=host --authfile "${authfile}" -v /:/host --entrypoint /usr/local/bin/lca-cli "${lca_image}" ibi --seed-image "${seed_image}" --authfile "${authfile}" --seed-version "${seed_version}" --pullSecretFile "${pull_secret}" ${additional_flags}
