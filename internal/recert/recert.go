@@ -1,6 +1,7 @@
 package recert
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -96,11 +98,19 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	return nil
 }
 
-func CreateRecertConfigFileForSeedCreation(path string) error {
+func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ForceExpire = true
-	config.KubeadminPasswordHash = "$2a$10$seed-placeholder-password-hash"
+
+	config.KubeadminPasswordHash = ""
+	if withPassword {
+		bytes, err := generateDisposablePasswordHash()
+		if err != nil {
+			return fmt.Errorf("failed to generate password hash: %w", err)
+		}
+		config.KubeadminPasswordHash = string(bytes)
+	}
 
 	if err := utils.MarshalToFile(config, path); err != nil {
 		return fmt.Errorf("failed create recert config file for sed creatation in %s: %w", path, err)
@@ -109,7 +119,25 @@ func CreateRecertConfigFileForSeedCreation(path string) error {
 	return nil
 }
 
-func CreateRecertConfigFileForSeedRestoration(path string) error {
+// generateDisposablePasswordHash generates a random password hash from a ridiculously
+// long length password that is never meant to be known or used by anyone, but
+// only to be used as a placeholder in the seed. It will be replaced or deleted
+// during seed reconfiguration.
+func generateDisposablePasswordHash() ([]byte, error) {
+	bcryptLargestSupportedLength := 72
+	token := make([]byte, bcryptLargestSupportedLength)
+	_, err := rand.Read(token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random bytes for password: %w", err)
+	}
+	bytes, err := bcrypt.GenerateFromPassword(token, bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password hash: %w", err)
+	}
+	return bytes, nil
+}
+
+func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string) error {
 	config := createBasicEmptyRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
 	config.ExtendExpiration = true
@@ -120,6 +148,8 @@ func CreateRecertConfigFileForSeedRestoration(path string) error {
 		fmt.Sprintf("ingresskey-ingress-operator %s/ingresskey-ingress-operator.key", common.BackupCertsDir),
 	}
 	config.UseCertRules = []string{filepath.Join(common.BackupCertsDir, "admin-kubeconfig-client-ca.crt")}
+	config.KubeadminPasswordHash = originalPasswordHash
+
 	if err := utils.MarshalToFile(config, path); err != nil {
 		return fmt.Errorf("failed to marshall recert config file for seed restoration: %w", err)
 	}

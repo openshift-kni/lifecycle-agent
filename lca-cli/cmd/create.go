@@ -92,7 +92,7 @@ func create() error {
 	if !skipCleanup {
 		defer func() {
 			if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
-				authFile, recertContainerImage, recertSkipValidation).CleanupSeedCluster(); err != nil {
+				authFile, recertContainerImage, recertSkipValidation).RestoreSeedCluster(); err != nil {
 				log.Fatalf("Failed to restore seed cluster: %v", err)
 			}
 			log.Info("Seed cluster restored successfully!")

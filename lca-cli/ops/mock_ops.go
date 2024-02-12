@@ -52,17 +52,17 @@ func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gom
 }
 
 // ForceExpireSeedCrypto mocks base method.
-func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
+func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", recertContainerImage, authFile)
+	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", recertContainerImage, authFile, hasKubeAdminPassword)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ForceExpireSeedCrypto indicates an expected call of ForceExpireSeedCrypto.
-func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
+func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile, hasKubeAdminPassword any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
 }
 
 // ImageExists mocks base method.

@@ -50,7 +50,7 @@ func restore() {
 	seedRestore := seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
 		authFile, recertContainerImage, recertSkipValidation)
 
-	if err := seedRestore.CleanupSeedCluster(); err != nil {
+	if err := seedRestore.RestoreSeedCluster(); err != nil {
 		log.Fatalf("Failed to restore seed cluster: %v", err)
 	}
 
