@@ -94,7 +94,7 @@ The target SNO has the following prerequisites:
   - Same performance tuning (i.e., reserved CPUs).
 - LCA operator must be deployed, version must be compatible with the seed.
 - The OADP operator is installed along with a DataProtectionApplication CR. OADP has connectivity to a S3 backend
-- The target cluster must have a dedicated partion configured for `/var/lib/containers`
+- The target cluster must have a dedicated partition configured for `/var/lib/containers`
 
 ## ImageBasedUpgrade CR
 
