@@ -92,7 +92,7 @@ type BackuperRestorer interface {
 	LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, error)
 	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
-	ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error
+	ValidateOadpConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error
 }
 
 // BRHandler handles the backup and restore
@@ -386,7 +386,7 @@ func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, i
 	return nil
 }
 
-func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
+func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -442,6 +442,7 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 			return NewBRFailedValidationError("OADP", errMsg)
 		}
 	}
+	h.Log.Info("OADP configMaps are validated", "configMaps", content)
 	return nil
 }
 
@@ -492,5 +493,7 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	if err != nil {
 		return NewBRFailedValidationError("OADP", err.Error())
 	}
+
+	h.Log.Info("OADP operator is running")
 	return nil
 }
