@@ -109,13 +109,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.Log.Info("Handling backups with OADP operator")
 	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
-		if backuprestore.IsBRFailedError(err) {
+		if backuprestore.IsBRNotFoundError(err) ||
+			backuprestore.IsBRFailedValidationError(err) ||
+			backuprestore.IsBRFailedError(err) {
+
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
-		}
-		if backuprestore.IsBRFailedValidationError(err) || backuprestore.IsBRNotFoundError(err) {
-			utils.SetUpgradeStatusInProgress(ibu, err.Error())
-			return requeueWithMediumInterval(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while handling backup: %w", err))
 	}
@@ -145,8 +144,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.Log.Info("Writing Restore CRs into new stateroot")
 	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
 		if backuprestore.IsBRFailedValidationError(err) {
-			utils.SetUpgradeStatusInProgress(ibu, err.Error())
-			return requeueWithMediumInterval(), nil
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while exporting restores: %w", err))
 	}

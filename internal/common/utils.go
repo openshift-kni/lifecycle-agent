@@ -62,8 +62,18 @@ func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.Confi
 // GetConfigMaps retrieves a collection of configmaps from cluster
 func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.ConfigMapRef) ([]corev1.ConfigMap, error) {
 	var cms []corev1.ConfigMap
+	var cmSet = map[v1alpha1.ConfigMapRef]bool{}
+	var uniqueCms []v1alpha1.ConfigMapRef
 
+	// Remove duplicate configmaps
 	for _, cm := range configMaps {
+		if _, found := cmSet[cm]; !found {
+			cmSet[cm] = true
+			uniqueCms = append(uniqueCms, cm)
+		}
+	}
+
+	for _, cm := range uniqueCms {
 		existingCm, err := GetConfigMap(ctx, c, cm)
 		if err != nil {
 			return nil, err

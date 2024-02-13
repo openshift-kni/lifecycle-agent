@@ -369,7 +369,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 		},
 		{
-			name: "backup failed validation request medium requeue",
+			name: "backup failed validation request no requeue",
 			args: args{
 				ibu: lcav1alpha1.ImageBasedUpgrade{},
 			},
@@ -377,19 +377,25 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return [][]*velerov1.Backup{},
 					backuprestore.NewBRFailedValidationError("Backup", "this is a test - FailedValidation")
 			},
-			want:    requeueWithMediumInterval(),
+			want:    doNotRequeue(),
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
+					Type:    string(utils.ConditionTypes.UpgradeCompleted),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "Upgrade failed",
+				},
+				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.InProgress),
-					Status:  metav1.ConditionTrue,
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
 					Message: "error while getting sorted backups from configmap: this is a test - FailedValidation",
 				},
 			},
 		},
 		{
-			name: "backup not found in configmap request medium requeue",
+			name: "backup not found in configmap request no requeue",
 			args: args{
 				ibu: lcav1alpha1.ImageBasedUpgrade{},
 			},
@@ -397,13 +403,19 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil,
 					backuprestore.NewBRNotFoundError("this is a test - NotFound")
 			},
-			want:    requeueWithMediumInterval(),
+			want:    doNotRequeue(),
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
+					Type:    string(utils.ConditionTypes.UpgradeCompleted),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "Upgrade failed",
+				},
+				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.InProgress),
-					Status:  metav1.ConditionTrue,
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
 					Message: "error while getting sorted backups from configmap: this is a test - NotFound",
 				},
 			},
@@ -506,13 +518,19 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return backuprestore.NewBRFailedValidationError("Restore", "ExportRestoresToDir validation failed")
 			},
 
-			want:    requeueWithMediumInterval(),
+			want:    doNotRequeue(),
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
+					Type:    string(utils.ConditionTypes.UpgradeCompleted),
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
+					Message: "Upgrade failed",
+				},
+				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.InProgress),
-					Status:  metav1.ConditionTrue,
+					Reason:  string(utils.ConditionReasons.Failed),
+					Status:  metav1.ConditionFalse,
 					Message: "ExportRestoresToDir validation failed",
 				},
 			},
