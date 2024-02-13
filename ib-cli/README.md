@@ -61,49 +61,50 @@ Flags:
 Use "ib-cli [command] --help" for more information about a command.
 ```
 
-### Running as a container
+### Get the ib-cli binary
+
+```shell
+export LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
+podman run -it -v `pwd`:/data --entrypoint cp $(LCA_IMAGE) /usr/local/bin/ib-cli ./data/
+```
+
+### Create installation ISO
 
 To create an installation ISO out of your Single Node OpenShift (SNO) OCI seed image, run the following command from your workstation:
 
 ```shell
 export LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
 export SEED_IMAGE=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
-export WORKDIR=~/ibi-data/
+export SEED_VERSION=4.14.6
+export WORKDIR=~/ibi-iso-workdir/
 mkdir ${WORKDIR}
-# Place the ssh public key, pull secret and the auth file inside the work dir
 export AUTH_FILE=/path/to/seed-image-pull-secret.json
 export PS_FILE=/path/to/release-pull-secret.json
 export SSH_PUBLIC_KEY=~/.ssh/id_rsa.pub
-cp ${SSH_PUBLIC_KEY} ${WORKDIR}/id_rsa.pub
-cp ${AUTH_FILE} ${WORKDIR}/seed-image-pull-secret.json
-cp ${PS_FILE} ${WORKDIR}release-pull-secret.json
-   
+export IBI_INSTALLATION_DISK=/dev/sda
 
--> podman run --privileged --pid=host --rm --net=host \
-    -v ${WORKDIR}:${WORKDIR} \
-    --entrypoint ib-cli ${LCA_IMAGE} create-iso create-iso --installation-disk /dev/vda \
-                                                           --lca-image ${LCA_IMAGE} \
-                                                           --seed-image ${SEED_IMAGE} \
-                                                           --seed-version 4.14.6 \
-                                                           --auth-file ${WORKDIR}/seed-image-pull-secret.json \
-                                                           --pullsecret-file ${WORKDIR}/release-pull-secret.json \
-                                                           --ssh-public-key-file ${WORKDIR}/id_rsa.pub \
-                                                           --dir ${WORKDIR}
+
+ib-cli create-iso --installation-disk ${IBI_INSTALLATION_DISK} \
+  --lca-image ${LCA_IMAGE} \
+  --seed-image ${SEED_IMAGE} \
+  --seed-version ${SEED_VERSION} \
+  --auth-file ${AUTH_FILE} \
+  --pullsecret-file ${PS_FILE} \
+  --ssh-public-key-file ${SSH_PUBLIC_KEY} \
+  --dir ./${WORKDIR}
 
 ib-cli assists Image Based Install (IBI).
 
   Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/ib-cli/README.md
 
-INFO[2024-01-31 17:07:06] Installation ISO creation has started        
-INFO[2024-01-31 17:07:06] Creating IBI installation ISO                
-INFO[2024-01-31 17:07:06] Generating Ignition Config                   
-INFO[2024-01-31 17:07:06] ignition file exists (foo/ibi-ignition.json), deleting it 
-INFO[2024-01-31 17:07:06] Executing podman with args [run -v ./data:/data:rw,Z --rm quay.io/coreos/butane:release --pretty --strict -d /data /data/config.bu] 
-INFO[2024-01-31 17:07:07] Downloading live ISO                         
-INFO[2024-01-31 17:07:07] rhcos live ISO (foo/rhcos-live.x86_64.iso) exists, skipping download 
-INFO[2024-01-31 17:07:07] Executing podman with args [run -v ./data:/data:rw,Z quay.io/coreos/coreos-installer:latest iso ignition embed -i /data/ibi-ignition.json -o /data/rhcos-ibi.iso /data/rhcos-live.x86_64.iso] 
-INFO[2024-01-31 17:07:07] installation ISO created at: foo/rhcos-ibi.iso 
-INFO[2024-01-31 17:07:07] Installation ISO created successfully!   
+INFO[2024-02-12 15:58:09] Installation ISO creation has started
+INFO[2024-02-12 15:58:09] Creating IBI installation ISO
+INFO[2024-02-12 15:58:09] Generating Ignition Config
+INFO[2024-02-12 15:58:09] Executing podman with args [run -v ./ibi-iso-workdir:/data:rw,Z --rm quay.io/coreos/butane:release --pretty --strict -d /data /data/config.bu]
+INFO[2024-02-12 15:58:10] Downloading live ISO
+INFO[2024-02-12 15:59:24] Executing podman with args [run -v ./ibi-iso-workdir:/data:rw,Z quay.io/coreos/coreos-installer:latest iso ignition embed -i /data/ibi-ignition.json -o /data/rhcos-ibi.iso /data/rhcos-live.x86_64.iso]
+INFO[2024-02-12 15:59:24] installation ISO created at: ibi-iso-workdir/rhcos-ibi.iso
+INFO[2024-02-12 15:59:24] Installation ISO created successfully!
 ```
 
 Notice that the `--rhcos-live-iso` and the `--lca-image` flags are optional, if not provided the tool will use the defaults.

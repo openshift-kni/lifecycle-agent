@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/openshift-kni/lifecycle-agent/ib-cli/installationiso"
 	"github.com/sirupsen/logrus"
@@ -81,6 +82,12 @@ func createIso() error {
 	hostCommandsExecutor := ops.NewRegularExecutor(log, verbose)
 	op := ops.NewOps(log, hostCommandsExecutor)
 
+	workDir, err = filepath.Abs(workDir)
+	if err != nil {
+		err = fmt.Errorf("failed to working directory full path: %w", err)
+		log.Errorf(err.Error())
+		return err
+	}
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
 	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso, installationDisk); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
