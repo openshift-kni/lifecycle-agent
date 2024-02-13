@@ -28,14 +28,9 @@ import (
 	cp "github.com/otiai10/copy"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/restmapper"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -122,35 +117,6 @@ func GetStaterootOptOpenshift(staterootPath string) string {
 func FuncTimer(start time.Time, name string, r logr.Logger) {
 	elapsed := time.Since(start)
 	r.Info(fmt.Sprintf("%s took %s", name, elapsed))
-}
-
-// NewDynamicClientAndRESTMapper returns a dynamic kube client and a REST mapper
-// to process unstructured resources
-func NewDynamicClientAndRESTMapper() (dynamic.Interface, meta.RESTMapper, error) {
-	// Read kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", PathOutsideChroot(KubeconfigFile))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read kubeconfig for NewDynamicClientAndRESTMapper: %w", err)
-	}
-
-	// Create dynamic client
-	client, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create a new dynamic client: %w", err)
-	}
-
-	// Create dynamic REST mapper
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create discovery client: %w", err)
-	}
-	groupResources, err := restmapper.GetAPIGroupResources(discoveryClient)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed group resources: %w", err)
-	}
-	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
-
-	return client, mapper, nil
 }
 
 func isConflictOrRetriable(err error) bool {

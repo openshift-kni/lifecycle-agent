@@ -171,6 +171,10 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
+		if extramanifest.IsEMFailedError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			return doNotRequeue(), nil
+		}
 		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
 	}
 

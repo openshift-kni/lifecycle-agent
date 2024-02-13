@@ -246,7 +246,7 @@ metadata:
   name: openshift-adp
   namespace: openshift-adp
 spec:
-  channel: stable-1.2
+  channel: stable-1.3
   installPlanApproval: Automatic
   approved: true
   name: redhat-oadp-operator

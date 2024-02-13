@@ -37,6 +37,7 @@ import (
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	corev1 "k8s.io/api/core/v1"
@@ -296,6 +297,38 @@ func (r *ImageBasedUpgradeReconciler) verifyPrecachingCompleteFunc(retries int, 
 	}
 }
 
+// validateIBUSpec validates the fields in the IBU spec
+func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+	r.Log.Info("Validating IBU spec")
+
+	// Check spec against this cluster's version and possibly exit early
+	if err := r.validateSeedOcpVersion(ibu.Spec.SeedImageRef.Version); err != nil {
+		return fmt.Errorf("failed to validate seed image OCP version: %w", err)
+	}
+
+	// If OADP configmap is provided, validate the configmap and check if OADP operator is available
+	if len(ibu.Spec.OADPContent) != 0 {
+		err := r.BackupRestore.ValidateOadpConfigmaps(ctx, ibu.Spec.OADPContent)
+		if err != nil {
+			return fmt.Errorf("failed to validate oadp configMap: %w", err)
+		}
+
+		err = r.BackupRestore.CheckOadpOperatorAvailability(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check oadp operator availability: %w", err)
+		}
+	}
+
+	// Validate the extraManifests configmap if it's provided
+	if len(ibu.Spec.ExtraManifests) != 0 {
+		err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests)
+		if err != nil {
+			return fmt.Errorf("failed to validate extraManifests configMap: %w", err)
+		}
+	}
+	return nil
+}
+
 func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (err error) {
 	var (
 		derivedCtx context.Context
@@ -308,11 +341,19 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 
 	errGroup.Go(func() error {
 		var ok bool
+		var additionalMsg string
 		imageListFile := filepath.Join(utils.IBUWorkspacePath, "image-list-file")
 
-		// check spec against this cluster's version and possibly exit early
-		if err := r.validateSeedOcpVersion(ibu.Spec.SeedImageRef.Version); err != nil {
-			return fmt.Errorf("failed to validate seed image OCP version in spec: %w", err)
+		// Validate IBU spec
+		if err := r.validateIBUSpec(ctx, ibu); err != nil {
+			// Do not return unknownCRD error detected from extra manifests configmaps,
+			// instead, attach a warning message in prep status condition
+			if extramanifest.IsEMUnknownCRDError(err) {
+				additionalMsg = fmt.Sprintf(". Warn: The requested CRD is not installed on the cluster. "+
+					"Please verify if this is as expected before proceeding to next stage: %v", err)
+			} else {
+				return fmt.Errorf("failed to validate IBU spec: %w", err)
+			}
 		}
 
 		// Pull seed image
@@ -371,7 +412,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 		if err == nil && status != nil && status.Message != "" {
 			r.Log.Info(msg, "summary", status.Message)
 		}
-		r.PrepTask.Progress = msg
+		r.PrepTask.Progress = msg + additionalMsg
 
 		// Prep-stage completed successfully
 		return nil
