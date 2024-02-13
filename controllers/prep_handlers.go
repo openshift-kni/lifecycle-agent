@@ -25,6 +25,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
+	configv1 "github.com/openshift/api/config/v1"
+
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -125,6 +128,34 @@ func (r *ImageBasedUpgradeReconciler) checkSeedImageCompatibility(_ context.Cont
 			common.SeedFormatVersion, seedFormatLabelValue)
 	}
 
+	return nil
+}
+
+// validateSeedOcpVersion rejects upgrade request if seed image version is not higher than current cluster (target) OCP version
+func (r *ImageBasedUpgradeReconciler) validateSeedOcpVersion(seedOcpVersion string) error {
+	// get target OCP version
+	targetClusterVersion := &configv1.ClusterVersion{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "version"}, targetClusterVersion); err != nil {
+		return fmt.Errorf("failed to get ClusterVersion for target: %w", err)
+	}
+	targetOCP := targetClusterVersion.Status.Desired.Version
+
+	// parse versions
+	targetSemVer, err := semver.NewVersion(targetOCP)
+	if err != nil {
+		return fmt.Errorf("failed to parse target version %s: %w", targetOCP, err)
+	}
+	seedSemVer, err := semver.NewVersion(seedOcpVersion)
+	if err != nil {
+		return fmt.Errorf("failed to parse seed version %s: %w", seedOcpVersion, err)
+	}
+
+	// compare versions
+	if seedSemVer.Compare(*targetSemVer) <= 0 {
+		return fmt.Errorf("seed OCP version (%s) must be higher than current OCP version (%s)", seedOcpVersion, targetOCP)
+	}
+
+	r.Log.Info("OCP versions are validated", "seed", seedOcpVersion, "target", targetOCP)
 	return nil
 }
 
@@ -286,6 +317,11 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 	errGroup.Go(func() error {
 		var ok bool
 		imageListFile := filepath.Join(utils.IBUWorkspacePath, "image-list-file")
+
+		// check spec against this cluster's version and possibly exit early
+		if err := r.validateSeedOcpVersion(ibu.Spec.SeedImageRef.Version); err != nil {
+			return fmt.Errorf("failed to validate seed image OCP version in spec: %w", err)
+		}
 
 		// Pull seed image
 		select {
