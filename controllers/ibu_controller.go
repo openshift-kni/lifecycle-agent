@@ -330,7 +330,8 @@ func isFinalizeAllowed(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
 func isAbortAllowed(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) bool {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	rollbackInProgressCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.RollbackInProgress))
-	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse && !isAfterPivot && rollbackInProgressCondition == nil {
+	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse && !isAfterPivot &&
+		(rollbackInProgressCondition == nil || rollbackInProgressCondition.Reason == string(utils.ConditionReasons.InvalidTransition)) {
 		// allowed if in prep or upgrade before pivot
 		return true
 	}

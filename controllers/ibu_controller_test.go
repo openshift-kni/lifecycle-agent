@@ -364,12 +364,29 @@ func TestValidateStageTransisions(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:       "idle when upgrade failed before pivot",
+			name:       "idle when upgrade failed before pivot or after uncontrolled rollback",
 			stage:      lcav1alpha1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
-				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Aborting,
+				metav1.ConditionFalse,
+				"Aborting",
+			}},
+			expected: true,
+		},
+		{
+			name:       "idle when upgrade failed with invalid rollback transition",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition},
 			},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
