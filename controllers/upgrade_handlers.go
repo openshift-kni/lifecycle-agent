@@ -273,33 +273,43 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	u.Log.Info("Starting health check for different components")
 	err := CheckHealth(u.Client, u.Log)
 	if err != nil {
-		utils.SetUpgradeStatusFailed(ibu, err.Error())
-		u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to health check failure: %s", err))
-		return doNotRequeue(), nil
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("System health checks in progress: %s", err.Error()))
+		return requeueWithShortInterval(), nil
 	}
 
 	// Applying extra manifests
+	utils.SetUpgradeStatusInProgress(ibu, "Applying Policy Manifests")
+	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying policy extra-manifests: %s", err))
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying policy manifests: %s", err))
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while applying policy extra manifests: %w", err))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Applying Policy Manifests: Failure occurred: %s", err.Error()))
+		return requeueWithError(fmt.Errorf("error while applying policy manifests: %w", err))
 	}
+
+	utils.SetUpgradeStatusInProgress(ibu, "Applying Config Manifests")
+	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
 
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying extra-manifests: %s", err))
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying config manifests: %s", err))
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while applying extra manifests: %w", err))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Applying Config Manifests: Failure occurred: %s", err.Error()))
+		return requeueWithError(fmt.Errorf("error while applying config manifests: %w", err))
 	}
 
 	// Recovering OADP configuration
+	utils.SetUpgradeStatusInProgress(ibu, "Restoring OADP Configuration")
+	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+
 	err = u.BackupRestore.RestoreOadpConfigurations(ctx)
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
@@ -307,10 +317,14 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to backup storage failure: %s", err))
 			return doNotRequeue(), nil
 		}
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring OADP Configuration: Failure occurred: %s", err.Error()))
 		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
 	}
 
 	// Handling restores with OADP operator
+	utils.SetUpgradeStatusInProgress(ibu, "Restoring OADP Data")
+	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+
 	result, err := u.HandleRestore(ctx)
 	if err != nil {
 		// Restore failed
@@ -319,10 +333,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
 			return doNotRequeue(), nil
 		}
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring OADP Data: Failure occurred: %s", err))
 		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
 	}
 	if !result.IsZero() {
 		// The restore process has not been completed yet, requeue
+		utils.SetUpgradeStatusInProgress(ibu, "Restore of OADP Data is in progress")
 		return result, nil
 	}
 
