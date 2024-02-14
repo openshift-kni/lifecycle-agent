@@ -211,7 +211,7 @@ func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Back
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
 	}
-	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
+	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
 	for _, obj := range objs {
 		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
 		if err != nil {
@@ -226,7 +226,6 @@ func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Back
 }
 
 func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Backup) error {
-	h.Log.Info("start clean up backup for something")
 	objs, err := getObjsFromAnnotations(backup)
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
@@ -235,7 +234,6 @@ func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Ba
 	escaped := strings.Replace(backupLabel, "/", "~1", 1)
 	payload := []byte(fmt.Sprintf(`[{"op":"remove","path":"/metadata/labels/%s"}]`, escaped))
 	for _, obj := range objs {
-		h.Log.Info("clean up back label for obj")
 		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
 		if err != nil {
 			h.Log.Error(err, "failed to remove backup label", "name", obj.Name, "namespace", obj.Namespace,

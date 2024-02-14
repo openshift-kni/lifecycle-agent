@@ -220,7 +220,7 @@ func setBackupLabelSelector(backup *velerov1.Backup) {
 	if backup.Spec.LabelSelector == nil {
 		backup.Spec.LabelSelector = &metav1.LabelSelector{}
 	}
-	metav1.AddLabelToSelector(backup.Spec.LabelSelector, backupLabel, "true")
+	metav1.AddLabelToSelector(backup.Spec.LabelSelector, backupLabel, backup.GetName())
 }
 
 func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
@@ -320,8 +320,8 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 	}
 
 	// Check if we can apply backup label to objects included in apply-backup annotation
-	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"true"}}]`, backupLabel))
 	for _, backup := range backups {
+		payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
 		objs, err := getObjsFromAnnotations(backup)
 		if err != nil {
 			return NewBRFailedValidationError("OADP", err.Error())

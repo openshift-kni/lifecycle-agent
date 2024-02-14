@@ -64,12 +64,12 @@ spec:
    - deployments
 ```
 
-By adding this annotation, LCA will limit the scope exclusively to those resources. LCA will parse the annotations and apply `lca.openshift.io/backup: true` label to those resources. LCA then adds this labelSelector when creating the backup CR:
+By adding this annotation, LCA will limit the scope exclusively to those resources. LCA will parse the annotations and apply `lca.openshift.io/backup: <backup-name>` label to those resources. LCA then adds this labelSelector when creating the backup CR:
 
 ```yaml
 labelSelector:
   matchLabels:
-    lca.openshift.io/backup: true
+    lca.openshift.io/backup: <backup-name>
 ```
 
 ## Install OADP and configure OADP on target cluster via ZTP GitOps

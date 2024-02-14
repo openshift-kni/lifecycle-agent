@@ -8,8 +8,8 @@ import (
 
 func TestSetBackupLabelSelector(t *testing.T) {
 	t.Run("set backup label selector", func(t *testing.T) {
-		backup := fakeBackupCr("a", "1", "b")
+		backup := fakeBackupCr("backupName", "1", "b")
 		setBackupLabelSelector(backup)
-		assert.Equal(t, "true", backup.Spec.LabelSelector.MatchLabels[backupLabel])
+		assert.Equal(t, backup.GetName(), backup.Spec.LabelSelector.MatchLabels[backupLabel])
 	})
 }
