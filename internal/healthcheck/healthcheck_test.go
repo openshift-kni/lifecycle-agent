@@ -1,6 +1,8 @@
 package healthcheck
 
 import (
+	"testing"
+
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -11,8 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
-	"time"
 )
 
 var s = scheme.Scheme
@@ -32,12 +32,6 @@ func init() {
 }
 
 func Test_nodesReady(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger
@@ -224,20 +218,14 @@ func Test_nodesReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := nodesReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("nodesReady() error = %v, wantErr %v", err, tt.wantErr)
+			if err := IsNodeReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("IsNodeReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 func Test_clusterServiceVersionReady(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger
@@ -291,20 +279,14 @@ func Test_clusterServiceVersionReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := clusterServiceVersionReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("clusterOperatorsReady() error = %v, wantErr %v", err, tt.wantErr)
+			if err := AreClusterServiceVersionsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("IsClusterServiceVersionReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 func Test_clusterOperatorsReady(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger
@@ -375,20 +357,14 @@ func Test_clusterOperatorsReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := clusterOperatorsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("clusterOperatorsReady() error = %v, wantErr %v", err, tt.wantErr)
+			if err := AreClusterOperatorsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("AreClusterOperatorsReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 func Test_machineConfigPoolReady(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger
@@ -423,20 +399,14 @@ func Test_machineConfigPoolReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := machineConfigPoolReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("machineConfigPoolReady() error = %v, wantErr %v", err, tt.wantErr)
+			if err := AreMachineConfigPoolsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("AreMachineConfigPoolsReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 func Test_clusterVersionReady(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger
@@ -483,20 +453,14 @@ func Test_clusterVersionReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := clusterVersionReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("clusterVersionReady() error = %v, wantErr %v", err, tt.wantErr)
+			if err := IsClusterVersionReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("IsClusterVersionReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 func TestHealthChecks(t *testing.T) {
-	oldPoll := pollTimeout
-	defer func() {
-		pollTimeout = oldPoll
-	}()
-	pollTimeout = 1 * time.Microsecond
-
 	type args struct {
 		c client.Reader
 		l logr.Logger

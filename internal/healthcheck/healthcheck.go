@@ -2,17 +2,11 @@ package healthcheck
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
-	"time"
-
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -28,11 +22,6 @@ import (
 // +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
 
-var (
-	pollInterval = 30 * time.Second
-	pollTimeout  = 15 * time.Minute
-)
-
 const (
 	NodeRoleControlPlane = "node-role.kubernetes.io/control-plane"
 	NodeRoleMaster       = "node-role.kubernetes.io/master"
@@ -40,207 +29,140 @@ const (
 )
 
 func HealthChecks(c client.Reader, l logr.Logger) error {
-	defer common.FuncTimer(time.Now(), "healthCheck", l)
+	var failures []string
 
-	// using channel store go routine return val and WaitGroup to sync.
-	chanBufferSize := 5
-	errChn := make(chan error, chanBufferSize)
-	var wg sync.WaitGroup
-
-	// prep and launch routines
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer common.FuncTimer(time.Now(), "clusterOperatorsReady", l)
-		errChn <- clusterOperatorsReady(c, l)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer common.FuncTimer(time.Now(), "machineConfigPoolReady", l)
-		errChn <- machineConfigPoolReady(c, l)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer common.FuncTimer(time.Now(), "clusterServiceVersionReady", l)
-		errChn <- clusterServiceVersionReady(c, l)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer common.FuncTimer(time.Now(), "clusterVersionReady", l)
-		errChn <- clusterVersionReady(c, l)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer common.FuncTimer(time.Now(), "nodesReady", l)
-		errChn <- nodesReady(c, l)
-	}()
-
-	// wait
-	go func() {
-		l.Info("Wait until WaitGroup is done")
-		defer close(errChn)
-		wg.Wait()
-	}()
-
-	var finalErrs error
-	for err := range errChn {
-		if err != nil {
-			finalErrs = errors.Join(finalErrs, err)
-		}
+	if err := AreClusterOperatorsReady(c, l); err != nil {
+		l.Info("co health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
 	}
-	if finalErrs != nil {
-		return fmt.Errorf("one or more health checks failed: %w", finalErrs)
+
+	if err := AreMachineConfigPoolsReady(c, l); err != nil {
+		l.Info("mcp health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if err := IsNodeReady(c, l); err != nil {
+		l.Info("node health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if err := AreClusterServiceVersionsReady(c, l); err != nil {
+		l.Info("csv health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if err := IsClusterVersionReady(c, l); err != nil {
+		l.Info("clusterVersion health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if len(failures) > 0 {
+		l.Info("One or more health checks failed")
+		return fmt.Errorf(strings.Join(append([]string{"one or more health checks failed"}, failures...), "\n  - "))
 	}
 
 	l.Info("Health checks done")
 	return nil
 }
 
-func clusterServiceVersionReady(c client.Reader, l logr.Logger) error {
-	l.Info("Waiting for all ClusterServiceVersion (csv) to be ready")
-	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isClusterServiceVersionReady(c, l))
+func AreClusterServiceVersionsReady(c client.Reader, l logr.Logger) error {
+	clusterServiceVersionList := operatorsv1alpha1.ClusterServiceVersionList{}
+	err := c.List(context.Background(), &clusterServiceVersionList)
 	if err != nil {
-		return fmt.Errorf("failed to wait for all ClusterServiceVersion (csv) to be ready: %w", err)
+		return fmt.Errorf("failed to get csv list: %w", err)
 	}
 
+	var notready []string
+	for _, csv := range clusterServiceVersionList.Items {
+		if strings.Contains(csv.Name, "lifecycle-agent") {
+			l.Info(fmt.Sprintf("Skipping check of %s/%s", csv.Kind, csv.Name))
+			continue
+		}
+		if !(csv.Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && csv.Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
+			notready = append(notready, csv.Name)
+			l.Info(fmt.Sprintf("csv not ready: %s", csv.Name))
+		}
+	}
+
+	if len(notready) != 0 {
+		return fmt.Errorf("one or more ClusterServiceVersions not yet ready: %s", strings.Join(notready, ", "))
+	}
+
+	l.Info("All CSVs are ready")
 	return nil
 }
 
-func isClusterServiceVersionReady(c client.Reader, l logr.Logger) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		clusterServiceVersionList := operatorsv1alpha1.ClusterServiceVersionList{}
-		err := c.List(context.Background(), &clusterServiceVersionList)
-		if err != nil {
-			l.Error(err, "failed to get csv list")
-			return false, nil
-		}
-
-		for _, csv := range clusterServiceVersionList.Items {
-			if strings.Contains(csv.Name, "lifecycle-agent") {
-				l.Info(fmt.Sprintf("Skipping check of %s/%s", csv.Kind, csv.Name))
-				continue
-			}
-			if !(csv.Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && csv.Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
-				l.Info(fmt.Sprintf("%s not ready yet", csv.Name), "kind", csv.Kind)
-				return false, nil
-			}
-		}
-
-		l.Info("All CSVs are ready")
-		return true, nil
-	}
-}
-
-func clusterVersionReady(c client.Reader, l logr.Logger) error {
-	l.Info("Waiting for ClusterVersion to be ready")
-	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isClusterVersionReady(c, l))
+func IsClusterVersionReady(c client.Reader, l logr.Logger) error {
+	clusterVersionList := configv1.ClusterVersionList{}
+	err := c.List(context.Background(), &clusterVersionList)
 	if err != nil {
-		return fmt.Errorf("failed to wait for ClusterVersion to be ready: %w", err)
+		return fmt.Errorf("failed to get cv list: %w", err)
 	}
 
+	// As we would only have one ClusterVersion currently, we don't need to build a list of not-ready CVs.
+	// Instead, we can return on first error.
+	for _, co := range clusterVersionList.Items {
+		if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
+			msg := fmt.Sprintf("clusterVersion %s not ready", co.Name)
+			l.Info(msg)
+			return fmt.Errorf(msg)
+		}
+	}
+
+	l.Info("Cluster version is ready")
 	return nil
 }
 
-func isClusterVersionReady(c client.Reader, l logr.Logger) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		clusterVersionList := configv1.ClusterVersionList{}
-		err := c.List(context.Background(), &clusterVersionList)
-		if err != nil {
-			l.Error(err, "failed to get cv list")
-			return false, nil
-		}
-
-		for _, co := range clusterVersionList.Items {
-			if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
-				l.Info(fmt.Sprintf("%s not ready yet", co.Name), "kind", co.Kind)
-				return false, nil
-			}
-		}
-
-		l.Info("Cluster version is ready")
-		return true, nil
-	}
-
-}
-
-func machineConfigPoolReady(c client.Reader, l logr.Logger) error {
-	l.Info("Waiting for MachineConfigPool (mcp) to be ready")
-	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isMachineConfigPoolReady(c, l))
+func AreMachineConfigPoolsReady(c client.Reader, l logr.Logger) error {
+	machineConfigPoolList := mcv1.MachineConfigPoolList{}
+	err := c.List(context.Background(), &machineConfigPoolList)
 	if err != nil {
-		return fmt.Errorf("failed to wait for MachineConfigPool (mcp) to be ready: %w", err)
+		return fmt.Errorf("failed to get mcp list: %w", err)
 	}
 
+	var notready []string
+	for _, mcp := range machineConfigPoolList.Items {
+		if mcp.Status.MachineCount != mcp.Status.ReadyMachineCount {
+			notready = append(notready, mcp.Name)
+			l.Info(fmt.Sprintf("mcp not ready: %s", mcp.Name))
+		}
+	}
+
+	if len(notready) != 0 {
+		return fmt.Errorf("one or more MachineConfigPools not yet ready: %s", strings.Join(notready, ", "))
+	}
+
+	l.Info("MachineConfigPool ready")
 	return nil
 }
 
-func isMachineConfigPoolReady(c client.Reader, l logr.Logger) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		machineConfigPoolList := mcv1.MachineConfigPoolList{}
-		err := c.List(context.Background(), &machineConfigPoolList)
-		if err != nil {
-			l.Error(err, "failed to get mcp list")
-			return false, nil
-		}
-
-		for _, mcp := range machineConfigPoolList.Items {
-			if mcp.Status.MachineCount != mcp.Status.ReadyMachineCount {
-				l.Info(fmt.Sprintf("%s not ready yet", mcp.Name), "kind", mcp.Kind)
-				return false, nil
-			}
-		}
-
-		l.Info("MachineConfigPool ready")
-		return true, nil
-	}
-}
-
-func clusterOperatorsReady(c client.Reader, l logr.Logger) error {
-	l.Info("Waiting for all ClusterOperator (co) to be ready")
-	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, areClusterOperatorsReady(c, l))
+func AreClusterOperatorsReady(c client.Reader, l logr.Logger) error {
+	clusterOperatorList := configv1.ClusterOperatorList{}
+	err := c.List(context.Background(), &clusterOperatorList)
 	if err != nil {
-		return fmt.Errorf("failed to wait for all ClusterOperator (co) to be ready: %w", err)
+		return fmt.Errorf("failed to get co list: %w", err)
 	}
 
+	var notready []string
+	for _, co := range clusterOperatorList.Items {
+		if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
+			notready = append(notready, co.Name)
+			l.Info(fmt.Sprintf("co not ready: %s", co.Name))
+		} else if getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorProgressing) {
+			notready = append(notready, co.Name)
+			l.Info(fmt.Sprintf("co is in progressing state: %s", co.Name))
+		} else if getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorDegraded) {
+			notready = append(notready, co.Name)
+			l.Info(fmt.Sprintf("co is in degraded state: %s", co.Name))
+		}
+	}
+
+	if len(notready) != 0 {
+		return fmt.Errorf("one or more ClusterOperators not yet ready: %s", strings.Join(notready, ", "))
+	}
+
+	l.Info("All cluster operators are now ready")
 	return nil
-}
-
-func areClusterOperatorsReady(c client.Reader, l logr.Logger) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		clusterOperatorList := configv1.ClusterOperatorList{}
-		err := c.List(context.Background(), &clusterOperatorList)
-		if err != nil {
-			l.Error(err, "failed to get co list")
-			return false, nil
-		}
-
-		for _, co := range clusterOperatorList.Items {
-			if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
-				l.Info(fmt.Sprintf("%s not ready yet", co.Name), "kind", co.Kind)
-				return false, nil
-			}
-
-			if getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorProgressing) {
-				l.Info(fmt.Sprintf("%s is in progressing state", co.Name), "kind", co.Kind)
-				return false, nil
-			}
-
-			if getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorDegraded) {
-				l.Info(fmt.Sprintf("%s is in degraded state", co.Name), "kind", co.Kind)
-				return false, nil
-			}
-		}
-
-		l.Info("All cluster operators are now ready")
-		return true, nil
-	}
 }
 
 func getClusterOperatorStatusCondition(conditions []configv1.ClusterOperatorStatusCondition, conditionType configv1.ClusterStatusConditionType) bool {
@@ -253,62 +175,53 @@ func getClusterOperatorStatusCondition(conditions []configv1.ClusterOperatorStat
 	return false
 }
 
-func nodesReady(c client.Reader, l logr.Logger) error {
-	l.Info("Waiting for Node to be ready")
-	err := wait.PollUntilContextTimeout(context.Background(), pollInterval, pollTimeout, true, isNodeReady(c, l))
+func IsNodeReady(c client.Reader, l logr.Logger) error {
+	infra := &configv1.Infrastructure{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, infra); err != nil {
+		return fmt.Errorf("failed to get infrastucture CR: %w", err)
+	}
+
+	if infra.Status.InfrastructureTopology != configv1.SingleReplicaTopologyMode {
+		// This is likely a test environment, so skip the health check.
+		l.Info(fmt.Sprintf("Skipping Node check. InfrastructureTopology is %s. Expected %s", infra.Status.InfrastructureTopology, configv1.SingleReplicaTopologyMode))
+		return nil
+	}
+
+	nodeList := corev1.NodeList{}
+	err := c.List(context.Background(), &nodeList)
 	if err != nil {
-		return fmt.Errorf("failed to watit for Node to be ready: %w", err)
+		return fmt.Errorf("failed to get node list: %w", err)
 	}
 
+	// As we would only have one node currently, we don't need to build a list of not-ready nodes.
+	// Instead, we can return on first error.
+	for _, node := range nodeList.Items {
+		if !getNodeStatusCondition(node.Status.Conditions, corev1.NodeReady) {
+			msg := fmt.Sprintf("node is not yet ready: %s", node.Name)
+			l.Info(msg)
+			return fmt.Errorf(msg)
+		}
+
+		if getNodeStatusCondition(node.Status.Conditions, corev1.NodeNetworkUnavailable) {
+			msg := fmt.Sprintf("node network unavailable: %s", node.Name)
+			l.Info(msg)
+			return fmt.Errorf(msg)
+		}
+
+		// Verify the node has the expected node-role labels for SNO
+		labels := node.ObjectMeta.GetLabels()
+		requiredLabels := []string{NodeRoleControlPlane, NodeRoleMaster, NodeRoleWorker}
+		for _, label := range requiredLabels {
+			if _, found := labels[label]; !found {
+				msg := fmt.Sprintf("node missing %s label: %s", label, node.Name)
+				l.Info(msg)
+				return fmt.Errorf(msg)
+			}
+		}
+	}
+
+	l.Info("Node is ready")
 	return nil
-}
-
-func isNodeReady(c client.Reader, l logr.Logger) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		infra := &configv1.Infrastructure{}
-		if err := c.Get(ctx, types.NamespacedName{Name: "cluster"}, infra); err != nil {
-			l.Error(err, "failed to get infrastucture CR")
-			return false, nil
-		}
-
-		if infra.Status.InfrastructureTopology != configv1.SingleReplicaTopologyMode {
-			// This is likely a test environment, so skip the health check.
-			l.Info(fmt.Sprintf("Skipping Node check. InfrastructureTopology is %s. Expected %s", infra.Status.InfrastructureTopology, configv1.SingleReplicaTopologyMode))
-			return true, nil
-		}
-
-		nodeList := corev1.NodeList{}
-		err := c.List(context.Background(), &nodeList)
-		if err != nil {
-			l.Error(err, "failed to get node list")
-			return false, nil
-		}
-
-		for _, node := range nodeList.Items {
-			if !getNodeStatusCondition(node.Status.Conditions, corev1.NodeReady) {
-				l.Info(fmt.Sprintf("%s not ready yet", node.Name), "kind", node.Kind)
-				return false, nil
-			}
-
-			if getNodeStatusCondition(node.Status.Conditions, corev1.NodeNetworkUnavailable) {
-				l.Info(fmt.Sprintf("%s NodeNetworkUnavailable", node.Name), "kind", node.Kind)
-				return false, nil
-			}
-
-			// Verify the node has the expected node-role labels for SNO
-			labels := node.ObjectMeta.GetLabels()
-			requiredLabels := []string{NodeRoleControlPlane, NodeRoleMaster, NodeRoleWorker}
-			for _, label := range requiredLabels {
-				if _, found := labels[label]; !found {
-					l.Info(fmt.Sprintf("%s does not have %s label", node.Name, label), "kind", node.Kind)
-					return false, nil
-				}
-			}
-		}
-
-		l.Info("Node is ready")
-		return true, nil
-	}
 }
 
 func getNodeStatusCondition(conditions []corev1.NodeCondition, conditionType corev1.NodeConditionType) bool {

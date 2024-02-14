@@ -194,7 +194,9 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					return
 				}
 				if !isValid {
-					err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
+					if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+						r.Log.Error(updateErr, "failed to update IBU CR status")
+					}
 					return
 				}
 			}
@@ -213,7 +215,10 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Update status
-	err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
+	if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+		r.Log.Error(updateErr, "failed to update IBU CR status")
+	}
+
 	return
 }
 

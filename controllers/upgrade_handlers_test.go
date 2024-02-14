@@ -852,23 +852,15 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
 				return fmt.Errorf("any error from hc")
 			},
-			initiateRollbackReturn: func() error {
-				return nil
-			},
 			wantConditions: []metav1.Condition{
 				{
-					Type:    string(utils.ConditionTypes.UpgradeCompleted),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
-				},
-				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
-					Reason:  string(utils.ConditionReasons.Failed),
-					Status:  metav1.ConditionFalse,
-					Message: "any error from hc",
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "System health checks in progress: any error from hc",
 				},
 			},
+			want:    requeueWithShortInterval(),
 			wantErr: assert.NoError,
 		},
 		{

@@ -78,6 +78,18 @@ var (
 
 const (
 	EnvSkipRecert = "SEEDGEN_SKIP_RECERT"
+
+	// SeedGen reconciler phases
+	phaseInitial    = "initial"    // SeedGen hasn't started yet
+	phaseGenerating = "generating" // SeedGen is in the first phase of work, ending with the launch of the imager
+	phaseFinalizing = "finalizing" // SeedGen has previously launched the imager and is in the final phase of seed generation
+	phaseCompleted  = "completed"  // SeedGen has successfully completed
+	phaseFailed     = "failed"     // SeedGen has failed
+
+	// The following consts are used for certain progress status messages, which may also factor into the reconciler phase check
+	msgLaunchingImager        = "Launching imager container"
+	prefixFinalizing          = "Finalizing seed generation"
+	prefixInitialHealthChecks = "System health checks"
 )
 
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators,verbs=get;list;watch;create;update;patch;delete
@@ -93,6 +105,43 @@ const (
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch;delete
+
+// getPhase determines the reconciler phase based on the seedgen CR status conditions
+func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) string {
+	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
+	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
+
+	// If neither condition is set, the reconciler phase is phaseInitial
+	if seedgenInProgressCondition == nil && seedgenCompletedCondition == nil {
+		return phaseInitial
+	}
+
+	// If either condition is set to Failed, the reconciler phase is phaseFailed
+	if (seedgenInProgressCondition != nil && seedgenInProgressCondition.Reason == string(utils.SeedGenConditionReasons.Failed)) ||
+		(seedgenCompletedCondition != nil && seedgenCompletedCondition.Reason == string(utils.SeedGenConditionReasons.Failed)) {
+		return phaseFailed
+	}
+
+	// If the Completed condition is set to True, the reconciler phase is phaseCompleted
+	if seedgenCompletedCondition != nil && seedgenCompletedCondition.Status == metav1.ConditionTrue {
+		return phaseCompleted
+	}
+
+	// If the InProgress condition is set to True, check the status message to determine the reconciler phase
+	if seedgenInProgressCondition != nil && seedgenInProgressCondition.Status == metav1.ConditionTrue {
+		msg := seedgenInProgressCondition.Message
+		if msg == msgLaunchingImager || strings.HasPrefix(msg, prefixFinalizing) {
+			// Reconciler phase is phaseFinalizing
+			return phaseFinalizing
+		} else if strings.HasPrefix(msg, prefixInitialHealthChecks) {
+			// Health checks in-progress indicates the reconciler phase is still phaseInitial
+			return phaseInitial
+		}
+	}
+
+	// Reconciler phase is phaseGenerating
+	return phaseGenerating
+}
 
 // Create an API client for hub requests (ACM)
 func (r *SeedGeneratorReconciler) createHubClient(hubKubeconfig []byte) (hubClient client.Client, err error) {
@@ -557,6 +606,12 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
+	// Ensure the kubeadmin secret exists
+	if _, err := commonUtils.GetSecretData(ctx, "kubeadmin", "kube-system", "kubeadmin", r.Client); err != nil {
+		msg = "Rejected due to system missing required kube-system/kubeadmin Secret"
+		return
+	}
+
 	return
 }
 
@@ -627,9 +682,14 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Pull the recertImage first, to avoid potential failures late in the seed image generation procedure
+	setSeedGenStatusInProgress(seedgen, "Pulling recert image")
+	_ = r.updateStatus(ctx, seedgen)
 	if err := r.pullRecertImagePullSpec(seedgen); err != nil {
 		return fmt.Errorf("failed to pull recert image: %w", err)
 	}
+
+	setSeedGenStatusInProgress(seedgen, "Preparing for seed generation")
+	_ = r.updateStatus(ctx, seedgen)
 
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
@@ -648,11 +708,6 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		}
 	} else {
 		return fmt.Errorf("could not find seedAuth in %s secret", utils.SeedGenSecretName)
-	}
-
-	// Save the seedgen CR in order to restore it after the lca-cli is complete
-	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
-		return fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
 	}
 
 	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
@@ -691,6 +746,9 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return fmt.Errorf("failed to write pull-secret to %s: %w", utils.StoredPullSecret, err)
 	}
 
+	setSeedGenStatusInProgress(seedgen, "Cleaning cluster resources")
+	_ = r.updateStatus(ctx, seedgen)
+
 	// Clean up cluster resources
 	r.Log.Info("Cleaning cluster resources")
 	if err := r.cleanupClusterResources(ctx); err != nil {
@@ -715,6 +773,16 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
 	defer r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData))
+
+	// Final stage of initial seed generation is to delete the CR and launch the container.
+	// Update the CR status prior to its saving and deletion
+	setSeedGenStatusInProgress(seedgen, msgLaunchingImager)
+	_ = r.updateStatus(ctx, seedgen)
+
+	// Save the seedgen CR in order to restore it after the lca-cli is complete
+	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
+		return fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
+	}
 
 	r.Log.Info("Deleting seedgen secret CR")
 	if err := r.Client.Delete(ctx, seedGenSecret); err != nil {
@@ -823,14 +891,6 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}()
 
-	// Wait for system stability before doing anything
-	r.Log.Info("Checking system health")
-	if err = healthcheck.HealthChecks(r.Client, r.Log); err != nil {
-		rc = fmt.Errorf("health check failed: %w", err)
-		return
-	}
-	r.Log.Info("Health check passed")
-
 	nextReconcile = doNotRequeue()
 
 	if req.Name != utils.SeedGenName {
@@ -861,56 +921,65 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return
 	}
 
-	if isSeedGenFailed(seedgen) {
+	phase := getPhase(seedgen)
+
+	if phase == phaseFailed {
 		r.Log.Info("Seed Generation has failed. Please delete and recreate the CR to try again")
 		return
-	}
+	} else if phase == phaseCompleted {
+		r.Log.Info("Seed Generation is completed")
+	} else if phase == phaseInitial {
+		// Run the initial checks
 
-	if rejection := r.validateSystem(ctx); len(rejection) > 0 {
-		setSeedGenStatusFailed(seedgen, rejection)
-		r.Log.Info(fmt.Sprintf("Seed generation rejected: system validation failed: %s", rejection))
+		if getSeedGenInProgressMessage(seedgen) == "" {
+			// Run the system validation the first time through
+			if rejection := r.validateSystem(ctx); len(rejection) > 0 {
+				setSeedGenStatusFailed(seedgen, rejection)
+				r.Log.Info(fmt.Sprintf("Seed generation rejected: system validation failed: %s", rejection))
 
-		// Update status
-		if err = r.updateStatus(ctx, seedgen); err != nil {
-			r.Log.Error(err, "Failed to update status")
-		}
-		return
-	}
-
-	if firstReconcile(seedgen) {
-		setSeedGenStatusInProgress(seedgen)
-		if err = r.updateStatus(ctx, seedgen); err != nil {
-			rc = fmt.Errorf("failed to update status: %w", err)
-			return
-		}
-
-		r.Log.Info(fmt.Sprintf("Generating seed image: %s", seedgen.Spec.SeedImage))
-		if err = r.generateSeedImage(ctx, seedgen, clusterName); err != nil {
-			r.Log.Error(err, "Seed generation failed")
-
-			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
-			if err = r.updateStatus(ctx, seedgen); err != nil {
-				r.Log.Error(err, "Failed to update status")
+				// Update status
+				if err = r.updateStatus(ctx, seedgen); err != nil {
+					r.Log.Error(err, "Failed to update status")
+				}
+				return
 			}
 
-			_ = r.wipeExistingWorkspace()
-			return
+			setSeedGenStatusInProgress(seedgen, fmt.Sprintf("%s started", prefixInitialHealthChecks))
+			_ = r.updateStatus(ctx, seedgen)
 		}
-	} else if isSeedGenInProgress(seedgen) {
-		r.Log.Info("Completing Seed Generation")
+
+		// Wait for system stability before starting seed generation
+		r.Log.Info("Checking system health")
+		if err = healthcheck.HealthChecks(r.Client, r.Log); err != nil {
+			r.Log.Info(fmt.Sprintf("health check failed: %s", err.Error()))
+			setSeedGenStatusInProgress(seedgen, fmt.Sprintf("%s in progress: %s", prefixInitialHealthChecks, err.Error()))
+			nextReconcile = requeueWithShortInterval()
+		} else {
+			r.Log.Info("Health check passed")
+			setSeedGenStatusInProgress(seedgen, "Starting seed generation")
+			nextReconcile = requeueImmediately()
+		}
+	} else if phase == phaseGenerating {
+		r.Log.Info(fmt.Sprintf("Generating seed image: %s", seedgen.Spec.SeedImage))
+		if err = r.generateSeedImage(ctx, seedgen, clusterName); err != nil {
+			_ = r.wipeExistingWorkspace()
+
+			r.Log.Error(err, "Seed generation failed")
+			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
+		}
+		nextReconcile = doNotRequeue()
+	} else if phase == phaseFinalizing {
+		r.Log.Info("Finalizing Seed Generation")
+		setSeedGenStatusInProgress(seedgen, prefixFinalizing)
+		_ = r.updateStatus(ctx, seedgen)
+
 		if err = r.finishSeedgen(ctx, clusterName); err != nil {
 			r.Log.Error(err, "Seed generation failed")
 			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
-			if err = r.updateStatus(ctx, seedgen); err != nil {
-				r.Log.Error(err, "Failed to update status")
-			}
-
-			return
+		} else {
+			setSeedGenStatusCompleted(seedgen)
 		}
-
-		setSeedGenStatusCompleted(seedgen)
-	} else if isSeedGenCompleted(seedgen) {
-		r.Log.Info("Seed Generation is completed")
+		nextReconcile = doNotRequeue()
 	}
 
 	// Update status
@@ -936,12 +1005,12 @@ func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator, msg string) 
 		seedgen.Generation)
 }
 
-func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator) {
+func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
 		utils.SeedGenConditionReasons.InProgress,
 		metav1.ConditionTrue,
-		"Seed Generation in progress",
+		msg,
 		seedgen.Generation)
 }
 
@@ -960,33 +1029,14 @@ func setSeedGenStatusCompleted(seedgen *seedgenv1alpha1.SeedGenerator) {
 		seedgen.Generation)
 }
 
-func isSeedGenFailed(seedgen *seedgenv1alpha1.SeedGenerator) bool {
-	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
+func getSeedGenInProgressMessage(seedgen *seedgenv1alpha1.SeedGenerator) string {
 	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
 
-	// Only allow start if both conditions are absent
-	return (seedgenInProgressCondition != nil && seedgenInProgressCondition.Reason == string(utils.SeedGenConditionReasons.Failed)) ||
-		(seedgenCompletedCondition != nil && seedgenCompletedCondition.Reason == string(utils.SeedGenConditionReasons.Failed))
-}
+	if seedgenInProgressCondition == nil || seedgenInProgressCondition.Status != metav1.ConditionTrue {
+		return ""
+	}
 
-func isSeedGenInProgress(seedgen *seedgenv1alpha1.SeedGenerator) bool {
-	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
-
-	return seedgenInProgressCondition != nil && seedgenInProgressCondition.Status == metav1.ConditionTrue
-}
-
-func isSeedGenCompleted(seedgen *seedgenv1alpha1.SeedGenerator) bool {
-	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
-
-	return seedgenCompletedCondition != nil && seedgenCompletedCondition.Status == metav1.ConditionTrue
-}
-
-func firstReconcile(seedgen *seedgenv1alpha1.SeedGenerator) bool {
-	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
-	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
-
-	// Only allow start if both conditions are absent
-	return seedgenInProgressCondition == nil && seedgenCompletedCondition == nil
+	return seedgenInProgressCondition.Message
 }
 
 func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
