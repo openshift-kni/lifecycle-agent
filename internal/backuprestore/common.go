@@ -198,7 +198,7 @@ func getBackup(ctx context.Context, c client.Client, name, namespace string) (*v
 		if k8serrors.IsNotFound(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
 	}
 
 	return backup, nil
@@ -210,7 +210,7 @@ func getClusterID(ctx context.Context, c client.Client) (string, error) {
 	if err := c.Get(ctx, types.NamespacedName{
 		Name: "version",
 	}, clusterVersion); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get ClusterVersion: %w", err)
 	}
 
 	return string(clusterVersion.Spec.ClusterID), nil
@@ -248,7 +248,7 @@ func (h *BRHandler) createObjectWithDryRun(ctx context.Context, object *unstruct
 		}
 
 		if !k8serrors.IsAlreadyExists(err) {
-			return err
+			return fmt.Errorf("failed to create configMap with dry run: %w", err)
 		}
 	}
 	return nil
@@ -290,7 +290,11 @@ func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, i
 	} else {
 		_, err = resourceClient.Patch(ctx, obj.Name, types.JSONPatchType, payload, patchOptions)
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to patch object: %w", err)
+	}
+
+	return nil
 }
 
 func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
@@ -301,7 +305,7 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 			h.Log.Error(nil, errMsg)
 			return NewBRFailedValidationError("OADP", errMsg)
 		}
-		return err
+		return fmt.Errorf("failed to oadp configMaps: %w", err)
 	}
 
 	backups, err := h.extractBackupFromConfigmaps(ctx, configmaps)
@@ -329,7 +333,7 @@ func (h *BRHandler) ValidateOadpConfigmap(ctx context.Context, content []lcav1al
 		for _, obj := range objs {
 			err := patchObj(ctx, h.DynamicClient, &obj, true, payload) //nolint:gosec
 			if err != nil {
-				return NewBRFailedValidationError("OADP", err.Error())
+				return NewBRFailedValidationError("OADP", fmt.Sprintf("failed apply backup label to objects included in apply-backup annotation: %s", err.Error()))
 			}
 		}
 	}
@@ -356,7 +360,7 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	// Check if OADP is running
 	oadpCsv := &operatorsv1alpha1.ClusterServiceVersionList{}
 	if err := h.List(ctx, oadpCsv, &client.ListOptions{Namespace: OadpNs}); err != nil {
-		return err
+		return fmt.Errorf("could not list ClusterServiceVersion: %w", err)
 	}
 
 	if len(oadpCsv.Items) == 0 ||
@@ -373,7 +377,7 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 		client.InNamespace(OadpNs),
 	}
 	if err := h.List(ctx, dpaList, opts...); err != nil {
-		return err
+		return fmt.Errorf("failed to list dpa: %w", err)
 	}
 
 	if len(dpaList.Items) == 0 {

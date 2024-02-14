@@ -76,25 +76,25 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 	// create backup dir
 	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
-		return err
+		return fmt.Errorf("failed to backup dir for seed image to %s: %w", s.backupDir, err)
 	}
 
 	s.log.Info("Copy lca-cli binary")
 	err := cp.Copy("/usr/local/bin/lca-cli", "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
 	}
 
 	if err := os.MkdirAll(common.BackupChecksDir, 0o700); err != nil {
-		return err
+		return fmt.Errorf("failed to make dir in %s: %w", common.BackupChecksDir, err)
 	}
 
 	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
-		return err
+		return fmt.Errorf("failed to run once create_container_list: %w", err)
 	}
 
 	if err := utils.RunOnce("gather_cluster_info", common.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
-		return err
+		return fmt.Errorf("failed to run once gather_cluster_info: %w", err)
 	}
 
 	if s.recertSkipValidation {
@@ -102,48 +102,48 @@ func (s *SeedCreator) CreateSeedImage() error {
 	} else {
 		s.log.Info("Backing up seed cluster certificates for recert tool")
 		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
-			return err
+			return fmt.Errorf("failed to backing up seed cluster certificates for recert tool: %w", err)
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	}
 
 	if err := s.stopServices(); err != nil {
-		return err
+		return fmt.Errorf("failed to stop services to create seed image: %w", err)
 	}
 
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
 		if err := utils.RunOnce("recert", common.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto, s.recertContainerImage, s.authFile); err != nil {
-			return err
+			return fmt.Errorf("failed to run once recert: %w", err)
 		}
 	}
 	if err := s.removeOvnCertsFolders(); err != nil {
-		return err
+		return fmt.Errorf("failed remove all OVN certs folders: %w", err)
 	}
 
 	if err := utils.RunOnce("backup_var", common.BackupChecksDir, s.log, s.backupVar); err != nil {
-		return err
+		return fmt.Errorf("failed to run once backup_var: %w", err)
 	}
 
 	if err := utils.RunOnce("backup_etc", common.BackupChecksDir, s.log, s.backupEtc); err != nil {
-		return err
+		return fmt.Errorf("failed to run once backup_etc: %w", err)
 	}
 
 	if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
-		return err
+		return fmt.Errorf("failed to run once backup_ostree: %w", err)
 	}
 
 	if err := utils.RunOnce("backup_rpmostree", common.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
-		return err
+		return fmt.Errorf("failed to run once backup_rpmostree: %w", err)
 	}
 
 	if err := utils.RunOnce("backup_mco_config", common.BackupChecksDir, s.log, s.backupMCOConfig); err != nil {
-		return err
+		return fmt.Errorf("failed to run once backup_mco_config: %w", err)
 	}
 
 	if err := s.createAndPushSeedImage(); err != nil {
-		return err
+		return fmt.Errorf("failed to create and push seed image: %w", err)
 	}
 
 	return nil
@@ -156,17 +156,19 @@ func (s *SeedCreator) copyConfigurationFiles() error {
 
 func (s *SeedCreator) handleServices() error {
 	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
-	return utils.HandleFilesWithCallback(dir, func(path string) error {
+	return utils.HandleFilesWithCallback(dir, func(path string) error { //nolint:wrapcheck
 		serviceName := filepath.Base(path)
 
 		s.log.Infof("Creating service %s", serviceName)
 		if err := cp.Copy(path, filepath.Join("/etc/systemd/system/", serviceName)); err != nil {
-			return err
+			return fmt.Errorf("failed create service %s: %w", serviceName, err)
 		}
 
 		s.log.Infof("Enabling service %s", serviceName)
-		_, err := s.ops.SystemctlAction("enable", serviceName)
-		return err
+		if _, err := s.ops.SystemctlAction("enable", serviceName); err != nil {
+			return fmt.Errorf("failed to enabling service %s: %w", serviceName, err)
+		}
+		return nil
 	})
 }
 
@@ -174,24 +176,26 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	s.log.Info("Saving seed cluster configuration")
 	clusterInfo, err := utils.GetClusterInfo(ctx, s.client)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get cluster info: %w", err)
 	}
 
 	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
-		return fmt.Errorf("error creating %s: %w", common.BackupCertsDir, err)
+		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)
 	}
 
 	s.log.Infof("Creating seed information file in %s", common.SeedClusterInfoFileName)
-	if err := utils.MarshalToFile(seedClusterInfo, path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)); err != nil {
-		return err
+	p := path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)
+	if err := utils.MarshalToFile(seedClusterInfo, p); err != nil {
+		return fmt.Errorf("error creating seed info file in %s: %w", p, err)
 	}
 
 	// in order to allow lca to verify version we need to provide file not as part of var archive too
-	if err := cp.Copy(path.Join(common.SeedDataDir, common.SeedClusterInfoFileName), path.Join(s.backupDir,
-		common.SeedClusterInfoFileName)); err != nil {
-		return err
+	src := path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)
+	dest := path.Join(s.backupDir, common.SeedClusterInfoFileName)
+	if err := cp.Copy(src, dest); err != nil {
+		return fmt.Errorf("error copying from %s to %s: %w", src, dest, err)
 	}
 
 	return nil
@@ -205,7 +209,7 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Cleaning image list")
 	// Don't ever add -a option as we don't want to delete unused images
 	if _, err := s.ops.RunBashInHostNamespace("podman", "image", "prune", "-f"); err != nil {
-		return err
+		return fmt.Errorf("failed to prune with podmamn: %w", err)
 	}
 
 	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
@@ -215,12 +219,12 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 
 	output, err := s.ops.RunBashInHostNamespace("crictl", args...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to run crictl with args %s: %w", args, err)
 	}
 	images := strings.Split(output, "\n")
 	images, err = s.filterCatalogImages(ctx, images)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to filter catalog images: %w", err)
 	}
 
 	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
@@ -239,13 +243,13 @@ func (s *SeedCreator) stopServices() error {
 	s.log.Info("Stop kubelet service")
 	_, err := s.ops.SystemctlAction("stop", "kubelet.service")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to stop kubelet: %w", err)
 	}
 
 	s.log.Info("Disabling kubelet service")
 	_, err = s.ops.SystemctlAction("disable", "kubelet.service")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to disable kubelet: %w", err)
 	}
 
 	s.log.Info("Stopping containers and CRI-O runtime.")
@@ -253,7 +257,7 @@ func (s *SeedCreator) stopServices() error {
 	var exitErr *exec.ExitError
 	// If ExitCode is 3, the command succeeded and told us that crio is down
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
-		return err
+		return fmt.Errorf("failed to checking crio status: %w", err)
 	}
 	s.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
@@ -263,7 +267,7 @@ func (s *SeedCreator) stopServices() error {
 			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
 			_, err = s.ops.RunBashInHostNamespace("crictl", args...)
 			if err != nil {
-				return false, err
+				return false, fmt.Errorf("failed to stop running containers: %w", err)
 			}
 			return true, nil
 		})
@@ -272,7 +276,7 @@ func (s *SeedCreator) stopServices() error {
 		s.log.Debug("Stopping CRI-O engine")
 		_, err = s.ops.SystemctlAction("stop", "crio.service")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to stop crio engine: %w", err)
 		}
 		s.log.Info("Running containers and CRI-O engine stopped successfully.")
 	} else {
@@ -309,7 +313,7 @@ func (s *SeedCreator) backupVar() error {
 	// Run the tar command
 	_, err := s.ops.RunBashInHostNamespace("tar", tarArgs...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to run tar for backupVar: %w", err)
 	}
 
 	s.log.Infof("Backup of %s created successfully.", common.VarFolder)
@@ -334,7 +338,7 @@ func (s *SeedCreator) backupEtc() error {
 		path.Join(s.backupDir, "/etc.deletions")}
 	_, err := s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed backing up /etc with args %s: %w", args, err)
 	}
 
 	args = []string{"admin", "config-diff", "|", "grep", "-v", "'cni/multus'",
@@ -343,7 +347,7 @@ func (s *SeedCreator) backupEtc() error {
 
 	_, err = s.ops.RunBashInHostNamespace("ostree", args...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed backing up /etc with args %s: %w", args, err)
 	}
 	s.log.Info("Backup of /etc created successfully.")
 
@@ -355,26 +359,31 @@ func (s *SeedCreator) backupOstree() error {
 	ostreeTar := s.backupDir + "/ostree.tgz"
 
 	// Execute 'tar' command and backup /etc
-	_, err := s.ops.RunBashInHostNamespace(
-		"tar", []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}...)
+	args := []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}
+	if _, err := s.ops.RunBashInHostNamespace("tar", args...); err != nil {
+		return fmt.Errorf("failed backing ostree with args %s: %w", args, err)
+	}
 
-	return err
+	return nil
 }
 
 func (s *SeedCreator) backupRPMOstree() error {
 	rpmJSON := s.backupDir + "/rpm-ostree.json"
-	_, err := s.ops.RunBashInHostNamespace(
-		"rpm-ostree", append([]string{"status", "-v", "--json"}, ">", rpmJSON)...)
+	args := append([]string{"status", "-v", "--json"}, ">", rpmJSON)
+	if _, err := s.ops.RunBashInHostNamespace("rpm-ostree", args...); err != nil {
+		return fmt.Errorf("failed to run backup rpmostree with args %s: %w", args, err)
+	}
 	s.log.Info("Backup of rpm-ostree.json created successfully.")
-	return err
+	return nil
 }
 
 func (s *SeedCreator) backupMCOConfig() error {
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	_, err := s.ops.RunBashInHostNamespace(
-		"cp", "/etc/machine-config-daemon/currentconfig", mcoJSON)
+	if _, err := s.ops.RunBashInHostNamespace("cp", "/etc/machine-config-daemon/currentconfig", mcoJSON); err != nil {
+		return fmt.Errorf("failed to backup MCO config: %w", err)
+	}
 	s.log.Info("Backup of mco-currentconfig created successfully.")
-	return err
+	return nil
 }
 
 // Building and pushing OCI image
@@ -442,13 +451,13 @@ func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
 	originFileName := fmt.Sprintf("%s/ostree-%s.origin", s.backupDir, bootedDeployment)
 	_, err := os.Stat(originFileName)
 	if err == nil || !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("failed to get file info for %s: %w", originFileName, err)
 	}
 	// Execute 'copy' command and backup .origin file
 	_, err = s.ops.RunInHostNamespace(
 		"cp", []string{"/ostree/deploy/" + bootedOSName + "/deploy/" + bootedDeployment + ".origin", originFileName}...)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed 'copy' command to backup .origin file,: %w", err)
 	}
 	s.log.Info("Backup of .origin created successfully.")
 	return nil
@@ -490,5 +499,9 @@ func (s *SeedCreator) filterCatalogImages(ctx context.Context, images []string) 
 
 func (s *SeedCreator) removeOvnCertsFolders() error {
 	s.log.Infof("Removing ovn certs folders")
-	return utils.RemoveListOfFolders(s.log, []string{common.OvnNodeCerts, common.MultusCerts})
+	dirs := []string{common.OvnNodeCerts, common.MultusCerts}
+	if err := utils.RemoveListOfFolders(s.log, dirs); err != nil {
+		return fmt.Errorf("failed to remove ovn certs in %s: %w", dirs, err)
+	}
+	return nil
 }

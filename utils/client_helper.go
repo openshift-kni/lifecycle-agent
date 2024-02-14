@@ -24,7 +24,7 @@ func GetSecretData(ctx context.Context, name, namespace, key string, client runt
 	if err := client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
 		// NOTE: The error is intentionally left unwrapped here, so the caller
 		// can check client.IgnoreNotFound on it
-		return "", err
+		return "", err //nolint:wrapcheck
 	}
 
 	data, ok := secret.Data[key]
@@ -38,7 +38,7 @@ func GetSecretData(ctx context.Context, name, namespace, key string, client runt
 func GetConfigMapData(ctx context.Context, name, namespace, key string, client runtimeclient.Client) (string, error) {
 	cm := &corev1.ConfigMap{}
 	if err := client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, cm); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get get configMap: %w", err)
 	}
 
 	data, ok := cm.Data[key]
@@ -79,22 +79,22 @@ type ClusterInfo struct {
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
 	clusterVersion := &ocp_config_v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get clusterversion: %w", err)
 	}
 
 	clusterName, err := GetClusterName(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get clusterName: %w", err)
 	}
 
 	clusterBaseDomain, err := GetClusterBaseDomain(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get clusterBaseDomain: %w", err)
 	}
 
 	node, err := GetSNOMasterNode(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get SNOMasterNode: %w", err)
 	}
 	ip, err := getNodeInternalIP(*node)
 	if err != nil {
@@ -159,7 +159,7 @@ func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*basicI
 	cm := &corev1.ConfigMap{}
 	err := client.Get(ctx, types.NamespacedName{Name: common.InstallConfigCM, Namespace: common.InstallConfigCMNamespace}, cm)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not get configMap: %w", err)
 	}
 
 	data, ok := cm.Data["install-config"]
@@ -223,7 +223,7 @@ func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient
 	allNamespaces := runtimeclient.ListOptions{Namespace: metav1.NamespaceAll}
 	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
 	if err := client.List(ctx, currentIcps, &allNamespaces); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list ImageContentSourcePolicy: %w", err)
 	}
 	for _, icsp := range currentIcps.Items {
 		for _, rdp := range icsp.Spec.RepositoryDigestMirrors {
@@ -232,7 +232,7 @@ func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient
 	}
 	currentIdms := ocp_config_v1.ImageDigestMirrorSetList{}
 	if err := client.List(ctx, &currentIdms, &allNamespaces); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list ImageDigestMirrorSet: %w", err)
 	}
 
 	for _, idms := range currentIdms.Items {

@@ -255,7 +255,7 @@ func ReadPrecachingList(imageListFile, clusterRegistry, seedRegistry string, ove
 		if overrideSeedRegistry {
 			image, err = utils.ReplaceImageRegistry(image, clusterRegistry, seedRegistry)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to replace image registry %s-%s-%s: %w", image, clusterRegistry, seedRegistry, err)
 			}
 		}
 		imageList = append(imageList, image)

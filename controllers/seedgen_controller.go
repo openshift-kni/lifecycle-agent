@@ -117,7 +117,10 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 	managedcluster := &clusterv1.ManagedCluster{}
 	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
 		// If not found, do nothing.
-		return client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("failed to get ManagedCluster: %w", err)
+		}
+		return nil
 	}
 
 	// The hubClient.Get() request isn't setting the GVK, so do it using the scheme data
@@ -125,7 +128,7 @@ func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClie
 	// on the SNO, so maybe we need a separate resource discovery mechanism, or distinct scheme?
 	typeMeta, err := commonUtils.TypeMetaForObject(r.Scheme, managedcluster)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get typeMeta for ManagedCluster: %w", err)
 	}
 	managedcluster.TypeMeta = *typeMeta
 
@@ -181,7 +184,7 @@ func (r *SeedGeneratorReconciler) reregisterWithHub(ctx context.Context, hubClie
 	}
 
 	if err := os.Rename(filePath, filePath+".bak"); err != nil {
-		return err
+		return fmt.Errorf("failed to rename file %s for hub registration: %w", filePath, err)
 	}
 
 	return nil
@@ -566,18 +569,18 @@ func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, 
 	// with the result which has no status
 	status := seedgen.Status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreAlreadyExists(r.Client.Create(ctx, seedgen))
+		return client.IgnoreAlreadyExists(r.Client.Create(ctx, seedgen)) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to create seedgen during restore: %w", err)
 	}
 
 	// Put the saved status into the newly create seedgen with the right resource
 	// version which is required for the update call to work
 	seedgen.Status = status
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return r.Client.Status().Update(ctx, seedgen)
+		return r.Client.Status().Update(ctx, seedgen) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to update seedgen status during restore: %w", err)
 	}
 
 	return nil
@@ -590,9 +593,9 @@ func (r *SeedGeneratorReconciler) restoreSeedgenSecretCR(ctx context.Context, se
 	secret.SetResourceVersion("")
 
 	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreAlreadyExists(r.Client.Create(ctx, secret))
+		return client.IgnoreAlreadyExists(r.Client.Create(ctx, secret)) //nolint:wrapcheck
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to create seedgen secret: %w", err)
 	}
 
 	return nil
@@ -979,11 +982,11 @@ func firstReconcile(seedgen *seedgenv1alpha1.SeedGenerator) bool {
 func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
 	seedgen.Status.ObservedGeneration = seedgen.ObjectMeta.Generation
 	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
-		return r.Status().Update(ctx, seedgen)
+		return r.Status().Update(ctx, seedgen) //nolint:wrapcheck
 	})
 
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}
 
 	return nil
@@ -993,6 +996,7 @@ func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *see
 func (r *SeedGeneratorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("SeedGenerator")
 
+	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&seedgenv1alpha1.SeedGenerator{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc:  func(e event.UpdateEvent) bool { return false },

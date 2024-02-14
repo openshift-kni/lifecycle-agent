@@ -92,28 +92,31 @@ func BackupKubeconfigCrypto(ctx context.Context, client runtimeclient.Client, cr
 
 	adminKubeConfigClientCA, err := GetConfigMapData(ctx, "admin-kubeconfig-client-ca", "openshift-config", "ca-bundle.crt", client)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get configMap data with adminKubeConfigClientCA: %w", err)
 	}
-	if err := os.WriteFile(path.Join(cryptoDir, "admin-kubeconfig-client-ca.crt"), []byte(adminKubeConfigClientCA), cryptoDirMode); err != nil {
-		return err
+	p := path.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")
+	if err := os.WriteFile(p, []byte(adminKubeConfigClientCA), cryptoDirMode); err != nil {
+		return fmt.Errorf("failed to admin-kubeconfig-client-ca.crt to path %s: %w", p, err)
 	}
 
 	for _, cert := range common.CertPrefixes {
 		servingSignerKey, err := GetSecretData(ctx, cert, "openshift-kube-apiserver-operator", "tls.key", client)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get secret data with servingSignerKey: %w", err)
 		}
-		if err := os.WriteFile(path.Join(cryptoDir, cert+".key"), []byte(servingSignerKey), cryptoDirMode); err != nil {
-			return err
+		curP := path.Join(cryptoDir, cert+".key")
+		if err := os.WriteFile(curP, []byte(servingSignerKey), cryptoDirMode); err != nil {
+			return fmt.Errorf("failed write to .key file to path %s: %w", curP, err)
 		}
 	}
 
 	ingressOperatorKey, err := GetSecretData(ctx, "router-ca", "openshift-ingress-operator", "tls.key", client)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get secret data with ingressOperatorKey: %w", err)
 	}
-	if err := os.WriteFile(path.Join(cryptoDir, "ingresskey-ingress-operator.key"), []byte(ingressOperatorKey), cryptoDirMode); err != nil {
-		return err
+	p = path.Join(cryptoDir, "ingresskey-ingress-operator.key")
+	if err := os.WriteFile(p, []byte(ingressOperatorKey), cryptoDirMode); err != nil {
+		return fmt.Errorf("failed to ingresskey-ingress-operator.key to path %s: %w", p, err)
 	}
 	return nil
 }

@@ -124,18 +124,16 @@ func (h *PHandler) CreateJob(ctx context.Context, config *Config) error {
 	cm := renderConfigMap(config.ImageList)
 	err := h.Client.Create(ctx, cm)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create configMap for precache: %w", err)
 	}
 
 	job, err := renderJob(config, h.Log)
 	if err != nil {
-		h.Log.Info("Failed to render precaching job manifest.")
-		return err
+		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}
 	err = h.Client.Create(ctx, job)
 	if err != nil {
-		h.Log.Info("Failed to create K8s job.")
-		return err
+		return fmt.Errorf("failed to create precache job: %w", err)
 	}
 
 	// Log job details
