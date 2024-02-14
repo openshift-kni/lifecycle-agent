@@ -79,7 +79,9 @@ This is generally intended for platform configuration that is site specific and 
 
 There are two implementations of extra manifests:
 
-- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted by the operator during the upgrade stage. Manifests that have the `ran.openshift.io/ztp-deploy-wave` annotation and are labeled with `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after rebooting to the new version.
+- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted by the operator during the upgrade stage.
+Manifests that have the `ran.openshift.io/ztp-deploy-wave` annotation and are labeled with `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after 
+rebooting to the new version.
 
 - If the target cluster is not integrated with ZTP GitOps the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
 `extraManifests` field in the [IBU CR](#imagebasedupgrade-cr). After rebooting to the new version, these extra manifests are applied.
