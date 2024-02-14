@@ -55,6 +55,8 @@ kind: SriovNetworkNodePolicy
 metadata:
   name: sriov-nnp-mh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "1"   
   spec:
     deviceType: netdevice
     isRdma: false
@@ -64,6 +66,8 @@ kind: SriovNetworkNodePolicy
 metadata:
   name: sriov-nnp-fh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "3"
   spec:
     deviceType: netdevice
     isRdma: true
@@ -75,6 +79,8 @@ kind: SriovNetwork
 metadata:
   name: sriov-nw-mh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "1"
   spec:
     resourceName: mh
 `
@@ -189,10 +195,10 @@ func TestExportExtraManifests(t *testing.T) {
 
 	// Check that the manifests were exported to the correct files
 	expectedFilePaths := []string{
-		filepath.Join(toDir, ExtraManifestPath, "0_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "2_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "3_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group2", "1_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group1", "1_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group3", "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group1", "2_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
 	}
 
 	for _, expectedFile := range expectedFilePaths {

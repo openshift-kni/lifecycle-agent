@@ -16,6 +16,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -371,4 +372,52 @@ func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Log
 	}
 
 	return dynamicClient, nil
+}
+
+func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstructured.Unstructured, error) {
+	var sortedManifests [][]*unstructured.Unstructured
+
+	groupSubDirs, err := os.ReadDir(filepath.Clean(basePath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read manifest groups subdirs in %s: %w", basePath, err)
+	}
+
+	for _, groupSubDir := range groupSubDirs {
+		if !groupSubDir.IsDir() {
+			log.Info("Unexpected file found, skipping...", "file",
+				filepath.Join(basePath, groupSubDir.Name()))
+			continue
+		}
+
+		// The returned list of entries are sorted by name alphabetically
+		manifestDirPath := filepath.Join(basePath, groupSubDir.Name())
+		manifestYamls, err := os.ReadDir(filepath.Clean(manifestDirPath))
+		if err != nil {
+			return nil, fmt.Errorf("failed get manifest yamls in %s: %w", manifestYamls, err)
+		}
+
+		var manifests []*unstructured.Unstructured
+		for _, yamlFile := range manifestYamls {
+			if yamlFile.IsDir() {
+				log.Info("Unexpected directory found, skipping...", "directory",
+					filepath.Join(manifestDirPath, yamlFile.Name()))
+				continue
+			}
+			yamlFilePath := filepath.Join(manifestDirPath, yamlFile.Name())
+
+			manifest := &unstructured.Unstructured{}
+			err := ReadYamlOrJSONFile(yamlFilePath, manifest)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read manifest file in %s: %w", yamlFilePath, err)
+			}
+			manifests = append(manifests, manifest)
+		}
+
+		sortedManifests = append(sortedManifests, manifests)
+	}
+
+	return sortedManifests, nil
 }

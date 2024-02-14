@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -66,6 +67,7 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 }
 
 func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
+	backupGvk := common.BackupGvk
 	backup := &velerov1.Backup{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       backupGvk.Kind,
@@ -74,7 +76,7 @@ func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
 	}
 	backup.SetName(name)
 	backup.SetNamespace(oadpNs)
-	backup.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
+	backup.SetAnnotations(map[string]string{common.ApplyWaveAnn: applyWave})
 
 	backup.Spec = velerov1.BackupSpec{
 		IncludedNamespaces:               []string{"openshift-test"},
@@ -491,91 +493,6 @@ func TestGetObjsFromAnnotations(t *testing.T) {
 			result, err := getObjsFromAnnotations(backup)
 			assert.Equal(t, tc.expected, result)
 			assert.NoError(t, err)
-		})
-	}
-}
-
-func TestSortBackupCrs(t *testing.T) {
-	testcases := []struct {
-		name           string
-		resources      []*velerov1.Backup
-		expectedResult [][]*velerov1.Backup
-	}{
-		{
-			name: "Multiple resources contain the same wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "3", "fakeResource"),
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-			}, {
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("c_backup", "3", "fakeResource"),
-			}, {
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-			}, {
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-			},
-			},
-		},
-		{
-			name: "Multiple resources have no wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("g_backup", "", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-			}, {
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-			}, {
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-			}, {
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-			}, {
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("g_backup", "", "fakeResource"),
-			},
-			},
-		},
-		{
-			name: "All resources have no wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "", "fakeResource"),
-				fakeBackupCr("a_backup", "", "fakeResource"),
-				fakeBackupCr("b_backup", "", "fakeResource"),
-				fakeBackupCr("f_backup", "", "fakeResource"),
-				fakeBackupCr("e_backup", "", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("a_backup", "", "fakeResource"),
-				fakeBackupCr("b_backup", "", "fakeResource"),
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "", "fakeResource"),
-				fakeBackupCr("e_backup", "", "fakeResource"),
-				fakeBackupCr("f_backup", "", "fakeResource"),
-			},
-			},
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, _ := sortByApplyWaveBackupCrs(tc.resources)
-			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
 }
