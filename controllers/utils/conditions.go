@@ -146,6 +146,15 @@ func IsStageCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.Imag
 	return false
 }
 
+// IsStageFailed checks if the completed condition status for the stage is false
+func IsStageFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+	condition := GetCompletedCondition(ibu, stage)
+	if condition != nil && condition.Status == metav1.ConditionFalse {
+		return true
+	}
+	return false
+}
+
 // IsStageCompletedOrFailed checks if the completed condition for the stage is present
 func IsStageCompletedOrFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
@@ -177,8 +186,8 @@ func IsStageInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.Ima
 	return false
 }
 
-// GetCurrentInProgressStage returns the stage that is currently in progress
-func GetCurrentInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBasedUpgradeStage {
+// GetInProgressStage returns the stage that is currently in progress
+func GetInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBasedUpgradeStage {
 	stages := []lcav1alpha1.ImageBasedUpgradeStage{
 		lcav1alpha1.Stages.Idle,
 		lcav1alpha1.Stages.Prep,

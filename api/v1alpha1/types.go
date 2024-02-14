@@ -64,9 +64,11 @@ type ImageBasedUpgradeSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Stage"
 	Stage ImageBasedUpgradeStage `json:"stage,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image Reference"
-	SeedImageRef          SeedImageRef          `json:"seedImageRef,omitempty"`
-	AdditionalImages      ConfigMapRef          `json:"additionalImages,omitempty"`
-	OADPContent           []ConfigMapRef        `json:"oadpContent,omitempty"`
+	SeedImageRef     SeedImageRef `json:"seedImageRef,omitempty"`
+	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content"
+	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Extra Manifests"
 	ExtraManifests        []ConfigMapRef        `json:"extraManifests,omitempty"`
 	AutoRollbackOnFailure AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
 }
@@ -105,12 +107,13 @@ type PullSecretRef struct {
 
 // ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
 type ImageBasedUpgradeStatus struct {
-	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Status"
 	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
 	StartedAt          metav1.Time `json:"startedAt,omitempty"`
 	CompletedAt        metav1.Time `json:"completedAt,omitempty"`
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Conditions"
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Valid Next Stage"
+	ValidNextStages []ImageBasedUpgradeStage `json:"validNextStages,omitempty"`
 }
 
 // +kubebuilder:object:root=true

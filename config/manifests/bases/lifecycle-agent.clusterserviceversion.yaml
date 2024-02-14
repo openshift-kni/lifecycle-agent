@@ -40,6 +40,10 @@ spec:
         name: ""
         version: v1
       specDescriptors:
+      - displayName: Extra Manifests
+        path: extraManifests
+      - displayName: OADP Content
+        path: oadpContent
       - displayName: Seed Image Reference
         path: seedImageRef
       - displayName: Stage
@@ -47,8 +51,8 @@ spec:
       statusDescriptors:
       - displayName: Conditions
         path: conditions
-      - displayName: Status
-        path: observedGeneration
+      - displayName: Valid Next Stage
+        path: validNextStages
       version: v1alpha1
     - description: SeedGenerator is the Schema for the seedgenerators API
       displayName: Seed Generator
