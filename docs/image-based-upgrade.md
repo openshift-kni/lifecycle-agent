@@ -19,7 +19,7 @@
 
 ## Overview
 
-Image Based Upgrade (IBU) is a mechanism that allows a SNO to be upgraded via a seed image. The seed is an OCI image
+Image Based Upgrade (IBU) is a feature that allows a SNO to be upgraded via a seed image. The seed is an OCI image
 generated from a SNO system installed with the target OCP version with most of the configuration for the target cluster
 profile baked in. The seed image is installed onto a target SNO as a new ostree stateroot. Prior to booting this new
 stateroot, application artifacts are backed up. After pivoting into the new release, the cluster is reconfigured with
@@ -55,24 +55,36 @@ TODO Insert the state transition diagram
 
 ## Handling Site Specific Artifacts
 
-Two mechanisms are provided for the admin to apply site specific artifacts to the SNO following the pivot to the new version.
+In order to optimize the downtime of IBU, the intent is to apply as many artifacts as possible to the seed image.
+The applications are considered site specific and are not part of this seed image.
+In addition, there are platform artifacts that are site and OCP version specific so cannot simply be backed up and restored.
 
-### Extra Manifests
-
-In order to optimize the downtime of IBU, the intent is to apply as much configuration as possible to the seed image.
-Some manifests contain site specific data that cannot be part of the seed image. Furthermore, these manifests may be OCP
-version specific so cannot be simply backed up and restored. The Life Cycle Agent provides a mechanism to apply a set of
-extra manifests after pivoting to the new OCP version. These manifests are stored in configmap(s) and specified by the
-`extraManifests` field [IBU CR](#imagebasedupgrade-cr)
+The LCA provides mechanisms to update the target cluster to address the above scenarios.
 
 ### Backup and Restore
 
-This is another mechanism provided to apply site specific artifacts to the new OCP version. This is mainly intended for
-the applications running on the SNO whose artifacts will not change as a result of the OCP version change. It will also
-be used for a small number of platform artifacts that will not change over the upgrade (ex. ACM klusterlet). The OADP
-operator is used to implement the backup and restore functionality. A configmap(s) is applied to the cluster and
-specified by the `oadpContent` field in [IBU CR](#imagebasedupgrade-cr). This configmap will contain a set of OADP
+This is mainly intended for the applications running on the SNO whose artifacts will not change as a result of the OCP version change.
+A requirement of IBU is that the application version does not change over the upgrade.
+
+It will also be used for a small number of platform artifacts that will not change over the upgrade (ex. ACM klusterlet).
+
+The OADP operator is used to implement the backup and restore functionality. A configmap(s) is applied to the cluster and
+specified by the `oadpContent` field in the [IBU CR](#imagebasedupgrade-cr). This configmap will contain a set of OADP
 backup and restore CR. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
+
+### Extra Manifests
+
+The Life Cycle Agent provides a mechanism to apply a set of extra manifests after booting the new OCP version.
+This is generally intended for platform configuration that is site specific and could change over OCP releases. It would also be used for new manifests that are only relevant in the new release.
+
+There are two implementations of extra manifests:
+
+- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted by the operator during the upgrade stage.
+Manifests that have the `ran.openshift.io/ztp-deploy-wave` annotation and are labeled with `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after
+rebooting to the new version.
+
+- If the target cluster is not integrated with ZTP GitOps the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
+`extraManifests` field in the [IBU CR](#imagebasedupgrade-cr). After rebooting to the new version, these extra manifests are applied.
 
 ## Target SNO Prerequisites
 
@@ -84,6 +96,7 @@ The target SNO has the following prerequisites:
   - Same performance tuning (i.e., reserved CPUs).
 - LCA operator must be deployed, version must be compatible with the seed.
 - The OADP operator is installed along with a DataProtectionApplication CR. OADP has connectivity to a S3 backend
+- The target cluster must have a dedicated partition configured for `/var/lib/containers`
 
 ## ImageBasedUpgrade CR
 
