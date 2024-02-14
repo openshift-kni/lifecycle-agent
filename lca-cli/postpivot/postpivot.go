@@ -216,17 +216,6 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfiguration
 	}
 	defer cli.Close()
 
-	// cleanup etcd keys
-	p.log.Info("Cleaning up etcd keys from seed data")
-	keysToDelete := []string{"/kubernetes.io/configmaps/openshift-etcd/etcd-endpoints"}
-
-	for _, key := range keysToDelete {
-		_, err = cli.Delete(ctx, key)
-		if err != nil {
-			return err
-		}
-	}
-
 	newEtcdIp := reconfigurationInfo.NodeIP
 	if utils.IsIpv6(newEtcdIp) {
 		newEtcdIp = fmt.Sprintf("[%s]", newEtcdIp)
