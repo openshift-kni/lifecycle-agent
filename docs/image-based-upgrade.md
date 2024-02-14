@@ -57,7 +57,7 @@ TODO Insert the state transition diagram
 
 In order to optimize the downtime of IBU, the intent is to apply as many artifacts as possible to the seed image.
 The applications are considered site specific and are not part of this seed image.
-In addition, there are platform artifacts that are site and OCP version specific so cannot simply backed up and restored.
+In addition, there are platform artifacts that are site and OCP version specific so cannot simply be backed up and restored.
 
 The LCA provides mechanisms to update the target cluster to address the above scenarios.
 
@@ -79,9 +79,9 @@ This is generally intended for platform configuration that is site specific and 
 
 There are two implementations of extra manifests:
 
-- If the target cluster is integrated with ZTP Gitops, the site specific manifests can be automatically extracted by the operator during the upgrade stage. Manifests with a label of `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after rebooting to the new version.
+- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted by the operator during the upgrade stage. Manifests that have the `ran.openshift.io/ztp-deploy-wave` annotation and are labeled with `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after rebooting to the new version.
 
-- If the target cluster is not integrated with ZTP Gitops the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
+- If the target cluster is not integrated with ZTP GitOps the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
 `extraManifests` field in the [IBU CR](#imagebasedupgrade-cr). After rebooting to the new version, these extra manifests are applied.
 
 ## Target SNO Prerequisites
