@@ -239,20 +239,18 @@ func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *lcav
 
 func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
-	if idleCondition != nil && idleCondition.Status == metav1.ConditionFalse {
-		switch idleCondition.Reason {
-		case string(utils.ConditionReasons.Aborting):
-			nextReconcile, err = r.handleAbort(ctx, ibu)
-		case string(utils.ConditionReasons.AbortFailed):
-			nextReconcile, err = r.handleAbortFailure(ctx, ibu)
-		case string(utils.ConditionReasons.Finalizing):
-			nextReconcile, err = r.handleFinalize(ctx, ibu)
-		case string(utils.ConditionReasons.FinalizeFailed):
-			nextReconcile, err = r.handleFinalizeFailure(ctx, ibu)
-		}
-		if nextReconcile.Requeue == false {
-			utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
-		}
+	if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {
+		return
+	}
+	switch idleCondition.Reason {
+	case string(utils.ConditionReasons.Aborting):
+		nextReconcile, err = r.handleAbort(ctx, ibu)
+	case string(utils.ConditionReasons.AbortFailed):
+		nextReconcile, err = r.handleAbortFailure(ctx, ibu)
+	case string(utils.ConditionReasons.Finalizing):
+		nextReconcile, err = r.handleFinalize(ctx, ibu)
+	case string(utils.ConditionReasons.FinalizeFailed):
+		nextReconcile, err = r.handleFinalizeFailure(ctx, ibu)
 	}
 	return
 }
@@ -439,8 +437,18 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// not metadata or status
 				oldGeneration := e.ObjectOld.GetGeneration()
 				newGeneration := e.ObjectNew.GetGeneration()
-				// spec update only for IBU
-				return oldGeneration != newGeneration
+				if oldGeneration != newGeneration {
+					return true
+				}
+
+				// trigger reconcile upon adding or removing ManualCleanupAnnotation
+				_, oldExist := e.ObjectOld.GetAnnotations()[utils.ManualCleanupAnnotation]
+				_, newExist := e.ObjectNew.GetAnnotations()[utils.ManualCleanupAnnotation]
+				if oldExist != newExist {
+					return true
+				}
+
+				return false
 			},
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
 			GenericFunc: func(ge event.GenericEvent) bool { return false },
