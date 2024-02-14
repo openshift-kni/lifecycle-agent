@@ -260,9 +260,8 @@ func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdLis
 	return
 }
 
-func (r *SeedGeneratorReconciler) sanitizePullSecret(ctx context.Context) error {
-	// Sanitize cluster's pull-secret from sensitive data
-	sanitizedPullSecret, _ := lcautils.UpdatePullSecretFromDockerConfig(ctx, r.Client, []byte(common.PullSecretEmptyData))
+func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context, dockerConfigJSON []byte) error {
+	updatedPullSecret, _ := lcautils.UpdatePullSecretFromDockerConfig(ctx, r.Client, dockerConfigJSON)
 
 	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer deadlineCancel()
@@ -275,7 +274,7 @@ func (r *SeedGeneratorReconciler) sanitizePullSecret(ctx context.Context) error 
 			return false, nil
 		}
 		r.Log.Info(fmt.Sprintf("%s data is %s", common.ImageRegistryAuthFile, strings.TrimSpace(string(dockerConfigJSON))))
-		return strings.TrimSpace(string(dockerConfigJSON)) == string(sanitizedPullSecret.Data[".dockerconfigjson"]), nil
+		return strings.TrimSpace(string(dockerConfigJSON)) == string(updatedPullSecret.Data[".dockerconfigjson"]), nil
 	})
 	if err != nil {
 		return fmt.Errorf("timed out waiting for MCO to override pull-secret file: %w", err)
@@ -396,11 +395,6 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 		}}
 	if err := r.Client.Delete(ctx, observabilitySecret, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete observability secret: %w", err)
-	}
-
-	r.Log.Info("Sanitize cluster's pull-secret before seed creation")
-	if err := r.sanitizePullSecret(ctx); err != nil {
-		return fmt.Errorf("failed sanitizing cluster's pull-secret: %w", err)
 	}
 
 	return nil
@@ -556,6 +550,13 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
+	// Ensure cluster's pull-secret is not sanitized
+	dockerConfigJSON, _ := os.ReadFile(filepath.Join(common.Host, common.ImageRegistryAuthFile))
+	if strings.TrimSpace(string(dockerConfigJSON)) == strings.TrimSpace(common.PullSecretEmptyData) {
+		msg = "Rejected due to invalid cluster pull-secret (previously sanitized without proper restore)"
+		return
+	}
+
 	return
 }
 
@@ -680,13 +681,13 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Get the cluster's pull-secret
-	clusterPullSecretData, err := lcautils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
+	originalPullSecretData, err := lcautils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
 	if err != nil {
 		return fmt.Errorf("could not access pull-secret %s in %s: %w", common.PullSecretName, common.OpenshiftConfigNamespace, err)
 	}
 
 	// Save the cluster's pull-secret in order to restore it after the lca-cli is complete
-	if err := os.WriteFile(common.PathOutsideChroot(utils.StoredPullSecret), []byte(clusterPullSecretData), 0o600); err != nil {
+	if err := os.WriteFile(common.PathOutsideChroot(utils.StoredPullSecret), []byte(originalPullSecretData), 0o600); err != nil {
 		return fmt.Errorf("failed to write pull-secret to %s: %w", utils.StoredPullSecret, err)
 	}
 
@@ -705,6 +706,15 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	if _, err := r.Executor.Execute("oc", "delete", "pod", kubeconfigArg, "--field-selector=status.phase==Failed", "--all-namespaces"); err != nil {
 		return fmt.Errorf("failed to cleanup Failed pods: %w", err)
 	}
+
+	r.Log.Info("Sanitize cluster's pull-secret from sensitive data")
+	if err := r.waitForPullSecretOverride(ctx, []byte(common.PullSecretEmptyData)); err != nil {
+		return fmt.Errorf("failed sanitizing cluster's pull-secret: %w", err)
+	}
+	// In the success case, the pod will block until terminated by the lca-cli container.
+	// Create a deferred function to restore the secret CR in the case where a failure happens
+	// before that point.
+	defer r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData))
 
 	r.Log.Info("Deleting seedgen secret CR")
 	if err := r.Client.Delete(ctx, seedGenSecret); err != nil {
