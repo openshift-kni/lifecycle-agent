@@ -27,16 +27,14 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	configv1 "github.com/openshift/api/config/v1"
-
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-
-	"golang.org/x/sync/errgroup"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
-	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -52,9 +50,8 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 
 	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
 		var pullSecret string
-		pullSecret, err := utils.LoadSecretData(
-			ctx, r.Client, ibu.Spec.SeedImageRef.PullSecretRef.Name, common.LcaNamespace, corev1.DockerConfigJsonKey,
-		)
+		pullSecret, err := lcautils.GetSecretData(ctx, ibu.Spec.SeedImageRef.PullSecretRef.Name,
+			common.LcaNamespace, corev1.DockerConfigJsonKey, r.Client)
 		if err != nil {
 			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
 			return err
@@ -183,7 +180,7 @@ func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVar
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
-	clusterRegistry, err := commonUtils.GetReleaseRegistry(ctx, r.Client)
+	clusterRegistry, err := lcautils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
 		return false, fmt.Errorf("failed to get cluster registry: %w", err)
 	}
@@ -192,7 +189,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	if err != nil {
 		return false, fmt.Errorf("failed to read seed info: %w", err)
 	}
-	shouldOverrideRegistry, err := commonUtils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
+	shouldOverrideRegistry, err := lcautils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
 	if err != nil {
 		return false, fmt.Errorf("failed to check ShouldOverrideSeedRegistry %w", err)
 	}
@@ -264,7 +261,7 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to write auto-rollback config: %w", err)
 	}
 
-	if err := commonUtils.BackupKubeconfigCrypto(ctx, r.Client, common.GetStaterootCertsDir(ibu)); err != nil {
+	if err := lcautils.BackupKubeconfigCrypto(ctx, r.Client, common.GetStaterootCertsDir(ibu)); err != nil {
 		return fmt.Errorf("failed to backup cerificaties: %w", err)
 	}
 
