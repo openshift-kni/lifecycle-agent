@@ -208,7 +208,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
 				return
 			}
-			ibu.Status.ValidNextStages = getValidNextStageList(ibu, inProgressStage, isAfterPivot)
+			ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
 		}
 	}
 
@@ -217,8 +217,8 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func getValidNextStageList(ibu *lcav1alpha1.ImageBasedUpgrade, inProgressStage lcav1alpha1.ImageBasedUpgradeStage, isAfterPivot bool) []lcav1alpha1.ImageBasedUpgradeStage {
-
+func getValidNextStageList(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bool) []lcav1alpha1.ImageBasedUpgradeStage {
+	inProgressStage := utils.GetInProgressStage(ibu)
 	if inProgressStage == lcav1alpha1.Stages.Idle || inProgressStage == lcav1alpha1.Stages.Rollback || utils.IsStageFailed(ibu, lcav1alpha1.Stages.Rollback) {
 		// no valid transition if abort/finalize/rollback in progress or failed
 		return []lcav1alpha1.ImageBasedUpgradeStage{}

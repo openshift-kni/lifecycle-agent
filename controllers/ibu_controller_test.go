@@ -767,17 +767,15 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 
 func Test_getValidNextStageList(t *testing.T) {
 	tests := []struct {
-		name            string
-		inProgressStage lcav1alpha1.ImageBasedUpgradeStage
-		isAfterPivot    bool
-		conditions      []Condition
-		wantStageList   []lcav1alpha1.ImageBasedUpgradeStage
+		name          string
+		isAfterPivot  bool
+		conditions    []Condition
+		wantStageList []lcav1alpha1.ImageBasedUpgradeStage
 	}{
 		{
-			name:            "prep in progress",
-			inProgressStage: lcav1alpha1.Stages.Prep,
-			conditions:      []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
-			wantStageList:   []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			name:          "prep in progress",
+			conditions:    []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
 		},
 		{
 			name:          "prep completed",
@@ -814,9 +812,8 @@ func Test_getValidNextStageList(t *testing.T) {
 			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
 		},
 		{
-			name:            "upgrade in progress before pivot",
-			inProgressStage: lcav1alpha1.Stages.Upgrade,
-			isAfterPivot:    false,
+			name:         "upgrade in progress before pivot",
+			isAfterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -824,9 +821,8 @@ func Test_getValidNextStageList(t *testing.T) {
 			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
 		},
 		{
-			name:            "upgrade in progress after pivot",
-			inProgressStage: lcav1alpha1.Stages.Upgrade,
-			isAfterPivot:    true,
+			name:         "upgrade in progress after pivot",
+			isAfterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -834,9 +830,8 @@ func Test_getValidNextStageList(t *testing.T) {
 			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
 		},
 		{
-			name:            "rollback in progress",
-			inProgressStage: lcav1alpha1.Stages.Rollback,
-			isAfterPivot:    true,
+			name:         "rollback in progress",
+			isAfterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -845,9 +840,8 @@ func Test_getValidNextStageList(t *testing.T) {
 			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
 		},
 		{
-			name:            "rollback in progress after pivoting back",
-			inProgressStage: lcav1alpha1.Stages.Rollback,
-			isAfterPivot:    false,
+			name:         "rollback in progress after pivoting back",
+			isAfterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -874,9 +868,8 @@ func Test_getValidNextStageList(t *testing.T) {
 			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
 		},
 		{
-			name:            "aborting or finalizing",
-			inProgressStage: lcav1alpha1.Stages.Idle,
-			wantStageList:   []lcav1alpha1.ImageBasedUpgradeStage{},
+			name:          "aborting or finalizing",
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "idle",
@@ -890,7 +883,7 @@ func Test_getValidNextStageList(t *testing.T) {
 			for _, condition := range tt.conditions {
 				utils.SetStatusCondition(&ibu.Status.Conditions, condition.Type, condition.Reason, condition.Status, "", 1)
 			}
-			if gotStageList := getValidNextStageList(ibu, tt.inProgressStage, tt.isAfterPivot); !reflect.DeepEqual(gotStageList, tt.wantStageList) {
+			if gotStageList := getValidNextStageList(ibu, tt.isAfterPivot); !reflect.DeepEqual(gotStageList, tt.wantStageList) {
 				t.Errorf("getValidNextStageList() = %v, want %v", gotStageList, tt.wantStageList)
 			}
 		})
