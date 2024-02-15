@@ -217,45 +217,39 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func getValidNextStageList(ibu *lcav1alpha1.ImageBasedUpgrade, inProgressStage lcav1alpha1.ImageBasedUpgradeStage, isAfterPivot bool) (stageList []lcav1alpha1.ImageBasedUpgradeStage) {
-	stageList = make([]lcav1alpha1.ImageBasedUpgradeStage, 0)
+func getValidNextStageList(ibu *lcav1alpha1.ImageBasedUpgrade, inProgressStage lcav1alpha1.ImageBasedUpgradeStage, isAfterPivot bool) []lcav1alpha1.ImageBasedUpgradeStage {
 
 	if inProgressStage == lcav1alpha1.Stages.Idle || inProgressStage == lcav1alpha1.Stages.Rollback || utils.IsStageFailed(ibu, lcav1alpha1.Stages.Rollback) {
 		// no valid transition if abort/finalize/rollback in progress or failed
-		return
+		return []lcav1alpha1.ImageBasedUpgradeStage{}
 	}
 
 	if inProgressStage == lcav1alpha1.Stages.Prep || utils.IsStageFailed(ibu, lcav1alpha1.Stages.Prep) {
-		stageList = append(stageList, lcav1alpha1.Stages.Idle)
-		return
+		return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle}
 	}
 
 	if inProgressStage == lcav1alpha1.Stages.Upgrade || utils.IsStageFailed(ibu, lcav1alpha1.Stages.Upgrade) {
 		if isAfterPivot {
-			stageList = append(stageList, lcav1alpha1.Stages.Rollback)
+			return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback}
 		} else {
-			stageList = append(stageList, lcav1alpha1.Stages.Idle)
+			return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle}
 		}
-		return
 	}
 
 	// no in progress stage, check completed stages in reverse order
 	if utils.IsStageCompleted(ibu, lcav1alpha1.Stages.Rollback) {
-		stageList = append(stageList, lcav1alpha1.Stages.Idle)
-		return
+		return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle}
 	}
 	if utils.IsStageCompleted(ibu, lcav1alpha1.Stages.Upgrade) {
-		stageList = append(stageList, lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Rollback)
-		return
+		return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Rollback}
 	}
 	if utils.IsStageCompleted(ibu, lcav1alpha1.Stages.Prep) {
-		stageList = append(stageList, lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Upgrade)
-		return
+		return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Upgrade}
 	}
 	if utils.IsStageCompleted(ibu, lcav1alpha1.Stages.Idle) {
-		stageList = append(stageList, lcav1alpha1.Stages.Prep)
+		return []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Prep}
 	}
-	return
+	return []lcav1alpha1.ImageBasedUpgradeStage{}
 }
 
 func isTransitionRequested(ibu *lcav1alpha1.ImageBasedUpgrade) bool {
