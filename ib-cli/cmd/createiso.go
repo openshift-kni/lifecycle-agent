@@ -45,7 +45,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&authFile, "auth-file", "a", "", "The path to the authentication file of the container registry of seed image.")
 	cmd.Flags().StringVarP(&pullSecretFile, "pullsecret-file", "p", "", "The path to the pull secret file for precache process.")
 	cmd.Flags().StringVarP(&sshPublicKeyFile, "ssh-public-key-file", "k", "", "The path to ssh public key to be added to the installed host.")
-	cmd.Flags().StringVarP(&lcaImage, "lca-image", "l", "quay.io/openshift-kni/lifecycle-agent-operator:4.14.0", "The lifecycle-agent image to use for generating the ISO.")
+	cmd.Flags().StringVarP(&lcaImage, "lca-image", "l", "quay.io/openshift-kni/lifecycle-agent-operator:4.15.0", "The lifecycle-agent image to use for generating the ISO.")
 	cmd.Flags().StringVarP(&rhcosLiveIso, "rhcos-live-iso", "r", "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso", "The URL to the rhcos-live-iso for generating the ISO.")
 	cmd.Flags().StringVarP(&installationDisk, "installation-disk", "i", "", "The disk that will be used for the installation.")
 	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")

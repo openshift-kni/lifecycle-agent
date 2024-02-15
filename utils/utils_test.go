@@ -1,11 +1,12 @@
 package utils
 
 import (
-	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIsIpv6(t *testing.T) {
@@ -81,7 +82,7 @@ func TestCopyFileIfExists(t *testing.T) {
 }
 
 func TestCopyReplaceMirrorRegistry(t *testing.T) {
-	image := "quay.io/openshift-kni/lifecycle-agent-operator:4.14.0 "
+	image := "quay.io/openshift-kni/lifecycle-agent-operator:4.15.0 "
 	testcases := []struct {
 		name            string
 		seedRegistry    string

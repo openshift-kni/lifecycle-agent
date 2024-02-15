@@ -17,12 +17,12 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.16.0'
+    olm.skipRange: '>=4.14.0 <4.15.0'
     operators.openshift.io/infrastructure-features: '["disconnected"]'
     provider: Red Hat
     repository: https://github.com/openshift-kni/lifecycle-agent
     support: Red Hat
-  name: lifecycle-agent.v4.14.0
+  name: lifecycle-agent.v4.15.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
