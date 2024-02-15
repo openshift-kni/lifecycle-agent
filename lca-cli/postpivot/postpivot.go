@@ -27,7 +27,6 @@ import (
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -66,11 +65,6 @@ const (
 	userCore              = "core"
 	sshMachineConfig      = "99-%s-ssh"
 
-	// secret yaml with ps in it, will be added to manifests folder,
-	// it will be applied with all other manifests
-	pullSecretFileName   = "pull-secret.json"
-	seedPullSecretSuffix = "_seed"
-
 	// TODO: change after all the components will move to blockDeviceLabel
 	OldblockDeviceLabel    = "relocation-config"
 	blockDeviceMountFolder = "/mnt/config"
@@ -107,9 +101,8 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
 
-	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFileAndManifest,
-		seedReconfiguration.PullSecret, common.ImageRegistryAuthFile, path.Join(p.workingDir, common.ClusterConfigDir,
-			common.ManifestsDir, pullSecretFileName)); err != nil {
+	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFile,
+		seedReconfiguration.PullSecret, common.ImageRegistryAuthFile); err != nil {
 		return fmt.Errorf("failed to run once pull-secret for post pivot: %w", err)
 	}
 
@@ -139,12 +132,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to all old mirror resources: %w", err)
 	}
 
-	// We move back seed pull secret that we saved aside (if it exists), right before applying new PS secret
-	// in order for MCO not to be degraded and apply new rendered master machine config
-	if err := utils.MoveFileIfExists(common.ImageRegistryAuthFile+seedPullSecretSuffix,
-		common.ImageRegistryAuthFile); err != nil {
-		return fmt.Errorf("failed move back seed pull secret: %w", err)
-	}
 	if err := p.applyManifests(); err != nil {
 		return fmt.Errorf("failed apply manifests: %w", err)
 	}
@@ -574,16 +561,10 @@ func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig
 }
 
 // createPullSecretFile creates auth file on filesystem in order to be able to pull images
-// and runs createPullSecretManifest to write secret in manifests folder
-func (p *PostPivot) createPullSecretFileAndManifest(pullSecret, pullSecretFile, pullSecretManifest string) error {
+func (p *PostPivot) createPullSecretFile(pullSecret, pullSecretFile string) error {
 	// TODO: Should return error in the future as cluster will not be operational without it
 	if pullSecret == "" {
-		p.log.Infof("Pull secret was not provided")
-		return nil
-	}
-	p.log.Infof("Move seed PS file aside")
-	if err := utils.MoveFileIfExists(pullSecretFile, pullSecretFile+seedPullSecretSuffix); err != nil {
-		return fmt.Errorf("failed to move seed PS file aside: %w", err)
+		return fmt.Errorf("pull secret was not provided")
 	}
 
 	p.log.Infof("Writing provided pull secret to %s", pullSecretFile)
@@ -591,29 +572,6 @@ func (p *PostPivot) createPullSecretFileAndManifest(pullSecret, pullSecretFile, 
 		return fmt.Errorf("failed to write pull secret to %s, err %w", pullSecret, err)
 	}
 
-	return p.createPullSecretManifest(pullSecret, pullSecretManifest)
-}
-
-// createPullSecretManifest create pullSecretFile in manifests folder, it will be applied with all other manifests
-func (p *PostPivot) createPullSecretManifest(pullSecret, pullSecretManifest string) error {
-	p.log.Infof("Creating pull secret manifest %s", pullSecretManifest)
-	ps := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      common.PullSecretName,
-			Namespace: common.OpenshiftConfigNamespace,
-		},
-		Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(pullSecret)},
-		Type: corev1.SecretTypeDockerConfigJson,
-	}
-	typeMeta, err := utils.TypeMetaForObject(p.scheme, &ps)
-	if err != nil {
-		return fmt.Errorf("failed to create typeMetafor pull secret, err: %w", err)
-	}
-	ps.TypeMeta = *typeMeta
-
-	if err := utils.MarshalToFile(ps, pullSecretManifest); err != nil {
-		return fmt.Errorf("failed to marshal pull secret into file, err: %w", err)
-	}
 	return nil
 }
 

@@ -326,6 +326,7 @@ func (s *SeedCreator) backupEtc() error {
 	// Execute 'ostree admin config-diff' command and backup etc.deletions
 	excludePatterns := []string{
 		"/etc/NetworkManager/system-connections",
+		"/etc/machine-config-daemon/orig/var/lib/kubelet",
 	}
 	tarArgs := []string{"tar", "czf", path.Join(s.backupDir + "/etc.tgz")}
 	for _, pattern := range excludePatterns {
