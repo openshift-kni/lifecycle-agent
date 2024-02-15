@@ -52,6 +52,7 @@ type (
 
 	UpgHandler struct {
 		client.Client
+		NoncachedClient client.Reader
 		Log             logr.Logger
 		BackupRestore   backuprestore.BackuperRestorer
 		ExtraManifest   extramanifest.EManifestHandler
@@ -81,14 +82,14 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 
 	// WARNING: the pod may not know if we are boot loop (for now)
 	if origStaterootBooted {
-		r.Log.Info("Starting pre pivot steps and will pivot to new stateroot with a reboot")
+		r.Log.Info("Running PrePivot handler")
 		prePivot, err := r.UpgradeHandler.PrePivot(ctx, ibu)
 		if err != nil {
 			return prePivot, fmt.Errorf("failed to run pre pivots without errors: %w", err)
 		}
 		return prePivot, nil
 	} else {
-		r.Log.Info("Pivot successful, starting post pivot steps")
+		r.Log.Info("Running PostPivot handler")
 		postPivot, err := r.UpgradeHandler.PostPivot(ctx, ibu)
 		if err != nil {
 			return postPivot, fmt.Errorf("failed to run post pivot without errors: %w", err)
@@ -100,7 +101,9 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) {
 	// Clear any error status that may have been set
 	utils.SetUpgradeStatusInProgress(ibu, "In progress")
-	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 }
 
 // prePivot executes all the pre-upgrade steps and initiates a cluster reboot.
@@ -271,15 +274,17 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, m
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Starting health check for different components")
-	err := CheckHealth(u.Client, u.Log)
+	err := CheckHealth(u.NoncachedClient, u.Log)
 	if err != nil {
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("System health checks in progress: %s", err.Error()))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
 		return requeueWithShortInterval(), nil
 	}
 
 	// Applying extra manifests
 	utils.SetUpgradeStatusInProgress(ibu, "Applying Policy Manifests")
-	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
 	if err != nil {
@@ -293,7 +298,9 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Applying Config Manifests")
-	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
 	if err != nil {
@@ -307,8 +314,10 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	}
 
 	// Recovering OADP configuration
-	utils.SetUpgradeStatusInProgress(ibu, "Restoring OADP Configuration")
-	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+	utils.SetUpgradeStatusInProgress(ibu, "Restoring Application Configuration")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 
 	err = u.BackupRestore.RestoreOadpConfigurations(ctx)
 	if err != nil {
@@ -317,13 +326,15 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to backup storage failure: %s", err))
 			return doNotRequeue(), nil
 		}
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring OADP Configuration: Failure occurred: %s", err.Error()))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring Application Configuration: Failure occurred: %s", err.Error()))
 		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
 	}
 
 	// Handling restores with OADP operator
-	utils.SetUpgradeStatusInProgress(ibu, "Restoring OADP Data")
-	_ = utils.UpdateIBUStatus(ctx, u.Client, ibu)
+	utils.SetUpgradeStatusInProgress(ibu, "Restoring Application Data")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 
 	result, err := u.HandleRestore(ctx)
 	if err != nil {
@@ -333,12 +344,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
 			return doNotRequeue(), nil
 		}
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring OADP Data: Failure occurred: %s", err))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring Application Data: Failure occurred: %s", err))
 		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
 	}
 	if !result.IsZero() {
 		// The restore process has not been completed yet, requeue
-		utils.SetUpgradeStatusInProgress(ibu, "Restore of OADP Data is in progress")
+		utils.SetUpgradeStatusInProgress(ibu, "Restore of Application Data is in progress")
 		return result, nil
 	}
 

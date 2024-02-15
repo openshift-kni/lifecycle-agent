@@ -199,6 +199,7 @@ func main() {
 
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),
+		NoncachedClient: mgr.GetAPIReader(),
 		Log:             log,
 		Scheme:          mgr.GetScheme(),
 		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache")},
@@ -211,6 +212,7 @@ func main() {
 		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 		UpgradeHandler: &controllers.UpgHandler{
 			Client:          mgr.GetClient(),
+			NoncachedClient: mgr.GetAPIReader(),
 			Log:             log.WithName("UpgradeHandler"),
 			BackupRestore:   backupRestore,
 			ExtraManifest:   &extramanifest.EMHandler{Client: mgr.GetClient(), Log: log.WithName("ExtraManifest")},
@@ -231,11 +233,12 @@ func main() {
 
 	seedgenLog := ctrl.Log.WithName("controllers").WithName("SeedGenerator")
 	if err = (&controllers.SeedGeneratorReconciler{
-		Client:   mgr.GetClient(),
-		Log:      seedgenLog,
-		Scheme:   mgr.GetScheme(),
-		Executor: executor,
-		Mux:      mux,
+		Client:          mgr.GetClient(),
+		NoncachedClient: mgr.GetAPIReader(),
+		Log:             seedgenLog,
+		Scheme:          mgr.GetScheme(),
+		Executor:        executor,
+		Mux:             mux,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SeedGenerator")
 		os.Exit(1)

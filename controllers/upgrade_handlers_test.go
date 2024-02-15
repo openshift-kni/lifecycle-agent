@@ -145,9 +145,10 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			// assert
 			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the numnber of groups and tracker match as pre cond for the test")
 			uph := &UpgHandler{
-				Client:        nil,
-				Log:           logr.Logger{},
-				BackupRestore: mockBackuprestore,
+				Client:          nil,
+				NoncachedClient: nil,
+				Log:             logr.Logger{},
+				BackupRestore:   mockBackuprestore,
 			}
 			got, err := uph.HandleBackup(context.Background(), &lcav1alpha1.ImageBasedUpgrade{})
 			if !tt.wantErr(t, err, fmt.Sprintf("handleBackup")) {
@@ -287,9 +288,10 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 			// assert
 			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the numnber of groups and tracker match as pre cond for the test")
 			uph := &UpgHandler{
-				Client:        nil,
-				Log:           logr.Logger{},
-				BackupRestore: mockBackuprestore,
+				Client:          nil,
+				NoncachedClient: nil,
+				Log:             logr.Logger{},
+				BackupRestore:   mockBackuprestore,
 			}
 			got, err := uph.HandleRestore(context.Background())
 			if !tt.wantErr(t, err, fmt.Sprintf("handleRestore(%v, %v)", context.Background(), &lcav1alpha1.ImageBasedUpgrade{})) {
@@ -759,6 +761,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			uh := &UpgHandler{
 				Client:          nil,
+				NoncachedClient: nil,
 				Log:             logr.Logger{},
 				BackupRestore:   mockBackuprestore,
 				ExtraManifest:   mockExtramanifest,
@@ -857,7 +860,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.InProgress),
 					Status:  metav1.ConditionTrue,
-					Message: "System health checks in progress: any error from hc",
+					Message: "Waiting for system to stabilize: any error from hc",
 				},
 			},
 			want:    requeueWithShortInterval(),
@@ -1010,11 +1013,12 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 			uh := &UpgHandler{
-				Client:        nil,
-				Log:           logr.Logger{},
-				BackupRestore: mockBackuprestore,
-				ExtraManifest: mockExtramanifest,
-				RebootClient:  mockRebootClient,
+				Client:          nil,
+				NoncachedClient: nil,
+				Log:             logr.Logger{},
+				BackupRestore:   mockBackuprestore,
+				ExtraManifest:   mockExtramanifest,
+				RebootClient:    mockRebootClient,
 			}
 
 			oldHC := CheckHealth

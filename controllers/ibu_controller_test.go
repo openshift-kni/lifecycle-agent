@@ -727,8 +727,8 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			validateFunc: func(t *testing.T, result ctrl.Result, ibu *lcav1alpha1.ImageBasedUpgrade) {
 				idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 				assert.Equal(t, idleCondition.Status, metav1.ConditionTrue)
-				if result != requeueImmediately() {
-					t.Errorf("expect requeue immediately")
+				if result != doNotRequeue() {
+					t.Errorf("expect no requeue")
 				}
 			},
 		},
@@ -748,6 +748,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 
 			r := &ImageBasedUpgradeReconciler{
 				Client:          fakeClient,
+				NoncachedClient: fakeClient,
 				Log:             logr.Discard(),
 				Scheme:          fakeClient.Scheme(),
 				RPMOstreeClient: mockClient,
