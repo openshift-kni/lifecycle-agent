@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -363,12 +364,29 @@ func TestValidateStageTransisions(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:       "idle when upgrade failed before pivot",
+			name:       "idle when upgrade failed before pivot or after uncontrolled rollback",
 			stage:      lcav1alpha1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
-				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.Aborting,
+				metav1.ConditionFalse,
+				"Aborting",
+			}},
+			expected: true,
+		},
+		{
+			name:       "idle when upgrade failed with invalid rollback transition",
+			stage:      lcav1alpha1.Stages.Idle,
+			afterPivot: false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition},
 			},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -460,14 +478,30 @@ func TestValidateStageTransisions(t *testing.T) {
 			}},
 		},
 		{
-			name:       "idle when rollback failed",
-			stage:      lcav1alpha1.Stages.Idle,
-			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""}},
-			expected:   true,
+			name:  "idle when rollback failed",
+			stage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress}},
+			afterPivot: true,
+			expected:   false,
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
-				utils.ConditionReasons.Idle, metav1.ConditionTrue,
-				"Idle",
+				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
+				"Transition to Idle not allowed - Rollback failed",
+			}},
+		},
+		{
+			name:  "idle when rollback failed after pivoting back",
+			stage: lcav1alpha1.Stages.Idle,
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress}},
+			expected: false,
+			expectedConditions: []ExpectedCondition{{
+				utils.ConditionTypes.Idle,
+				utils.ConditionReasons.InvalidTransition, metav1.ConditionFalse,
+				"Transition to Idle not allowed - Rollback failed",
 			}},
 		},
 		{
@@ -727,6 +761,138 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 				t.Errorf("unexcepted error: %v", err.Error())
 			}
 			tc.validateFunc(t, result, ibu)
+		})
+	}
+}
+
+func Test_getValidNextStageList(t *testing.T) {
+	tests := []struct {
+		name            string
+		inProgressStage lcav1alpha1.ImageBasedUpgradeStage
+		isAfterPivot    bool
+		conditions      []Condition
+		wantStageList   []lcav1alpha1.ImageBasedUpgradeStage
+	}{
+		{
+			name:            "prep in progress",
+			inProgressStage: lcav1alpha1.Stages.Prep,
+			conditions:      []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
+			wantStageList:   []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+		},
+		{
+			name:          "prep completed",
+			conditions:    []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Upgrade},
+		},
+		{
+			name: "prep failed",
+			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+		},
+		{
+			name:          "upgrade completed",
+			conditions:    []Condition{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Rollback},
+		},
+		{
+			name:         "upgrade failed before pivot",
+			isAfterPivot: false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+		},
+		{
+			name:         "upgrade failed after pivot",
+			isAfterPivot: true,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
+		},
+		{
+			name:            "upgrade in progress before pivot",
+			inProgressStage: lcav1alpha1.Stages.Upgrade,
+			isAfterPivot:    false,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+		},
+		{
+			name:            "upgrade in progress after pivot",
+			inProgressStage: lcav1alpha1.Stages.Upgrade,
+			isAfterPivot:    true,
+			conditions: []Condition{
+				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
+		},
+		{
+			name:            "rollback in progress",
+			inProgressStage: lcav1alpha1.Stages.Rollback,
+			isAfterPivot:    true,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+		},
+		{
+			name:            "rollback in progress after pivoting back",
+			inProgressStage: lcav1alpha1.Stages.Rollback,
+			isAfterPivot:    false,
+			conditions: []Condition{
+				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
+			},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+		},
+		{
+			// TODO consider allowing finalize the successful upgrade after a rollback failure
+			name: "rollback failed after successful upgrade",
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, utils.ConditionReasons.Completed}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+		},
+		{
+			name: "rollback failed after upgrade failure",
+			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
+				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+		},
+		{
+			name:          "rollback completed",
+			conditions:    []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+		},
+		{
+			name:            "aborting or finalizing",
+			inProgressStage: lcav1alpha1.Stages.Idle,
+			wantStageList:   []lcav1alpha1.ImageBasedUpgradeStage{},
+		},
+		{
+			name:          "idle",
+			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
+			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Prep},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ibu := &lcav1alpha1.ImageBasedUpgrade{}
+			for _, condition := range tt.conditions {
+				utils.SetStatusCondition(&ibu.Status.Conditions, condition.Type, condition.Reason, condition.Status, "", 1)
+			}
+			if gotStageList := getValidNextStageList(ibu, tt.inProgressStage, tt.isAfterPivot); !reflect.DeepEqual(gotStageList, tt.wantStageList) {
+				t.Errorf("getValidNextStageList() = %v, want %v", gotStageList, tt.wantStageList)
+			}
 		})
 	}
 }
