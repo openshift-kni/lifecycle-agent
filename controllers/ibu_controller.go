@@ -498,7 +498,11 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					// Re-create initial IBU instead of save/restore when it's idle or rollback failed
 					if utils.IsStageCompleted(ibu, lcav1alpha1.Stages.Idle) || utils.IsStageFailed(ibu, lcav1alpha1.Stages.Rollback) {
 						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-							return os.Remove(filePath) //nolint:wrapcheck
+							err := os.Remove(filePath)
+							if os.IsNotExist(err) {
+								return nil
+							}
+							return err //nolint:wrapcheck
 						}); err != nil {
 							fmt.Printf("Failed to save deleted IBU: %v", err)
 						}
