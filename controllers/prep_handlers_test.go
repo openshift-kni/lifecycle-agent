@@ -2,13 +2,14 @@ package controllers
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
 )
 
 func TestImageBasedUpgradeReconciler_validateSeedOcpVersion(t *testing.T) {
@@ -55,10 +56,11 @@ func TestImageBasedUpgradeReconciler_validateSeedOcpVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-
+			client := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(version).Build()
 			r := &ImageBasedUpgradeReconciler{
-				Client: fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(version).Build(),
-				Log:    logr.Logger{},
+				Client:          client,
+				NoncachedClient: client,
+				Log:             logr.Logger{},
 			}
 
 			err := r.validateSeedOcpVersion(tt.args.seedOcpVersion)
