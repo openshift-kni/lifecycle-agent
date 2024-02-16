@@ -163,7 +163,7 @@ func getObjsFromAnnotations(backup *velerov1.Backup) ([]ObjMetadata, error) {
 		if k != applyLabelAnn || v == "" {
 			continue
 		}
-		objStrings := strings.Split(v, ",")
+		objStrings := common.RemoveDuplicates[string](strings.Split(v, ","))
 		for _, objString := range objStrings {
 			objStringSplitted := strings.Split(objString, "/")
 			if len(objStringSplitted) < 3 || len(objStringSplitted) > 5 {
