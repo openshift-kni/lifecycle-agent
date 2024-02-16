@@ -1,0 +1,37 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="${1}"
+SRIOV_DATA_PATH="${BASE_COLLECTION_PATH}/sriov-data"
+MUST_GATHER_LOGFILE_PATH="${2}"
+SRIOV_NS="openshift-sriov-network-operator"
+
+sriov_found="$(oc -n $SRIOV_NS get deployment sriov-network-operator --ignore-not-found --no-headers)"
+if [[ -z $sriov_found ]]; then
+    echo "INFO: Sriov not found, skipping Sriov collection" | tee -a $MUST_GATHER_LOGFILE_PATH
+    exit 0
+fi
+
+mkdir -p $SRIOV_DATA_PATH
+
+
+function get_sriov_crs() {
+    OADP_CRDS+=($(oc get crd | awk '/sriovnetwork.openshift.io/{print $1}'))
+
+    for CRD in "${OADP_CRDS[@]}"; do
+        echo "INFO: Collecting $CRD CR" | tee -a $MUST_GATHER_LOGFILE_PATH
+        oc adm inspect --dest-dir "${SRIOV_DATA_PATH}/cr" "${CRD}" -A &
+        cr_pids+=($!)
+    done
+    wait "${cr_pids[@]}"
+}
+
+
+get_sriov_crs &
+pids+=($!)
+
+echo "INFO: Waiting for sriov-data collection to finish" | tee -a $MUST_GATHER_LOGFILE_PATH
+wait "${pids[@]}"
+echo "INFO: DONE with sriov-data collection" | tee -a $MUST_GATHER_LOGFILE_PATH
+
+# force disk flush to ensure that all data gathered is accessible in the copy container
+sync

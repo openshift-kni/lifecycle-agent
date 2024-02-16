@@ -49,3 +49,14 @@ resp, err := http.Get(healthzEndpoint) //nolint:gosec
 
 - List of linters [here](https://golangci-lint.run/usage/linters/). See `AutoFix` column for which ones can work with `--fix`.
 - More techniques for suppressing false positives [here](https://golangci-lint.run/usage/false-positives/)
+
+## Must-Gather
+
+Consider checking out the [enhancement](https://github.com/openshift/enhancements/blob/master/enhancements/oc/must-gather.md) for latest features/tips and The OCP [must-gather](https://github.com/openshift/must-gather) repo for examples.  
+
+Run locally  
+
+```shell
+# $1 - path to local output dir. It will created if not present
+./must-gather/collection-scripts/gather must-gather/tmp
+```
