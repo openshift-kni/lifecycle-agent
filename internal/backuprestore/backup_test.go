@@ -339,7 +339,7 @@ func TestApplyBackupLabels(t *testing.T) {
 			Log:           ctrl.Log.WithName("BackupRestore"),
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			backup := fakeBackupCr("a", "1", "b")
+			backup := fakeBackupCr("backupName", "1", "b")
 			var objStrings []string
 			for _, obj := range tc.annotationObjs {
 				v := fmt.Sprintf("%s/%s/%s/", obj.Group, obj.Version, obj.Resource)
@@ -366,14 +366,14 @@ func TestApplyBackupLabels(t *testing.T) {
 					}).Namespace(meta.Namespace).Get(context.TODO(), meta.Name, metav1.GetOptions{})
 				}
 				expect := newUnstructuredWithLabel(
-					"group/version", "resource", meta.Namespace, meta.Name, backupLabel, "true")
+					"group/version", "resource", meta.Namespace, meta.Name, backupLabel, backup.GetName())
 				assert.NoError(t, err)
 				if !equality.Semantic.DeepEqual(get, expect) {
 					t.Fatal(cmp.Diff(expect, get))
 				}
 			}
 			if len(tc.annotationObjs) > 0 {
-				assert.Equal(t, backup.Spec.LabelSelector.MatchLabels[backupLabel], "true")
+				assert.Equal(t, backup.Spec.LabelSelector.MatchLabels[backupLabel], backup.GetName())
 			}
 		})
 	}
