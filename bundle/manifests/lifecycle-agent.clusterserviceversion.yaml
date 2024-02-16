@@ -42,7 +42,7 @@ metadata:
             "name": "seedimage"
           },
           "spec": {
-            "seedImage": "quay.io/myrepo/seedimages:sno-seed-image-xyz"
+            "seedImage": "quay.io/xyz"
           }
         }
       ]
