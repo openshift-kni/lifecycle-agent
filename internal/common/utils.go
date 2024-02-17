@@ -165,3 +165,16 @@ func GetStaterootCertsDir(ibu *v1alpha1.ImageBasedUpgrade) string {
 func GetStaterootName(seedImageVersion string) string {
 	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(seedImageVersion, "-", "_"))
 }
+
+func RemoveDuplicates[T comparable](list []T) []T {
+	result := []T{}
+	mp := make(map[T]bool)
+	for _, item := range list {
+		if _, present := mp[item]; present {
+			continue
+		}
+		result = append(result, item)
+		mp[item] = true
+	}
+	return result
+}
