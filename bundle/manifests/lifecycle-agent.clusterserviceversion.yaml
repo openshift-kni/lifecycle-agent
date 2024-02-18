@@ -30,7 +30,7 @@ metadata:
             ],
             "seedImageRef": {
               "image": "quay.io/xyz",
-              "version": "4.15.0"
+              "version": "4.16.0"
             },
             "stage": "Idle"
           }
@@ -60,14 +60,14 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.15.0'
+    olm.skipRange: '>=4.14.0 <4.16.0'
     operators.openshift.io/infrastructure-features: '["disconnected"]'
     operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
     provider: Red Hat
     repository: https://github.com/openshift-kni/lifecycle-agent
     support: Red Hat
-  name: lifecycle-agent.v4.15.0
+  name: lifecycle-agent.v4.16.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
@@ -498,7 +498,7 @@ spec:
                 - /usr/local/bin/manager
                 env:
                 - name: PRECACHE_WORKLOAD_IMG
-                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.15.0
+                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.16.0
                 - name: MY_POD_NAME
                   valueFrom:
                     fieldRef:
@@ -507,7 +507,7 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.namespace
-                image: quay.io/openshift-kni/lifecycle-agent-operator:4.15.0
+                image: quay.io/openshift-kni/lifecycle-agent-operator:4.16.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -605,4 +605,4 @@ spec:
   provider:
     name: Red Hat
   replaces: lifecycle-agent.v0.0.0
-  version: 4.15.0
+  version: 4.16.0
