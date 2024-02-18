@@ -1,12 +1,12 @@
 variant: fcos
 version: 1.5.0
-{{- if .SshPublicKey}}
+{{if .SshPublicKey}}
 passwd:
   users:
     - name: core
       ssh_authorized_keys:
         - {{.SshPublicKey}}
-{{end -}}
+{{end}}
 storage:
   files:
     - path: /var/tmp/backup-secret.json
@@ -36,6 +36,11 @@ systemd:
         Environment=SEED_VERSION={{.SeedVersion}}
         Environment=LCA_IMAGE={{.LCAImage}}
         Environment=INSTALLATION_DISK={{.InstallationDisk}}
+        {{if .PrecacheDisabled}}
+        Environment=PRECACHE_DISABLED=true
+        {{else if .PrecacheBestEffort}}
+        Environment=PRECACHE_BEST_EFFORT=true
+        {{end}}
         Type=oneshot
         RemainAfterExit=yes
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh

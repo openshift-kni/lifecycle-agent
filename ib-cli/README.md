@@ -108,3 +108,9 @@ INFO[2024-02-12 15:59:24] Installation ISO created successfully!
 ```
 
 Notice that the `--rhcos-live-iso` and the `--lca-image` flags are optional, if not provided the tool will use the defaults.
+
+### Image Precaching
+
+By default, ib-cli will precache images and will fail in case image precaching didn't succeed.
+In order to disable precaching add `--precache-disable` flag to `create-iso` command.
+In order to run precaching in `best-effort` mode add `--precache-best-effort` flag.
