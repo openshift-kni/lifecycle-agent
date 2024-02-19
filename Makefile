@@ -116,6 +116,15 @@ bashate: ## Run bashate.
 	@echo "Running bashate"
 	hack/bashate.sh
 
+.PHONY: scorecard
+scorecard: operator-sdk ## Run scorecard tests against bundle
+ifeq ($(KUBECONFIG),)
+	@echo "Running scorecard tests requires KUBECONFIG set to access cluster"
+else
+	@echo "Running scorecard"
+	$(OPERATOR_SDK) scorecard bundle
+endif
+
 .PHONY: ci-job
 ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
 
