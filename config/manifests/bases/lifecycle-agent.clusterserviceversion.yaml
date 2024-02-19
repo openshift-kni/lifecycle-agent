@@ -40,17 +40,77 @@ spec:
         name: ""
         version: v1
       specDescriptors:
+      - displayName: Additional Images
+        path: additionalImages
+      - displayName: Name
+        path: additionalImages.name
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Namespace
+        path: additionalImages.namespace
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Auto Rollback On Failure
+        path: autoRollbackOnFailure
+      - displayName: Disabled For Post Reboot Config
+        path: autoRollbackOnFailure.disabledForPostRebootConfig
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
+      - displayName: Disabled For Upgrade Completion
+        path: autoRollbackOnFailure.disabledForUpgradeCompletion
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
+      - displayName: Disabled Init Monitor
+        path: autoRollbackOnFailure.disabledInitMonitor
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
+      - displayName: Init Monitor Timeout Seconds
+        path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:number
       - displayName: Extra Manifests
         path: extraManifests
+      - displayName: Name
+        path: extraManifests[0].name
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Namespace
+        path: extraManifests[0].namespace
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
       - displayName: OADP Content
         path: oadpContent
+      - displayName: Name
+        path: oadpContent[0].name
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Namespace
+        path: oadpContent[0].namespace
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
       - displayName: Seed Image Reference
         path: seedImageRef
+      - displayName: Image
+        path: seedImageRef.image
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Pull Secret Reference
+        path: seedImageRef.pullSecretRef
+      - displayName: Name
+        path: seedImageRef.pullSecretRef.name
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Version
+        path: seedImageRef.version
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
       - displayName: Stage
         path: stage
       statusDescriptors:
       - displayName: Conditions
         path: conditions
+        x-descriptors:
+        - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1alpha1
@@ -62,9 +122,20 @@ spec:
       - kind: Namespace
         name: ""
         version: v1
+      specDescriptors:
+      - displayName: Recert Image
+        path: recertImage
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - displayName: Seed Image
+        path: seedImage
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
       statusDescriptors:
       - displayName: Conditions
         path: conditions
+        x-descriptors:
+        - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Status
         path: observedGeneration
       version: v1alpha1
