@@ -73,7 +73,7 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
       "stage": "Idle",
       "seedImageRef": {
         "version": "4.13.10",
-        "image": "quay.io/dpenney/upgbackup:lca-test-seed-v1",
+        "image": "quay.io/myrepo/upgbackup:lca-test-seed-v1",
         "pullSecretRef": {"name": "seed-pull-secret"}
       }
     }
@@ -376,7 +376,7 @@ kind: SeedGenerator
 metadata:
   name: seedimage
 spec:
-  seedImage: quay.io/dpenney/upgbackup:orchestrated-seed-image
+  seedImage: quay.io/myrepo/upgbackup:orchestrated-seed-image
   recertImage: quay.io/edge-infrastructure/recert:v0
 ```
 

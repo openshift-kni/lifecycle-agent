@@ -296,7 +296,7 @@ kind: SeedGenerator
 metadata:
   name: seedimage
 spec:
-  seedImage: quay.io/dpenney/upgbackup:orchestrated-seed-image
+  seedImage: quay.io/myrepo/upgbackup:orchestrated-seed-image
 ```
 
 ## Generating the IBU Seed Image

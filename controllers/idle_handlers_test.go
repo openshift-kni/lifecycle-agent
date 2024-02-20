@@ -180,8 +180,9 @@ func TestCheckManualCleanup(t *testing.T) {
 				t.Errorf("error in creating fake client")
 			}
 			r := &ImageBasedUpgradeReconciler{
-				Client: client,
-				Log:    logr.Discard(),
+				Client:          client,
+				NoncachedClient: client,
+				Log:             logr.Discard(),
 			}
 
 			got, err := r.checkManualCleanup(context.TODO(), ibu)
