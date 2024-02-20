@@ -718,6 +718,21 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 	return nil
 }
 
+func (r *SeedGeneratorReconciler) setupWorkspace() error {
+	if err := r.wipeExistingWorkspace(); err != nil {
+		return fmt.Errorf("failed to wipe previous workspace: %w", err)
+	}
+
+	if err := r.rmPreviousImagerContainer(); err != nil {
+		return fmt.Errorf("failed to delete previous imager container: %w", err)
+	}
+
+	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+	return nil
+}
+
 // Generate the seed image
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator, clusterName string) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
@@ -737,21 +752,8 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	nextReconcile = doNotRequeue()
-
-	if err := r.wipeExistingWorkspace(); err != nil {
-		rc = fmt.Errorf("failed to wipe previous workspace: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := r.rmPreviousImagerContainer(); err != nil {
-		rc = fmt.Errorf("failed to delete previous imager container: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
-		rc = fmt.Errorf("failed to create workdir: %w", err)
+	if err := r.setupWorkspace(); err != nil {
+		rc = err
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
