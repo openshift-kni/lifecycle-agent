@@ -30,6 +30,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -537,6 +538,12 @@ func (r *SeedGeneratorReconciler) checkLCACliStatus() error {
 
 // Check whether the system can be used for seed generation
 func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg string) {
+	// Check that the "ostree admin set-default" feature is available
+	if !ostreeclient.NewClient(r.Executor, false).IsOstreeAdminSetDefaultFeatureEnabled() {
+		msg = "Rejected: Installed release does not support \"ostree admin set-default\" feature"
+		return
+	}
+
 	// Ensure there are no ACM addons enabled on the seed SNO
 	if acmNsList := r.currentAcmAddonNamespaces(ctx); len(acmNsList) > 0 {
 		msg = fmt.Sprintf("Rejected due to presence of ACM addon(s): %s", strings.Join(acmNsList, ", "))
