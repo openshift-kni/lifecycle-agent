@@ -24,8 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-logr/logr"
-	cp "github.com/otiai10/copy"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -38,6 +36,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/go-logr/logr"
+	cp "github.com/otiai10/copy"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 )
@@ -177,4 +178,19 @@ func RemoveDuplicates[T comparable](list []T) []T {
 		mp[item] = true
 	}
 	return result
+}
+
+// TouchFile update the access and modification times of a file to the current time
+func TouchFile(filename string) error {
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	// Update the access and modification times to the current time
+	if err := os.Chtimes(filename, time.Now(), time.Now()); err != nil {
+		return fmt.Errorf("failed to update %s: %w", filename, err)
+	}
+	return nil
 }

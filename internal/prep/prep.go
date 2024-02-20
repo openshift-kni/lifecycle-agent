@@ -3,20 +3,20 @@ package prep
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-logr/logr"
-	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
-
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 )
 
 // need this for unit tests
@@ -75,6 +75,26 @@ func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 // /ostree/deploy/<osname>/deploy/<deployment.id>.origin
 func getDeploymentOriginPath(deploymentDir string) string {
 	return deploymentDir + ".origin"
+}
+
+func updateKdumpIfExists(log logr.Logger, stateRootPath string) error {
+	kdumpPath := common.PathOutsideChroot(filepath.Join(stateRootPath, "/var/lib/kdump/*"))
+	log.Info(fmt.Sprintf("Looking for kdump under :%s", kdumpPath))
+	matchedFiles, err := filepath.Glob(kdumpPath)
+	if err != nil {
+		return fmt.Errorf("failed to find kdump: %w", err)
+	}
+	if len(matchedFiles) == 0 {
+		log.Info("no kdump found")
+		return nil
+	}
+	errs := []error{}
+	for _, filename := range matchedFiles {
+		log.Info(fmt.Sprintf("Updating kdump: %s", filename))
+		err = common.TouchFile(filename)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // removeETCDeletions remove the files that are listed in etc.deletions
@@ -229,6 +249,10 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	if err = removeETCDeletions(mountpoint, deploymentDir); err != nil {
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
+	}
+
+	if err = updateKdumpIfExists(log, common.GetStaterootPath(osname)); err != nil {
+		return fmt.Errorf("failed to update kdump: %w", err)
 	}
 
 	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
