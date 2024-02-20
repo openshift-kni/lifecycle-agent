@@ -11,7 +11,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
@@ -251,16 +250,19 @@ func TestCreatePullSecretFile(t *testing.T) {
 	}()
 
 	testcases := []struct {
-		name       string
-		pullSecret string
+		name          string
+		pullSecret    string
+		expectedError bool
 	}{
 		{
-			name:       "Happy flow, pull secret was set",
-			pullSecret: "pull-secret",
+			name:          "Happy flow, pull secret was set",
+			pullSecret:    "pull-secret",
+			expectedError: false,
 		},
 		{
-			name:       "Pull secret was not set",
-			pullSecret: "",
+			name:          "Pull secret was not set, should fail",
+			pullSecret:    "",
+			expectedError: true,
 		},
 	}
 
@@ -269,26 +271,12 @@ func TestCreatePullSecretFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
 			pullSecretFile := path.Join(tmpDir, "config.json")
-			pullSecretManifestFile := path.Join(tmpDir, pullSecretFileName)
 			clientgoscheme.AddToScheme(scheme)
 			pp := NewPostPivot(scheme, log, mockOps, "", tmpDir, "")
-			err := pp.createPullSecretFileAndManifest(tc.pullSecret, pullSecretFile, pullSecretManifestFile)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
+			err := pp.createPullSecretFile(tc.pullSecret, pullSecretFile)
+			assert.Equal(t, err != nil, tc.expectedError)
 			if tc.pullSecret != "" {
-				secret := &corev1.Secret{}
-				err = utils.ReadYamlOrJSONFile(pullSecretManifestFile, secret)
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				ps, ok := secret.Data[corev1.DockerConfigJsonKey]
-				if !ok {
-					t.Errorf("pull secret was not found: %v", err)
-				}
-				assert.Equal(t, "pull-secret", string(ps))
-
-				ps, err = os.ReadFile(pullSecretFile)
+				ps, err := os.ReadFile(pullSecretFile)
 				if err != nil {
 					t.Errorf("unexpected error while reading pull secret file: %v", err)
 				}
