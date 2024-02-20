@@ -97,12 +97,16 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to run once gather_cluster_info: %w", err)
 	}
 
+	seedHasKubeadminPassword := false
 	if s.recertSkipValidation {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
 		s.log.Info("Backing up seed cluster certificates for recert tool")
 		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backing up seed cluster certificates for recert tool: %w", err)
+		}
+		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupDir); err != nil {
+			return fmt.Errorf("failed to backup kubeadmin password hash: %w", err)
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
 	}
@@ -114,7 +118,8 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
-		if err := utils.RunOnce("recert", common.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto, s.recertContainerImage, s.authFile); err != nil {
+		if err := utils.RunOnce("recert", common.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto,
+			s.recertContainerImage, s.authFile, seedHasKubeadminPassword); err != nil {
 			return fmt.Errorf("failed to run once recert: %w", err)
 		}
 	}

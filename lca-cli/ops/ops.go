@@ -28,7 +28,7 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
-	ForceExpireSeedCrypto(recertContainerImage, authFile string) error
+	ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error
 	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
 	RunUnauthenticatedEtcdServer(authFile, name string) error
 	waitForEtcd(healthzEndpoint string) error
@@ -86,15 +86,15 @@ func (o *ops) RunInHostNamespace(command string, args ...string) (string, error)
 	return execute, nil
 }
 
-func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string) error {
+func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
 	o.log.Info("Running recert --force-expire tool and saving a summary without sensitive data")
 	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
 	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
 	// into a seed image.
 	o.log.Info("Run recert --force-expire tool")
 	recertConfigFile := path.Join(common.BackupDir, recert.RecertConfigFile)
-	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile); err != nil {
-		return fmt.Errorf("failed to create %s file", recertConfigFile)
+	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile, hasKubeAdminPassword); err != nil {
+		return fmt.Errorf("failed to create %s file: %w", recertConfigFile, err)
 	}
 	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, nil); err != nil {
 		return err
@@ -108,7 +108,13 @@ func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) e
 	o.log.Info("Running recert --extend-expiration tool to restore original seed crypto")
 	o.log.Info("Run recert --extend-expiration tool")
 	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
-	if err := recert.CreateRecertConfigFileForSeedRestoration(recertConfigFile); err != nil {
+
+	originalPasswordHash, err := utils.LoadKubeadminPasswordHash(common.BackupDir)
+	if err != nil {
+		return fmt.Errorf("failed to load kubeadmin password hash: %w", err)
+	}
+
+	if err := recert.CreateRecertConfigFileForSeedRestoration(recertConfigFile, originalPasswordHash); err != nil {
 		return fmt.Errorf("failed to create %s file", recertConfigFile)
 	}
 
