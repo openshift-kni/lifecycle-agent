@@ -36,6 +36,7 @@ import (
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -53,6 +54,7 @@ import (
 
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -119,6 +121,7 @@ var phases = struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
 func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) seedgenReconcilerPhase {
@@ -342,6 +345,35 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 		return fmt.Errorf("timed out waiting for MCO to override pull-secret file: %w", err)
 	}
 
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.Context) error {
+	r.Log.Info("Cleaning old machine configs")
+	mcps := &mcv1.MachineConfigPoolList{}
+	err := r.Client.List(ctx, mcps)
+	if err != nil {
+		return fmt.Errorf("failed to list machine config pools, err: %w", err)
+	}
+	var currentMCs []string
+	for _, mcp := range mcps.Items {
+		currentMCs = append(currentMCs, mcp.Spec.Configuration.Name)
+	}
+
+	mcs := &mcv1.MachineConfigList{}
+	err = r.Client.List(ctx, mcs)
+	if err != nil {
+		return fmt.Errorf("failed to list machine configs, err: %w", err)
+	}
+	for _, mc := range mcs.Items {
+		if !strings.HasPrefix(mc.Name, "rendered") || lo.Contains(currentMCs, mc.Name) {
+			continue
+		}
+		r.Log.Info(fmt.Sprintf("Deleting machine config %s", mc.Name))
+		if err := r.Client.Delete(ctx, mc.DeepCopy()); err != nil {
+			return fmt.Errorf("failed to delete machine config %s, err: %w", mc.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -686,6 +718,21 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 	return nil
 }
 
+func (r *SeedGeneratorReconciler) setupWorkspace() error {
+	if err := r.wipeExistingWorkspace(); err != nil {
+		return fmt.Errorf("failed to wipe previous workspace: %w", err)
+	}
+
+	if err := r.rmPreviousImagerContainer(); err != nil {
+		return fmt.Errorf("failed to delete previous imager container: %w", err)
+	}
+
+	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+	return nil
+}
+
 // Generate the seed image
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator, clusterName string) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
@@ -705,21 +752,8 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	nextReconcile = doNotRequeue()
-
-	if err := r.wipeExistingWorkspace(); err != nil {
-		rc = fmt.Errorf("failed to wipe previous workspace: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := r.rmPreviousImagerContainer(); err != nil {
-		rc = fmt.Errorf("failed to delete previous imager container: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
-		rc = fmt.Errorf("failed to create workdir: %w", err)
+	if err := r.setupWorkspace(); err != nil {
+		rc = err
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
@@ -849,6 +883,12 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
 	defer r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData))
+
+	if err := r.cleanupOldRenderedMachineConfigs(ctx); err != nil {
+		rc = fmt.Errorf("failed to cleanup old machine configs, err: %w", err)
+		setSeedGenStatusFailed(seedgen, rc.Error())
+		return
+	}
 
 	// Final stage of initial seed generation is to delete the CR and launch the container.
 	// Update the CR status prior to its saving and deletion

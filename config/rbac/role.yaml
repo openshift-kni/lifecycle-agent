@@ -200,6 +200,7 @@ rules:
   resources:
   - machineconfigs
   verbs:
+  - delete
   - get
   - list
   - watch
