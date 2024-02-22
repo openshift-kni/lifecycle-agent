@@ -22,8 +22,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
+	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -37,6 +39,7 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -268,14 +271,80 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, m
 	return
 }
 
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=get;list;watch;patch
+
+func (u *UpgHandler) sriovNetworkNodeStateWorkaround(ctx context.Context, msg string) error {
+	//
+	// Workaround: If the health checks fail, reporting that the SriovNetworkNodeState does not exist,
+	// add an annotation to the sriov default policy to kick the reconciler.
+	//
+	// After the postpivot, the various pods are all coming up at the same time, once kubelet is enabled by
+	// the postpivot service-unit. There is a bit of a race condition where the sriov-network-operator starts
+	// around the same time as the kube-apiserver. This means sriov-network-operator may start its reconcilers
+	// prior to being able to connect to etcd, which can be hidden by the use of cached API. When this happens,
+	// its reconcilers run with no CRs, but also no failures. It thinks the reconcilers were successful, and waits
+	// 5 minutes before running the reconcilers again.
+	//
+	// When this occurs, no SriovNetworkNodePolicies (other than default) or SriovNetworkNodeStates are created.
+	// This, in turn, results in a failure when trying to apply extra-manifests that include sriov config.
+	//
+	// Eventually, the periodic reconciler kicks in and creates the required CRs.
+	//
+	// The inclusion of the SriovNetworkNodeState health check blocks the Upgrade handler from attempting to apply
+	// the extra-manifests until it has a node in Succeeded state, protecting LCA from this failure. However, this
+	// LCA is waiting up to 5 minutes for the health checks to pass as a result, which increases the time required
+	// to perform an IBU.
+	//
+	// As a workaround, until such time that sriov-network-operator handles this scenario, this function kicks the
+	// reconciler by adding an annotation to the default SriovNetworkNodePolicy. This change to the CR triggers
+	// the reconciler to run, creating the necessary resources.
+	//
+	// If the health check failure message includes the message from the SriovNetworkNodeState health check that there
+	// were no SriovNetworkNodeState CRs, it is an indication that the sriov-network-operator reconciler ran without
+	// creating the CRs, which triggers the workaround to give the reconciler a little kick before requeuing. The health
+	// check should then be fine on the next pass of the IBU reconciler, as there will have been enough time for the CRs
+	// to have been created.
+	//
+
+	if !strings.Contains(msg, healthcheck.SriovNetworkNodeStateNotPresentMsg) {
+		return nil
+	}
+
+	policies := &sriovv1.SriovNetworkNodePolicyList{}
+	if err := u.List(ctx, policies); err != nil {
+		return fmt.Errorf("failed to get SriovNetworkNodePolicy list: %w", err)
+	}
+
+	for _, networkNodePolicy := range policies.Items {
+		if networkNodePolicy.Name != "default" {
+			continue
+		}
+
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s": "%s"}}}`,
+			"imagebasedupgrades.lca.openshift.io-kick-reconciler", time.Now().Format(time.RFC3339)))
+		if err := u.Patch(ctx, &sriovv1.SriovNetworkNodePolicy{
+			ObjectMeta: networkNodePolicy.ObjectMeta,
+		}, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			return fmt.Errorf("failed to annotate default SriovNetworkNodePolicy: %w", err)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed to find default SriovNetworkNodePolicy")
+}
+
 // postPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Starting health check for different components")
-	err := CheckHealth(u.NoncachedClient, u.Log)
+	err := CheckHealth(ctx, u.NoncachedClient, u.Log)
 	if err != nil {
+		// Trigger sriov workaround, if necessary
+		u.sriovNetworkNodeStateWorkaround(ctx, err.Error())
+
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
 		return requeueWithShortInterval(), nil
 	}

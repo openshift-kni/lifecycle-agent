@@ -1,13 +1,17 @@
 package healthcheck
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
+	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	v1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -29,6 +33,10 @@ func init() {
 	s.AddKnownTypes(operatorsv1alpha1.SchemeGroupVersion, &operatorsv1alpha1.ClusterServiceVersion{})
 	s.AddKnownTypes(configv1.GroupVersion, &configv1.Infrastructure{})
 	s.AddKnownTypes(v1.SchemeGroupVersion, &v1.Node{})
+	s.AddKnownTypes(apiextensionsv1.SchemeGroupVersion, &apiextensionsv1.CustomResourceDefinitionList{})
+	s.AddKnownTypes(apiextensionsv1.SchemeGroupVersion, &apiextensionsv1.CustomResourceDefinition{})
+	s.AddKnownTypes(sriovv1.SchemeGroupVersion, &sriovv1.SriovNetworkNodeStateList{})
+	s.AddKnownTypes(sriovv1.SchemeGroupVersion, &sriovv1.SriovNetworkNodeState{})
 }
 
 func Test_nodesReady(t *testing.T) {
@@ -218,7 +226,7 @@ func Test_nodesReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := IsNodeReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+			if err := IsNodeReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
 				t.Errorf("IsNodeReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -279,7 +287,7 @@ func Test_clusterServiceVersionReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := AreClusterServiceVersionsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+			if err := AreClusterServiceVersionsReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
 				t.Errorf("IsClusterServiceVersionReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -357,7 +365,7 @@ func Test_clusterOperatorsReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := AreClusterOperatorsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+			if err := AreClusterOperatorsReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
 				t.Errorf("AreClusterOperatorsReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -399,7 +407,7 @@ func Test_machineConfigPoolReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := AreMachineConfigPoolsReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+			if err := AreMachineConfigPoolsReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
 				t.Errorf("AreMachineConfigPoolsReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -453,8 +461,93 @@ func Test_clusterVersionReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := IsClusterVersionReady(tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+			if err := IsClusterVersionReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
 				t.Errorf("IsClusterVersionReady() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func Test_sriovNetworkNodeStateReady(t *testing.T) {
+	type args struct {
+		c client.Reader
+		l logr.Logger
+	}
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sriovnetworknodestates.sriovnetwork.openshift.io",
+		},
+	}
+
+	successSriovNetworkNodeState := &sriovv1.SriovNetworkNodeState{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Status: sriovv1.SriovNetworkNodeStateStatus{
+			SyncStatus: "Succeeded",
+		},
+	}
+
+	failedSriovNetworkNodeState := &sriovv1.SriovNetworkNodeState{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Status: sriovv1.SriovNetworkNodeStateStatus{
+			SyncStatus: "",
+		},
+	}
+
+	tests := []struct {
+		name      string
+		args      args
+		objects   []runtime.Object
+		wantErr   bool
+		wantedErr string
+	}{
+		{
+			name: "happy path",
+			args: args{l: logr.Logger{}},
+			objects: []runtime.Object{
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{*successSriovNetworkNodeState},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "sriov network node state not present",
+			args: args{l: logr.Logger{}},
+			objects: []runtime.Object{
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{},
+				},
+			},
+			wantErr:   true,
+			wantedErr: SriovNetworkNodeStateNotPresentMsg,
+		},
+		{
+			name: "sriov network node state not ready",
+			args: args{l: logr.Logger{}},
+			objects: []runtime.Object{
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{*failedSriovNetworkNodeState},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			if err := IsSriovNetworkNodeReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("IsSriovNetworkNodeReady() error = %v, wantErr %v", err, tt.wantErr)
+			} else if tt.wantErr && tt.wantedErr != "" && !strings.Contains(err.Error(), tt.wantedErr) {
+				// Check for specific expected error message
+				t.Errorf("IsSriovNetworkNodeReady() error = %v, wantedErr %s", err, tt.wantedErr)
 			}
 		})
 	}
@@ -465,6 +558,22 @@ func TestHealthChecks(t *testing.T) {
 		c client.Reader
 		l logr.Logger
 	}
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sriovnetworknodestates.sriovnetwork.openshift.io",
+		},
+	}
+
+	successSriovNetworkNodeState := &sriovv1.SriovNetworkNodeState{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Status: sriovv1.SriovNetworkNodeStateStatus{
+			SyncStatus: "Succeeded",
+		},
+	}
+
 	tests := []struct {
 		name    string
 		args    args
@@ -475,6 +584,7 @@ func TestHealthChecks(t *testing.T) {
 			name:    "fail all",
 			wantErr: true,
 			objects: []runtime.Object{
+				crd,
 				&configv1.Infrastructure{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "cluster",
@@ -604,13 +714,17 @@ func TestHealthChecks(t *testing.T) {
 						},
 					},
 				},
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{*successSriovNetworkNodeState},
+				},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			err := HealthChecks(tt.args.c, tt.args.l)
+			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HealthChecks() error = %v, wantErr %v", err, tt.wantErr)
 			}

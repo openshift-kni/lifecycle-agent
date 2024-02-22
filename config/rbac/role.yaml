@@ -291,6 +291,23 @@ rules:
   verbs:
   - use
 - apiGroups:
+  - sriovnetwork.openshift.io
+  resources:
+  - sriovnetworknodepolicies
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - sriovnetwork.openshift.io
+  resources:
+  - sriovnetworknodestates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - velero.io
   resources:
   - backups
