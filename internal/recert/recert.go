@@ -41,6 +41,7 @@ type RecertConfig struct {
 	CNSanReplaceRules     []string `json:"cn_san_replace_rules,omitempty"`
 	UseKeyRules           []string `json:"use_key_rules,omitempty"`
 	UseCertRules          []string `json:"use_cert_rules,omitempty"`
+	PullSecret            string   `json:"pull_secret,omitempty"`
 }
 
 // CreateRecertConfigFile function to create recert config file
@@ -75,6 +76,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
 	}
 	config.KubeadminPasswordHash = seedReconfig.KubeadminPasswordHash
+	config.PullSecret = seedReconfig.PullSecret
 
 	if _, err := os.Stat(cryptoDir); err == nil {
 		ingressFile, ingressCN, err := getIngressCNAndFile(cryptoDir)
