@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -403,7 +402,8 @@ func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *lcav1alpha1.Imag
 			condition.ObservedGeneration = ibu.ObjectMeta.Generation
 		}
 	}
-	err := common.RetryOnConflictOrRetriable(retry.DefaultRetry, func() error {
+
+	err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
 		return c.Status().Update(ctx, ibu) //nolint:wrapcheck
 	})
 

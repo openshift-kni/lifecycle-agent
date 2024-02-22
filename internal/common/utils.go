@@ -45,6 +45,13 @@ import (
 // TODO: Need a better way to change this but will require relatively big refactoring
 var OstreeDeployPathPrefix = ""
 
+var RetryBackoffTwoMinutes = wait.Backoff{
+	Steps:    120,
+	Duration: time.Second,
+	Factor:   1.0,
+	Jitter:   0.1,
+}
+
 // GetConfigMap retrieves the configmap from cluster
 func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.ConfigMapRef) (*corev1.ConfigMap, error) {
 
@@ -152,6 +159,14 @@ func isConflictOrRetriable(err error) bool {
 
 func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
 	return retry.OnError(backoff, isConflictOrRetriable, fn) //nolint:wrapcheck
+}
+
+func isRetriable(err error) bool {
+	return apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
+}
+
+func RetryOnRetriable(backoff wait.Backoff, fn func() error) error {
+	return retry.OnError(backoff, isRetriable, fn) //nolint:wrapcheck
 }
 
 func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {

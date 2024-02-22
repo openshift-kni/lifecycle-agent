@@ -55,6 +55,7 @@ import (
 // ImageBasedUpgradeReconciler reconciles a ImageBasedUpgrade object
 type ImageBasedUpgradeReconciler struct {
 	client.Client
+	NoncachedClient client.Reader
 	UpgradeHandler  UpgradeHandler
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
@@ -102,9 +103,9 @@ func requeueWithError(err error) (ctrl.Result, error) {
 	return ctrl.Result{}, err
 }
 
-//nolint:unused
 func requeueImmediately() ctrl.Result {
-	return ctrl.Result{Requeue: true}
+	// Allow a brief pause in case there's a delay with a DB Update
+	return requeueWithCustomInterval(2 * time.Second)
 }
 
 func requeueWithShortInterval() ctrl.Result {
@@ -164,14 +165,20 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return
 	}
 
+	// Use a non-cached query to Get the IBU CR, to ensure we aren't running against a stale cached CR
 	ibu := &lcav1alpha1.ImageBasedUpgrade{}
-	err = r.Get(ctx, req.NamespacedName, ibu)
+	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
+		return r.NoncachedClient.Get(ctx, req.NamespacedName, ibu) //nolint:wrapcheck
+	})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = lcautils.InitIBU(ctx, r.Client, &r.Log)
 			return
 		}
 		r.Log.Error(err, "Failed to get ImageBasedUpgrade")
+
+		// This is likely a case where the API is down, so requeue and try again shortly
+		nextReconcile = requeueWithShortInterval()
 		return
 	}
 
@@ -182,6 +189,9 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		return
 	}
+
+	// Make sure "next stage" list is initialized
+	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
 
 	if isTransitionRequested(ibu) {
 		// Update in progress condition to true and idle condition to false when transitioning to non idle stage
@@ -194,26 +204,40 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					return
 				}
 				if !isValid {
-					err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
+					ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+					if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+						r.Log.Error(updateErr, "failed to update IBU CR status")
+					}
 					return
 				}
 			}
-			nextReconcile = requeueImmediately()
-		}
-	} else {
-		inProgressStage := utils.GetInProgressStage(ibu)
-		if inProgressStage != "" {
-			nextReconcile, err = r.handleStage(ctx, ibu, inProgressStage)
-			if err != nil {
-				_ = utils.UpdateIBUStatus(ctx, r.Client, ibu)
-				return
-			}
 			ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+			// Update status
+			if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+				r.Log.Error(updateErr, "failed to update IBU CR status")
+			}
 		}
 	}
 
+	inProgressStage := utils.GetInProgressStage(ibu)
+	if inProgressStage != "" {
+		nextReconcile, err = r.handleStage(ctx, ibu, inProgressStage)
+		if err != nil {
+			ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+			if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+				r.Log.Error(updateErr, "failed to update IBU CR status")
+			}
+			return
+		}
+	}
+
+	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+
 	// Update status
-	err = utils.UpdateIBUStatus(ctx, r.Client, ibu)
+	if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
+		r.Log.Error(updateErr, "failed to update IBU CR status")
+	}
+
 	return
 }
 
