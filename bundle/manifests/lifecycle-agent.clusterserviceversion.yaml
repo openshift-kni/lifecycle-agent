@@ -61,12 +61,26 @@ metadata:
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
     olm.skipRange: '>=4.14.0 <4.16.0'
+    operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+    operatorframework.io/suggested-namespace-template: |-
+      {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+          "name": "openshift-lifecycle-agent",
+          "annotations": {
+            "workload.openshift.io/allowed": "management"
+          }
+        }
+      }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
     operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
     provider: Red Hat
     repository: https://github.com/openshift-kni/lifecycle-agent
     support: Red Hat
+  labels:
+    operatorframework.io/arch.amd64: supported
   name: lifecycle-agent.v4.16.0
   namespace: openshift-lifecycle-agent
 spec:
