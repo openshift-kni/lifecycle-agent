@@ -34,8 +34,8 @@ var foldersToRemove = []string{
 	common.SeedDataDir,
 }
 
-// SeedRestoration handles cleanup operations after creating a seed image, removing temporary files
-// and executing additional cleanup steps as needed.
+// SeedRestoration handles restoration operations after creating a seed image, removing temporary files
+// and executing additional restoration steps as needed.
 type SeedRestoration struct {
 	log                  *logrus.Logger
 	ops                  ops.Ops
@@ -60,13 +60,13 @@ func NewSeedRestoration(log *logrus.Logger, ops ops.Ops, backupDir,
 	}
 }
 
-// CleanupSeedCluster comprises the lca-cli workflow for cleanup operations after creating a seed image
-// out of an SNO cluster.
-func (s *SeedRestoration) CleanupSeedCluster() error {
+// RestoreSeedCluster comprises the lca-cli workflow for restoration operations
+// after creating a seed image out of an SNO cluster.
+func (s *SeedRestoration) RestoreSeedCluster() error {
 	s.log.Info("Cleaning up seed cluster")
 
-	// Collect all cleanup errors to only fail fatally at the end,
-	// but still cleanup as much as possible.
+	// Collect all restoration errors to only fail fatally at the end,
+	// but still restoration as much as possible.
 	var errors []error
 
 	s.log.Info("Removing seed image")
@@ -109,7 +109,7 @@ func (s *SeedRestoration) CleanupSeedCluster() error {
 	}
 
 	if len(errors) > 0 {
-		return fmt.Errorf("encountered %d errors during cleanup", len(errors))
+		return fmt.Errorf("encountered %d errors during restoration", len(errors))
 	}
 
 	return nil
