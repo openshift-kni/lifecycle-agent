@@ -119,7 +119,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.resetProgressMessage(ctx, ibu)
 	}
 
-	// backup with OADP
+	utils.SetUpgradeStatusInProgress(ibu, "Backing up Application Data")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
+
 	u.Log.Info("Handling backups with OADP operator")
 	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
@@ -134,6 +138,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 	if !ctrlResult.IsZero() {
 		// The backup process has not been completed yet, requeue
+		utils.SetUpgradeStatusInProgress(ibu, "Backup of Application Data is in progress")
 		return ctrlResult, nil
 	}
 
@@ -145,6 +150,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	stateroot := common.GetDesiredStaterootName(ibu)
 	staterootPath := getStaterootPath(stateroot)
 	staterootVarPath := getStaterootVarPath(stateroot)
+
+	utils.SetUpgradeStatusInProgress(ibu, "Exporting Application Configuration")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
 
 	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
 	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
@@ -164,6 +174,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return requeueWithError(fmt.Errorf("error while exporting restores: %w", err))
 	}
 
+	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
+	}
+
 	u.Log.Info("Writing extra-manifests into new stateroot")
 	// Extract from policies can be done by matching labels on the policy or the CR itself
 	// Currently we expect user to properly label CRs with site specific content
@@ -175,6 +190,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 
 	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
 		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
+	}
+
+	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
+	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
+		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
 	u.Log.Info("Writing cluster-configuration into new stateroot")
