@@ -126,19 +126,24 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		r.Log.Error(err, msg)
 		errorMessage += msg + " "
 	}
-	// Terminate precaching worker thread
+
+	r.Log.Info("Terminating precaching worker thread, will wait up to 30 seconds")
 	if r.PrepTask.Active && r.PrepTask.Cancel != nil {
 		r.PrepTask.Cancel()
 		r.PrepTask.Reset()
 	}
+
+	r.Log.Info("Cleaning up stateroot")
 	if err := r.cleanupStateroots(allUnbootedStateroots, ibu); err != nil {
 		handleError(err, "failed to cleanup stateroots.")
 	}
+
+	r.Log.Info("Cleaning up precache")
 	if err := r.Precache.Cleanup(ctx); err != nil {
 		handleError(err, "failed to cleanup precaching resources.")
 	}
 
-	// only delete Backup CRs
+	r.Log.Info("Cleaning up Backup CRs")
 	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
 		handleError(err, "failed to cleanup backups.")
 	} else if !allRemoved {
@@ -146,6 +151,7 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		handleError(err, err.Error())
 	}
 
+	r.Log.Info("Cleaning up IBU files")
 	if err := cleanupIBUFiles(); err != nil {
 		handleError(err, "failed to cleanup ibu files.")
 	}
