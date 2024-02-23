@@ -339,7 +339,14 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 			return false, nil
 		}
 		r.Log.Info(fmt.Sprintf("%s data is %s", common.ImageRegistryAuthFile, strings.TrimSpace(string(dockerConfigJSON))))
-		return strings.TrimSpace(string(dockerConfigJSON)) == string(updatedPullSecret.Data[".dockerconfigjson"]), nil
+		if strings.TrimSpace(string(dockerConfigJSON)) != string(updatedPullSecret.Data[".dockerconfigjson"]) {
+			return false, nil
+		}
+		if err := healthcheck.AreMachineConfigPoolsReady(deadlineCtx, r.NoncachedClient, r.Log); err != nil {
+			r.Log.Info(fmt.Sprintf("Waiting for MCP: %s", err.Error()))
+			return false, nil
+		}
+		return true, nil
 	})
 	if err != nil {
 		return fmt.Errorf("timed out waiting for MCO to override pull-secret file: %w", err)
