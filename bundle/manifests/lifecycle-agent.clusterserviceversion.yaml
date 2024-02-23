@@ -292,8 +292,15 @@ spec:
           - delete
           - get
           - list
+          - patch
           - update
           - watch
+        - apiGroups:
+          - batch
+          resources:
+          - jobs/status
+          verbs:
+          - get
         - apiGroups:
           - config.openshift.io
           resources:

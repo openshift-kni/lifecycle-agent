@@ -26,6 +26,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
+	kbatch "k8s.io/api/batch/v1"
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -75,11 +76,12 @@ type ImageBasedUpgradeReconciler struct {
 
 // Task contains objects for executing a group of serial tasks asynchronously
 type Task struct {
-	Active   bool
-	Success  bool
-	Cancel   context.CancelFunc
-	Progress string
-	done     chan struct{}
+	Active             bool
+	Success            bool
+	Cancel             context.CancelFunc
+	Progress           string
+	AdditionalComplete string // additional completion msg
+	done               chan struct{}
 }
 
 // Reset Re-initialize the Task variables to initial values
@@ -88,11 +90,13 @@ func (c *Task) Reset() {
 	c.Success = false
 	c.Cancel = nil
 	c.Progress = ""
+	c.AdditionalComplete = ""
 	select {
 	case _, open := <-c.done:
 		if open {
 			close(c.done)
 		}
+	case <-time.After(30 * time.Second): // max wait timeout in case c.done is still empty
 	}
 }
 
@@ -138,16 +142,11 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=prometheusrules,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the ImageBasedUpgrade object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (nextReconcile ctrl.Result, err error) {
 	if r.Mux != nil {
 		r.Mux.Lock()
@@ -506,6 +505,7 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return false
 			},
 		})).
+		Owns(&kbatch.Job{}). // note: job resource watched is restricted further using cache.Options during NewManager
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
 }

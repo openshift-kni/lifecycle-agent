@@ -20,11 +20,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/go-logr/logr"
-
 	"os"
 	"strings"
+
+	"github.com/go-logr/logr"
+	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
@@ -39,7 +40,8 @@ import (
 // PHandler handles the precaching job
 type PHandler struct {
 	client.Client
-	Log logr.Logger
+	Log    logr.Logger
+	Scheme *runtime.Scheme
 }
 
 // Config defines the configuration options for a pre-caching job.
@@ -114,8 +116,7 @@ type Status struct {
 }
 
 // CreateJob creates a new precache job.
-func (h *PHandler) CreateJob(ctx context.Context, config *Config) error {
-
+func (h *PHandler) CreateJob(ctx context.Context, config *Config, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	if err := validateJobConfig(ctx, h.Client, config.ImageList); err != nil {
 		return err
 	}
@@ -127,10 +128,11 @@ func (h *PHandler) CreateJob(ctx context.Context, config *Config) error {
 		return fmt.Errorf("failed to create configMap for precache: %w", err)
 	}
 
-	job, err := renderJob(config, h.Log)
+	job, err := renderJob(config, h.Log, ibu, h.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}
+
 	err = h.Client.Create(ctx, job)
 	if err != nil {
 		return fmt.Errorf("failed to create precache job: %w", err)
@@ -144,16 +146,14 @@ func (h *PHandler) CreateJob(ctx context.Context, config *Config) error {
 
 // QueryJobStatus retrieves the status of the precache job.
 func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
-
-	job, err := getJob(ctx, h.Client, LcaPrecacheJobName, common.LcaNamespace)
+	job, err := getJob(ctx, h.Client)
 	if err != nil {
-		h.Log.Info("Unable to get job for status", "jobName", LcaPrecacheJobName)
-		return nil, err
+		return nil, err //nolint:wrapcheck
 	}
 
-	if job == nil {
-		h.Log.Info("Precaching job does not exist", "jobName", LcaPrecacheJobName)
-		return nil, nil
+	// job deletion not allowed
+	if job.GetDeletionTimestamp() != nil {
+		return nil, fmt.Errorf("precache job is marked to be deleted, this not allowed")
 	}
 
 	status := &Status{Message: ""}
@@ -191,15 +191,15 @@ func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
 	return status, nil
 }
 
-// Cleanup deletes the ConfigMap and Job precaching resources
+// Cleanup deletes precaching resources
 func (h *PHandler) Cleanup(ctx context.Context) error {
-	// Delete Job
-	if err := deleteJob(ctx, h.Client, LcaPrecacheJobName, common.LcaNamespace); err != nil {
+	// Delete precache job
+	if err := deleteJob(ctx, h.Client); err != nil {
 		h.Log.Info("Failed to delete precaching job", "name", LcaPrecacheJobName)
 		return err
 	}
-	// Delete ConfigMap
-	if err := deleteConfigMap(ctx, h.Client, LcaPrecacheConfigMapName, common.LcaNamespace); err != nil {
+	// Delete precache ConfigMap
+	if err := deleteConfigMap(ctx, h.Client); err != nil {
 		h.Log.Info("Failed to delete precaching configmap", "name", LcaPrecacheConfigMapName)
 		return err
 	}
