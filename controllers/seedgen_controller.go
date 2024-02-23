@@ -693,7 +693,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log); err != nil {
 		r.Log.Info(fmt.Sprintf("health check failed: %s", err.Error()))
 		setSeedGenStatusInProgress(seedgen, fmt.Sprintf("%s: %s", msgWaitingForStable, err.Error()))
-		nextReconcile = requeueWithShortInterval()
+		nextReconcile = requeueWithHealthCheckInterval()
 		return
 	}
 
