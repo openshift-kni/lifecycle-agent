@@ -10,7 +10,6 @@
     - [Creating the seedimage SeedGenerator CR](#creating-the-seedimage-seedgenerator-cr)
   - [Generating the IBU Seed Image](#generating-the-ibu-seed-image)
     - [Monitoring Progress](#monitoring-progress)
-  - [ACM and ZTP GitOps Considerations](#acm-and-ztp-gitops-considerations)
 
 ## Overview
 
@@ -23,7 +22,7 @@ The Lifecycle Agent provides orchestration of IBU Seed Image generation via the 
   - Prepare seed image config
   - Generate and publish the seed image
   - Restore the cluster operators
-- After LCA operator recovers, restore the seedgen CR and update its status to reflect success or failure of image generation, and restore the `ManagedCluster` CR on the hub (if applicable).
+- After LCA operator recovers, restore the seedgen CR and update its status to reflect success or failure of image generation.
 
 ## Seed SNO Pre-Requisites
 
@@ -33,12 +32,10 @@ The seed SNO configuration has some pre-requisites:
   - Same number of cores.
   - Same tuned performance configuration (ie. reserved CPUs).
   - FIPS enablement (? *TODO*: confirm)
-- Deployed in the same manner as target SNO(s).
-  - Same ACM/MCE version.
-    - Exception: Hub for seed SNO must not have extra ACM addons enabled (ie. observability). The LCA orchestration confirms that no such addons are present on the seed SNO as part of its system config validation.
 - OADP operator must be deployed.
 - Container storage must be setup as shared between stateroots, such as with a separate partition.
 - Required dnsmasq configuration to support updating cluster name, domain, and IP from the seed image as part of IBU.
+- If seed SNO was deployed via ACM, the cluster must be detached prior to generating the seed image. If deployed with ZTP Gitops, it is highly recommended to drop the site-config and prune via argocd.
 
 ### Shared Container Storage
 
@@ -235,17 +232,13 @@ spec:
 
 ## SeedGenerator CR
 
-The Lifecycle Agent provides orchestration of the IBU Seed Image generation, triggered by creating a `SeedGenerator` CR. Additionally, a `seedgen` `Secret` is required to provide the auth necessary for publishing the seed image, as well as the optional `hubKubeconfig` if the LCA is to handle the `ManagedCluster`.
-
-*TODO*: Provide helper script for generating the `seedgen` `Secret` and `seedimage` `SeedGenerator` CRs
+The Lifecycle Agent provides orchestration of the IBU Seed Image generation, triggered by creating a `SeedGenerator` CR. Additionally, a `seedgen` `Secret` is required to provide the auth necessary for publishing the seed image.
 
 ### Creating the seedgen Secret CR
 
 The `seedgen` `Secret`, created in the `openshift-lifecycle-agent` namespace, allows the user to provide the following information:
 
 - `seedAuth`: base64-encoded auth file for write-access to the registry for pushing the generated seed image
-- `hubKubeconfig`: (Optional) base64-encoded kubeconfig for admin access to the hub, in order to deregister the seed
-  cluster from ACM. If this is not present in the secret, the ACM cleanup will be skipped.
 
 > [!IMPORTANT]
 > This `Secret` must be named `seedgen` and must be created in the `openshift-lifecycle-agent` namespace.
@@ -275,7 +268,6 @@ metadata:
 type: Opaque
 data:
   seedAuth: <encoded authfile>
-  hubKubeconfig: <encoded kubeconfig>
 ```
 
 ### Creating the seedimage SeedGenerator CR
@@ -328,22 +320,3 @@ Once the lca-cli is launched, you can SSH to the seed SNO and monitor the contai
 ```console
 podman logs -f lca_image_builder
 ```
-
-## ACM and ZTP GitOps Considerations
-
-If you provide a `hubKubeconfig` in your `seedgen` `Secret`, the orchestrator will interact with the hub to verify
-whether the `ManagedCluster` exists for the seed SNO. If it exists, the orchestrator will detach the cluster from ACM by
-deleting the `ManagedCluster`, saving the CR to be restored as part of the recovery.
-
-> [!WARNING]
-> When the orchestrator deletes the `ManagedCluster`, ArgoCD will mark the site-config "out of sync". If you have the
-> `selfHeal` option enabled in ArgoCD, it will automatically sync and recreate the CR, triggering ACM to reimport the
-> seed SNO while it is preparing to generate the image. This means you must drop the site-config in gitops prior to
-> triggering the seed image generation, rather than providing the `hubKubeconfig`. Similarly, if you are using a shared
-> hub, a sync could be triggered by someone else.
-
-> [!IMPORTANT]
-> If you are using gitops to deploy your seed SNO, it is highly recommended that you do not provide a `hubKubeconfig`,
-> due to the potential race condition of resyncing, regardless of whether `selfHeal` is enabled in ArgoCD. Rather, you
-> should drop the site-config from gitops and sync/prune the cluster first. Once the cluster has been removed from the
-> hub, you can safely trigger the seed image generation.
