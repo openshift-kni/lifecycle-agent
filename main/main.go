@@ -60,6 +60,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
 
+	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -100,6 +101,7 @@ func init() {
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
 	utilruntime.Must(policyv1.AddToScheme(scheme))
 	utilruntime.Must(policiesv1.AddToScheme(scheme))
+	utilruntime.Must(sriovv1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }
