@@ -655,6 +655,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Starting seed generation")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	nextReconcile = doNotRequeue()
@@ -668,6 +669,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Pulling recert image")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	if err := r.pullRecertImagePullSpec(seedgen); err != nil {
@@ -679,6 +681,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Preparing for seed generation")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Get the seedgen secret
@@ -726,6 +729,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Cleaning cluster resources")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Clean up cluster resources
@@ -772,6 +776,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, msgLaunchingImager)
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Save the seedgen CR in order to restore it after the imager is complete
