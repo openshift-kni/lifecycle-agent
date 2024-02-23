@@ -320,6 +320,8 @@ func (u *UpgHandler) sriovNetworkNodeStateWorkaround(ctx context.Context, msg st
 			continue
 		}
 
+		u.Log.Info("Adding annotation to default SriovNetworkNodePolicy to trigger sriov reconciler")
+
 		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s": "%s"}}}`,
 			"imagebasedupgrades.lca.openshift.io-kick-reconciler", time.Now().Format(time.RFC3339)))
 		if err := u.Patch(ctx, &sriovv1.SriovNetworkNodePolicy{
@@ -343,10 +345,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 	err := CheckHealth(ctx, u.NoncachedClient, u.Log)
 	if err != nil {
 		// Trigger sriov workaround, if necessary
-		u.sriovNetworkNodeStateWorkaround(ctx, err.Error())
+		if err := u.sriovNetworkNodeStateWorkaround(ctx, err.Error()); err != nil {
+			u.Log.Error(err, "failure triggering sriov reconciler")
+		}
 
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
-		return requeueWithShortInterval(), nil
+		return requeueWithHealthCheckInterval(), nil
 	}
 
 	// Applying extra manifests

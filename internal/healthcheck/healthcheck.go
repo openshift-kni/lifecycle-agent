@@ -279,7 +279,7 @@ func IsSriovNetworkNodeReady(ctx context.Context, c client.Reader, l logr.Logger
 
 	for _, nodeState := range nodeStates.Items {
 		if nodeState.Status.SyncStatus != "Succeeded" {
-			return fmt.Errorf("sriovNodeNetworkState not ready")
+			return fmt.Errorf("sriovNetworkNodeState not ready")
 		}
 	}
 

@@ -863,7 +863,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Message: "Waiting for system to stabilize: any error from hc",
 				},
 			},
-			want:    requeueWithShortInterval(),
+			want:    requeueWithHealthCheckInterval(),
 			wantErr: assert.NoError,
 		},
 		{
