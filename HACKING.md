@@ -350,14 +350,6 @@ In addition, a `Secret` named `seedgen` is required in the `openshift-lifecycle-
 to provide the following information in the `Data` section:
 
 - `seedAuth`: base64-encoded auth file for write-access to the registry for pushing the generated seed image
-- `hubKubeconfig`: (Optional) base64-encoded kubeconfig for admin access to the hub, in order to deregister the seed
-  cluster from ACM. If this is not present in the secret, the ACM cleanup will be skipped.
-
-If the `hubKubeconfig` is provided, LCA will deregister the cluster from ACM and cleanup the node prior to generating
-the seed image. The `ManagedCluster` resource is saved prior to deletion from the hub in order to restore it after the
-seed image has been generated, reregistering the cluster with ACM.
-
-NOTE: Automatic restore of the `ManagedCluster` has not yet been implemented.
 
 ```yaml
 ---
@@ -369,7 +361,6 @@ metadata:
 type: Opaque
 data:
   seedAuth: <encoded authfile>
-  hubKubeconfig: <encoded kubeconfig>
 ---
 apiVersion: lca.openshift.io/v1alpha1
 kind: SeedGenerator
