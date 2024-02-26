@@ -295,15 +295,6 @@ spec:
           - update
           - watch
         - apiGroups:
-          - cluster.open-cluster-management.io
-          resources:
-          - managedclusters
-          verbs:
-          - delete
-          - get
-          - list
-          - watch
-        - apiGroups:
           - config.openshift.io
           resources:
           - clusteroperators

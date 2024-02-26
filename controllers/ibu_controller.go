@@ -216,8 +216,9 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 			ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
 			// Update status
-			if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
-				r.Log.Error(updateErr, "failed to update IBU CR status")
+			if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
+				r.Log.Error(err, "failed to update IBU CR status")
+				return
 			}
 		}
 	}
@@ -237,8 +238,8 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
 
 	// Update status
-	if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
-		r.Log.Error(updateErr, "failed to update IBU CR status")
+	if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
+		r.Log.Error(err, "failed to update IBU CR status")
 	}
 
 	return
