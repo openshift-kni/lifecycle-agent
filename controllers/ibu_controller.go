@@ -121,7 +121,10 @@ func requeueWithLongInterval() ctrl.Result {
 	return requeueWithCustomInterval(5 * time.Minute)
 }
 
-//nolint:unused
+func requeueWithHealthCheckInterval() ctrl.Result {
+	return requeueWithCustomInterval(20 * time.Second)
+}
+
 func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 	return ctrl.Result{RequeueAfter: interval}
 }

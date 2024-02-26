@@ -6,13 +6,16 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigpools,verbs=list;watch
@@ -20,40 +23,59 @@ import (
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=clusterserviceversions,verbs=list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodestates,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
 
 const (
 	NodeRoleControlPlane = "node-role.kubernetes.io/control-plane"
 	NodeRoleMaster       = "node-role.kubernetes.io/master"
 	NodeRoleWorker       = "node-role.kubernetes.io/worker"
+
+	SriovNetworkNodeStateNotPresentMsg = "no SriovNetworkNodeStates present"
 )
 
-func HealthChecks(c client.Reader, l logr.Logger) error {
+func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	var failures []string
 
-	if err := AreClusterOperatorsReady(c, l); err != nil {
+	clusterOperatorsReady := false
+	clusterServiceVersionsReady := false
+
+	if err := AreClusterOperatorsReady(ctx, c, l); err != nil {
 		l.Info("co health check failure", "error", err.Error())
 		failures = append(failures, err.Error())
+	} else {
+		clusterOperatorsReady = true
 	}
 
-	if err := AreMachineConfigPoolsReady(c, l); err != nil {
+	if err := AreMachineConfigPoolsReady(ctx, c, l); err != nil {
 		l.Info("mcp health check failure", "error", err.Error())
 		failures = append(failures, err.Error())
 	}
 
-	if err := IsNodeReady(c, l); err != nil {
+	if err := IsNodeReady(ctx, c, l); err != nil {
 		l.Info("node health check failure", "error", err.Error())
 		failures = append(failures, err.Error())
 	}
 
-	if err := AreClusterServiceVersionsReady(c, l); err != nil {
+	if err := AreClusterServiceVersionsReady(ctx, c, l); err != nil {
 		l.Info("csv health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	} else {
+		clusterServiceVersionsReady = true
+	}
+
+	if err := IsClusterVersionReady(ctx, c, l); err != nil {
+		l.Info("clusterVersion health check failure", "error", err.Error())
 		failures = append(failures, err.Error())
 	}
 
-	if err := IsClusterVersionReady(c, l); err != nil {
-		l.Info("clusterVersion health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
+	if clusterOperatorsReady && clusterServiceVersionsReady {
+		// Only check SriovNetworkNodeState once cluster operators and CSVs are stable
+		if err := IsSriovNetworkNodeReady(ctx, c, l); err != nil {
+			l.Info("sriovNetworkNodeState health check failure", "error", err.Error())
+			failures = append(failures, err.Error())
+		}
 	}
 
 	if len(failures) > 0 {
@@ -65,9 +87,9 @@ func HealthChecks(c client.Reader, l logr.Logger) error {
 	return nil
 }
 
-func AreClusterServiceVersionsReady(c client.Reader, l logr.Logger) error {
+func AreClusterServiceVersionsReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 	clusterServiceVersionList := operatorsv1alpha1.ClusterServiceVersionList{}
-	err := c.List(context.Background(), &clusterServiceVersionList)
+	err := c.List(ctx, &clusterServiceVersionList)
 	if err != nil {
 		return fmt.Errorf("failed to get csv list: %w", err)
 	}
@@ -92,9 +114,9 @@ func AreClusterServiceVersionsReady(c client.Reader, l logr.Logger) error {
 	return nil
 }
 
-func IsClusterVersionReady(c client.Reader, l logr.Logger) error {
+func IsClusterVersionReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 	clusterVersionList := configv1.ClusterVersionList{}
-	err := c.List(context.Background(), &clusterVersionList)
+	err := c.List(ctx, &clusterVersionList)
 	if err != nil {
 		return fmt.Errorf("failed to get cv list: %w", err)
 	}
@@ -113,9 +135,9 @@ func IsClusterVersionReady(c client.Reader, l logr.Logger) error {
 	return nil
 }
 
-func AreMachineConfigPoolsReady(c client.Reader, l logr.Logger) error {
+func AreMachineConfigPoolsReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 	machineConfigPoolList := mcv1.MachineConfigPoolList{}
-	err := c.List(context.Background(), &machineConfigPoolList)
+	err := c.List(ctx, &machineConfigPoolList)
 	if err != nil {
 		return fmt.Errorf("failed to get mcp list: %w", err)
 	}
@@ -136,9 +158,9 @@ func AreMachineConfigPoolsReady(c client.Reader, l logr.Logger) error {
 	return nil
 }
 
-func AreClusterOperatorsReady(c client.Reader, l logr.Logger) error {
+func AreClusterOperatorsReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 	clusterOperatorList := configv1.ClusterOperatorList{}
-	err := c.List(context.Background(), &clusterOperatorList)
+	err := c.List(ctx, &clusterOperatorList)
 	if err != nil {
 		return fmt.Errorf("failed to get co list: %w", err)
 	}
@@ -175,9 +197,9 @@ func getClusterOperatorStatusCondition(conditions []configv1.ClusterOperatorStat
 	return false
 }
 
-func IsNodeReady(c client.Reader, l logr.Logger) error {
+func IsNodeReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 	infra := &configv1.Infrastructure{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, infra); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: "cluster"}, infra); err != nil {
 		return fmt.Errorf("failed to get infrastucture CR: %w", err)
 	}
 
@@ -188,7 +210,7 @@ func IsNodeReady(c client.Reader, l logr.Logger) error {
 	}
 
 	nodeList := corev1.NodeList{}
-	err := c.List(context.Background(), &nodeList)
+	err := c.List(ctx, &nodeList)
 	if err != nil {
 		return fmt.Errorf("failed to get node list: %w", err)
 	}
@@ -232,4 +254,35 @@ func getNodeStatusCondition(conditions []corev1.NodeCondition, conditionType cor
 	}
 
 	return false
+}
+
+func IsSriovNetworkNodeReady(ctx context.Context, c client.Reader, l logr.Logger) error {
+	// Check the CRD first. If it doesn't exist, pass the health check
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "sriovnetworknodestates.sriovnetwork.openshift.io"}, crd); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("failed to verify sriov CRD exists: %w", err)
+	}
+
+	nodeStates := &sriovv1.SriovNetworkNodeStateList{}
+
+	if err := c.List(ctx, nodeStates); err != nil {
+		return fmt.Errorf("failed to get SriovNetworkNodeStates: %w", err)
+	}
+
+	if len(nodeStates.Items) == 0 {
+		return fmt.Errorf(SriovNetworkNodeStateNotPresentMsg)
+	}
+
+	for _, nodeState := range nodeStates.Items {
+		if nodeState.Status.SyncStatus != "Succeeded" {
+			return fmt.Errorf("sriovNetworkNodeState not ready")
+		}
+	}
+
+	l.Info("SriovNetworkNodeState is ready")
+	return nil
 }

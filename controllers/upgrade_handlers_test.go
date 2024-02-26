@@ -839,7 +839,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		args                              args
 		want                              controllerruntime.Result
 		wantErr                           assert.ErrorAssertionFunc
-		checkHealthReturn                 func(c client.Reader, l logr.Logger) error
+		checkHealthReturn                 func(ctx context.Context, c client.Reader, l logr.Logger) error
 		applyExtraManifestsReturn         func() error
 		applyPolicyManifestsReturn        func() error
 		restoreOadpConfigurationsReturn   func() error
@@ -852,7 +852,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "healthchecks return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return fmt.Errorf("any error from hc")
 			},
 			wantConditions: []metav1.Condition{
@@ -863,13 +863,13 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Message: "Waiting for system to stabilize: any error from hc",
 				},
 			},
-			want:    requeueWithShortInterval(),
+			want:    requeueWithHealthCheckInterval(),
 			wantErr: assert.NoError,
 		},
 		{
 			name: "extraManifests return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
@@ -900,7 +900,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "RestoreOadpConfigurations return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
@@ -934,7 +934,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "handleRestore with restore error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
@@ -974,7 +974,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "upgrade completed",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
