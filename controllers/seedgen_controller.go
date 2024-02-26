@@ -41,7 +41,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,7 +56,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "open-cluster-management.io/api/cluster/v1"
 )
 
 // SeedGeneratorReconciler reconciles a SeedGenerator object
@@ -72,10 +70,9 @@ type SeedGeneratorReconciler struct {
 }
 
 var (
-	lcaImage               string
-	seedgenAuthFile        = filepath.Join(utils.SeedgenWorkspacePath, "auth.json")
-	storedManagedClusterCR = filepath.Join(utils.SeedgenWorkspacePath, "managedcluster.json")
-	imagerContainerName    = "lca_image_builder"
+	lcaImage            string
+	seedgenAuthFile     = filepath.Join(utils.SeedgenWorkspacePath, "auth.json")
+	imagerContainerName = "lca_image_builder"
 )
 
 const (
@@ -118,7 +115,6 @@ var phases = struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
-//+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch;delete
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
 func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) seedgenReconcilerPhase {
@@ -154,114 +150,6 @@ func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) seedgenReconcilerPhase {
 
 	// Reconciler phase is phaseGenerating
 	return phases.PhaseGenerating
-}
-
-// Create an API client for hub requests (ACM)
-func (r *SeedGeneratorReconciler) createHubClient(hubKubeconfig []byte) (hubClient client.Client, err error) {
-	config, err := clientcmd.RESTConfigFromKubeConfig(hubKubeconfig)
-	if err != nil {
-		err = fmt.Errorf("failed RESTConfigFromKubeConfig: %w", err)
-		return
-	}
-
-	hubClient, err = client.New(config, client.Options{Scheme: r.Scheme})
-	if err != nil {
-		err = fmt.Errorf("failed to create hub client: %w", err)
-		return
-	}
-
-	return
-}
-
-// Collect and save the data needed to restore the ACM registration, then delete the managedcluster from the hub
-func (r *SeedGeneratorReconciler) deregisterFromHub(ctx context.Context, hubClient client.Client, clusterName string) error {
-	// Save the managedcluster
-	managedcluster := &clusterv1.ManagedCluster{}
-	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
-		// If not found, do nothing.
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get ManagedCluster: %w", err)
-		}
-		return nil
-	}
-
-	// The hubClient.Get() request isn't setting the GVK, so do it using the scheme data
-	// TODO: This may be due to issues with the RESTMapper or Scheme, where this CRD doesn't exist
-	// on the SNO, so maybe we need a separate resource discovery mechanism, or distinct scheme?
-	typeMeta, err := commonUtils.TypeMetaForObject(r.Scheme, managedcluster)
-	if err != nil {
-		return fmt.Errorf("failed to get typeMeta for ManagedCluster: %w", err)
-	}
-	managedcluster.TypeMeta = *typeMeta
-
-	if err := commonUtils.MarshalToFile(managedcluster, common.PathOutsideChroot(storedManagedClusterCR)); err != nil {
-		return fmt.Errorf("failed to write managedcluster to %s: %w", storedManagedClusterCR, err)
-	}
-
-	// Ensure that the dependent resources are deleted
-	deleteOpts := []client.DeleteOption{
-		client.PropagationPolicy(metav1.DeletePropagationForeground),
-	}
-
-	// Deregister from ACM on the hub
-	if err := hubClient.Delete(ctx, managedcluster, deleteOpts...); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("failed to delete managedcluster from hub: %w", err)
-	}
-
-	// TODO: For some reason, the managedcluster deletion is returning immediately, rather than
-	// blocking while the deletion occurs in the foreground. Maybe because it's deleting on the hub?
-	// As a workaround, we'll poll until the cluster is deleted.
-	interval := 10 * time.Second
-	maxRetries := 90 // ~15 minutes
-	current := 0
-	r.Log.Info("Waiting until managedcluster is deleted")
-	for r.managedClusterExists(ctx, hubClient, clusterName) {
-		if current < maxRetries {
-			time.Sleep(interval)
-			current += 1
-		} else {
-			return fmt.Errorf("timed out waiting for managedcluster deletion")
-		}
-	}
-
-	return nil
-}
-
-func (r *SeedGeneratorReconciler) reregisterWithHub(ctx context.Context, hubClient client.Client, filePath string) error {
-	// Restore the managedcluster
-	managedcluster := &clusterv1.ManagedCluster{}
-
-	if err := lcautils.ReadYamlOrJSONFile(filePath, managedcluster); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("unable to read stored managedcluster file (%s): %w", filePath, err)
-	}
-
-	// Clear the ResourceVersion, otherwise the restore will fail
-	managedcluster.SetResourceVersion("")
-
-	if err := hubClient.Create(ctx, managedcluster); err != nil {
-		return fmt.Errorf("failed to create ManagedCluster: %w", err)
-	}
-
-	if err := os.Rename(filePath, filePath+".bak"); err != nil {
-		return fmt.Errorf("failed to rename file %s for hub registration: %w", filePath, err)
-	}
-
-	return nil
-}
-
-// Check whether the managedcluster resource exists on the hub
-func (r *SeedGeneratorReconciler) managedClusterExists(ctx context.Context, hubClient client.Client, clusterName string) bool {
-	managedcluster := &clusterv1.ManagedCluster{}
-	if err := hubClient.Get(ctx, types.NamespacedName{Name: clusterName}, managedcluster); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			r.Log.Info(fmt.Sprintf("Error when checking managedcluster existence: %s", err.Error()))
-		}
-		return false
-	}
-	return true
 }
 
 // Get a list of ACM addon namespaces present on the cluster
@@ -612,6 +500,17 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
+	// Verify that the klusterlet CRD is absent, indicating the cluster has been detached from ACM (if originally deployed via ACM)
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "klusterlets.operator.open-cluster-management.io"}, crd); !errors.IsNotFound(err) {
+		if err == nil {
+			msg = "Rejected: Cluster must be detached from hub prior to seed generation"
+		} else {
+			msg = "Failure occurred during check for klusterlets CRD in system validation"
+		}
+		return
+	}
+
 	// Ensure there are no ACM addons enabled on the seed SNO
 	if acmNsList := r.currentAcmAddonNamespaces(ctx); len(acmNsList) > 0 {
 		msg = fmt.Sprintf("Rejected due to presence of ACM addon(s): %s", strings.Join(acmNsList, ", "))
@@ -694,7 +593,7 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 }
 
 // Generate the seed image
-func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator, clusterName string) (nextReconcile ctrl.Result, rc error) {
+func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
 	r.Log.Info("Checking system health")
 	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log); err != nil {
@@ -709,6 +608,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Starting seed generation")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	nextReconcile = doNotRequeue()
@@ -735,6 +635,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Pulling recert image")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	if err := r.pullRecertImagePullSpec(seedgen); err != nil {
@@ -746,6 +647,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Preparing for seed generation")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Get the seedgen secret
@@ -775,35 +677,6 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return
 	}
 
-	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
-		// Create client for access to hub
-		hubClient, err := r.createHubClient(hubKubeconfig)
-		if err != nil {
-			rc = fmt.Errorf("failed to create hub client: %w", err)
-			setSeedGenStatusFailed(seedgen, rc.Error())
-			return
-		}
-
-		if r.managedClusterExists(ctx, hubClient, clusterName) {
-			// Save the ACM resources from hub needed for re-import
-			r.Log.Info("Collecting ACM import data")
-			if err := r.deregisterFromHub(ctx, hubClient, clusterName); err != nil {
-				rc = fmt.Errorf("failed to deregister from hub: %w", err)
-				setSeedGenStatusFailed(seedgen, rc.Error())
-				return
-			}
-
-			// In the success case, the pod will block until terminated by the imager container.
-			// Create a deferred function to restore the ManagedCluster in the case where a failure happens
-			// before that point.
-			defer r.restoreManagedCluster(ctx, clusterName)
-		} else {
-			r.Log.Info("ManagedCluster does not exist on hub")
-		}
-	} else {
-		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
-	}
-
 	// Get the cluster's pull-secret
 	originalPullSecretData, err := lcautils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
 	if err != nil {
@@ -822,6 +695,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, "Cleaning cluster resources")
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Clean up cluster resources
@@ -862,6 +736,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	setSeedGenStatusInProgress(seedgen, msgLaunchingImager)
 	if err := r.updateStatus(ctx, seedgen); err != nil {
 		r.Log.Error(err, "failed to update seedgen CR status")
+		return
 	}
 
 	// Save the seedgen CR in order to restore it after the imager is complete
@@ -916,55 +791,18 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	return
 }
 
-func (r *SeedGeneratorReconciler) restoreManagedCluster(ctx context.Context, clusterName string) error {
-	// Get the seedgen secret
-	seedGenSecret := &corev1.Secret{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
-		return fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
-	}
-
-	if hubKubeconfig, exists := seedGenSecret.Data["hubKubeconfig"]; exists {
-		filePath := common.PathOutsideChroot(storedManagedClusterCR)
-		if _, err := os.Stat(filePath); err == nil {
-			// The hubKubeconfig exists and there's a stored ManagedCluster CR. Restore it.
-
-			// Create client for access to hub
-			hubClient, err := r.createHubClient(hubKubeconfig)
-			if err != nil {
-				return fmt.Errorf("failed to create hub client: %w", err)
-			}
-
-			if r.managedClusterExists(ctx, hubClient, clusterName) {
-				r.Log.Info("ManagedCluster exists on hub, no need to restore")
-			} else {
-				// Save the ACM resources from hub needed for re-import
-				r.Log.Info("Reregistering cluster with ACM")
-				if err := r.reregisterWithHub(ctx, hubClient, filePath); err != nil {
-					return fmt.Errorf("failed to reregister with ACM: %w", err)
-				}
-			}
-		} else {
-			r.Log.Info("Found hubKubeconfig, but no saved ManagedCluster. Skipping restore")
-		}
-	} else {
-		r.Log.Info(fmt.Sprintf("No hubKubeconfig found in secret %s. Skipping hub interaction", utils.SeedGenSecretName))
-	}
-
-	return nil
-}
-
 // finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
-func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context, clusterName string) error {
-	if err := r.restoreManagedCluster(ctx, clusterName); err != nil {
-		return err
-	}
-
+func (r *SeedGeneratorReconciler) finishSeedgen() error {
 	// Check exit status of lca_cli container
 	if err := r.checkImagerStatus(); err != nil {
 		return fmt.Errorf("imager container status check failed: %w", err)
 	}
 
-	return r.wipeExistingWorkspace()
+	if err := r.wipeExistingWorkspace(); err != nil {
+		return fmt.Errorf("failed to wipe workspace: %w", err)
+	}
+
+	return nil
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -996,12 +834,6 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if lcaImage, err = r.getLcaImage(ctx); err != nil {
-		rc = err
-		return
-	}
-
-	clusterName, err := commonUtils.GetClusterName(ctx, r.Client)
-	if err != nil {
 		rc = err
 		return
 	}
@@ -1048,7 +880,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		nextReconcile = requeueImmediately()
 	case phases.PhaseGenerating:
 		r.Log.Info(fmt.Sprintf("Generating seed image: %s", seedgen.Spec.SeedImage))
-		if nextReconcile, err = r.generateSeedImage(ctx, seedgen, clusterName); err != nil {
+		if nextReconcile, err = r.generateSeedImage(ctx, seedgen); err != nil {
 			_ = r.wipeExistingWorkspace()
 
 			// CR Status will have been updated by generateSeedImage, so just log the failure
@@ -1061,7 +893,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Log.Error(err, "failed to update seedgen CR status")
 		}
 
-		if err = r.finishSeedgen(ctx, clusterName); err != nil {
+		if err = r.finishSeedgen(); err != nil {
 			r.Log.Error(err, "Seed generation failed")
 			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
 		} else {
