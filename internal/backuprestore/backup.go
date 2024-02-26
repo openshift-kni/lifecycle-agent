@@ -370,7 +370,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 	}
 
 	// Create the directory for DPA
-	dpaDir := filepath.Join(toDir, oadpDpaPath)
+	dpaDir := filepath.Join(toDir, OadpDpaPath)
 	if err := os.MkdirAll(dpaDir, 0o700); err != nil {
 		return fmt.Errorf("failed to make dir for DPA in %s: %w", dpaDir, err)
 	}
@@ -381,7 +381,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		dpa.SetUID("")
 		dpa.SetResourceVersion("")
 
-		filePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+yamlExt)
+		filePath := filepath.Join(toDir, OadpDpaPath, dpa.GetName()+yamlExt)
 		if err := utils.MarshalToYamlFile(&dpa, filePath); err != nil { //nolint:gosec
 			return fmt.Errorf("failed to delete %s: %w", filePath, err)
 		}
@@ -413,8 +413,8 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		return nil
 	}
 	// Create the directory for secrets
-	if err := os.MkdirAll(filepath.Join(toDir, oadpSecretPath), 0o700); err != nil {
-		return fmt.Errorf("failed to make oadp secret path in %s: %w", oadpDpaPath, err)
+	if err := os.MkdirAll(filepath.Join(toDir, OadpSecretPath), 0o700); err != nil {
+		return fmt.Errorf("failed to make oadp secret path in %s: %w", OadpDpaPath, err)
 	}
 
 	// Write secrets
@@ -430,7 +430,7 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		storageSecret.SetUID("")
 		storageSecret.SetResourceVersion("")
 
-		filePath := filepath.Join(toDir, oadpSecretPath, secretName+yamlExt)
+		filePath := filepath.Join(toDir, OadpSecretPath, secretName+yamlExt)
 		if err := utils.MarshalToYamlFile(storageSecret, filePath); err != nil {
 			return fmt.Errorf("failed to marshal oadp secret %s: %w", filePath, err)
 		}

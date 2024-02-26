@@ -12,6 +12,7 @@ import (
 	"time"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -22,6 +23,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	cp "github.com/otiai10/copy"
@@ -138,6 +140,14 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if err := p.changeRegistryInCSVDeployment(ctx, client, seedReconfiguration, seedClusterInfo); err != nil {
 		return fmt.Errorf("failed change registry in CSV deployment: %w", err)
+	}
+
+	// Restore OADP secrets and DPA if exists
+	if err := p.restoreOadpSecrets(ctx, client); err != nil {
+		return fmt.Errorf("failed to restore OADP secrets: %w", err)
+	}
+	if err := p.restoreOadpDataProtectionApplication(ctx, client); err != nil {
+		return fmt.Errorf("failed to restore OADP DataProtectionApplication: %w", err)
 	}
 
 	if err := utils.RunOnce("set_cluster_id", p.workingDir, p.log, p.setNewClusterID, ctx, client, seedReconfiguration); err != nil {
@@ -300,6 +310,61 @@ func (p *PostPivot) recoverLvmDevices() error {
 		return fmt.Errorf("failed to scan and active lvm devices, err: %w", err)
 	}
 
+	return nil
+}
+
+func (p *PostPivot) restoreOadpSecrets(ctx context.Context, client runtimeclient.Client) error {
+	p.log.Infof("Restoring OADP secrets from %s", backuprestore.OadpSecretPath)
+
+	secretYamlDir := backuprestore.OadpSecretPath
+	secretYamls, err := os.ReadDir(secretYamlDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.log.Infof("No OADP secrets to restore")
+			return nil
+		}
+		return fmt.Errorf("failed to read OADP secret dir %s: %w", secretYamlDir, err)
+	}
+	if len(secretYamls) == 0 {
+		p.log.Infof("No OADP secrets to restore")
+		return nil
+	}
+
+	for _, secretYaml := range secretYamls {
+		secretYamlPath := filepath.Join(secretYamlDir, secretYaml.Name())
+		if secretYaml.IsDir() {
+			continue
+		}
+
+		secret := &corev1.Secret{}
+		if err := utils.ReadYamlOrJSONFile(secretYamlPath, secret); err != nil {
+			return fmt.Errorf("failed to read secret from %s: %w", secretYamlPath, err)
+		}
+
+		if err := backuprestore.CreateOrUpdateSecret(ctx, secret, client); err != nil {
+			return fmt.Errorf("failed to restore OADP secret: %w", err)
+		}
+		p.log.Infof("OADP Secret %s applied", secret.GetName())
+	}
+	return nil
+}
+
+func (p *PostPivot) restoreOadpDataProtectionApplication(ctx context.Context, client runtimeclient.Client) error {
+	p.log.Infof("Restoring OADP DataProtectionApplication from %s", backuprestore.OadpDpaPath)
+	dpa, err := backuprestore.ReadOadpDataProtectionApplication(backuprestore.OadpDpaPath)
+	if err != nil {
+		return fmt.Errorf("failed to get stored DataProtectionApplication: %w", err)
+	}
+
+	if dpa == nil {
+		p.log.Infof("No OADP DataProtectionApplication to restore")
+		return nil
+	}
+
+	if err := backuprestore.CreateOrUpdateDataProtectionAppliation(ctx, dpa, client); err != nil {
+		return fmt.Errorf("failed to restore DataProtectionApplication: %w", err)
+	}
+	p.log.Infof("OADP DataProtectionApplication %s applied", dpa.GetName())
 	return nil
 }
 

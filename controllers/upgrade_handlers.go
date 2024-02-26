@@ -406,21 +406,15 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		return requeueWithError(fmt.Errorf("error while applying config manifests: %w", err))
 	}
 
-	// Recovering OADP configuration
-	utils.SetUpgradeStatusInProgress(ibu, "Restoring Application Configuration")
-	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
-		u.Log.Error(updateErr, "failed to update IBU CR status")
-	}
-
-	err = u.BackupRestore.RestoreOadpConfigurations(ctx)
+	err = u.BackupRestore.EnsureOadpConfiguration(ctx)
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to backup storage failure: %s", err))
 			return doNotRequeue(), nil
 		}
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring Application Configuration: Failure occurred: %s", err.Error()))
-		return requeueWithError(fmt.Errorf("error while restoring OADP configuration: %w", err))
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Checking Application Configuration: Failure occurred: %s", err.Error()))
+		return requeueWithError(fmt.Errorf("error while checking OADP configuration: %w", err))
 	}
 
 	// Handling restores with OADP operator
