@@ -842,7 +842,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		checkHealthReturn                 func(ctx context.Context, c client.Reader, l logr.Logger) error
 		applyExtraManifestsReturn         func() error
 		applyPolicyManifestsReturn        func() error
-		restoreOadpConfigurationsReturn   func() error
+		ensureOadpConfigurationReturn     func() error
 		loadRestoresFromOadpRestoreReturn func() ([][]*velerov1.Restore, error)
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
 		initiateRollbackReturn            func() error
@@ -909,7 +909,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			applyExtraManifestsReturn: func() error {
 				return nil
 			},
-			restoreOadpConfigurationsReturn: func() error {
+			ensureOadpConfigurationReturn: func() error {
 				return backuprestore.NewBRStorageBackendUnavailableError("error RestoreOadpConfigurations")
 			},
 			initiateRollbackReturn: func() error {
@@ -943,7 +943,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			applyExtraManifestsReturn: func() error {
 				return nil
 			},
-			restoreOadpConfigurationsReturn: func() error {
+			ensureOadpConfigurationReturn: func() error {
 				return nil
 			},
 			loadRestoresFromOadpRestoreReturn: func() ([][]*velerov1.Restore, error) {
@@ -983,7 +983,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			applyExtraManifestsReturn: func() error {
 				return nil
 			},
-			restoreOadpConfigurationsReturn: func() error {
+			ensureOadpConfigurationReturn: func() error {
 				return nil
 			},
 			loadRestoresFromOadpRestoreReturn: func() ([][]*velerov1.Restore, error) {
@@ -1034,8 +1034,8 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			if tt.applyExtraManifestsReturn != nil {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.ExtraManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
-			if tt.restoreOadpConfigurationsReturn != nil {
-				mockBackuprestore.EXPECT().RestoreOadpConfigurations(gomock.Any()).Return(tt.restoreOadpConfigurationsReturn()).Times(1)
+			if tt.ensureOadpConfigurationReturn != nil {
+				mockBackuprestore.EXPECT().EnsureOadpConfiguration(gomock.Any()).Return(tt.ensureOadpConfigurationReturn()).Times(1)
 			}
 			if tt.loadRestoresFromOadpRestoreReturn != nil {
 				mockBackuprestore.EXPECT().LoadRestoresFromOadpRestorePath().Return(tt.loadRestoresFromOadpRestoreReturn()).Times(1)
