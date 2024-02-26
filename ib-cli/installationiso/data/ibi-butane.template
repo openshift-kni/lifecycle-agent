@@ -36,6 +36,7 @@ systemd:
         Environment=SEED_VERSION={{.SeedVersion}}
         Environment=LCA_IMAGE={{.LCAImage}}
         Environment=INSTALLATION_DISK={{.InstallationDisk}}
+        Environment=EXTRA_PARTITION_START={{.ExtraPartitionStart}}
         {{if .PrecacheDisabled}}
         Environment=PRECACHE_DISABLED=true
         {{else if .PrecacheBestEffort}}

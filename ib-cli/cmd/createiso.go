@@ -28,17 +28,18 @@ import (
 )
 
 var (
-	seedImage          string
-	seedVersion        string
-	pullSecretFile     string
-	authFile           string
-	sshPublicKeyFile   string
-	lcaImage           string
-	rhcosLiveIso       string
-	installationDisk   string
-	workDir            string
-	precacheBestEffort bool
-	precacheDisabled   bool
+	seedImage           string
+	seedVersion         string
+	pullSecretFile      string
+	authFile            string
+	sshPublicKeyFile    string
+	lcaImage            string
+	rhcosLiveIso        string
+	installationDisk    string
+	extraPartitionStart string
+	workDir             string
+	precacheBestEffort  bool
+	precacheDisabled    bool
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -50,6 +51,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&lcaImage, "lca-image", "l", "quay.io/openshift-kni/lifecycle-agent-operator:4.16.0", "The lifecycle-agent image to use for generating the ISO.")
 	cmd.Flags().StringVarP(&rhcosLiveIso, "rhcos-live-iso", "r", "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso", "The URL to the rhcos-live-iso for generating the ISO.")
 	cmd.Flags().StringVarP(&installationDisk, "installation-disk", "i", "", "The disk that will be used for the installation.")
+	cmd.Flags().StringVarP(&extraPartitionStart, "extra-partition-start", "e", "use_directory", "Start of extra partition used for /var/lib/containers. Partition will expand until the end of the disk. Uses sgdisk notation")
 	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")
 	cmd.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "", false, "Set image precache to best effort mode")
 	cmd.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
@@ -94,7 +96,7 @@ func createIso() error {
 	}
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
 	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso,
-		installationDisk, precacheBestEffort, precacheDisabled); err != nil {
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
 		log.Errorf(err.Error())
 		return err
