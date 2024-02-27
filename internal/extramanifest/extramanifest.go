@@ -175,6 +175,14 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 		return fmt.Errorf("failed to extract manifests from configMap: %w", err)
 	}
 
+	// MachineConfig can trigger reboot and this will result in not meeting KPI downtime requirement
+	// so raise validation error if there is a MachineConfig in extramanifests
+	for _, manifest := range manifests {
+		if manifest.GetKind() == "MachineConfig" && manifest.GetAPIVersion() == "machineconfiguration.openshift.io/v1" {
+			return NewEMFailedValidationError("Using MachingConfigs in extramanifests is not allowed")
+		}
+	}
+
 	// Apply manifest with dryrun
 	dryrun := true
 	for _, manifest := range manifests {
