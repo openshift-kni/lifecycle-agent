@@ -72,6 +72,10 @@ labelSelector:
     lca.openshift.io/backup: <backup-name>
 ```
 
+> [!IMPORTANT]
+> Please note that to use the `apply-label` annotation for backing up specific resources, the resources listed in the annotation should also be properly included in the spec.
+> Additionally, if the `apply-label` annotation is used in the backup CR, only the resources listed in the annotation will be backed up, regardless of whether other resource types are specified in the spec or not.
+
 ## Install OADP and configure OADP on target cluster via ZTP GitOps
 
  Install OADP via [GitOps ZTP pipeline](https://docs.openshift.com/container-platform/4.14/scalability_and_performance/ztp_far_edge/ztp-configuring-managed-clusters-policies.html).
@@ -358,6 +362,10 @@ spec:
   - serviceaccounts
   - secrets
 ```
+
+> [!IMPORTANT]
+> Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
+> defined and the secret exists on the open-cluster-management-agent namespace in your hub cluster. If it does not exist, you can safely remove it from the `apply-label` annotation.
 
 backup_localvolume.yaml
 
