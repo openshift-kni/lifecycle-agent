@@ -92,8 +92,9 @@ type AutoRollbackOnFailure struct {
 	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"` // If true, disable auto-rollback for Upgrade completion handler
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
 	DisabledInitMonitor bool `json:"disabledInitMonitor,omitempty"` // If true, disable LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
+	// +kubebuilder:validation:Minimum=0
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
-	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"` // LCA Init Monitor watchdog timeout, in seconds. Value <= 0 is treated as "use default" when writing config file in Prep stage
+	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"` // LCA Init Monitor watchdog timeout, in seconds. Value = 0 is treated as "use default" when writing config file in Prep stage
 }
 
 // ConfigMapRef defines a reference to a config map

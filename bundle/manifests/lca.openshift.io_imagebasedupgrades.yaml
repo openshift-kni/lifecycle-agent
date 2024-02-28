@@ -69,6 +69,7 @@ spec:
                   disabledInitMonitor:
                     type: boolean
                   initMonitorTimeoutSeconds:
+                    minimum: 0
                     type: integer
                 type: object
               extraManifests:
