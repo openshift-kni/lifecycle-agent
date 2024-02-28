@@ -9,6 +9,7 @@
 package ops
 
 import (
+	net "net"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -108,6 +109,21 @@ func (m *MockOps) ListBlockDevices() ([]BlockDevice, error) {
 func (mr *MockOpsMockRecorder) ListBlockDevices() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlockDevices", reflect.TypeOf((*MockOps)(nil).ListBlockDevices))
+}
+
+// ListNodeAddresses mocks base method.
+func (m *MockOps) ListNodeAddresses() ([]net.Addr, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListNodeAddresses")
+	ret0, _ := ret[0].([]net.Addr)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListNodeAddresses indicates an expected call of ListNodeAddresses.
+func (mr *MockOpsMockRecorder) ListNodeAddresses() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListNodeAddresses", reflect.TypeOf((*MockOps)(nil).ListNodeAddresses))
 }
 
 // Mount mocks base method.

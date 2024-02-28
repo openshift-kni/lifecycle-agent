@@ -58,6 +58,7 @@ var (
 	hostnameFile       = "/etc/hostname"
 	nmConnectionFolder = common.NMConnectionFolder
 	nodeIpFile         = "/run/nodeip-configuration/primary-ip"
+	nodeIPHintFile     = "/etc/default/nodeip-configuration"
 )
 
 const (
@@ -478,6 +479,51 @@ func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 	return nil
 }
 
+func (p *PostPivot) setNodeIPHint(ctx context.Context, nodeIp, nodeIPConfFile string) error {
+	if nodeIp == "" {
+		p.log.Info("Node ip was not provided, skipping node ip hint changes")
+		return nil
+	}
+	var hintSubnet net.IP
+	p.log.Infof("Searching for subnet that matches %s", nodeIp)
+	// retry is required as installation service runs before
+	// network online and the ip might require some time to be configured
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (done bool, err error) {
+		addresses, err := p.ops.ListNodeAddresses()
+		if err != nil {
+			p.log.Warnf("failed to list node addresses, will retry. err: %s", err.Error())
+			return false, nil
+		}
+
+		for _, addr := range addresses {
+			ip, subnet, _ := net.ParseCIDR(addr.String())
+			if nodeIp == ip.String() {
+				hintSubnet, _, _ = net.ParseCIDR(subnet.String())
+				break
+			}
+		}
+		// should retry in case subnet was not found
+		if hintSubnet == nil {
+			p.log.Infof("Failed to find subnet that matches %s, will retry", nodeIp)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find subnet that matches %s, please check provided ip, err: %w", nodeIp, err)
+	}
+
+	p.log.Infof("Writing subnet %s into %s", hintSubnet.String(), nodeIPHintFile)
+	if err := os.WriteFile(nodeIPConfFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s",
+		hintSubnet.String())), 0o600); err != nil {
+		return fmt.Errorf("failed to write nmstate config to %s, err %w", nodeIPConfFile, err)
+	}
+
+	return nil
+}
+
 // setSSHKey  sets ssh public key provided by user in 2 operations:
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
@@ -649,15 +695,11 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
-// networkConfiguration is on charge of configuring network prior installation process.
-// This function should include all network configurations of post-pivot flow.
-// It's logic currently includes:
+// physicalNetworkConfigurations is on charge of configuring host network prior installation process.
 // 1. Copying provided nmconnection files to NM sysconnections to setup network provided by user
 // 2. Apply provided NMstate configurations
-// 3. In case ip was not provided by user we should run set ip logic that can be found in setNodeIPIfNotProvided
-// 4. Override seed dnsmasq params
-// 5. Restart NM and dnsmasq in order to apply provided configurations
-func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+// 3. We should restart NM after adding connection files in order for sure to set static ip
+func (p *PostPivot) physicalNetworkConfigurations(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	if err := p.copyNMConnectionFiles(
 		path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder); err != nil {
 		return err
@@ -667,7 +709,30 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
+	if _, err := p.ops.SystemctlAction("restart", nmService); err != nil {
+		return fmt.Errorf("failed to restart network manager service, err %w", err)
+	}
+	return nil
+}
+
+// networkConfiguration is in charge of configuring the network prior installation process.
+// This function should include all network configurations of post-pivot flow.
+// It's logic currently includes:
+// 1. Setup host network
+// 2. Override nodeip-hint file
+// 3. In case ip was not provided by user we should run set ip logic that can be found in setNodeIPIfNotProvided
+// 4. Override seed dnsmasq params
+// 5. Restart NM and dnsmasq in order to apply provided configurations
+func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if err := p.physicalNetworkConfigurations(seedReconfiguration); err != nil {
+		return err
+	}
+
 	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
+		return err
+	}
+
+	if err := p.setNodeIPHint(ctx, seedReconfiguration.NodeIP, nodeIPHintFile); err != nil {
 		return err
 	}
 
