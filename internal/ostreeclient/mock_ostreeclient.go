@@ -11,6 +11,7 @@ package ostreeclient
 import (
 	reflect "reflect"
 
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -38,17 +39,17 @@ func (m *MockIClient) EXPECT() *MockIClientMockRecorder {
 }
 
 // Deploy mocks base method.
-func (m *MockIClient) Deploy(osname, refsepc string, kargs []string) error {
+func (m *MockIClient) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Deploy", osname, refsepc, kargs)
+	ret := m.ctrl.Call(m, "Deploy", osname, refsepc, kargs, rpmOstreeClient, ibi)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Deploy indicates an expected call of Deploy.
-func (mr *MockIClientMockRecorder) Deploy(osname, refsepc, kargs any) *gomock.Call {
+func (mr *MockIClientMockRecorder) Deploy(osname, refsepc, kargs, rpmOstreeClient, ibi any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), osname, refsepc, kargs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), osname, refsepc, kargs, rpmOstreeClient, ibi)
 }
 
 // GetDeployment mocks base method.
