@@ -253,10 +253,6 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
-	if err := r.RPMOstreeClient.RpmOstreeCleanup(); err != nil {
-		return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
-	}
-
 	if err := r.RebootClient.WriteIBUAutoRollbackConfigFile(ibu); err != nil {
 		return fmt.Errorf("failed to write auto-rollback config: %w", err)
 	}
