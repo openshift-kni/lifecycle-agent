@@ -197,7 +197,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed to build kargs: %w", err)
 	}
 
-	if err = ostreeClient.Deploy(osname, seedBootedRef, kargs); err != nil {
+	if err = ostreeClient.Deploy(osname, seedBootedRef, kargs, rpmOstreeClient, ibi); err != nil {
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 
