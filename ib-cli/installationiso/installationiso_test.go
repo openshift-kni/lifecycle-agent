@@ -148,12 +148,13 @@ func TestInstallationIso(t *testing.T) {
 		},
 	}
 	var (
-		mockController   = gomock.NewController(t)
-		mockOps          = ops.NewMockOps(mockController)
-		seedImage        = "seedImage"
-		seedVersion      = "seedVersion"
-		lcaImage         = "lcaImage"
-		installationDisk = "/dev/sda"
+		mockController      = gomock.NewController(t)
+		mockOps             = ops.NewMockOps(mockController)
+		seedImage           = "seedImage"
+		seedVersion         = "seedVersion"
+		lcaImage            = "lcaImage"
+		installationDisk    = "/dev/sda"
+		extraPartitionStart = "-40G"
 	)
 
 	for _, tc := range testcases {
@@ -209,7 +210,7 @@ func TestInstallationIso(t *testing.T) {
 			}
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
 			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage,
-				rhcosLiveIsoUrl, installationDisk, tc.precacheBestEffort, tc.precacheDisabled)
+				rhcosLiveIsoUrl, installationDisk, extraPartitionStart, tc.precacheBestEffort, tc.precacheDisabled)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
 				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))

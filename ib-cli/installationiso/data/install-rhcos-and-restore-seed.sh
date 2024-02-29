@@ -6,27 +6,42 @@ seed_image=${1:-$SEED_IMAGE}
 seed_version=${2:-$SEED_VERSION}
 installation_disk=${3:-$INSTALLATION_DISK}
 lca_image=${4:-$LCA_IMAGE}
+extra_partition_start=${5:-$EXTRA_PARTITION_START}
+extra_partition_number=5
+extra_partition_label=varlibcontainers
+create_extra_partition=true
+
+[[ "$extra_partition_start" == "use_directory" ]] && create_extra_partition="false"
 
 authfile=${AUTH_FILE:-"/var/tmp/backup-secret.json"}
 pull_secret=${PULL_SECRET_FILE:-"/var/tmp/pull-secret.json"}
 
 coreos-installer install ${installation_disk}
 
+if [[ "$create_extra_partition" == "true" ]]; then
+    # Create new partition for /var/lib/containers
+    sfdisk ${installation_disk} <<< write
+    sgdisk --new $extra_partition_number:$extra_partition_start --change-name $extra_partition_number:$extra_partition_label ${installation_disk}
+    mkfs.xfs ${installation_disk}$extra_partition_number
+fi
+
+
 # We need to grow the partition. Coreos-installer leaves a small partition
 growpart ${installation_disk} 4
-mount ${installation_disk}4 /mnt
-mount ${installation_disk}3 /mnt/boot
+mount /dev/disk/by-partlabel/root /mnt
+mount /dev/disk/by-partlabel/boot /mnt/boot
 xfs_growfs ${installation_disk}4
 
-# Creating and mounting shared /var/lib/containers
-if lsattr -d /mnt/ | cut -d ' ' -f 1 | grep i; then
-    chattr -i /mnt/
-    mkdir -p /mnt/sysroot/containers
-    chattr +i /mnt/
+if [[ "$create_extra_partition" == "true" ]]; then
+    # Mount extra partition in /var/lib/containers
+    mount /dev/disk/by-partlabel/varlibcontainers /var/lib/containers
 else
-    mkdir -p /mnt/sysroot/containers
+    # Create and mount directory for /var/lib/containers
+    chattr -i /mnt/
+    mkdir -p /mnt/containers
+    chattr +i /mnt/
+    mount -o bind /mnt/containers /var/lib/containers
 fi
-mount -o bind /mnt/sysroot/containers /var/lib/containers
 
 additional_flags=""
 if [ -n "${PRECACHE_DISABLED}" ]; then

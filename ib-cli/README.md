@@ -82,9 +82,16 @@ export AUTH_FILE=/path/to/seed-image-pull-secret.json
 export PS_FILE=/path/to/release-pull-secret.json
 export SSH_PUBLIC_KEY=~/.ssh/id_rsa.pub
 export IBI_INSTALLATION_DISK=/dev/sda
+# Start of the /var/lib/containers partition. Free space before it will be allocated to system partition
+# It can be one of the following:
+#     - Positive number: partition will start at position 120Gb of the disk and extend to the end of the disk. Example: 120Gb
+#     - Negative number: partition will be of that precise size. Example: -40Gb
+#     - If the flag is ommited, no new partition will be created, and a directory /sysroot/containers will be created and used instead
+export EXTRA_PARTITION_START=-40G
 
 
 ib-cli create-iso --installation-disk ${IBI_INSTALLATION_DISK} \
+  --extra-partition-start ${EXTRA_PARTITION_START} \
   --lca-image ${LCA_IMAGE} \
   --seed-image ${SEED_IMAGE} \
   --seed-version ${SEED_VERSION} \
