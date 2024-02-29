@@ -8,13 +8,14 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
 //go:generate mockgen -source=ostreeclient.go -package=ostreeclient -destination=mock_ostreeclient.go
 type IClient interface {
 	PullLocal(repoPath string) error
 	OSInit(osname string) error
-	Deploy(osname, refsepc string, kargs []string) error
+	Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error
 	Undeploy(ostreeIndex int) error
 	SetDefaultDeployment(index int) error
 	IsOstreeAdminSetDefaultFeatureEnabled() bool
@@ -58,7 +59,7 @@ func (c *Client) OSInit(osname string) error {
 	return nil
 }
 
-func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
+func (c *Client) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error {
 	args := []string{"admin", "deploy", "--os", osname, "--no-prune"}
 	if c.ibi {
 		args = append(args, "--sysroot", "/mnt")
@@ -74,6 +75,17 @@ func (c *Client) Deploy(osname, refsepc string, kargs []string) error {
 	if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
 		return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
 	}
+
+	if !ibi {
+		// In an IBU where both releases have the same underlying rhcos image, the parent commit of the deployment has
+		// unique commit IDs (due to import from seed), but the same checksum. In order to avoid pruning the original parent
+		// commit and corrupting the ostree, the previous "ostree admin deploy" command was called with the "--no-prune" option.
+		// This must also be followed up with a call to "rpm-ostree cleanup -b" to update the base refs.
+		if err := rpmOstreeClient.RpmOstreeCleanup(); err != nil {
+			return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
+		}
+	}
+
 	return nil
 }
 
