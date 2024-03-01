@@ -173,16 +173,18 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
-		p.log.Info("pulling recert image")
-		if _, err := p.ops.RunInHostNamespace("podman", "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
-			p.log.Warnf("failed to pull recert image, will retry, err: %s", err.Error())
-			return false, nil
-		}
-		return true, nil
-	})
+	if _, err := p.ops.RunInHostNamespace("podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err != nil {
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
+			p.log.Info("pulling recert image")
+			if _, err := p.ops.RunInHostNamespace("podman", "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
+				p.log.Warnf("failed to pull recert image, will retry, err: %s", err.Error())
+				return false, nil
+			}
+			return true, nil
+		})
+	}
 
 	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
 		path.Join(p.workingDir, recert.RecertConfigFile),
