@@ -535,8 +535,9 @@ func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 				Config: rawExt,
 			},
 		}
+		fname := fmt.Sprintf(sshMachineConfig, role) + ".json"
 		if err := utils.MarshalToFile(mc, path.Join(p.workingDir, common.ClusterConfigDir,
-			common.ManifestsDir, fmt.Sprintf(sshMachineConfig, role))); err != nil {
+			common.ManifestsDir, fname)); err != nil {
 			return fmt.Errorf("failed to marshal ssh key into file for role %s, err: %w", role, err)
 		}
 	}
