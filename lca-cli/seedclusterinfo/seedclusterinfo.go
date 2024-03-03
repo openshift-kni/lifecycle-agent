@@ -82,9 +82,25 @@ type SeedClusterInfo struct {
 	// from seeds that don't have one. Similarly, installing a cluster without
 	// FIPS from a seed with FIPS is also not supported.
 	HasFIPS bool `json:"has_fips"`
+
+	AdditionalTrustBundle *AdditionalTrustBundle `json:"additionalTrustBundle"`
 }
 
-func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string, hasProxy, hasFIPS bool) *SeedClusterInfo {
+type AdditionalTrustBundle struct {
+	// Whether the "user-ca-bundle" configmap in the "openshift-config"
+	// namespace has a value or not
+	HasUserCaBundle bool `json:"hasUserCaBundle"`
+
+	// The Proxy CR trustedCA configmap name
+	ProxyConfigmapName string `json:"proxyConfigmapName"`
+}
+
+func NewFromClusterInfo(clusterInfo *utils.ClusterInfo,
+	seedImagePullSpec string,
+	hasProxy,
+	hasFIPS bool,
+	additionalTrustBundle *AdditionalTrustBundle,
+) *SeedClusterInfo {
 	return &SeedClusterInfo{
 		SeedClusterOCPVersion:    clusterInfo.OCPVersion,
 		BaseDomain:               clusterInfo.BaseDomain,
@@ -96,6 +112,7 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string
 		RecertImagePullSpec:      seedImagePullSpec,
 		HasProxy:                 hasProxy,
 		HasFIPS:                  hasFIPS,
+		AdditionalTrustBundle:    additionalTrustBundle,
 	}
 }
 

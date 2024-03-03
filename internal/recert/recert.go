@@ -19,18 +19,28 @@ const (
 	SummaryFile      = "/var/tmp/recert-summary.yaml"
 )
 
-var staticDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
+var (
+	// we don't want pki to go through recertification, only cluster customization (additional trust bundle appears in /pki)
+	cryptoDirs               = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
+	clusterCustomizationDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon", "/pki"}
+
+	cryptoFiles               = []string{"/host-etc/mcs-machine-config-content.json"}
+	clusterCustomizationFiles = []string{"/host-etc/mcs-machine-config-content.json", "/host-etc/mco/proxy.env", "/host-etc/chrony.conf"}
+)
 
 type RecertConfig struct {
-	DryRun           bool   `json:"dry_run,omitempty"`
-	ExtendExpiration bool   `json:"extend_expiration,omitempty"`
-	ForceExpire      bool   `json:"force_expire,omitempty"`
-	EtcdEndpoint     string `json:"etcd_endpoint,omitempty"`
-	ClusterRename    string `json:"cluster_rename,omitempty"`
-	Hostname         string `json:"hostname,omitempty"`
-	IP               string `json:"ip,omitempty"`
-	Proxy            string `json:"proxy,omitempty"`
-	InstallConfig    string `json:"install_config,omitempty"`
+	DryRun               bool   `json:"dry_run,omitempty"`
+	ExtendExpiration     bool   `json:"extend_expiration,omitempty"`
+	ForceExpire          bool   `json:"force_expire,omitempty"`
+	EtcdEndpoint         string `json:"etcd_endpoint,omitempty"`
+	ClusterRename        string `json:"cluster_rename,omitempty"`
+	Hostname             string `json:"hostname,omitempty"`
+	IP                   string `json:"ip,omitempty"`
+	Proxy                string `json:"proxy,omitempty"`
+	InstallConfig        string `json:"install_config,omitempty"`
+	UserCaBundle         string `json:"user_ca_bundle,omitempty"`
+	ProxyTrustedCaBundle string `json:"proxy_trusted_ca_bundle,omitempty"`
+
 	// We intentionally don't omitEmpty this field because an empty string here
 	// means "delete the kubeadmin password secret" while a complete omission
 	// of the field means "don't touch the secret". We never want the latter,
@@ -38,15 +48,17 @@ type RecertConfig struct {
 	KubeadminPasswordHash string `json:"kubeadmin_password_hash"`
 	// WARNING: You probably don't want use `SummaryFile`! This will leak
 	// private keys and tokens!
-	SummaryFile       string   `json:"summary_file,omitempty"`
-	SummaryFileClean  string   `json:"summary_file_clean,omitempty"`
-	StaticDirs        []string `json:"static_dirs,omitempty"`
-	StaticFiles       []string `json:"static_files,omitempty"`
-	CNSanReplaceRules []string `json:"cn_san_replace_rules,omitempty"`
-	UseKeyRules       []string `json:"use_key_rules,omitempty"`
-	UseCertRules      []string `json:"use_cert_rules,omitempty"`
-	PullSecret        string   `json:"pull_secret,omitempty"`
-	ChronyConfig      string   `json:"chrony_config,omitempty"`
+	SummaryFile               string   `json:"summary_file,omitempty"`
+	SummaryFileClean          string   `json:"summary_file_clean,omitempty"`
+	CryptoDirs                []string `json:"crypto_dirs,omitempty"`
+	CryptoFiles               []string `json:"crypto_files,omitempty"`
+	ClusterCustomizationDirs  []string `json:"cluster_customization_dirs,omitempty"`
+	ClusterCustomizationFiles []string `json:"cluster_customization_files,omitempty"`
+	CNSanReplaceRules         []string `json:"cn_san_replace_rules,omitempty"`
+	UseKeyRules               []string `json:"use_key_rules,omitempty"`
+	UseCertRules              []string `json:"use_cert_rules,omitempty"`
+	PullSecret                string   `json:"pull_secret,omitempty"`
+	ChronyConfig              string   `json:"chrony_config,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -58,6 +70,28 @@ func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Pro
 		proxy.HTTPProxy, proxy.HTTPSProxy, proxy.NoProxy,
 		statusProxy.HTTPProxy, statusProxy.HTTPSProxy, statusProxy.NoProxy,
 	)
+}
+
+func SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(recertConfig *RecertConfig, additionalTrustBundle seedreconfig.AdditionalTrustBundle) error {
+	if additionalTrustBundle.UserCaBundle != "" {
+		recertConfig.UserCaBundle = additionalTrustBundle.UserCaBundle
+	}
+
+	if (additionalTrustBundle.ProxyConfigmapName != "" && additionalTrustBundle.ProxyConfigmapBundle == "") ||
+		(additionalTrustBundle.ProxyConfigmapName == "" && additionalTrustBundle.ProxyConfigmapBundle != "") {
+		return fmt.Errorf("both or neither of proxy configmap bundle and proxy configmap name must be set")
+	}
+
+	switch additionalTrustBundle.ProxyConfigmapName {
+	case common.ClusterAdditionalTrustBundleName:
+		recertConfig.ProxyTrustedCaBundle = fmt.Sprintf("%s:", common.ClusterAdditionalTrustBundleName)
+	case "":
+		recertConfig.ProxyTrustedCaBundle = ""
+	default:
+		recertConfig.ProxyTrustedCaBundle = fmt.Sprintf("%s:%s", additionalTrustBundle.ProxyConfigmapName, additionalTrustBundle.ProxyConfigmapBundle)
+	}
+
+	return nil
 }
 
 // CreateRecertConfigFile function to create recert config file
@@ -80,6 +114,10 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	}
 
 	config.Proxy = FormatRecertProxyFromSeedReconfigProxy(seedReconfig.Proxy, seedReconfig.StatusProxy)
+
+	if err := SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(&config, seedReconfig.AdditionalTrustBundle); err != nil {
+		return fmt.Errorf("failed to set recert trusted ca bundle from seed reconfig additional trust bundle: %w", err)
+	}
 
 	config.InstallConfig = seedReconfig.InstallConfig
 
@@ -138,7 +176,7 @@ func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error
 	}
 
 	if err := utils.MarshalToFile(config, path); err != nil {
-		return fmt.Errorf("failed create recert config file for sed creatation in %s: %w", path, err)
+		return fmt.Errorf("failed create recert config file for seed creation in %s: %w", path, err)
 	}
 
 	return nil
@@ -176,21 +214,19 @@ func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string)
 	config.KubeadminPasswordHash = originalPasswordHash
 
 	if err := utils.MarshalToFile(config, path); err != nil {
-		return fmt.Errorf("failed to marshall recert config file for seed restoration: %w", err)
+		return fmt.Errorf("failed to marshal recert config file for seed restoration: %w", err)
 	}
 	return nil
 }
 
 func createBasicEmptyRecertConfig() RecertConfig {
 	return RecertConfig{
-		DryRun:       false,
-		EtcdEndpoint: common.EtcdDefaultEndpoint,
-		StaticDirs:   staticDirs,
-		StaticFiles: []string{
-			"/host-etc/mcs-machine-config-content.json",
-			"/host-etc/mco/proxy.env",
-			"/host-etc/chrony.conf",
-		},
+		DryRun:                    false,
+		EtcdEndpoint:              common.EtcdDefaultEndpoint,
+		CryptoDirs:                cryptoDirs,
+		CryptoFiles:               cryptoFiles,
+		ClusterCustomizationDirs:  clusterCustomizationDirs,
+		ClusterCustomizationFiles: clusterCustomizationFiles,
 	}
 }
 

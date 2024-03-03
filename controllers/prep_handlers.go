@@ -124,6 +124,23 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
+	hasUserCaBundle, proxyConfigmapName, err := lcautils.GetClusterAdditionalTrustBundleState(ctx, c)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster additional trust bundle state: %w", err)
+	}
+
+	//nolint:staticcheck //lint:ignore SA9003 // else branch intentionally left empty
+	if seedInfo.AdditionalTrustBundle != nil {
+		if err := checkSeedImageAdditionalTrustBundleCompatibility(*seedInfo.AdditionalTrustBundle, hasUserCaBundle, proxyConfigmapName); err != nil {
+			return fmt.Errorf("checking seed image additional trust bundle compatibility: %w", err)
+		}
+	} else {
+		// For the sake of backwards compatibility, we allow older seed images
+		// that don't have information about the additional trust bundle. This
+		// means that upgrade will fail at the recert stage if there's a
+		// mismatch between the seed and the seed reconfiguration data.
+	}
+
 	return nil
 }
 
@@ -209,6 +226,31 @@ func checkSeedImageProxyCompatibility(seedHasProxy, hasProxy bool) error {
 
 	if !seedHasProxy && hasProxy {
 		return fmt.Errorf("seed image does not have a proxy but the cluster being upgraded does, this combination is not supported")
+	}
+
+	return nil
+}
+
+// checkSeedImageAdditionalTrustBundleCompatibility checks for proxy
+// configuration compatibility of the seed image vs the current cluster. If the
+// seed image has a proxy and the cluster being upgraded doesn't, we cannot
+// proceed as recert does not support proxy rename under those conditions.
+// Similarly, we cannot proceed if the cluster being upgraded has a proxy but
+// the seed image doesn't.
+func checkSeedImageAdditionalTrustBundleCompatibility(seedAdditionalTrustBundle seedclusterinfo.AdditionalTrustBundle, hasUserCaBundle bool, proxyConfigmapName string) error {
+	if seedAdditionalTrustBundle.HasUserCaBundle && !hasUserCaBundle {
+		return fmt.Errorf("seed image has an %s/%s configmap but the cluster being upgraded does not, this combination is not supported",
+			common.OpenshiftConfigNamespace, common.ClusterAdditionalTrustBundleName)
+	}
+
+	if !seedAdditionalTrustBundle.HasUserCaBundle && hasUserCaBundle {
+		return fmt.Errorf("seed image does not have an %s/%s configmap but the cluster being upgraded does, this combination is not supported",
+			common.OpenshiftConfigNamespace, common.ClusterAdditionalTrustBundleName)
+	}
+
+	if seedAdditionalTrustBundle.ProxyConfigmapName != proxyConfigmapName {
+		return fmt.Errorf("seed image's Proxy trustedCA configmap name %q (oc get proxy -oyaml) mismatches cluster's name %q, this combination is not supported",
+			seedAdditionalTrustBundle.ProxyConfigmapName, proxyConfigmapName)
 	}
 
 	return nil

@@ -251,6 +251,7 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 		"-v", "/var/lib/kubelet:/kubelet",
 		"-v", "/var/tmp:/var/tmp",
 		"-v", "/etc/machine-config-daemon:/machine-config-daemon",
+		"-v", "/etc/pki:/pki",
 		"-e", fmt.Sprintf("RECERT_CONFIG=%s", recertConfigFile),
 	)
 	if authFile != "" {
