@@ -193,6 +193,8 @@ The "Prep" stage will:
 - Pull the seed image
 - Perform the following validations:
   - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
+  - If the extraManifests is popluated, validate that the specified configmap has been applied and is valid
+    - If a required CRD is missing from the current stateroot, a warning message will be included in the prep status condition for user to verify before proceeding to the upgrade stage
   - Validate that the desired upgrade version matches the version of the seed image
   - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
 - Unpack the seed image and create a new ostree stateroot
