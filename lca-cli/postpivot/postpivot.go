@@ -98,7 +98,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
-	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
+	if err := p.networkConfiguration(ctx, seedReconfiguration, seedClusterInfo); err != nil {
 		return fmt.Errorf("failed to configure networking, err: %w", err)
 	}
 
@@ -741,6 +741,38 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
+// updateNoProxy taken from installer, adds required no-proxy params
+// https://github.com/openshift/installer/blob/ad59622147974f2d2d62bcdeaf342ae4f87ed84f/pkg/asset/manifests/proxy.go
+func (p *PostPivot) updateNoProxy(proxy *clusterconfig_api.Proxy, clusterNetworks, serviceNetworks []string,
+	clusterName, baseDomain string) {
+	if proxy == nil || (proxy.HTTPSProxy == "" && proxy.HTTPProxy == "") {
+		return
+	}
+	noProxyTrim := strings.TrimSpace(proxy.NoProxy)
+	// everything is allowed, no point to add new values
+	if noProxyTrim == "*" {
+		proxy.NoProxy = noProxyTrim
+		return
+	}
+
+	var noProxyUpdated []string
+	if noProxyTrim != "" {
+		noProxyUpdated = append(noProxyUpdated, noProxyTrim)
+	}
+	// if we set proxy we need to update no proxy with no proxy params as installer.
+	// it must be able to connect to api int.
+	noProxyUpdated = append(noProxyUpdated,
+		"127.0.0.1",
+		"localhost",
+		".svc",
+		".cluster.local",
+		fmt.Sprintf("api-int.%s.%s", clusterName, baseDomain))
+
+	noProxyUpdated = append(noProxyUpdated, clusterNetworks...)
+	noProxyUpdated = append(noProxyUpdated, serviceNetworks...)
+	proxy.NoProxy = strings.Join(noProxyUpdated, ",")
+}
+
 // networkConfiguration is on charge of configuring network prior installation process.
 // This function should include all network configurations of post-pivot flow.
 // It's logic currently includes:
@@ -749,7 +781,8 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 // 3. In case ip was not provided by user we should run set ip logic that can be found in setNodeIPIfNotProvided
 // 4. Override seed dnsmasq params
 // 5. Restart NM and dnsmasq in order to apply provided configurations
-func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedInfo *seedclusterinfo.SeedClusterInfo) error {
 	if err := p.copyNMConnectionFiles(
 		path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder); err != nil {
 		return err
@@ -758,6 +791,10 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 	if err := p.applyNMStateConfiguration(seedReconfiguration); err != nil {
 		return err
 	}
+
+	// updating no proxy in case proxy was set
+	p.updateNoProxy(seedReconfiguration.Proxy, seedInfo.ClusterNetworks, seedInfo.ServiceNetworks,
+		seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain)
 
 	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
 		return err

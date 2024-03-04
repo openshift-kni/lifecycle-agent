@@ -60,6 +60,12 @@ type SeedClusterInfo struct {
 	// certificates, so it has already proven to run successfully on the seed
 	// data).
 	RecertImagePullSpec string `json:"recert_image_pull_spec,omitempty"`
+
+	// cluster networks configured while creating seed cluster, required for proxy configurations
+	ClusterNetworks []string
+
+	// service networks configured while creating seed cluster, required for proxy configurations
+	ServiceNetworks []string
 }
 
 func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string) *SeedClusterInfo {
@@ -72,6 +78,8 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string
 		SNOHostname:              clusterInfo.Hostname,
 		MirrorRegistryConfigured: clusterInfo.MirrorRegistryConfigured,
 		RecertImagePullSpec:      seedImagePullSpec,
+		ClusterNetworks:          clusterInfo.ClusterNetworks,
+		ServiceNetworks:          clusterInfo.ServiceNetworks,
 	}
 }
 

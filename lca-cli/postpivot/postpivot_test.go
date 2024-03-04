@@ -23,8 +23,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
-
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
@@ -409,6 +409,8 @@ func TestNetworkConfiguration(t *testing.T) {
 		NodeIP:      "192.167.127.10",
 	}
 
+	seedInfo := &seedclusterinfo.SeedClusterInfo{}
+
 	testcases := []struct {
 		name                  string
 		expectedError         bool
@@ -456,7 +458,7 @@ func TestNetworkConfiguration(t *testing.T) {
 				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", fmt.Errorf("dummy")).Times(1)
 			}
 
-			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
+			err := pp.networkConfiguration(context.TODO(), seedReconfiguration, seedInfo)
 			assert.Equal(t, tc.expectedError, err != nil, err)
 		})
 	}
@@ -508,6 +510,7 @@ func fakeManifests(tmpDir string) error {
 	}
 	return nil
 }
+
 func TestApplyManifests(t *testing.T) {
 	var (
 		mockController = gomock.NewController(t)
@@ -602,6 +605,59 @@ func TestApplyManifests(t *testing.T) {
 			assert.Equal(t, 1, len(currentCms.Items))
 			assert.Equal(t, "user-ca-bundle", currentCms.Items[0].GetName())
 			assert.Equal(t, "openshift-config", currentCms.Items[0].GetNamespace())
+		})
+	}
+}
+
+func TestUpdateNoProxy(t *testing.T) {
+	seedReconfiguration := &clusterconfig_api.SeedReconfiguration{
+		BaseDomain:  "new.com",
+		ClusterName: "new_name",
+	}
+
+	clusterNetworks := []string{"172.0.0.1/24", "174.0.0.1/24"}
+	serviceNetworks := []string{"192.0.0.1/24", "194.0.0.1/24"}
+
+	testcases := []struct {
+		name     string
+		proxy    *clusterconfig_api.Proxy
+		validate func(proxy *clusterconfig_api.Proxy)
+	}{
+		{
+			name:  "proxy not configured, nothing to do",
+			proxy: nil,
+			validate: func(proxy *clusterconfig_api.Proxy) {
+				assert.Nil(t, proxy)
+			},
+		},
+		{
+			name:  "proxy http and https are not configured, nothing to do",
+			proxy: &clusterconfig_api.Proxy{},
+			validate: func(proxy *clusterconfig_api.Proxy) {
+				assert.Equal(t, "", proxy.NoProxy)
+			},
+		},
+		{
+			name:  "proxy http is set, should update proxy values",
+			proxy: &clusterconfig_api.Proxy{HTTPProxy: "proxy", NoProxy: "aaa"},
+			validate: func(proxy *clusterconfig_api.Proxy) {
+				assert.Contains(t, proxy.NoProxy, "aaa")
+				assert.Contains(t, proxy.NoProxy, "localhost")
+				assert.Contains(t, proxy.NoProxy, "127.0.0.1")
+				assert.Contains(t, proxy.NoProxy, strings.Join(clusterNetworks, ","))
+				assert.Contains(t, proxy.NoProxy, strings.Join(serviceNetworks, ","))
+				assert.Contains(t, proxy.NoProxy, fmt.Sprintf("api-int.%s.%s",
+					seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain))
+			},
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, nil, "", "", "")
+			pp.updateNoProxy(tc.proxy, clusterNetworks, serviceNetworks,
+				seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain)
+			tc.validate(tc.proxy)
 		})
 	}
 }
