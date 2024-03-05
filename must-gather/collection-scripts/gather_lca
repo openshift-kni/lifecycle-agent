@@ -32,6 +32,7 @@ function get_healthcheck_crs() {
     oc get ClusterVersion -A -oyaml &> $healthcheck_dir/cluster-version.yaml
     oc get ClusterServiceVersion -A -oyaml &> $healthcheck_dir/cluster-service-version.yaml
     oc get SriovNetworkNodeState -A -oyaml &> $healthcheck_dir/sriov-network-node-state.yaml
+    oc get CertificateSigningRequest -A -oyaml &> $healthcheck_dir/certificate-signing-request.yaml
 }
 
 function get_lca_image_builder_log() {
