@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	sriovnetworkv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
@@ -129,7 +130,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	p.waitForApi(ctx, client)
 
 	if err := p.deleteAllOldMirrorResources(ctx, client); err != nil {
-		return fmt.Errorf("failed to all old mirror resources: %w", err)
+		return fmt.Errorf("failed to delete all old mirror resources: %w", err)
+	}
+
+	if err := p.deleteOldSriovFECInfo(ctx, client, seedReconfiguration.Hostname); err != nil {
+		return fmt.Errorf("failed to delete old SRIOV-FEC info: %w", err)
 	}
 
 	if err := p.applyManifests(); err != nil {
@@ -324,6 +329,19 @@ func (p *PostPivot) deleteAllOldMirrorResources(ctx context.Context, client runt
 	}
 
 	return p.deleteCatalogSources(ctx, client)
+}
+
+// deleteOldSriovFECInfo deletes the seed's SriovNetworkNodeState CR; this cleanup step is required when the
+// SRIOV-FEC operator may be deployed on the seed, usually in Telco deployments.
+func (p *PostPivot) deleteOldSriovFECInfo(ctx context.Context, client runtimeclient.Client, seedHostname string) error {
+	p.log.Info("Deleting seed's SriovNetworkNodeState CR if exists")
+
+	oldSriovNetworkNodeState := &sriovnetworkv1.SriovNetworkNodeState{ObjectMeta: metav1.ObjectMeta{Name: seedHostname}}
+	if err := client.Delete(ctx, oldSriovNetworkNodeState); err != nil {
+		return fmt.Errorf("failed to delete seed's SriovNetworkNodeState CR: %w", err)
+	}
+
+	return nil
 }
 
 func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclient.Client) error {
