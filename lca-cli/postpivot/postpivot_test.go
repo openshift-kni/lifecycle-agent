@@ -650,6 +650,21 @@ func TestUpdateNoProxy(t *testing.T) {
 					seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain))
 			},
 		},
+		{
+			name: "proxy http is set, verify no duplicates",
+			proxy: &clusterconfig_api.Proxy{HTTPProxy: "proxy", NoProxy: fmt.Sprintf("aaa, aaa, 127.0.0.1,"+
+				"api-int.%s.%s", seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain)},
+			validate: func(proxy *clusterconfig_api.Proxy) {
+				assert.Contains(t, proxy.NoProxy, "aaa")
+				assert.Equal(t, strings.Count(proxy.NoProxy, "aaa"), 1)
+				assert.Contains(t, proxy.NoProxy, "127.0.0.1")
+				assert.Equal(t, strings.Count(proxy.NoProxy, "127.0.0.1"), 1)
+				assert.Contains(t, proxy.NoProxy, fmt.Sprintf("api-int.%s.%s",
+					seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain))
+				assert.Equal(t, strings.Count(proxy.NoProxy, fmt.Sprintf("api-int.%s.%s",
+					seedReconfiguration.ClusterName, seedReconfiguration.BaseDomain)), 1)
+			},
+		},
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {

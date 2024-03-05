@@ -748,7 +748,7 @@ func (p *PostPivot) updateNoProxy(proxy *clusterconfig_api.Proxy, clusterNetwork
 	if proxy == nil || (proxy.HTTPSProxy == "" && proxy.HTTPProxy == "") {
 		return
 	}
-	noProxyTrim := strings.TrimSpace(proxy.NoProxy)
+	noProxyTrim := strings.ReplaceAll(proxy.NoProxy, " ", "")
 	// everything is allowed, no point to add new values
 	if noProxyTrim == "*" {
 		proxy.NoProxy = noProxyTrim
@@ -757,7 +757,7 @@ func (p *PostPivot) updateNoProxy(proxy *clusterconfig_api.Proxy, clusterNetwork
 
 	var noProxyUpdated []string
 	if noProxyTrim != "" {
-		noProxyUpdated = append(noProxyUpdated, noProxyTrim)
+		noProxyUpdated = append(noProxyUpdated, strings.Split(noProxyTrim, ",")...)
 	}
 	// if we set proxy we need to update no proxy with no proxy params as installer.
 	// it must be able to connect to api int.
@@ -770,6 +770,7 @@ func (p *PostPivot) updateNoProxy(proxy *clusterconfig_api.Proxy, clusterNetwork
 
 	noProxyUpdated = append(noProxyUpdated, clusterNetworks...)
 	noProxyUpdated = append(noProxyUpdated, serviceNetworks...)
+	noProxyUpdated = common.RemoveDuplicates[string](noProxyUpdated)
 	proxy.NoProxy = strings.Join(noProxyUpdated, ",")
 }
 
