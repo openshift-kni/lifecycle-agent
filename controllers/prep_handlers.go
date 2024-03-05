@@ -410,6 +410,14 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 
 	switch {
 	case !r.PrepTask.Active:
+		r.Log.Info("Running health check for Prep")
+		if err := CheckHealth(ctx, r.NoncachedClient, r.Log); err != nil {
+			msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
+			r.Log.Info(msg)
+			utils.SetPrepStatusInProgress(ibu, msg)
+			return requeueWithHealthCheckInterval(), nil
+		}
+
 		r.initPrepTask()
 		go func() {
 			err = r.prepStageWorker(ctx, ibu)

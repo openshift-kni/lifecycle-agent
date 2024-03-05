@@ -119,6 +119,14 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.resetProgressMessage(ctx, ibu)
 	}
 
+	u.Log.Info("Running health check for Upgrade (pre-pivot)")
+	if err := CheckHealth(ctx, u.NoncachedClient, u.Log); err != nil {
+		msg := fmt.Sprintf("Waiting for system to stabilize before Upgrade (pre-pivot) stage can continue: %s", err.Error())
+		u.Log.Info(msg)
+		utils.SetUpgradeStatusInProgress(ibu, msg)
+		return requeueWithHealthCheckInterval(), nil
+	}
+
 	utils.SetUpgradeStatusInProgress(ibu, "Backing up Application Data")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
