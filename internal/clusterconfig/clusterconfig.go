@@ -6,18 +6,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-logr/logr"
+	v1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/go-logr/logr"
-	v1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -32,7 +29,6 @@ import (
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=imagecontentsourcepolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
-//+kubebuilder:rbac:groups=operators.coreos.com,resources=catalogsources,verbs=get;list;watch
 
 const (
 	manifestDir = "manifests"
@@ -42,9 +38,8 @@ const (
 
 	pullSecretName = "pull-secret"
 
-	idmsFileName           = "image-digest-mirror-set.json"
-	icspsFileName          = "image-content-source-policy-list.json"
-	catalogSourcesFileName = "custom-catalog-sources.json"
+	idmsFileName  = "image-digest-mirror-set.json"
+	icspsFileName = "image-content-source-policy-list.json"
 
 	caBundleCMName   = "user-ca-bundle"
 	caBundleFileName = caBundleCMName + ".json"
@@ -87,9 +82,6 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 		return err
 	}
 	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
-		return err
-	}
-	if err := r.fetchCatalogSources(ctx, manifestsDir); err != nil {
 		return err
 	}
 
@@ -273,24 +265,6 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) fetchCatalogSources(ctx context.Context, manifestsDir string) error {
-	r.Log.Info("Fetching catalogSourcces")
-	customCatalogSources, err := r.getCustomCatalogSources(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch catalog sources %w", err)
-	}
-	if len(customCatalogSources.Items) < 1 {
-		r.Log.Info("No custom CatalogSources found, skipping")
-		return nil
-	}
-	filePath := filepath.Join(manifestsDir, catalogSourcesFileName)
-	r.Log.Info("Writing catalog source to file", "path", filePath)
-	if err := utils.MarshalToFile(customCatalogSources, filePath); err != nil {
-		return fmt.Errorf("failed to write catalog source to file %s: %w", filePath, err)
-	}
-	return nil
-}
-
 // configDirs creates and returns the directory for the given cluster configuration.
 func (r *UpgradeClusterConfigGather) configDir(ostreeVarDir string) (string, error) {
 	filesDir := filepath.Join(ostreeVarDir, common.OptOpenshift, common.ClusterConfigDir)
@@ -452,44 +426,4 @@ func (r *UpgradeClusterConfigGather) fetchNetworkConfig(ostreeDir string) error 
 	}
 	r.Log.Info("Done fetching node network files")
 	return nil
-}
-
-func (r *UpgradeClusterConfigGather) getCustomCatalogSources(ctx context.Context) (operatorsv1alpha1.CatalogSourceList, error) {
-	catalogSources := &operatorsv1alpha1.CatalogSourceList{}
-	customCatalogSources := &operatorsv1alpha1.CatalogSourceList{}
-	allNamespaces := client.ListOptions{Namespace: metav1.NamespaceAll}
-	if err := r.Client.List(ctx, catalogSources, &allNamespaces); err != nil {
-		return operatorsv1alpha1.CatalogSourceList{}, fmt.Errorf("failed to list all catalogueSources %w", err)
-	}
-
-	defaultCatalogRecources := []string{"certified-operators", "community-operators", "redhat-marketplace", "redhat-operators"}
-	for i, cs := range catalogSources.Items {
-		if slices.Contains(defaultCatalogRecources, cs.Name) {
-			r.Log.Info("Skipping default catalog source %s", "name", cs.Name)
-		} else {
-			obj := operatorsv1alpha1.CatalogSource{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        cs.Name,
-					Namespace:   cs.Namespace,
-					Annotations: cs.GetAnnotations(),
-				},
-				Spec: cs.Spec,
-			}
-
-			typeMeta, err := r.typeMetaForObject(&catalogSources.Items[i])
-			if err != nil {
-				return operatorsv1alpha1.CatalogSourceList{}, err
-			}
-			obj.TypeMeta = *typeMeta
-
-			customCatalogSources.Items = append(customCatalogSources.Items, obj)
-		}
-	}
-	r.Log.Info("catalogSources", "APIVersion:", catalogSources.TypeMeta.APIVersion, "Kind:", catalogSources.TypeMeta.Kind)
-	typeMeta, err := r.typeMetaForObject(customCatalogSources)
-	if err != nil {
-		return operatorsv1alpha1.CatalogSourceList{}, err
-	}
-	customCatalogSources.TypeMeta = *typeMeta
-	return *customCatalogSources, nil
 }
