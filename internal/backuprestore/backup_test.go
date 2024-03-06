@@ -824,16 +824,16 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Check that the DPA was written to file
-	dpaFilePath := filepath.Join(toDir, oadpDpaPath, dpa.GetName()+".yaml")
+	dpaFilePath := filepath.Join(toDir, OadpDpaPath, dpa.GetName()+".yaml")
 	_, err = os.Stat(dpaFilePath)
 	assert.NoError(t, err)
 
 	// Check that the secrets was written to file
-	veleroCredSecretFilePath := filepath.Join(toDir, oadpSecretPath, "velero-cred.yaml")
+	veleroCredSecretFilePath := filepath.Join(toDir, OadpSecretPath, "velero-cred.yaml")
 	_, err = os.Stat(veleroCredSecretFilePath)
 	assert.NoError(t, err)
 
-	storageSecretFilePath := filepath.Join(toDir, oadpSecretPath, "cloud-credentials.yaml")
+	storageSecretFilePath := filepath.Join(toDir, OadpSecretPath, "cloud-credentials.yaml")
 	_, err = os.Stat(storageSecretFilePath)
 	assert.NoError(t, err)
 }
