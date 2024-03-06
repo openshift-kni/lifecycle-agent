@@ -25,21 +25,18 @@ import (
 	"testing"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-
 	appsv1 "k8s.io/api/apps/v1"
 
+	"github.com/go-logr/logr"
+	ocpV1 "github.com/openshift/api/config/v1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/go-logr/logr"
-	ocpV1 "github.com/openshift/api/config/v1"
-	mcv1 "github.com/openshift/api/machineconfiguration/v1"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -174,9 +171,7 @@ func init() {
 		&ocpV1.ImageContentPolicyList{})
 	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
 		&operatorv1alpha1.ImageContentSourcePolicyList{},
-		&operatorv1alpha1.ImageContentSourcePolicy{},
-		&operatorsv1alpha1.CatalogSource{},
-		&operatorsv1alpha1.CatalogSourceList{})
+		&operatorv1alpha1.ImageContentSourcePolicy{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -218,23 +213,6 @@ func TestClusterConfig(t *testing.T) {
 		},
 		Spec: ocpV1.ImageDigestMirrorSetSpec{ImageDigestMirrors: []ocpV1.ImageDigestMirrors{{Source: "data"}}},
 	}
-	defaultCatalogSources := &operatorsv1alpha1.CatalogSource{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "redhat-operators",
-		},
-		Spec: operatorsv1alpha1.CatalogSourceSpec{
-			Image: "registry.redhat.io/redhat/redhat-operator-index:v4.13",
-		},
-	}
-	customCatalogSources := &operatorsv1alpha1.CatalogSource{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "my-catalog",
-			Annotations: map[string]string{"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}"},
-		},
-		Spec: operatorsv1alpha1.CatalogSourceSpec{
-			Image: "some-registry/redhat/redhat-operator-index:v4.13",
-		},
-	}
 	defaultProxy := &ocpV1.Proxy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
@@ -250,7 +228,6 @@ func TestClusterConfig(t *testing.T) {
 		clusterVersion  client.Object
 		idms            client.Object
 		icsps           []client.Object
-		catalogSources  []client.Object
 		node            client.Object
 		proxy           client.Object
 		deleteKubeadmin bool
@@ -262,7 +239,6 @@ func TestClusterConfig(t *testing.T) {
 			pullSecret:     defaultPullSecret,
 			clusterVersion: defaultClusterVersion,
 			idms:           defaultIDMS,
-			catalogSources: []client.Object{defaultCatalogSources, customCatalogSources},
 			node:           validMasterNode,
 			proxy:          defaultProxy,
 			icsps:          nil,
@@ -291,17 +267,6 @@ func TestClusterConfig(t *testing.T) {
 				if assert.Equal(t, 1, len(idms.Items)) {
 					assert.Equal(t, "any", idms.Items[0].Name)
 					assert.Equal(t, "data", idms.Items[0].Spec.ImageDigestMirrors[0].Source)
-				}
-
-				// validate catalog sources
-				catalogSources := &operatorsv1alpha1.CatalogSourceList{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, catalogSourcesFileName), catalogSources); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				if assert.Equal(t, 1, len(catalogSources.Items)) {
-					assert.Equal(t, customCatalogSources.Name, catalogSources.Items[0].Name)
-					assert.Equal(t, customCatalogSources.Annotations, catalogSources.Items[0].Annotations)
-					assert.Equal(t, customCatalogSources.Spec.Image, catalogSources.Items[0].Spec.Image)
 				}
 
 				seedReconfig, err := getSeedReconfigFromUcc(ucc, tempDir)
@@ -387,62 +352,6 @@ func TestClusterConfig(t *testing.T) {
 					t.Errorf("unexpected error: %v", err)
 				}
 				assert.Equal(t, 1, len(dir))
-			},
-		},
-		{
-			testCaseName:   "empty catalog sources",
-			pullSecret:     defaultPullSecret,
-			clusterVersion: defaultClusterVersion,
-			idms:           nil,
-			icsps:          nil,
-			catalogSources: nil,
-			caBundleCM:     nil,
-			node:           validMasterNode,
-			proxy:          defaultProxy,
-			expectedErr:    false,
-			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				filesDir, err := ucc.configDir(tempDir)
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				dir, err := os.ReadDir(filepath.Join(filesDir, manifestDir))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				// expect a single file: proxy.json
-				assert.Equal(t, 1, len(dir))
-				_, err = os.Stat(filepath.Join(filesDir, manifestDir, proxyFileName))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			},
-		},
-		{
-			testCaseName:   "no user defined catalog sources",
-			pullSecret:     defaultPullSecret,
-			clusterVersion: defaultClusterVersion,
-			idms:           nil,
-			icsps:          nil,
-			catalogSources: []client.Object{defaultCatalogSources},
-			caBundleCM:     nil,
-			node:           validMasterNode,
-			proxy:          defaultProxy,
-			expectedErr:    false,
-			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
-				filesDir, err := ucc.configDir(tempDir)
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				dir, err := os.ReadDir(filepath.Join(filesDir, manifestDir))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				// expect a single file: proxy.json
-				assert.Equal(t, 1, len(dir))
-				_, err = os.Stat(filepath.Join(filesDir, manifestDir, proxyFileName))
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
 			},
 		},
 		{
@@ -550,11 +459,6 @@ func TestClusterConfig(t *testing.T) {
 			if tc.icsps != nil {
 				for _, icsp := range tc.icsps {
 					objs = append(objs, icsp)
-				}
-			}
-			if tc.catalogSources != nil {
-				for _, cs := range tc.catalogSources {
-					objs = append(objs, cs)
 				}
 			}
 
