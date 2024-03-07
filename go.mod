@@ -127,4 +127,6 @@ require (
 
 replace k8s.io/client-go => k8s.io/client-go v0.28.2
 
+replace vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
+
 //replace github.com/vmware-tanzu/velero => github.com/openshift/velero v0.10.2-0.20231002153713-b470b0211e1f
