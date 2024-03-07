@@ -11,12 +11,12 @@ During Abort/Finalize LCA performs a cleanup. This includes:
 
 If LCA fails to perform any of the above steps, it transitions to Abort/Finalize failed state.
 The condition message and log shows which steps have failed.
-User should perform manual cleanup and add `lca.openshift.io/manualCleanupDone` annotation to IBU. After observing this annotation LCA will retry the cleanup and if successful, IBU transitions to `Idle`.
+User should perform manual cleanup and add `lca.openshift.io/manual-cleanup-done` annotation to IBU. After observing this annotation LCA will retry the cleanup and if successful, IBU transitions to `Idle`.
 
 ### Stateroot cleanup
 
 During `Abort` LCA cleanups the new stateroot and during `Finalize` LCA cleanups the old stateroot. User should inspect the log to determine why this step has failed since failure in this step indicates a serious issue in the node.
-You can add the `lca.openshift.io/manualCleanupDone` annotation to IBU so that LCA retries the cleanup. If manual cleanup of a stateroot is necessary follow the following steps:
+You can add the `lca.openshift.io/manual-cleanup-done` annotation to IBU so that LCA retries the cleanup. If manual cleanup of a stateroot is necessary follow the following steps:
 
 - Run `ostree admin status` to determine if there are any existing deployments in the stateroot. These will need to be cleaned up first. Cleanup every deployment in the stateroot using:
 
@@ -36,7 +36,7 @@ unshare -m /bin/sh -c "mount -o remount,rw /sysroot && rm -rf /sysroot/ostree/de
 
 ### OADP backup cleanup
 
-The main reason that this step can fail is connection failure between LCA and the backup backend. By restoring the connection and adding `lca.openshift.io/manualCleanupDone` annotation, LCA can successfully cleanup backup resources.
+The main reason that this step can fail is connection failure between LCA and the backup backend. By restoring the connection and adding `lca.openshift.io/manual-cleanup-done` annotation, LCA can successfully cleanup backup resources.
 
 The following command can be used to check the backend connectivity:
 
@@ -46,4 +46,4 @@ NAME                          PHASE       LAST VALIDATED   AGE   DEFAULT
 dataprotectionapplication-1   Available   33s              8d    true
 ```
 
-Otherwise, user should manually remove all backup resources `backups.velero.io`, `restores.velero.io` and `deletebackuprequests.velero.io`. Then add `lca.openshift.io/manualCleanupDone` annotation to IBU CR.
+Otherwise, user should manually remove all backup resources `backups.velero.io`, `restores.velero.io` and `deletebackuprequests.velero.io`. Then add `lca.openshift.io/manual-cleanup-done` annotation to IBU CR.
