@@ -150,6 +150,33 @@ status:
   observedGeneration: 1
 ```
 
+### Stage transitions
+
+LCA will reject the stage transition if it is an invalid transition.
+
+This table presents a comprehensive list of conditions and valid next stages based on the current stage.
+
+|Current Stage|Condition         |Status|Reason        |After Pivot|Valid Next Stages|
+|-------------|------------------|------|--------------|-----------|-----------------|
+|`Idle`       |Idle              |True  |Idle          |N/A        |Prep             |
+|             |                  |False |Aborting      |False      |N/A              |
+|             |                  |False |Finalizing    |True       |N/A              |
+|             |                  |False |AbortFailed   |False      |N/A              |
+|             |                  |False |FinalizeFailed|True       |N/A              |
+|`Prep`       |PrepInProgress    |True  |InProgress    |False      |Idle             |
+|             |PrepCompleted     |False |Failed        |False      |Idle             |
+|             |                  |True  |Completed     |False      |Idle, Upgrade    |
+|`Upgrade`    |UpgradeInProgress |True  |InProgress    |False      |Idle             |
+|             |                  |True  |InProgress    |True       |Rollback         |
+|             |UpgradeCompleted  |False |Failed        |False      |Idle             |
+|             |                  |False |Failed        |True       |Rollback         |
+|             |                  |True  |Completed     |True       |Idle, Rollback   |
+|`Rollback`   |RollbackInProgress|True  |InProgress    |True       |N/A              |
+|             |RollbackCompleted |False |Failed        |True       |N/A              |
+|             |                  |True  |Completed     |True       |Idle             |
+
+If unexpected rejection occurs that block any spec changes, the annotation `lca.openshift.io/triggerReconcile` serves as a backdoor to trigger the reconciliation for LCA to rectify the situation by adding or updating the annotation in the IBU CR.
+
 ## Image Based Upgrade Walkthrough
 
 The Lifecycle Agent provides orchestration of the image based upgrade, triggered by patching the `ImageBasedUpgrade` CR through a series of stages.

@@ -12,7 +12,8 @@ const (
 	IBUName     string = "upgrade"
 	IBUFilePath string = common.LCAConfigDir + "/ibu.json"
 
-	ManualCleanupAnnotation string = "lca.openshift.io/manualCleanupDone"
+	ManualCleanupAnnotation    string = "lca.openshift.io/manualCleanupDone"
+	TriggerReconcileAnnotation string = "lca.openshift.io/triggerReconcile"
 
 	// SeedGenName defines the valid name of the CR for the controller to reconcile
 	SeedGenName          string = "seedimage"

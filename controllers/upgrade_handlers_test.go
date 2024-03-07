@@ -378,7 +378,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -404,7 +404,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -430,7 +430,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -485,7 +485,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -545,7 +545,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -697,7 +697,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -833,7 +833,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					savedIbu := lcav1alpha1.ImageBasedUpgrade{}
 					err = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, len(savedIbu.Status.Conditions), 2, "")
-					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, "Upgrade failed", "")
+					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, utils.UpgradeFailed, "")
 					assert.Equalf(t, savedIbu.Status.Conditions[1].Message, "Uncontrolled rollback", "")
 				}
 			}
@@ -914,7 +914,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -948,7 +948,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -988,7 +988,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -1025,13 +1025,13 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Completed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade completed",
+					Message: utils.UpgradeCompleted,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Completed),
 					Status:  metav1.ConditionTrue,
-					Message: "Upgrade completed",
+					Message: utils.UpgradeCompleted,
 				},
 			},
 			wantErr: assert.NoError,
