@@ -62,7 +62,7 @@ type SeedClusterInfo struct {
 	RecertImagePullSpec string `json:"recert_image_pull_spec,omitempty"`
 }
 
-func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string) *SeedClusterInfo {
+func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, recertImagePullSpec string) *SeedClusterInfo {
 	return &SeedClusterInfo{
 		SeedClusterOCPVersion:    clusterInfo.OCPVersion,
 		BaseDomain:               clusterInfo.BaseDomain,
@@ -71,7 +71,7 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string
 		ReleaseRegistry:          clusterInfo.ReleaseRegistry,
 		SNOHostname:              clusterInfo.Hostname,
 		MirrorRegistryConfigured: clusterInfo.MirrorRegistryConfigured,
-		RecertImagePullSpec:      seedImagePullSpec,
+		RecertImagePullSpec:      recertImagePullSpec,
 	}
 }
 

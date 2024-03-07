@@ -65,6 +65,21 @@ func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authF
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
 }
 
+// GetImageDigest mocks base method.
+func (m *MockOps) GetImageDigest(image, authFile string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetImageDigest", image, authFile)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetImageDigest indicates an expected call of GetImageDigest.
+func (mr *MockOpsMockRecorder) GetImageDigest(image, authFile any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetImageDigest", reflect.TypeOf((*MockOps)(nil).GetImageDigest), image, authFile)
+}
+
 // ImageExists mocks base method.
 func (m *MockOps) ImageExists(img string) (bool, error) {
 	m.ctrl.T.Helper()

@@ -43,6 +43,7 @@ type Ops interface {
 	ListBlockDevices() ([]BlockDevice, error)
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
+	GetImageDigest(image, authFile string) (string, error)
 }
 
 type BlockDevice struct {
@@ -252,6 +253,25 @@ func (o *ops) ImageExists(img string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// GetImageDigest retrieve the image digest using the podman inspect command
+// Pass in the full image FQDN with tag e.g: quay.io/edge-infrastructure/recert:v0
+func (o *ops) GetImageDigest(image, authFile string) (string, error) {
+	args := []string{"pull", image}
+	if authFile != "" {
+		args = append(args, "--authfile", authFile)
+	}
+	_, err := o.hostCommandsExecutor.Execute("podman", args...)
+	if err != nil {
+		return "", fmt.Errorf("failed to run podman pull: %w", err)
+	}
+
+	digest, err := o.hostCommandsExecutor.Execute("podman", "inspect", image, "-f", "{{.Digest}}")
+	if err != nil {
+		return "", fmt.Errorf("failed to run podman inspect: %w", err)
+	}
+	return digest, nil
 }
 
 type PodmanImage struct {

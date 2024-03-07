@@ -12,13 +12,14 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	runtime "sigs.k8s.io/controller-runtime/pkg/client"
+
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -87,6 +88,10 @@ func (s *SeedCreator) CreateSeedImage() error {
 
 	if err := os.MkdirAll(common.BackupChecksDir, 0o700); err != nil {
 		return fmt.Errorf("failed to make dir in %s: %w", common.BackupChecksDir, err)
+	}
+
+	if err := s.ensureRecertImageWithDigestFormat(); err != nil {
+		return fmt.Errorf("failed to ensure recert image digest: %w", err)
 	}
 
 	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
@@ -509,5 +514,27 @@ func (s *SeedCreator) removeOvnCertsFolders() error {
 	if err := utils.RemoveListOfFolders(s.log, dirs); err != nil {
 		return fmt.Errorf("failed to remove ovn certs in %s: %w", dirs, err)
 	}
+	return nil
+}
+
+func (s *SeedCreator) ensureRecertImageWithDigestFormat() error {
+	if strings.Contains(s.recertContainerImage, "@s") {
+		s.log.Infof("Recert image (%s) is already using digest format", s.recertContainerImage)
+		return nil
+	}
+	digest, err := s.ops.GetImageDigest(s.recertContainerImage, s.authFile)
+	if err != nil {
+		return fmt.Errorf("failed to get recert image digest: %w", err)
+	}
+	parts := strings.Split(s.recertContainerImage, ":")
+
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid format: %s", s.recertContainerImage)
+	}
+
+	imageName := parts[0]
+	tag := parts[1]
+	s.log.Infof("Replacing recert image: %s tag: %s, with digest: %s", imageName, tag, digest)
+	s.recertContainerImage = fmt.Sprintf("%s@%s", imageName, digest)
 	return nil
 }
