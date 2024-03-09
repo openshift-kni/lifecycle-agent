@@ -47,8 +47,12 @@ spec:
             description: SeedGeneratorSpec defines the desired state of SeedGenerator
             properties:
               recertImage:
+                description: RecertImage defines the full pull-spec of the recert
+                  container image to use.
                 type: string
               seedImage:
+                description: SeedImage defines the full pull-spec of the seed container
+                  image to be created.
                 type: string
             type: object
             x-kubernetes-validations:

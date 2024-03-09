@@ -182,11 +182,15 @@ spec:
         name: ""
         version: v1
       specDescriptors:
-      - displayName: Recert Image
+      - description: RecertImage defines the full pull-spec of the recert container
+          image to use.
+        displayName: Recert Image
         path: recertImage
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:text
-      - displayName: Seed Image
+      - description: SeedImage defines the full pull-spec of the seed container image
+          to be created.
+        displayName: Seed Image
         path: seedImage
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:text
