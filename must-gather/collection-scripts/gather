@@ -1,0 +1,42 @@
+#!/bin/bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+PROJECT="openshift-lifecycle"
+BASE_COLLECTION_PATH="${1:-/must-gather/}"
+MUST_GATHER_LOGFILE_PATH="${BASE_COLLECTION_PATH}/must-gather-debug.log"
+mkdir -p $BASE_COLLECTION_PATH
+touch $MUST_GATHER_LOGFILE_PATH
+
+echo "DEBUG: All scripts at: '${SCRIPT_DIR}'"
+echo "DEBUG: Base dir for must-gather at: '${BASE_COLLECTION_PATH}'"
+echo "DEBUG: Must-gather logs are located at: '${MUST_GATHER_LOGFILE_PATH}'"
+
+echo "INFO: Starting LCA must-gather" | tee -a $MUST_GATHER_LOGFILE_PATH
+
+# generate /must-gather/version file
+. $SCRIPT_DIR/version
+echo "$PROJECT/must-gather"> $BASE_COLLECTION_PATH/version
+version >> $BASE_COLLECTION_PATH/version
+
+
+# todo: add log collection params https://github.com/openshift/must-gather/blob/c8fec85caeab4757d1c67daf38620fc89aabca69/collection-scripts/common.sh
+# Gather lca operator logs
+$SCRIPT_DIR/gather_lca $BASE_COLLECTION_PATH $MUST_GATHER_LOGFILE_PATH &
+pids+=($!)
+
+# Gather oadp logs
+$SCRIPT_DIR/gather_oadp $BASE_COLLECTION_PATH $MUST_GATHER_LOGFILE_PATH &
+pids+=($!)
+
+# Gather sriov logs
+$SCRIPT_DIR/gather_sriov $BASE_COLLECTION_PATH $MUST_GATHER_LOGFILE_PATH &
+pids+=($!)
+
+if [[ ${#pids[@]} -ne 0 ]]; then
+    echo "INFO: Waiting on subprocesses to finish execution." | tee -a $MUST_GATHER_LOGFILE_PATH
+    wait "${pids[@]}"
+fi
+
+echo "INFO: Done LCA must-gather" | tee -a $MUST_GATHER_LOGFILE_PATH
+# force disk flush to ensure that all data gathered is accessible in the copy container
+sync

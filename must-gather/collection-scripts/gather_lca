@@ -1,0 +1,128 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="${1}"
+LCA_DATA_PATH="${BASE_COLLECTION_PATH}/lca-data"
+MUST_GATHER_LOGFILE_PATH="${2}"
+IBU_NS="openshift-lifecycle-agent"
+mkdir -p $LCA_DATA_PATH
+
+HOST_POD="$(oc -n ${IBU_NS} get pods -l app.kubernetes.io/name=lifecyle-agent-operator -o jsonpath='{.items[*].metadata.name}')"
+
+function get_ibu_crs() {
+    IBU_CRDS=($(oc get crd | awk '/lca.openshift.io/{print $1}'))
+
+    for CRD in "${IBU_CRDS[@]}"; do
+        echo "INFO: Collecting $CRD CR" | tee -a $MUST_GATHER_LOGFILE_PATH
+        oc adm inspect --dest-dir "${LCA_DATA_PATH}/cr" "${CRD}" -A
+    done
+}
+
+function get_ns_resources() {
+    echo "INFO: Collecting resources from ns ${IBU_NS}" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc adm inspect --dest-dir "${LCA_DATA_PATH}/ns-resources" "ns/${IBU_NS}"
+}
+
+function get_healthcheck_crs() {
+    echo "INFO: Collecting CRs used for healthcheck" | tee -a $MUST_GATHER_LOGFILE_PATH
+    healthcheck_dir=$LCA_DATA_PATH/cr-healthcheck
+    mkdir -p $healthcheck_dir
+    oc get Nodes -A -oyaml &> $healthcheck_dir/node.yaml
+    oc get ClusterOperator -A -oyaml &> $healthcheck_dir/cluster-operator.yaml
+    oc get MachineConfigPool -A -oyaml &> $healthcheck_dir/machine-config-pool.yaml
+    oc get ClusterVersion -A -oyaml &> $healthcheck_dir/cluster-version.yaml
+    oc get ClusterServiceVersion -A -oyaml &> $healthcheck_dir/cluster-service-version.yaml
+    oc get SriovNetworkNodeState -A -oyaml &> $healthcheck_dir/sriov-network-node-state.yaml
+}
+
+function get_lca_image_builder_log() {
+    echo "INFO: Collecting lca_image_builder container log" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+    /bin/bash -c "podman logs lca_image_builder" &> $LCA_DATA_PATH/lca_image_builder.log
+}
+
+function get_installationConfiguration_service_log() {
+    echo "INFO: Collecting installation-configuration.service log" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc adm node-logs --role master -u installation-configuration &> $LCA_DATA_PATH/installation-configuration.service.log
+}
+
+function get_recert_summary() {
+    echo "INFO: Collecting recert-summary.yaml. Looking for it under all stateroots" | tee -a $MUST_GATHER_LOGFILE_PATH
+    rcp=$LCA_DATA_PATH/recert-summary
+    mkdir -p $rcp
+    osnames=($(oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+              /bin/bash -c "rpm-ostree status --json  | jq -r .deployments[].osname | tr \"\n\" \" \""))
+    for stateroot in "${osnames[@]}"; do
+      oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+      /bin/bash -c "cat /ostree/deploy/${stateroot}/var/tmp/recert-summary.yaml" &> $rcp/recert-summary-${stateroot}.yaml
+    done
+}
+
+function get_rpm_ostree_status() {
+    echo "INFO: Collecting rpm-ostree status" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+    /bin/bash -c "rpm-ostree status --json" &> $LCA_DATA_PATH/rpm-ostree-status.json
+}
+
+function get_list_blk() {
+    echo "INFO: Collecting lsblk output" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+    /bin/bash -c "lsblk --json" &> $LCA_DATA_PATH/block.json
+}
+
+function get_logs_from_unbooted() {
+    unbooted=$(oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host /bin/bash -c "rpm-ostree status --json  | jq '.deployments[] | select(.booted==false) | .osname'")
+    unbooted="${unbooted//\"}"
+    if [[ -z $unbooted ]]
+    then
+      echo "INFO: No unbooted stateroot found" | tee -a $MUST_GATHER_LOGFILE_PATH
+    else
+      echo "INFO: Collecting everything under /var/log/ for unbooted stateroot ${unbooted}" | tee -a $MUST_GATHER_LOGFILE_PATH
+      ublogPath=$LCA_DATA_PATH/unbooted-stateroot-var-log/${unbooted}/var/log/
+      mkdir -p $ublogPath
+      oc rsync --compress=true -n ${IBU_NS} -c manager ${HOST_POD}:/host/ostree/deploy/${unbooted}/var/log/ ${ublogPath}/
+    fi
+}
+
+function get_etc() {
+    echo "INFO: Collecting everything under /etc" | tee -a $MUST_GATHER_LOGFILE_PATH
+    etcP=$LCA_DATA_PATH/host-etc
+    mkdir -p $etcP
+    oc rsync --compress=true -n ${IBU_NS} -c manager ${HOST_POD}:/host/etc/ ${etcP}/
+}
+
+get_ns_resources &
+pids+=($!)
+
+get_ibu_crs &
+pids+=($!)
+
+get_lca_image_builder_log &
+pids+=($!)
+
+get_installationConfiguration_service_log &
+pids+=($!)
+
+get_healthcheck_crs &
+pids+=($!)
+
+get_recert_summary &
+pids+=($!)
+
+get_rpm_ostree_status &
+pids+=($!)
+
+get_list_blk &
+pids+=($!)
+
+get_logs_from_unbooted &
+pids+=($!)
+
+get_etc &
+pids+=($!)
+
+echo "INFO: Waiting on lca-data collection to finish" | tee -a $MUST_GATHER_LOGFILE_PATH
+wait "${pids[@]}"
+echo "INFO: Done lca-data collection" | tee -a $MUST_GATHER_LOGFILE_PATH
+
+# force disk flush to ensure that all data gathered is accessible in the copy container
+sync
