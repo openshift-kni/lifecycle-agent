@@ -38,7 +38,7 @@ var osRemoveAll = os.RemoveAll
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
-	if successful, errMsg := r.cleanup(ctx, false, ibu); successful {
+	if successful, errMsg := r.cleanup(ctx); successful {
 		r.Log.Info("Finished handleAbort successfully")
 		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
 		return doNotRequeue(), nil
@@ -94,7 +94,7 @@ func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ib
 func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleFinalize")
 
-	if successful, errMsg := r.cleanup(ctx, true, ibu); successful {
+	if successful, errMsg := r.cleanup(ctx); successful {
 		r.Log.Info("Finished handleFinalize successfully")
 		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
 		return doNotRequeue(), nil
@@ -113,9 +113,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 
 // cleanup cleans stateroots, precache, backup, ibu files
 // returns true if all cleanup tasks were successful
-func (r *ImageBasedUpgradeReconciler) cleanup(
-	ctx context.Context, allUnbootedStateroots bool,
-	ibu *lcav1alpha1.ImageBasedUpgrade) (bool, string) {
+func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context) (bool, string) {
 	// try to clean up as much as possible and avoid returning when one of the cleanup tasks fails
 	// successful means that all the cleanup tasks completed without any error
 	successful := true
@@ -131,7 +129,7 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		r.PrepTask.Cancel()
 		r.PrepTask.Reset()
 	}
-	if err := r.cleanupStateroots(allUnbootedStateroots, ibu); err != nil {
+	if err := r.cleanupUnbootedStateroots(); err != nil {
 		handleError(err, "failed to cleanup stateroots.")
 	}
 	if err := r.Precache.Cleanup(ctx); err != nil {
@@ -151,16 +149,6 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 	}
 
 	return successful, errorMessage
-}
-
-// cleanupStateroot cleans all unbooted stateroots or desired stateroot
-// depending on allUnbootedStateroots argument
-func (r *ImageBasedUpgradeReconciler) cleanupStateroots(
-	allUnbootedStateroots bool, ibu *lcav1alpha1.ImageBasedUpgrade) error {
-	if allUnbootedStateroots {
-		return r.cleanupUnbootedStateroots()
-	}
-	return r.cleanupUnbootedStateroot(common.GetDesiredStaterootName(ibu))
 }
 
 func cleanupIBUFiles() error {
