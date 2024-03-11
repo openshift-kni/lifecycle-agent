@@ -276,7 +276,7 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Upg
 
 Pre-pivot:
 
-- LCA collects the required cluster specific info/artifacts and stores them in the new state root. This includes hostname, nmconnection files, cluster ID, NodeIP and various OCP platform CRs from etcd.
+- LCA collects the required cluster specific info/artifacts and stores them in the new state root. This includes hostname, nmconnection files, cluster ID, NodeIP and various OCP platform CRs(i.e., imagecontentimagecontentsourcepolicies, localvolumes.local.storage.openshift.io) from etcd.
 - Applies OADP backup CRs as specified by the `oadpContent` field in the IBU spec. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 - Stores OADP restore CRs as specified by the `oadpContent` field in the IBU spec to the new state root. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 - Stores CRs specified by the `extraManifests` field in the IBU spec as well as the CRs described in the ZTP policies bound to the cluster for the target OCP version to the new state root.
