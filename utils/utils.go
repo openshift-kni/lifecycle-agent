@@ -109,15 +109,17 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 	return &nodesList.Items[0], nil
 }
 
-func ReadYamlOrJSONFile(filePath string, into any) error {
-	data, err := os.ReadFile(filePath)
+func ReadYamlOrJSONFile(fp string, into any) error {
+	fp = filepath.Clean(fp)
+
+	data, err := os.ReadFile(fp)
 	if err != nil {
 		return err // nolint:wrapcheck
 	}
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
 	if err := decoder.Decode(into); err != nil {
-		return fmt.Errorf("failed to decode %s: %w", filePath, err)
+		return fmt.Errorf("failed to decode %s: %w", fp, err)
 	}
 
 	return nil
