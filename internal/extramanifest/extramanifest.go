@@ -116,9 +116,9 @@ func IsEMUnknownCRDError(err error) bool {
 	return false
 }
 
-func (h *EMHandler) applyExtraManifest(ctx context.Context, manifest *unstructured.Unstructured, isDryRun bool) error {
+func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper meta.RESTMapper, manifest *unstructured.Unstructured, isDryRun bool) error {
 	// Mapping resource GVK to CVR
-	mapping, err := h.Client.RESTMapper().RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
+	mapping, err := restMapper.RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
 	if err != nil {
 		return fmt.Errorf("failed to get RESTMapping: %w", err)
 	}
@@ -126,7 +126,7 @@ func (h *EMHandler) applyExtraManifest(ctx context.Context, manifest *unstructur
 	// Check if the resource exists
 	existingManifest := &unstructured.Unstructured{}
 	existingManifest.SetGroupVersionKind(manifest.GroupVersionKind())
-	resource := h.DynamicClient.Resource(mapping.Resource).Namespace(manifest.GetNamespace())
+	resource := dc.Resource(mapping.Resource).Namespace(manifest.GetNamespace())
 	existingManifest, err = resource.Get(ctx, manifest.GetName(), metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
@@ -140,6 +140,7 @@ func (h *EMHandler) applyExtraManifest(ctx context.Context, manifest *unstructur
 			}
 		}
 
+		manifest.SetResourceVersion("")
 		if _, err := resource.Create(ctx, manifest, opts); err != nil {
 			return fmt.Errorf("failed to create manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
 		}
@@ -186,7 +187,7 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 	// Apply manifest with dryrun
 	dryrun := true
 	for _, manifest := range manifests {
-		err = h.applyExtraManifest(ctx, manifest, dryrun)
+		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryrun)
 		if err != nil {
 			h.Log.Error(err, "Failed to apply manifest with dryrun")
 			errMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
@@ -357,7 +358,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		}
 
 		h.Log.Info("Applying manifest from file", "path", manifestYamlPath)
-		err = h.applyExtraManifest(ctx, manifest, false)
+		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, false)
 		if err != nil {
 			h.Log.Error(err, "Failed to apply manifest")
 			errMsg := fmt.Sprintf("failed to apply manifest: %v", err.Error())
