@@ -387,9 +387,16 @@ func (r *SeedGeneratorReconciler) rmPreviousImagerContainer() error {
 	return nil
 }
 
+// getRecertImagePullSpec returns the recert image pull-spec, based on the following priority order:
+//   - Use recertImage from seedgen spec, if specified
+//   - If not, get the value from the recert image environment variable
+//   - If environment variable is not set, use the default value
 func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) (recertImage string) {
 	if seedgen.Spec.RecertImage == "" {
-		recertImage = common.DefaultRecertImage
+		recertImage = os.Getenv(common.RecertImageEnvKey)
+		if recertImage == "" {
+			recertImage = common.DefaultRecertImage
+		}
 	} else {
 		recertImage = seedgen.Spec.RecertImage
 	}
