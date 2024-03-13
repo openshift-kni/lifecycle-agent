@@ -61,18 +61,37 @@ spec:
                 - namespace
                 type: object
               autoRollbackOnFailure:
+                description: AutoRollbackOnFailure defines automatic rollback settings
+                  if the upgrade fails or if the upgrade does not complete within
+                  the specified time limit.
                 properties:
                   disabledForPostRebootConfig:
+                    description: DisabledForPostRebootConfig when set to true, disables
+                      automatic rollback when the reconfiguration of the cluster fails
+                      upon the first reboot.
                     type: boolean
                   disabledForUpgradeCompletion:
+                    description: DisabledForUpgradeCompletion when set to true, disables
+                      automatic rollback after the Lifecycle Agent reports a failed
+                      upgrade upon completion.
                     type: boolean
                   disabledInitMonitor:
+                    description: DisabledInitMonitor when set to true, disables automatic
+                      rollback when the upgrade does not complete after reboot within
+                      the time frame specified in the initMonitorTimeoutSeconds field.
                     type: boolean
                   initMonitorTimeoutSeconds:
+                    description: InitMonitorTimeoutSeconds defines the time frame
+                      in seconds. If not defined or set to 0, the default value of
+                      1800 seconds (30 minutes) is used.
                     minimum: 0
                     type: integer
                 type: object
               extraManifests:
+                description: ExtraManifests defines the ConfigMap resource for the
+                  user-specific extra manifests in the Prep stage. Users can also
+                  add their custom catalog sources that you want to retain after the
+                  upgrade.
                 items:
                   description: ConfigMapRef defines a reference to a config map
                   properties:
@@ -86,6 +105,8 @@ spec:
                   type: object
                 type: array
               oadpContent:
+                description: OADPContent defines the list of ConfigMap resources that
+                  contain the OADP Backup and Restore CRs.
                 items:
                   description: ConfigMapRef defines a reference to a config map
                   properties:
@@ -103,10 +124,12 @@ spec:
                   the upgrade
                 properties:
                   image:
+                    description: Image defines the full pull-spec of the seed container
+                      image to use.
                     type: string
                   pullSecretRef:
-                    description: PullSecretRef defines a reference to a secret with
-                      credentials for pulling container images
+                    description: PullSecretRef defines the reference to a secret with
+                      credentials to pull container images.
                     properties:
                       name:
                         type: string
@@ -114,6 +137,8 @@ spec:
                     - name
                     type: object
                   version:
+                    description: Version defines the target platform version. The
+                      value must match the version of the seed image.
                     type: string
                 type: object
               stage:
