@@ -19,6 +19,8 @@ package precache
 import (
 	"context"
 	"fmt"
+	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -314,12 +316,24 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"))
+			ibu := v1alpha1.ImageBasedUpgrade{}
+			sc := runtime.NewScheme()
+			_ = v1alpha1.AddToScheme(sc)
+
+			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"), &ibu, sc)
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, renderedJob)
+
+				// owners reference are set
+				assert.Equal(t, len(renderedJob.GetOwnerReferences()), 1)
+				assert.Equal(t, renderedJob.GetOwnerReferences()[0].Kind, "ImageBasedUpgrade")
+
+				// finalizer set
+				assert.Equal(t, len(renderedJob.GetFinalizers()), 1)
+				assert.Equal(t, renderedJob.GetFinalizers()[0], LcaPrecacheFinalizer)
 
 				expectedJob := getExpectedBaseJob()
 				expectedJob.Spec.Template.Spec.Containers[0].Args = tc.expectedArgs

@@ -28,6 +28,7 @@ const (
 	LcaPrecacheServiceAccount string = "lifecycle-agent-controller-manager"
 	LcaPrecacheJobName        string = "lca-precache-job"
 	LcaPrecacheConfigMapName  string = "lca-precache-cm"
+	LcaPrecacheFinalizer             = "lca.precache.io/finalizer"
 )
 
 // Image paths

@@ -23,6 +23,10 @@ import (
 	"os"
 	"sync"
 
+	kbatchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
@@ -144,7 +148,17 @@ func main() {
 		Metrics: server.Options{
 			BindAddress: metricsAddr,
 		},
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&kbatchv1.Job{}: {
+					Namespaces: map[string]cache.Config{
+						common.LcaNamespace: {
+							FieldSelector: fields.SelectorFromSet(fields.Set{"metadata.name": precache.LcaPrecacheJobName})}},
+				},
+			},
+		},
 	})
+
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -192,7 +206,7 @@ func main() {
 		NoncachedClient: mgr.GetAPIReader(),
 		Log:             log,
 		Scheme:          mgr.GetScheme(),
-		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache")},
+		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache"), Scheme: mgr.GetScheme()},
 		RPMOstreeClient: rpmOstreeClient,
 		Executor:        executor,
 		OstreeClient:    ostreeClient,
