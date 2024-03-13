@@ -31,6 +31,7 @@ const (
 	ImageRegistryAuthFile = "/var/lib/kubelet/config.json"
 	KubeconfigFile        = "/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-ext.kubeconfig"
 
+	RecertImageEnvKey      = "RELATED_IMAGE_RECERT_IMAGE"
 	DefaultRecertImage     = "quay.io/edge-infrastructure/recert:release-4.15"
 	EtcdStaticPodFile      = "/etc/kubernetes/manifests/etcd-pod.yaml"
 	EtcdStaticPodContainer = "etcd"
