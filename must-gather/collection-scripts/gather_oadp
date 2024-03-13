@@ -1,0 +1,58 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="${1}"
+OADP_DATA_PATH="${BASE_COLLECTION_PATH}/oadp-data"
+MUST_GATHER_LOGFILE_PATH="${2}"
+OADP_NS="openshift-adp"
+
+oadp_found="$(oc -n $OADP_NS get deployment openshift-adp-controller-manager --ignore-not-found --no-headers)"
+if [[ -z $oadp_found ]]; then
+    echo "INFO: OADP not found, skipping OADP collection" | tee -a $MUST_GATHER_LOGFILE_PATH
+    exit 0
+fi
+
+mkdir -p $OADP_DATA_PATH
+
+function get_oadp_install_resources() {
+    echo "INFO: Collecting OADP install resources" | tee -a $MUST_GATHER_LOGFILE_PATH
+    install_resources_path=$OADP_DATA_PATH/install-resources
+    mkdir -p $install_resources_path
+
+    oc -n $OADP_NS get subscription openshift-adp -oyaml &> $install_resources_path/Subscription.yaml
+    oc -n $OADP_NS get operatorgroup openshift-adp -oyaml &> $install_resources_path/OperatorGroup.yaml
+    oc get ns $OADP_NS -oyaml &> $install_resources_path/Namespace.yaml
+}
+
+
+function get_oadp_crs() {
+    OADP_CRDS+=($(oc get crd | awk '/oadp.openshift.io/{print $1}'))
+    OADP_CRDS+=($(oc get crd | awk '/velero.io/{print $1}'))
+
+    for CRD in "${OADP_CRDS[@]}"; do
+        echo "INFO: Collecting $CRD CR" | tee -a $MUST_GATHER_LOGFILE_PATH
+        oc adm inspect --dest-dir "${OADP_DATA_PATH}/cr" "${CRD}" -A &
+        cr_pids+=($!)
+    done
+    wait "${cr_pids[@]}"
+}
+
+function get_odap_ns_resrouces() {
+    echo "INFO: Collecting resources from ns ${OADP_NS}" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc adm inspect --dest-dir "${OADP_DATA_PATH}/ns-resources" "ns/${OADP_NS}"
+}
+
+get_oadp_install_resources &
+pids+=($!)
+
+get_oadp_crs &
+pids+=($!)
+
+get_odap_ns_resrouces &
+pids+=($!)
+
+echo "INFO: Waiting for oadp-data collection to finish" | tee -a $MUST_GATHER_LOGFILE_PATH
+wait "${pids[@]}"
+echo "INFO: DONE with oadp-data collection" | tee -a $MUST_GATHER_LOGFILE_PATH
+
+# force disk flush to ensure that all data gathered is accessible in the copy container
+sync

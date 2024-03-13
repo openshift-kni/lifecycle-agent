@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+function version() {
+  if [[ -n $LIFECYCLE_AGENT_VERSION ]] ; then
+    echo "${LIFECYCLE_AGENT_VERSION}"
+  else
+    echo "0.0.0-unknown-lifecycle-agent"
+  fi
+}
