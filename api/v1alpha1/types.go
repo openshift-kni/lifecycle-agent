@@ -33,6 +33,7 @@ import (
 // +kubebuilder:validation:XValidation:message="can not change spec.extraManifests while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests) && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests) && !has(oldSelf.spec.extraManifests)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +operator-sdk:csv:customresourcedefinitions:displayName="Image-based Cluster Upgrade",resources={{Namespace, v1},{Deployment,apps/v1}}
+
 // ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
 type ImageBasedUpgrade struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -67,9 +68,12 @@ type ImageBasedUpgradeSpec struct {
 	SeedImageRef SeedImageRef `json:"seedImageRef,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Additional Images"
 	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
+	// OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content"
 	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Extra Manifests"
+	// ExtraManifests defines the ConfigMap resource for the user-specific extra manifests in the Prep stage.
+	// Users can also add their custom catalog sources that you want to retain after the upgrade.
 	ExtraManifests []ConfigMapRef `json:"extraManifests,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
 	AutoRollbackOnFailure AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
@@ -77,21 +81,34 @@ type ImageBasedUpgradeSpec struct {
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
 type SeedImageRef struct {
+	// Version defines the target platform version. The value must match the version of the seed image.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Version string `json:"version,omitempty"`
+	// Image defines the full pull-spec of the seed container image to use.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Image string `json:"image,omitempty"`
+	// PullSecretRef defines the reference to a secret with credentials to pull container images.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Pull Secret Reference"
 	PullSecretRef *PullSecretRef `json:"pullSecretRef,omitempty"`
 }
 
+// AutoRollbackOnFailure defines automatic rollback settings if the upgrade fails or if the upgrade does not
+// complete within the specified time limit.
 type AutoRollbackOnFailure struct {
+	// DisabledForPostRebootConfig when set to true, disables automatic rollback when the reconfiguration of the
+	// cluster fails upon the first reboot.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
 	DisabledForPostRebootConfig bool `json:"disabledForPostRebootConfig,omitempty"` // If true, disable auto-rollback for post-reboot config service-unit(s)
+	// DisabledForUpgradeCompletion when set to true, disables automatic rollback after the Lifecycle Agent reports
+	// a failed upgrade upon completion.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
 	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"` // If true, disable auto-rollback for Upgrade completion handler
+	// DisabledInitMonitor when set to true, disables automatic rollback when the upgrade does not complete after
+	// reboot within the time frame specified in the initMonitorTimeoutSeconds field.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
 	DisabledInitMonitor bool `json:"disabledInitMonitor,omitempty"` // If true, disable LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
+	// InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0, the default value of
+	// 1800 seconds (30 minutes) is used.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"` // LCA Init Monitor watchdog timeout, in seconds. Value <= 0 is treated as "use default" when writing config file in Prep stage
 }
