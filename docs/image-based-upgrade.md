@@ -487,6 +487,37 @@ This will:
 
 Once completed, the system is ready for the next upgrade.
 
+#### Finalize or Abort failure
+
+If finalize or abort fails, IBU transitions into `FinalizeFailed` or
+`AbortFailed` states respectively.
+
+```yaml
+  status:
+    conditions:
+    - message: failed to delete all the backup CRs. Perform cleanup manually then add 'lca.openshift.io/manualCleanupDone' annotation to ibu CR to transition back to Idle
+      observedGeneration: 5
+      reason: AbortFailed
+      status: "False"
+      type: Idle
+```
+
+The condition message indicates which parts of the cleanup have failed.
+User should perform the [cleanup manually](troubleshooting.md#manual-cleanup) in these states.
+After manual cleanup user should add `lca.openshift.io/manualCleanupDone` annotation
+to IBU CR.
+
+```yaml
+  kind: ImageBasedUpgrade
+  metadata:
+    annotations:
+      lca.openshit.io/manualCleanupDone: ""
+
+```
+
+Upon observing this annotation, IBU will remove the annotation and run
+abort/finalize again. If successful, IBU transitions back to the `Idle` state.
+
 ### Monitoring Progress
 
 LCA Operator logs:
