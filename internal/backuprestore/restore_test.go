@@ -388,7 +388,7 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	}
 }
 
-func TestRestoreDataProtectionApplications(t *testing.T) {
+func TestEnsureOadpConfigurations(t *testing.T) {
 	// Create temporary directory
 	fromDir, err := os.MkdirTemp("", "staterootB")
 	if err != nil {
@@ -397,7 +397,7 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 	defer os.RemoveAll(fromDir)
 
 	// Create oadp directory
-	dpaDir := filepath.Join(fromDir, oadpDpaPath)
+	dpaDir := filepath.Join(fromDir, OadpDpaPath)
 	if err := os.MkdirAll(dpaDir, 0755); err != nil {
 		t.Fatalf("Failed to create oadp directory: %v", err)
 	}
@@ -411,6 +411,15 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 				"name":      "oadp",
 				"namespace": OadpNs,
 			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
+						"type":   "Reconciled",
+						"status": "True",
+						"reason": "Complete",
+					},
+				},
+			},
 		},
 	}
 	dpaFilePath := filepath.Join(dpaDir, dpa.GetName()+".yaml")
@@ -418,7 +427,7 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 		t.Errorf("error in writing dpa to file")
 	}
 
-	fakeClient, err := getFakeClientFromObjects()
+	fakeClient, err := getFakeClientFromObjects(dpa)
 	if err != nil {
 		t.Errorf("error in creating fake client")
 	}
@@ -429,12 +438,11 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 	}
 
 	errorChan := make(chan error)
-
-	// Test restore of DataProtectionApplication
+	// Verify DPA is reconciled and storage backends are availiable
 	go func() {
 		// Override the default host path
 		hostPath = fromDir
-		err := handler.restoreDataProtectionApplication(context.Background())
+		err := handler.EnsureOadpConfiguration(context.Background())
 		errorChan <- err
 	}()
 
@@ -444,15 +452,6 @@ func TestRestoreDataProtectionApplications(t *testing.T) {
 	if err := fakeClient.Create(context.Background(), bsl); err != nil {
 		t.Errorf("error in creating backup storage location")
 	}
-
-	// Verify dpa is created
-	existingDpa := &unstructured.Unstructured{}
-	existingDpa.SetGroupVersionKind(dpaGvk)
-	err = fakeClient.Get(context.Background(), client.ObjectKey{
-		Name: "oadp", Namespace: OadpNs,
-	}, existingDpa)
-	assert.NoError(t, err)
-
 }
 
 func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorageLocationPhase) *velerov1.BackupStorageLocation {

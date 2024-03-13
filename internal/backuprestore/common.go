@@ -21,16 +21,20 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -61,8 +65,8 @@ const (
 
 	OadpPath        = "/opt/OADP"
 	OadpRestorePath = OadpPath + "/veleroRestore"
-	oadpDpaPath     = OadpPath + "/dpa"
-	oadpSecretPath  = OadpPath + "/secret"
+	OadpDpaPath     = OadpPath + "/dpa"
+	OadpSecretPath  = OadpPath + "/secret"
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
 	OadpNs = "openshift-adp"
@@ -81,11 +85,11 @@ var (
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
 	CheckOadpOperatorAvailability(ctx context.Context) error
+	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
 	GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error)
 	LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, error)
-	RestoreOadpConfigurations(ctx context.Context) error
 	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
 	ValidateOadpConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error
@@ -216,6 +220,60 @@ func getClusterID(ctx context.Context, c client.Client) (string, error) {
 	return string(clusterVersion.Spec.ClusterID), nil
 }
 
+func CreateOrUpdateSecret(ctx context.Context, secret *corev1.Secret, c client.Client) error {
+	existingSecret := &corev1.Secret{}
+	err := c.Get(ctx, types.NamespacedName{
+		Name:      secret.Name,
+		Namespace: secret.Namespace,
+	}, existingSecret)
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get secret: %w", err)
+		}
+		// Create the secret if it does not exist
+		if err := c.Create(ctx, secret); err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create secret: %w", err)
+			}
+		}
+	} else {
+		secret.SetResourceVersion(existingSecret.GetResourceVersion())
+		if err := c.Update(ctx, secret); err != nil {
+			return fmt.Errorf("failed to update secret: %w", err)
+		}
+	}
+	return nil
+}
+
+func CreateOrUpdateDataProtectionAppliation(ctx context.Context, dpa *unstructured.Unstructured, c client.Client) error {
+	dpa.SetGroupVersionKind(dpaGvk)
+	unstructured.RemoveNestedField(dpa.Object, "status")
+
+	existingDpa := &unstructured.Unstructured{}
+	existingDpa.SetGroupVersionKind(dpaGvk)
+	err := c.Get(ctx, types.NamespacedName{
+		Name:      dpa.GetName(),
+		Namespace: dpa.GetNamespace(),
+	}, existingDpa)
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("could not get DataProtectionApplication: %w", err)
+		}
+		// Create the DPA if it does not exist
+		if err := c.Create(ctx, dpa); err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create DataProtectionApplication: %w", err)
+			}
+		}
+	} else {
+		dpa.SetResourceVersion(existingDpa.GetResourceVersion())
+		if err := c.Update(ctx, dpa); err != nil {
+			return fmt.Errorf("failed to update DataProtectionApplication: %w", err)
+		}
+	}
+	return nil
+}
+
 func setBackupLabelSelector(backup *velerov1.Backup) {
 	if backup.Spec.LabelSelector == nil {
 		backup.Spec.LabelSelector = &metav1.LabelSelector{}
@@ -272,6 +330,37 @@ func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 		}
 	}
 	return false
+}
+
+func ReadOadpDataProtectionApplication(dpaYamlDir string) (*unstructured.Unstructured, error) {
+	dpaYamls, err := os.ReadDir(dpaYamlDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read DataProtectionApplication dir %s: %w", dpaYamlDir, err)
+	}
+	if len(dpaYamls) == 0 {
+		return nil, nil
+	}
+
+	if len(dpaYamls) > 1 {
+		// Unexpected error
+		return nil, fmt.Errorf("found more than one DataProtectionApplication yamls in %s", dpaYamlDir)
+	}
+
+	dpaYamlPath := filepath.Join(dpaYamlDir, dpaYamls[0].Name())
+	if dpaYamls[0].IsDir() {
+		// Unexpected error
+		return nil, fmt.Errorf("%s is a directory instead of file", dpaYamlPath)
+	}
+
+	dpa := &unstructured.Unstructured{}
+	dpa.SetGroupVersionKind(dpaGvk)
+	if err := utils.ReadYamlOrJSONFile(dpaYamlPath, dpa); err != nil {
+		return nil, fmt.Errorf("failed to read DataProtectionApplication from %s: %w", dpaYamlPath, err)
+	}
+	return dpa, nil
 }
 
 func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool, payload []byte) error {

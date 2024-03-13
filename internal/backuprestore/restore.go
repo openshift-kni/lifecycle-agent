@@ -261,167 +261,35 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 	return sortedRestores, nil
 }
 
-// RestoreOadpConfigurations restores the backed up OADP DataProtectionApplication CRs and storage secrets
-func (h *BRHandler) RestoreOadpConfigurations(ctx context.Context) error {
-	if err := h.restoreSecrets(ctx); err != nil {
-		return err
-	}
-
-	return h.restoreDataProtectionApplication(ctx)
-}
-
-// restoreSecrets restores the previous backed up secrets for object storage backend
-// from the given location
-func (h *BRHandler) restoreSecrets(ctx context.Context) error {
-	secretYamlDir := filepath.Join(hostPath, oadpSecretPath)
-	secretYamls, err := os.ReadDir(secretYamlDir)
+// EnsureOadpConfiguration checks OADP configuration
+func (h *BRHandler) EnsureOadpConfiguration(ctx context.Context) error {
+	h.Log.Info("Checking OADP configuration")
+	dpaYamlDir := filepath.Join(hostPath, OadpDpaPath)
+	dpa, err := ReadOadpDataProtectionApplication(dpaYamlDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read secret dir in %s: %w", secretYamlDir, err)
+		return fmt.Errorf("failed to get stored DataProtectionApplication: %w", err)
 	}
-
-	h.Log.Info("Recovering OADP secret")
-	if len(secretYamls) == 0 {
-		h.Log.Info("No secrets found", "path", secretYamlDir)
+	if dpa == nil {
+		h.Log.Info("No OADP configuration applied, skipping")
 		return nil
 	}
 
-	for _, secretYaml := range secretYamls {
-		secretYamlPath := filepath.Join(secretYamlDir, secretYaml.Name())
-		if secretYaml.IsDir() {
-			// Unexpected
-			h.Log.Info("Unexpected directory found, skipping", "directory", secretYamlPath)
-			continue
-		}
-
-		secret := &corev1.Secret{}
-		err := utils.ReadYamlOrJSONFile(secretYamlPath, secret)
-		if err != nil {
-			return fmt.Errorf("failed to read restore secret in %s: %w", secretYamlPath, err)
-		}
-
-		h.Log.Info("Creating secret from file", "path", secretYamlPath)
-		existingSecret := &corev1.Secret{}
-		err = h.Get(ctx, types.NamespacedName{
-			Name:      secret.Name,
-			Namespace: secret.Namespace,
-		}, existingSecret)
-		if err != nil {
-			if !k8serrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get secret: %w", err)
-			}
-			// Create the secret if it does not exist
-			if err := h.Create(ctx, secret); err != nil {
-				if !k8serrors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create secret: %w", err)
-				}
-			}
-			h.Log.Info("Secret restored", "name", secret.GetName(), "namespace", secret.GetNamespace())
-		} else {
-			secret.SetResourceVersion(existingSecret.GetResourceVersion())
-			if err := h.Update(ctx, secret); err != nil {
-				return fmt.Errorf("failed to update secret: %w", err)
-			}
-			h.Log.Info("Secret updated", "name", secret.GetName(), "namespace", secret.GetNamespace())
-		}
-	}
-
-	// Cleanup the oadp secret path
-	if err := os.RemoveAll(secretYamlDir); err != nil {
-		return fmt.Errorf("failed to clean oadp secret in %s: %w", secretYamlDir, err)
-	}
-	h.Log.Info("OADP secret path removed", "path", secretYamlDir)
-	return nil
-}
-
-// restoreDataProtectionApplication restores the previous backed up DataProtectionApplication CR
-// from oadp DPA path
-func (h *BRHandler) restoreDataProtectionApplication(ctx context.Context) error {
-	dpaYamlDir := filepath.Join(hostPath, oadpDpaPath)
-	dpaYamls, err := os.ReadDir(dpaYamlDir)
+	// Ensure the DPA is reconciled successfully
+	err = h.ensureDPAReconciled(ctx, dpa.GetName(), dpa.GetNamespace())
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read DPA yaml in %s: %w", dpaYamls, err)
-	}
-
-	h.Log.Info("Recovering OADP DataProtectionApplication")
-	if len(dpaYamls) == 0 {
-		h.Log.Info("No DataProtectionApplication found", "path", dpaYamlDir)
-		return nil
-	}
-
-	for _, dpaYaml := range dpaYamls {
-		dpaYamlPath := filepath.Join(dpaYamlDir, dpaYaml.Name())
-		if dpaYaml.IsDir() {
-			// Unexpected
-			h.Log.Info("Unexpected directory found, skipping", "directory", dpaYamlPath)
-			continue
-		}
-
-		dpa := &unstructured.Unstructured{}
-		dpa.SetGroupVersionKind(dpaGvk)
-		err := utils.ReadYamlOrJSONFile(dpaYamlPath, dpa)
-		if err != nil {
-			return fmt.Errorf("failed to create DPA unstructure using %s: %w", dpaYamlPath, err)
-		}
-		// Although Create() and Update() will not restore the object status,
-		// remove the status field from the DPA CR just in case
-		unstructured.RemoveNestedField(dpa.Object, "status")
-
-		h.Log.Info("Creating DataProtectionApplication from file", "path", dpaYamlPath)
-		existingDpa := &unstructured.Unstructured{}
-		existingDpa.SetGroupVersionKind(dpaGvk)
-		err = h.Client.Get(ctx, types.NamespacedName{
-			Name:      dpa.GetName(),
-			Namespace: dpa.GetNamespace(),
-		}, existingDpa)
-		if err != nil {
-			if !k8serrors.IsNotFound(err) {
-				return fmt.Errorf("could not get DataProtectionApplication: %w", err)
-			}
-			// Create the DPA if it does not exist
-			if err := h.Create(ctx, dpa); err != nil {
-				if !k8serrors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create DPA: %w", err)
-				}
-			}
-			h.Log.Info("DataProtectionApplication restored", "name", dpa.GetName(), "namespace", dpa.GetNamespace())
-		} else {
-			dpa.SetResourceVersion(existingDpa.GetResourceVersion())
-			if err := h.Update(ctx, dpa); err != nil {
-				return fmt.Errorf("failed to update dpa: %w", err)
-			}
-			h.Log.Info("DataProtectionApplication updated", "name", dpa.GetName(), "namespace", dpa.GetNamespace())
-		}
-
-		// Ensure the DPA is reconciled successfully
-		err = h.ensureDPAReconciled(ctx, dpa.GetName(), dpa.GetNamespace())
-		if err != nil {
-			return fmt.Errorf("failed to ensure DPA reconcilde successfully: %w", err)
-		}
+		return fmt.Errorf("failed to ensure DataProtectionApplication reconcile successfully: %w", err)
 	}
 
 	// Ensure the storage backends are created and available
-	// after the restore of DataProtectionApplications
 	if err := h.ensureStorageBackendAvailable(ctx, OadpNs); err != nil {
 		return fmt.Errorf("failed to ensure StorageBackend availability: %w", err)
 	}
-
-	// Cleanup the oadp DPA path
-	if err := os.RemoveAll(dpaYamlDir); err != nil {
-		return fmt.Errorf("failed remove oadp DPA path %s: %w", dpaYamls, err)
-	}
-	h.Log.Info("OADP DataProtectionApplication path removed", "path", dpaYamlDir)
 	return nil
 }
 
 // ensureDPAReconciled ensures the DataProtectionApplication CR is reconciled successfully
 func (h *BRHandler) ensureDPAReconciled(ctx context.Context, name, namespace string) error {
-	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true,
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, true,
 		func(ctx context.Context) (done bool, err error) {
 			dpa := &unstructured.Unstructured{}
 			dpa.SetGroupVersionKind(dpaGvk)
@@ -430,6 +298,11 @@ func (h *BRHandler) ensureDPAReconciled(ctx context.Context, name, namespace str
 				Namespace: namespace,
 			}, dpa)
 			if err != nil {
+				if k8serrors.IsNotFound(err) {
+					errMsg := fmt.Sprintf("DataProtectionApplication %s is not found", name)
+					h.Log.Error(err, errMsg)
+					return false, NewBRStorageBackendUnavailableError(errMsg)
+				}
 				return false, nil
 			}
 
@@ -441,10 +314,12 @@ func (h *BRHandler) ensureDPAReconciled(ctx context.Context, name, namespace str
 			return false, nil
 		})
 	if err != nil {
-		// Only context.DeadlineExceeded err could be returned
-		errMsg := fmt.Sprintf("Timeout waiting for DataProtectionApplication CR %s to be reconciled", name)
-		h.Log.Error(err, errMsg)
-		return NewBRStorageBackendUnavailableError(errMsg)
+		if errors.Is(err, context.DeadlineExceeded) {
+			errMsg := fmt.Sprintf("Timeout waiting for DataProtectionApplication CR %s to be reconciled", name)
+			h.Log.Error(err, errMsg)
+			return NewBRStorageBackendUnavailableError(errMsg)
+		}
+		return err //nolint:wrapcheck
 	}
 	return nil
 }
@@ -453,7 +328,9 @@ func (h *BRHandler) ensureDPAReconciled(ctx context.Context, name, namespace str
 // It returns NewBRStorageBackendUnavailableError if the storage backend
 // is not available because of an error, no storage backend is created after
 // 5 minutes, or it's timed out waiting for the storage backend to be available
-// due to unknown reasons
+// due to unknown reasons.
+// Since DPA has been restored earlier during node startup following the reboot,
+// at this point, all storage backends should already be available.
 func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs string) error {
 	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
 		func(ctx context.Context) (done bool, err error) {
@@ -469,7 +346,6 @@ func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs 
 				return false, nil
 			}
 
-			h.Log.Info("Waiting for backup storage locations to be available")
 			for _, bsl := range backupStorageLocation.Items {
 				if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseUnavailable {
 					errMsg := fmt.Sprintf("BackupStorageLocation is unavailable. Name: %s, Error: %s", bsl.Name, bsl.Status.Message)
@@ -484,6 +360,8 @@ func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs 
 				h.Log.Info("All backup storage locations are available")
 				return true, nil
 			}
+
+			h.Log.Info("Waiting for backup storage locations to be available")
 			return false, nil
 		})
 	if err != nil {
