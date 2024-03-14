@@ -232,7 +232,7 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 
 		// The returned list of entries are sorted by name alphabetically
 		restoreDirPath := filepath.Join(OadpRestorePath, restoreSubDir.Name())
-		restoreYamls, err := os.ReadDir(filepath.Join(hostPath, restoreDirPath))
+		restoreYamls, err := os.ReadDir(filepath.Clean(filepath.Join(hostPath, restoreDirPath)))
 		if err != nil {
 			return nil, fmt.Errorf("failed get restore yamls in %s: %w", restoreYamls, err)
 		}

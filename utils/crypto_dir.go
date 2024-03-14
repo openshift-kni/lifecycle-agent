@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	cryptoDirMode    = 0o600
-	passwordHashFile = "kubeadmin-password-hash.txt"
+	cryptoDirMode = 0o600
+	pwHashFile    = "kubeadmin-password-hash.txt"
 )
 
 func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) error {
@@ -133,7 +133,7 @@ func BackupKubeadminPasswordHash(ctx context.Context, client runtimeclient.Clien
 		return false, fmt.Errorf("failed to get kubeadmin password: %w", err)
 	}
 
-	if err := os.WriteFile(path.Join(cryptoDir, passwordHashFile), []byte(password), cryptoDirMode); err != nil {
+	if err := os.WriteFile(path.Join(cryptoDir, pwHashFile), []byte(password), cryptoDirMode); err != nil {
 		return false, fmt.Errorf("failed to write kubeadmin password hash: %w", err)
 	}
 
@@ -141,7 +141,7 @@ func BackupKubeadminPasswordHash(ctx context.Context, client runtimeclient.Clien
 }
 
 func LoadKubeadminPasswordHash(cryptoDir string) (string, error) {
-	if _, err := os.Stat(path.Join(cryptoDir, passwordHashFile)); err != nil {
+	if _, err := os.Stat(path.Join(cryptoDir, pwHashFile)); err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
@@ -149,7 +149,7 @@ func LoadKubeadminPasswordHash(cryptoDir string) (string, error) {
 		return "", fmt.Errorf("failed to check if kubeadmin password hash exists: %w", err)
 	}
 
-	password, err := os.ReadFile(path.Join(cryptoDir, passwordHashFile))
+	password, err := os.ReadFile(path.Join(cryptoDir, pwHashFile))
 	if err != nil {
 		return "", fmt.Errorf("failed to read kubeadmin password hash: %w", err)
 	}
