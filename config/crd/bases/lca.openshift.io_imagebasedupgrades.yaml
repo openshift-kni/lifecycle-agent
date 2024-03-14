@@ -88,10 +88,10 @@ spec:
                     type: integer
                 type: object
               extraManifests:
-                description: ExtraManifests defines the ConfigMap resource for the
-                  user-specific extra manifests in the Prep stage. Users can also
-                  add their custom catalog sources that you want to retain after the
-                  upgrade.
+                description: ExtraManifests defines the list of ConfigMap resources
+                  that contain the user-specific extra manifests to be applied during
+                  the upgrade post-pivot stage. Users can also add their custom catalog
+                  sources that may want to retain after the upgrade.
                 items:
                   description: ConfigMapRef defines a reference to a config map
                   properties:
