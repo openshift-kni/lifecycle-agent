@@ -143,11 +143,14 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		handleError(err, "failed to cleanup precaching resources.")
 	}
 
-	r.Log.Info("Cleaning up Backup CRs")
+	r.Log.Info("Cleaning up DeleteBackupRequest and Backup CRs")
+	if err := r.BackupRestore.CleanupDeleteBackupRequests(ctx); err != nil {
+		handleError(err, "failed to cleanup DeleteBackupRequest CRs.")
+	}
 	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
 		handleError(err, "failed to cleanup backups.")
 	} else if !allRemoved {
-		err := errors.New("failed to delete all the backup CRs.")
+		err := errors.New("failed to delete all the backup CRs")
 		handleError(err, err.Error())
 	}
 
