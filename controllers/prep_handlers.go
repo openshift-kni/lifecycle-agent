@@ -287,16 +287,17 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 		return fmt.Errorf("failed to validate seed image OCP version: %w", err)
 	}
 
-	// If OADP configmap is provided, validate the configmap and check if OADP operator is available
+	// If OADP configmap is provided, check if OADP operator is available, validate the configmap
+	// and remove stale Backups from object storage if any.
 	if len(ibu.Spec.OADPContent) != 0 {
-		err := r.BackupRestore.ValidateOadpConfigmaps(ctx, ibu.Spec.OADPContent)
-		if err != nil {
-			return fmt.Errorf("failed to validate oadp configMap: %w", err)
-		}
-
-		err = r.BackupRestore.CheckOadpOperatorAvailability(ctx)
+		err := r.BackupRestore.CheckOadpOperatorAvailability(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to check oadp operator availability: %w", err)
+		}
+
+		err = r.BackupRestore.ValidateOadpConfigmaps(ctx, ibu.Spec.OADPContent)
+		if err != nil {
+			return fmt.Errorf("failed to validate oadp configMap: %w", err)
 		}
 	}
 
