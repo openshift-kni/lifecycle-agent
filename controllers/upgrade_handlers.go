@@ -477,6 +477,14 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBas
 	// trigger and track each group
 	for index, backups := range sortedBackupGroups {
 		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
+
+		// check for any stale backup in the group
+		if allStaleBackupsRemoved, err := u.BackupRestore.CleanupStaleBackups(ctx, backups); err != nil {
+			return requeueWithError(fmt.Errorf("failed to cleanup stale Backups: %w", err))
+		} else if !allStaleBackupsRemoved {
+			return requeueWithError(fmt.Errorf("failed to delete all the stale Backup CRs: %w", err))
+		}
+
 		backupTracker, err := u.BackupRestore.StartOrTrackBackup(ctx, backups)
 		if err != nil {
 			return requeueWithError(fmt.Errorf("error while starting or tracking backup: %w", err))
