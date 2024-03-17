@@ -49,7 +49,8 @@ import (
 const oadpNs = "openshift-adp"
 
 var (
-	testscheme = scheme.Scheme
+	testscheme    = scheme.Scheme
+	testClusterID = "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36"
 )
 
 func init() {
@@ -74,6 +75,7 @@ func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
 	}
 	backup.SetName(name)
 	backup.SetNamespace(oadpNs)
+	backup.SetLabels(map[string]string{clusterIDLabel: testClusterID})
 	backup.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
 
 	backup.Spec = velerov1.BackupSpec{
@@ -644,7 +646,7 @@ func TestTriggerBackup(t *testing.T) {
 			Name: "version",
 		},
 		Spec: configv1.ClusterVersionSpec{
-			ClusterID: "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36",
+			ClusterID: configv1.ClusterID(testClusterID),
 		},
 	}
 
