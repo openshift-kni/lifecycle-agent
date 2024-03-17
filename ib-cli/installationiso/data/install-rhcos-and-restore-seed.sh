@@ -22,7 +22,7 @@ if [[ "$create_extra_partition" == "true" ]]; then
     # Create new partition for /var/lib/containers
     sfdisk ${installation_disk} <<< write
     sgdisk --new $extra_partition_number:$extra_partition_start --change-name $extra_partition_number:$extra_partition_label ${installation_disk}
-    mkfs.xfs ${installation_disk}$extra_partition_number
+    mkfs.xfs -f ${installation_disk}$extra_partition_number
 fi
 
 
