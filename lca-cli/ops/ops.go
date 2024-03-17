@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,6 +44,7 @@ type Ops interface {
 	ListBlockDevices() ([]BlockDevice, error)
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
+	ListNodeAddresses() ([]net.Addr, error)
 }
 
 type BlockDevice struct {
@@ -381,4 +383,23 @@ func (o *ops) Umount(deviceName string) error {
 		return fmt.Errorf("failed to unmount %s, err: %w", deviceName, err)
 	}
 	return nil
+}
+
+// ListNodeAddresses return a list of all IP addresses currently configured on the host
+func (o *ops) ListNodeAddresses() ([]net.Addr, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node interfaces, err: %w", err)
+	}
+	var addresses []net.Addr
+	for _, iface := range ifaces {
+		ips, err := iface.Addrs()
+		if err != nil {
+			o.log.Warnf("Failing to get addressed for %s interface", iface.Name)
+			continue
+		}
+		addresses = append(addresses, ips...)
+	}
+
+	return addresses, nil
 }

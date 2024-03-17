@@ -3,6 +3,7 @@ package postpivot
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -436,9 +437,11 @@ func TestNetworkConfiguration(t *testing.T) {
 			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
 			hostnameFile = path.Join(tmpDir, "hostname")
 			dnsmasqOverrides = path.Join(tmpDir, "dnsmasqoverrides")
+			nodeIPHintFile = path.Join(tmpDir, "hint")
 
 			if tc.restartNMSuccess {
-				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(1)
+				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(2)
+				mockOps.EXPECT().ListNodeAddresses().Return([]net.Addr{MockNetAddr{IpWithCidr: "192.167.127.10/24"}}, nil).Times(1)
 				if tc.restartDNSMASQSuccess {
 					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", nil).Times(1)
 				} else {
@@ -450,6 +453,67 @@ func TestNetworkConfiguration(t *testing.T) {
 
 			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
 			assert.Equal(t, tc.expectedError, err != nil, err)
+		})
+	}
+}
+
+type MockNetAddr struct {
+	IpWithCidr string
+}
+
+func (m MockNetAddr) Network() string {
+	return ""
+}
+
+func (m MockNetAddr) String() string {
+	return m.IpWithCidr
+}
+
+func TestSetNodeIPHint(t *testing.T) {
+	testcases := []struct {
+		name      string
+		nodeIp    string
+		addresses []net.Addr
+	}{
+		{
+			name:      "Ip provided: write it's cidr to file",
+			nodeIp:    "192.167.1.2",
+			addresses: []net.Addr{MockNetAddr{IpWithCidr: "192.167.1.2/24"}},
+		},
+		{
+			name:   "Ip is not provided, nothing to do",
+			nodeIp: "",
+		},
+	}
+
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
+			hintFile := path.Join(tmpDir, "hint")
+			if tc.nodeIp != "" {
+				mockOps.EXPECT().ListNodeAddresses().Return(tc.addresses, nil).Times(1)
+			}
+
+			err := pp.setNodeIPHint(context.TODO(), tc.nodeIp, hintFile)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tc.nodeIp == "" {
+				_, err = os.Stat(hintFile)
+				assert.Equal(t, err != nil, true, fmt.Sprintf("%s should not exists", hintFile))
+			} else {
+				hint, err := os.ReadFile(hintFile)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				_, cidr, _ := net.ParseCIDR(tc.addresses[0].String())
+				ip, _, _ := net.ParseCIDR(cidr.String())
+				assert.Equal(t, fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip), string(hint))
+			}
 		})
 	}
 }
