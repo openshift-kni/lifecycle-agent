@@ -328,6 +328,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 	tests := []struct {
 		name                                            string
 		args                                            args
+		healthCheckError                                error
 		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
 		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
 		remountSysrootReturn                            func() error
@@ -345,6 +346,23 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		wantErr                                         assert.ErrorAssertionFunc
 		wantConditions                                  []metav1.Condition
 	}{
+		{
+			name: "Pre-pivot upgrade requests requeue because of healthcheck fail",
+			args: args{
+				ibu: lcav1alpha1.ImageBasedUpgrade{},
+			},
+			healthCheckError: fmt.Errorf("test error from HC package"),
+			want:             requeueWithHealthCheckInterval(),
+			wantErr:          assert.NoError,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "Waiting for system to stabilize before Upgrade (pre-pivot) stage can continue: test error from HC package",
+				},
+			},
+		},
 		{
 			name: "backup failed request no requeue",
 			args: args{
@@ -719,6 +737,15 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.fetchLvmConfigReturn != nil {
 				mockClusterconfig.EXPECT().FetchLvmConfig(gomock.Any(), gomock.Any()).Return(tt.fetchLvmConfigReturn()).Times(1)
 			}
+
+			oldHC := CheckHealth
+			defer func() {
+				CheckHealth = oldHC
+			}()
+			CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+				return tt.healthCheckError
+			}
+
 			ibuTempDirNew := t.TempDir()
 			if tt.exportIBUCRNew {
 				origGetStaterootVarPath := getStaterootVarPath
@@ -759,6 +786,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.rebootToNewStateRootReturn != nil {
 				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
 			}
+
 			uh := &UpgHandler{
 				Client:          nil,
 				NoncachedClient: nil,

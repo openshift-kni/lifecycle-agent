@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -90,9 +92,22 @@ func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ib
 	return false, nil
 }
 
-//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleFinalize")
+
+	r.Log.Info("Running health check for finalize (Idle) stage")
+	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log); err != nil {
+		msg := fmt.Sprintf("Waiting for system to stabilize before finalize (idle) stage can continue: %s", err.Error())
+		r.Log.Info(msg)
+		utils.SetStatusCondition(&ibu.Status.Conditions,
+			utils.ConditionTypes.Idle,
+			utils.ConditionReasons.Finalizing,
+			metav1.ConditionFalse,
+			msg,
+			ibu.Generation,
+		)
+		return requeueWithHealthCheckInterval(), nil
+	}
 
 	if successful, errMsg := r.cleanup(ctx, true, ibu); successful {
 		r.Log.Info("Finished handleFinalize successfully")

@@ -2,6 +2,7 @@ package healthcheck
 
 import (
 	"context"
+	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	k8sv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +39,8 @@ func init() {
 	s.AddKnownTypes(apiextensionsv1.SchemeGroupVersion, &apiextensionsv1.CustomResourceDefinition{})
 	s.AddKnownTypes(sriovv1.SchemeGroupVersion, &sriovv1.SriovNetworkNodeStateList{})
 	s.AddKnownTypes(sriovv1.SchemeGroupVersion, &sriovv1.SriovNetworkNodeState{})
+	s.AddKnownTypes(k8sv1.SchemeGroupVersion, &k8sv1.CertificateSigningRequest{})
+	s.AddKnownTypes(k8sv1.SchemeGroupVersion, &k8sv1.CertificateSigningRequestList{})
 }
 
 func Test_nodesReady(t *testing.T) {
@@ -727,6 +731,64 @@ func TestHealthChecks(t *testing.T) {
 			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HealthChecks() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAreCertificateSigningRequestsReady(t *testing.T) {
+	tests := []struct {
+		name       string
+		objects    []runtime.Object
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "Successful only if approved and true",
+			objects: []runtime.Object{
+				&k8sv1.CertificateSigningRequest{
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{
+							{
+								Type:   k8sv1.CertificateApproved,
+								Status: v1.ConditionStatus(metav1.ConditionTrue),
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Fail with approved but status is false",
+			objects: []runtime.Object{
+				&k8sv1.CertificateSigningRequest{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-csr",
+					},
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{
+							{
+								Type:   k8sv1.CertificateApproved,
+								Status: v1.ConditionStatus(metav1.ConditionFalse),
+							},
+						},
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "certificateSigningRequest (csr) test-csr not yet approved",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			err := AreCertificateSigningRequestsReady(context.Background(), c, logr.Logger{})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("AreCertificateSigningRequestsReady() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				assert.Equal(t, err.Error(), tt.wantErrMsg)
 			}
 		})
 	}
