@@ -84,6 +84,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
+	CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error)
 	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error

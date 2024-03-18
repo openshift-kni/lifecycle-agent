@@ -86,6 +86,21 @@ func (mr *MockBackuperRestorerMockRecorder) CleanupDeleteBackupRequests(ctx any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupDeleteBackupRequests", reflect.TypeOf((*MockBackuperRestorer)(nil).CleanupDeleteBackupRequests), ctx)
 }
 
+// CleanupStaleBackups mocks base method.
+func (m *MockBackuperRestorer) CleanupStaleBackups(ctx context.Context, backups []*v1.Backup) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CleanupStaleBackups", ctx, backups)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CleanupStaleBackups indicates an expected call of CleanupStaleBackups.
+func (mr *MockBackuperRestorerMockRecorder) CleanupStaleBackups(ctx, backups any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupStaleBackups", reflect.TypeOf((*MockBackuperRestorer)(nil).CleanupStaleBackups), ctx, backups)
+}
+
 // EnsureOadpConfiguration mocks base method.
 func (m *MockBackuperRestorer) EnsureOadpConfiguration(ctx context.Context) error {
 	m.ctrl.T.Helper()
