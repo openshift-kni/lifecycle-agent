@@ -92,9 +92,10 @@ spec:
         path: autoRollbackOnFailure.initMonitorTimeoutSeconds
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
-      - description: ExtraManifests defines the ConfigMap resource for the user-specific
-          extra manifests in the Prep stage. Users can also add their custom catalog
-          sources that you want to retain after the upgrade.
+      - description: ExtraManifests defines the list of ConfigMap resources that contain
+          the user-specific extra manifests to be applied during the upgrade post-pivot
+          stage. Users can also add their custom catalog sources that may want to
+          retain after the upgrade.
         displayName: Extra Manifests
         path: extraManifests
       - displayName: Name
