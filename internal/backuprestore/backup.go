@@ -506,6 +506,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
 				Namespace: backup.Namespace,
+				Labels:    map[string]string{clusterIDLabel: clusterID},
 			},
 			Spec: velerov1.DeleteBackupRequestSpec{
 				BackupName: backup.Name,
@@ -513,7 +514,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		}
 
 		if err := h.Create(ctx, deleteBackupRequest); err != nil {
-			return false, fmt.Errorf("could not apply deleltebackup request: %w", err)
+			return false, fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
 		}
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
 	}
@@ -564,4 +565,39 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 		return false, fmt.Errorf("api call errors when tring to ensure backup deletion: %w", err)
 	}
 	return true, nil
+}
+
+// CleanupDeleteBackupRequests deletes all DeleteBackupRequest for this cluster from object storage
+func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
+	// Get the cluster ID
+	clusterID, err := getClusterID(ctx, h.Client)
+	if err != nil {
+		return err
+	}
+
+	// List all DeleteBackupRequest CRs created for this cluster
+	deleteBackupRequestList := &velerov1.DeleteBackupRequestList{}
+	if err := h.List(ctx, deleteBackupRequestList, client.MatchingLabels{
+		clusterIDLabel: clusterID,
+	}); err != nil {
+		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+		if errors.As(err, &groupDiscoveryErr) {
+			h.Log.Info("DeleteBackupRequest CR is not installed, nothing to cleanup")
+			return nil
+		}
+		return fmt.Errorf("failed to list DeleteBackupRequest CRs: %w", err)
+	}
+
+	// Cleanup all DeleteBackupRequest CRs
+	for _, deleteBackupRequest := range deleteBackupRequestList.Items {
+		deleteBackupRequestName := deleteBackupRequest.GetName()
+
+		h.Log.Info(fmt.Sprintf("Deleting DeleteBackupRequest CR %s", deleteBackupRequestName))
+		if err := h.Delete(ctx, deleteBackupRequest.DeepCopy()); err != nil {
+			return fmt.Errorf("failed to delete DeleteBackupRequest CR %s: %w", deleteBackupRequestName, err)
+		}
+	}
+
+	h.Log.Info("All DeleteBackupRequest CRs have been deleted")
+	return nil
 }
