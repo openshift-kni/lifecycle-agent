@@ -315,11 +315,11 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 			},
 			Spec: idms.Spec,
 		}
-		typeMeta, err := r.typeMetaForObject(&currentIdms)
+		typeMeta, err := r.typeMetaForObject(&idms) //nolint:gosec
 		if err != nil {
 			return v1.ImageDigestMirrorSetList{}, err
 		}
-		idms.TypeMeta = *typeMeta
+		obj.TypeMeta = *typeMeta
 
 		idmsList.Items = append(idmsList.Items, obj)
 	}
@@ -357,7 +357,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 		if err != nil {
 			return err
 		}
-		icp.TypeMeta = *typeMeta
+		obj.TypeMeta = *typeMeta
 		iscpsList.Items = append(iscpsList.Items, obj)
 	}
 	typeMeta, err := r.typeMetaForObject(iscpsList)
@@ -366,9 +366,10 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	}
 	iscpsList.TypeMeta = *typeMeta
 
-	if err := utils.MarshalToFile(iscpsList, filepath.Join(manifestsDir, icspsFileName)); err != nil {
-		return fmt.Errorf("failed to write icsps to %s, err: %w",
-			filepath.Join(manifestsDir, icspsFileName), err)
+	filePath := filepath.Join(manifestsDir, icspsFileName)
+	r.Log.Info("Writing ICSPs to file", "path", filePath)
+	if err := utils.MarshalToFile(iscpsList, filePath); err != nil {
+		return fmt.Errorf("failed to write icsps to %s, err: %w", filePath, err)
 	}
 
 	return nil

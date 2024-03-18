@@ -5,13 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
@@ -450,6 +458,150 @@ func TestNetworkConfiguration(t *testing.T) {
 
 			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
 			assert.Equal(t, tc.expectedError, err != nil, err)
+		})
+	}
+}
+
+func fakeICSP(name string) *operatorv1alpha1.ImageContentSourcePolicy {
+	return &operatorv1alpha1.ImageContentSourcePolicy{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ImageContentSourcePolicy",
+			APIVersion: operatorv1alpha1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
+			RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{
+				{Source: "icspData"},
+			},
+		},
+	}
+}
+
+func fakeManifests(tmpDir string) error {
+	cm := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: corev1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "user-ca-bundle",
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"test-bundle": "data",
+		},
+	}
+	if err := utils.MarshalToFile(cm, filepath.Join(tmpDir, "user-ca-bundle.json")); err != nil {
+		return fmt.Errorf("Unexpected error: %v", err)
+	}
+
+	icspList := &operatorv1alpha1.ImageContentSourcePolicyList{}
+	icsp1 := fakeICSP("icsp1")
+	icsp1.SetLabels(map[string]string{"test-label": "true"})
+	icsp2 := fakeICSP("icsp2")
+	icsp2.SetLabels(map[string]string{"test-label": "true"})
+	icspList.Items = append(icspList.Items, *icsp1, *icsp2)
+	if err := utils.MarshalToFile(icspList, filepath.Join(tmpDir, "icsps.json")); err != nil {
+		return fmt.Errorf("Unexpected error: %v", err)
+	}
+	return nil
+}
+func TestApplyManifests(t *testing.T) {
+	var (
+		mockController = gomock.NewController(t)
+		mockOps        = ops.NewMockOps(mockController)
+	)
+
+	defer func() {
+		mockController.Finish()
+	}()
+
+	testscheme := scheme.Scheme
+	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
+		&operatorv1alpha1.ImageContentSourcePolicyList{})
+
+	// create static rest mapper
+	icspGvk := operatorv1alpha1.GroupVersion.WithKind("ImageContentSourcePolicy")
+	cmGvk := corev1.SchemeGroupVersion.WithKind("ConfigMap")
+	restMapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{
+		operatorv1alpha1.GroupVersion,
+		corev1.SchemeGroupVersion,
+	})
+	restMapper.Add(icspGvk, meta.RESTScopeRoot)
+	restMapper.Add(cmGvk, meta.RESTScopeNamespace)
+
+	// create objs mappings
+	icspMapping, _ := restMapper.RESTMapping(icspGvk.GroupKind(), operatorv1alpha1.GroupVersion.Version)
+	cmMapping, _ := restMapper.RESTMapping(cmGvk.GroupKind(), corev1.SchemeGroupVersion.Version)
+
+	testcases := []struct {
+		name         string
+		existingObjs []runtime.Object
+	}{
+		{
+			name:         "objs do not exist",
+			existingObjs: []runtime.Object{},
+		},
+		{
+			name:         "objs exist",
+			existingObjs: []runtime.Object{fakeICSP("icsp1"), fakeICSP("icsp2")},
+		},
+	}
+
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		log := &logrus.Logger{}
+		t.Run(tc.name, func(t *testing.T) {
+			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
+
+			// fake manifest files
+			if err := fakeManifests(tmpDir); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// fake dynamic client
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(testscheme, tc.existingObjs...)
+
+			// check the number of resource prior to apply
+			opts := metav1.ListOptions{}
+			icspResource := dynamicClient.Resource(icspMapping.Resource)
+			currentIcsps, err := icspResource.List(context.Background(), opts)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			cmResource := dynamicClient.Resource(cmMapping.Resource)
+			currentCms, err := cmResource.List(context.Background(), opts)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			assert.Equal(t, len(tc.existingObjs), len(currentIcsps.Items)+len(currentCms.Items))
+
+			// apply manifests
+			err = pp.applyManifests(context.Background(), tmpDir, dynamicClient, restMapper)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// validate applied resources
+			currentIcsps, err = icspResource.List(context.Background(), opts)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			assert.Equal(t, 2, len((currentIcsps.Items)))
+			for _, icsp := range currentIcsps.Items {
+				assert.Equal(t, map[string]string{"test-label": "true"}, icsp.GetLabels())
+			}
+
+			currentCms, err = cmResource.List(context.Background(), opts)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			assert.Equal(t, 1, len(currentCms.Items))
+			assert.Equal(t, "user-ca-bundle", currentCms.Items[0].GetName())
+			assert.Equal(t, "openshift-config", currentCms.Items[0].GetNamespace())
 		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
@@ -24,12 +25,15 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/dynamic"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -124,6 +128,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client, err: %w", err)
 	}
+	dynamicClient, err := utils.CreateDynamicClient(p.kubeconfig, false, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create k8s dynamic client, err: %w", err)
+	}
 
 	if _, err := p.ops.SystemctlAction("enable", "kubelet", "--now"); err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
@@ -134,8 +142,16 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to all old mirror resources: %w", err)
 	}
 
-	if err := p.applyManifests(); err != nil {
+	mPath := path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir)
+	if err := p.applyManifests(ctx, mPath, dynamicClient, client.RESTMapper()); err != nil {
 		return fmt.Errorf("failed apply manifests: %w", err)
+	}
+
+	emPath := path.Join(p.workingDir, common.ExtraManifestsDir)
+	if _, err := os.Stat(emPath); err == nil {
+		if err := p.applyManifests(ctx, emPath, dynamicClient, client.RESTMapper()); err != nil {
+			return fmt.Errorf("failed apply extra manifests: %w", err)
+		}
 	}
 
 	if err := p.changeRegistryInCSVDeployment(ctx, client, seedReconfiguration, seedClusterInfo); err != nil {
@@ -264,31 +280,39 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 	})
 }
 
-func (p *PostPivot) applyManifests() error {
-	p.log.Infof("Applying manifests from %s", path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))
-	mPath := path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir)
-	dir, err := os.ReadDir(mPath)
+func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper) error {
+	p.log.Infof("Applying manifests from %s", mPath)
+	mFiles, err := os.ReadDir(mPath)
 	if err != nil {
-		return fmt.Errorf("failed to read dir for extra manifest in %s: %w", mPath, err)
+		return fmt.Errorf("failed to read dir for extra manifests in %s: %w", mPath, err)
 	}
-	if len(dir) == 0 {
+	if len(mFiles) == 0 {
 		p.log.Infof("No manifests to apply were found, skipping")
 		return nil
 	}
 
-	args := []string{"--kubeconfig", p.kubeconfig, "apply", "-f"}
-
-	_, err = p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ClusterConfigDir, common.ManifestsDir))...)
-	if err != nil {
-		return fmt.Errorf("failed to apply manifests, err: %w", err)
-	}
-
-	if _, err := os.Stat(path.Join(p.workingDir, common.ExtraManifestsDir)); err == nil {
-		p.log.Infof("Applying extra manifests")
-		_, err := p.ops.RunInHostNamespace("oc", append(args, path.Join(p.workingDir, common.ExtraManifestsDir))...)
-		if err != nil {
-			return fmt.Errorf("failed to apply extra manifests, err: %w", err)
+	for _, mFile := range mFiles {
+		var obj map[string]interface{}
+		if err := utils.ReadYamlOrJSONFile(filepath.Join(mPath, mFile.Name()), &obj); err != nil {
+			return fmt.Errorf("failed to read manifest %s: %w", mFile.Name(), err)
 		}
+
+		if manifests, ok := obj["items"]; ok {
+			for _, m := range manifests.([]interface{}) {
+				manifest := unstructured.Unstructured{}
+				manifest.Object = m.(map[string]interface{})
+				if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+					return fmt.Errorf("failed to apply manifest: %w", err)
+				}
+			}
+		} else {
+			manifest := unstructured.Unstructured{}
+			manifest.Object = obj
+			if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+				return fmt.Errorf("failed to apply manifest: %w", err)
+			}
+		}
+		p.log.Infof("manifest applied: %s", filepath.Join(mPath, mFile.Name()))
 	}
 	return nil
 }

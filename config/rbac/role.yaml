@@ -187,6 +187,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - local.storage.openshift.io
+  resources:
+  - localvolumes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - machineconfiguration.openshift.io
   resources:
   - machineconfigpools

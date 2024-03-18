@@ -347,12 +347,16 @@ func AppendToListIfNotExists(list []string, value string) []string {
 	return append(list, value)
 }
 
-func CreateDynamicClient(kubeconfig string, log *logr.Logger) (dynamic.Interface, error) {
+func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Logger) (dynamic.Interface, error) {
 	// Read kubeconfig
 	var config *rest.Config
 	if _, err := os.Stat(kubeconfig); err != nil {
-		log.Error(err, "could not find KubeconfigFile. Using empty config only for test environment")
-		config = &rest.Config{}
+		if isTestEnvAllowed {
+			log.Error(err, "could not find KubeconfigFile. Using empty config only for test environment")
+			config = &rest.Config{}
+		} else {
+			return nil, fmt.Errorf("could not find kubeconfigFile: %w", err)
+		}
 	} else {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
