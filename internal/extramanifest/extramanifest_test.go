@@ -109,6 +109,19 @@ metadata:
     resourceName: mh
 `
 
+const machineConfig = `
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: generic
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+`
+
 func TestExportExtraManifests(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
 
@@ -212,9 +225,16 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 		{
 			name: "extra manifest contains invalid format in spec",
 			configmaps: []lcav1alpha1.ConfigMapRef{
-				{Name: "extra-manifest-cm1", Namespace: "default"},
+				{Name: "extra-manifest-cm2", Namespace: "default"},
 			},
 			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
+		},
+		{
+			name: "extra manifest containts MachineConfig",
+			configmaps: []lcav1alpha1.ConfigMapRef{
+				{Name: "extra-manifest-cm-mc", Namespace: "default"},
+			},
+			expectedErr: fmt.Errorf("Using MachingConfigs in extramanifests is not allowed"),
 		},
 	}
 
@@ -245,6 +265,15 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 					},
 					Data: map[string]string{
 						"sriovnetwork2_invalid.yaml": sriovnetwork2_invalid,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "extra-manifest-cm-mc",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"sriovnetwork2_invalid.yaml": machineConfig,
 					},
 				},
 			}
