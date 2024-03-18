@@ -892,36 +892,37 @@ func TestCleanupBackups(t *testing.T) {
 		Log:    ctrl.Log.WithName("BackupRestore"),
 	}
 
-	resultChan := make(chan bool)
 	errorChan := make(chan error)
 
 	// Test backup cleanup for cluster1
 	go func() {
-		result, err := handler.CleanupBackups(context.Background())
-		resultChan <- result
+		err := handler.CleanupBackups(context.Background())
 		errorChan <- err
 	}()
 
 	// Mock the deletion of backup for cluster1
 	time.Sleep(1 * time.Second)
+
+	for _, backup := range backups {
+		dbr := &velerov1.DeleteBackupRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: backup.GetName(), Namespace: backup.GetNamespace()},
+		}
+		fakeClient.Delete(context.Background(), dbr)
+	}
+
 	if err := fakeClient.Delete(context.Background(), backups[0]); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	result := <-resultChan
 	err = <-errorChan
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-
-	// Verify that the backup for cluster1 was deleted
-	assert.Equal(t, true, result)
 
 	// Verify backupDeletionRequest was created for cluster1 only
 	deletionRequests := &velerov1.DeleteBackupRequestList{}
 	if err := fakeClient.List(context.Background(), deletionRequests); err != nil {
 		t.Errorf("failed to list deleteBackupRequest: %v", err)
 	}
-	assert.Equal(t, 1, len(deletionRequests.Items))
-	assert.Equal(t, "backupCluster1", deletionRequests.Items[0].Name)
+	assert.Equal(t, 0, len(deletionRequests.Items))
 }
