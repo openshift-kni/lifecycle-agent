@@ -551,11 +551,14 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
 		if err != nil {
 			return false, err
+		} else if existingBackup == nil {
+			// Backup isn't found, continue to the next one
+			continue
 		}
 
 		// Check cluster ID label of existingBackup
-		labels := backup.GetLabels()
-		if labels[clusterIDLabel] != clusterID {
+		labels := existingBackup.GetLabels()
+		if labels != nil && labels[clusterIDLabel] != clusterID {
 			staleBackupList.Items = append(staleBackupList.Items, *existingBackup)
 
 			deleteBackupRequest := &velerov1.DeleteBackupRequest{
