@@ -91,7 +91,7 @@ func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.
 
 	for _, backup := range backups {
 		var existingBackup *velerov1.Backup
-		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
+		existingBackup, err := getValidBackup(ctx, h.Client, backup.Name, backup.Namespace)
 		if err != nil {
 			return &bt, err
 		}
