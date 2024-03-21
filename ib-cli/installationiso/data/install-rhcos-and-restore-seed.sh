@@ -42,6 +42,7 @@ else
     chattr +i /mnt/
     mount -o bind /mnt/containers /var/lib/containers
 fi
+restorecon -R /var/lib/containers
 
 additional_flags=""
 if [ -n "${PRECACHE_DISABLED}" ]; then
