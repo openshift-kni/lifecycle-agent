@@ -479,12 +479,11 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 }
 
 // CleanupBackups deletes all backups for this cluster from object storage
-// returns: true if all backups have been deleted, error
-func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
+func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 	// Get the cluster ID
 	clusterID, err := getClusterID(ctx, h.Client)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// List all backups created for this cluster
@@ -495,9 +494,9 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
 		if errors.As(err, &groupDiscoveryErr) {
 			h.Log.Info("Backup CR is not installed, nothing to cleanup")
-			return true, nil
+			return nil
 		}
-		return false, fmt.Errorf("failed to list Backup: %w", err)
+		return fmt.Errorf("failed to list Backup: %w", err)
 	}
 
 	// Create deleteBackupRequest CR to delete the backup in the object storage
@@ -514,7 +513,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		}
 
 		if err := h.Create(ctx, deleteBackupRequest); err != nil {
-			return false, fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
+			return fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
 		}
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
 	}
@@ -526,18 +525,17 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// Ensure all backups are deleted
 	return h.ensureBackupsDeleted(ctx, backupList.Items)
 }
 
 // CleanupStaleBackups checks and deletes if there are any stale Backups (with the same name) that
 // may be available in the object storage but do not belong to this cluster.
 // returns: true if all stale backups have been deleted, error
-func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error) {
+func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) error {
 	// Get the cluster ID
 	clusterID, err := getClusterID(ctx, h.Client)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// List of stale backups present in this cluster
@@ -550,7 +548,7 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 		// though they are labeled with a different cluster ID.
 		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
 		if err != nil {
-			return false, err
+			return err
 		} else if existingBackup == nil {
 			// Backup isn't found, continue to the next one
 			continue
@@ -572,7 +570,7 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 			}
 
 			if err := h.Create(ctx, deleteBackupRequest); err != nil {
-				return false, fmt.Errorf("could not apply DeleteBackupRequest CR: %w", err)
+				return fmt.Errorf("could not apply DeleteBackupRequest CR: %w", err)
 			}
 			h.Log.Info("Found stale Backup, DeleteBackupRequest has been sent", "backup", backup.Name)
 		}
@@ -580,48 +578,66 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 
 	if len(staleBackupList.Items) == 0 {
 		h.Log.Info("No stale Backups found in the cluster, skipping")
-		return true, nil
+		return nil
 	}
 
 	// Ensure all backups are deleted
 	return h.ensureBackupsDeleted(ctx, staleBackupList.Items)
 }
 
-func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) (bool, error) {
-	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
+func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []velerov1.Backup) error {
+	return wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true, //nolint:wrapcheck
 		func(ctx context.Context) (bool, error) {
-			var remainingBackups []string
 			for _, backup := range backups {
-				err := h.Get(ctx, types.NamespacedName{
+				backupRequest := &velerov1.DeleteBackupRequest{}
+				if err := h.Get(ctx, types.NamespacedName{
 					Name:      backup.Name,
 					Namespace: backup.Namespace,
-				}, &velerov1.Backup{})
-				if err != nil {
+				}, backupRequest); err != nil {
 					if !k8serrors.IsNotFound(err) {
-						return false, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
+						return false, nil
 					}
 				} else {
-					// Backup still exists
-					remainingBackups = append(remainingBackups, backup.Name)
+					if backupRequest.Status.Phase != velerov1.DeleteBackupRequestPhaseProcessed {
+						h.Log.Info("Waiting for DeleteBackupRequest to be processed", "deleteBackupRequest", backupRequest.GetName(), "phase", backupRequest.Status.Phase)
+						return false, nil
+					}
+					if len(backupRequest.Status.Errors) != 0 {
+						return true, fmt.Errorf("deleteBackupRequest %s failed with errors: %v", backupRequest.GetName(), backupRequest.Status.Errors)
+					}
 				}
 			}
-
-			if len(remainingBackups) == 0 {
-				h.Log.Info("All backups have been deleted")
-				return true, nil
-			}
-
-			h.Log.Info("Waiting for backups to be deleted", "backups", remainingBackups)
-			return false, nil
+			return true, nil
 		})
-	if err != nil {
+}
+
+func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) error {
+	if err := h.waitForDeleteBackupRequests(ctx, backups); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			h.Log.Error(err, "Timeout waiting for backups to be deleted")
-			return false, nil
+			return err
 		}
-		return false, fmt.Errorf("api call errors when tring to ensure backup deletion: %w", err)
+		return fmt.Errorf("failed deleting backups: %w", err)
 	}
-	return true, nil
+
+	for _, backup := range backups {
+		err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
+			return h.Get(ctx, types.NamespacedName{ //nolint:wrapcheck
+				Name:      backup.Name,
+				Namespace: backup.Namespace,
+			}, &velerov1.Backup{})
+		})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("failed to ensure backup %s is deleted: %w", backup.GetName(), err)
+		} else {
+			return fmt.Errorf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName())
+		}
+	}
+	h.Log.Info("All Backup CRs have been deleted successfully")
+	return nil
 }
 
 // CleanupDeleteBackupRequests deletes all DeleteBackupRequest for this cluster from object storage

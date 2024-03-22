@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -139,7 +138,7 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 	var handleError = func(err error, msg string) {
 		successful = false
 		r.Log.Error(err, msg)
-		errorMessage += msg + " "
+		errorMessage += err.Error() + " "
 	}
 
 	r.Log.Info("Terminating precaching worker thread, will wait up to 30 seconds")
@@ -162,11 +161,8 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 	if err := r.BackupRestore.CleanupDeleteBackupRequests(ctx); err != nil {
 		handleError(err, "failed to cleanup DeleteBackupRequest CRs.")
 	}
-	if allRemoved, err := r.BackupRestore.CleanupBackups(ctx); err != nil {
-		handleError(err, "failed to cleanup backups.")
-	} else if !allRemoved {
-		err := errors.New("failed to delete all the backup CRs")
-		handleError(err, err.Error())
+	if err := r.BackupRestore.CleanupBackups(ctx); err != nil {
+		handleError(err, "failed to cleanup backups")
 	}
 
 	r.Log.Info("Cleaning up IBU files")

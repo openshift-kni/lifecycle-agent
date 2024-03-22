@@ -58,12 +58,11 @@ func (mr *MockBackuperRestorerMockRecorder) CheckOadpOperatorAvailability(ctx an
 }
 
 // CleanupBackups mocks base method.
-func (m *MockBackuperRestorer) CleanupBackups(ctx context.Context) (bool, error) {
+func (m *MockBackuperRestorer) CleanupBackups(ctx context.Context) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CleanupBackups", ctx)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // CleanupBackups indicates an expected call of CleanupBackups.
@@ -87,12 +86,11 @@ func (mr *MockBackuperRestorerMockRecorder) CleanupDeleteBackupRequests(ctx any)
 }
 
 // CleanupStaleBackups mocks base method.
-func (m *MockBackuperRestorer) CleanupStaleBackups(ctx context.Context, backups []*v1.Backup) (bool, error) {
+func (m *MockBackuperRestorer) CleanupStaleBackups(ctx context.Context, backups []*v1.Backup) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CleanupStaleBackups", ctx, backups)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // CleanupStaleBackups indicates an expected call of CleanupStaleBackups.
