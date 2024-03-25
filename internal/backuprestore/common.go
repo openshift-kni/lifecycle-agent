@@ -84,6 +84,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
+	CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error)
 	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
@@ -443,6 +444,18 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 			return NewBRFailedValidationError("OADP", errMsg)
 		}
 	}
+
+	// Check for any stale backup CRs in this cluster
+	if allStaleBackupsRemoved, err := h.CleanupStaleBackups(ctx, backups); err != nil {
+		errMsg := fmt.Sprintf("Failed to cleanup stale Backups: %s", err)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	} else if !allStaleBackupsRemoved {
+		errMsg := fmt.Sprintf("Failed to delete all the stale Backup CRs: %s", err)
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
+	}
+
 	h.Log.Info("OADP configMaps are validated", "configMaps", content)
 	return nil
 }

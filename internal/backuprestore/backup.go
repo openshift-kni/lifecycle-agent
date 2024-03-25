@@ -530,6 +530,60 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 	return h.ensureBackupsDeleted(ctx, backupList.Items)
 }
 
+// CleanupStaleBackups checks and deletes if there are any stale Backups (with the same name) that
+// may be available in the object storage but do not belong to this cluster.
+// returns: true if all stale backups have been deleted, error
+func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error) {
+	// Get the cluster ID
+	clusterID, err := getClusterID(ctx, h.Client)
+	if err != nil {
+		return false, err
+	}
+
+	// List of stale backups present in this cluster
+	staleBackupList := &velerov1.BackupList{}
+
+	for _, backup := range backups {
+
+		// If the target cluster is reinstalled before cleaning up any previous Backups from
+		// the object storage, OADP may sync those stale Backup CRs back to this cluster, even
+		// though they are labeled with a different cluster ID.
+		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
+		if err != nil {
+			return false, err
+		}
+
+		// Check cluster ID label of existingBackup
+		labels := backup.GetLabels()
+		if labels[clusterIDLabel] != clusterID {
+			staleBackupList.Items = append(staleBackupList.Items, *existingBackup)
+
+			deleteBackupRequest := &velerov1.DeleteBackupRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      backup.Name,
+					Namespace: backup.Namespace,
+				},
+				Spec: velerov1.DeleteBackupRequestSpec{
+					BackupName: backup.Name,
+				},
+			}
+
+			if err := h.Create(ctx, deleteBackupRequest); err != nil {
+				return false, fmt.Errorf("could not apply DeleteBackupRequest CR: %w", err)
+			}
+			h.Log.Info("Found stale Backup, DeleteBackupRequest has been sent", "backup", backup.Name)
+		}
+	}
+
+	if len(staleBackupList.Items) == 0 {
+		h.Log.Info("No stale Backups found in the cluster, skipping")
+		return true, nil
+	}
+
+	// Ensure all backups are deleted
+	return h.ensureBackupsDeleted(ctx, staleBackupList.Items)
+}
+
 func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) (bool, error) {
 	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
 		func(ctx context.Context) (bool, error) {
