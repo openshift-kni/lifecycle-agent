@@ -18,6 +18,7 @@ package precache
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/runtime"
 	"os"
 	"testing"
 
@@ -144,6 +145,9 @@ func TestCreateJob(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{}
+			ibu := v1alpha1.ImageBasedUpgrade{}
+			sc := runtime.NewScheme()
+			_ = v1alpha1.AddToScheme(sc)
 
 			Log := ctrl.Log.WithName("Precache")
 
@@ -153,7 +157,7 @@ func TestCreateJob(t *testing.T) {
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(tc.config, Log)
+				job, err := renderJob(tc.config, Log, &ibu, sc)
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -166,9 +170,10 @@ func TestCreateJob(t *testing.T) {
 			handler := &PHandler{
 				Client: fakeClient,
 				Log:    Log,
+				Scheme: sc,
 			}
 
-			err = handler.CreateJob(context.TODO(), tc.config)
+			err = handler.CreateJob(context.TODO(), tc.config, &ibu)
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {
@@ -181,7 +186,7 @@ func TestCreateJob(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
+				actualJob, err := getJob(context.TODO(), fakeClient)
 				assert.NoError(t, err)
 				assert.NotNil(t, actualJob)
 
@@ -262,9 +267,13 @@ func TestQueryJobStatus(t *testing.T) {
 			cm := renderConfigMap(config.ImageList)
 			objs = append(objs, cm)
 
+			ibu := v1alpha1.ImageBasedUpgrade{}
+			sc := runtime.NewScheme()
+			_ = v1alpha1.AddToScheme(sc)
+
 			Log := ctrl.Log.WithName("Precache")
 			if tc.inputJobName != "" {
-				job, err := renderJob(config, Log)
+				job, err := renderJob(config, Log, &ibu, sc)
 				assert.NoError(t, err)
 				job.Status = *tc.jobStatus
 				objs = append(objs, job)
@@ -333,13 +342,17 @@ func TestCleanup(t *testing.T) {
 
 			Log := ctrl.Log.WithName("Precache")
 
+			ibu := v1alpha1.ImageBasedUpgrade{}
+			sc := runtime.NewScheme()
+			_ = v1alpha1.AddToScheme(sc)
+
 			// Inject ConfigMap, Job
 			if tc.inputConfigMapName != "" {
 				cm := renderConfigMap(config.ImageList)
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(config, Log)
+				job, err := renderJob(config, Log, &ibu, sc)
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -367,8 +380,8 @@ func TestCleanup(t *testing.T) {
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient, LcaPrecacheJobName, common.LcaNamespace)
-				assert.NoError(t, err)
+				actualJob, err := getJob(context.TODO(), fakeClient)
+				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualJob)
 			}
 		})

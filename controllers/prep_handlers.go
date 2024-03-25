@@ -19,22 +19,20 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/coreos/go-semver/semver"
-	configv1 "github.com/openshift/api/config/v1"
-	"golang.org/x/sync/errgroup"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
-
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	configv1 "github.com/openshift/api/config/v1"
+	"golang.org/x/sync/errgroup"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
@@ -207,7 +205,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 
 	// Create pre-cache config using default values
 	config := precache.NewConfig(imageList, envVars)
-	err = r.Precache.CreateJob(ctx, config)
+	err = r.Precache.CreateJob(ctx, config, ibu)
 	if err != nil {
 		return false, fmt.Errorf("failed to create precaching job: %w", err)
 	}
@@ -215,16 +213,10 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	return true, nil
 }
 
-func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context) (status *precache.Status, err error) {
-	status, err = r.Precache.QueryJobStatus(ctx)
+func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context) (*precache.Status, error) {
+	status, err := r.Precache.QueryJobStatus(ctx)
 	if err != nil {
-		r.Log.Info("Failed to get precaching job status")
-		return
-	}
-
-	if status == nil {
-		r.Log.Info("Precaching job status is nil")
-		return
+		return nil, err //nolint:wrapcheck
 	}
 
 	if status.Status == precache.Failed {
@@ -245,7 +237,7 @@ func (r *ImageBasedUpgradeReconciler) queryPrecachingStatus(ctx context.Context)
 	}
 	r.Log.Info(logMsg)
 
-	return
+	return status, nil
 }
 
 func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, imageListFile string) error {
@@ -265,32 +257,25 @@ func (r *ImageBasedUpgradeReconciler) SetupStateroot(ctx context.Context, ibu *l
 	return nil
 }
 
-func (r *ImageBasedUpgradeReconciler) verifyPrecachingCompleteFunc(retries int, interval time.Duration) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		r.Log.Info("Querying pre-caching job for completion...")
-		for retry := 0; retry < retries; retry++ {
-			status, err := r.queryPrecachingStatus(ctx)
-			if err != nil && errors.Is(err, precache.ErrFailed) {
-				// precaching job failed - exit immediately
-				return false, err
-			} else if status != nil {
-				if status.Message != "" {
-					r.PrepTask.Progress = fmt.Sprintf("Precaching progress: %s", status.Message)
-				}
-				if status.Status == precache.Succeeded {
-					// precaching job succeeded
-					return true, nil
-				} else if status.Status == precache.Active {
-					// precaching job still in-progress
-					return false, nil
-				}
-			}
-			// retry after interval
-			time.Sleep(interval)
-		}
-		// failed more than retries times to retrieve precaching status - exit with error
-		return false, fmt.Errorf("failed more than %d times to fetch precaching job status", retries)
+func (r *ImageBasedUpgradeReconciler) verifyPrecachingComplete(ctx context.Context) (bool, error) {
+	status, err := r.queryPrecachingStatus(ctx)
+	if err != nil {
+		return false, err //nolint:wrapcheck
 	}
+
+	if status.Message != "" {
+		r.PrepTask.Progress = fmt.Sprintf("Precaching progress: %s", status.Message)
+	}
+	r.Log.Info("Current precache job status", "Status", status.Status)
+	if status.Status == precache.Succeeded {
+		// precaching job succeeded
+		return true, nil
+	} else if status.Status == precache.Active {
+		// precaching job still in-progress
+		return false, nil
+	}
+
+	return false, nil
 }
 
 // validateIBUSpec validates the fields in the IBU spec
@@ -337,7 +322,6 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 
 	errGroup.Go(func() error {
 		var ok bool
-		var additionalMsg string
 		imageListFile := filepath.Join(utils.IBUWorkspacePath, "image-list-file")
 
 		// Validate IBU spec
@@ -345,7 +329,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 			// Do not return unknownCRD error detected from extra manifests configmaps,
 			// instead, attach a warning message in prep status condition
 			if extramanifest.IsEMUnknownCRDError(err) {
-				additionalMsg = fmt.Sprintf(". Warn: The requested CRD is not installed on the cluster. "+
+				r.PrepTask.AdditionalComplete = fmt.Sprintf(". Warn: The requested CRD is not installed on the cluster. "+
 					"Please verify if this is as expected before proceeding to next stage: %v", err)
 			} else {
 				return fmt.Errorf("failed to validate IBU spec: %w", err)
@@ -395,22 +379,6 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 			r.PrepTask.Progress = "Successfully created precaching job"
 		}
 
-		// Wait for precaching job to complete
-		r.PrepTask.Progress = "Waiting for precaching job to complete"
-		interval := 30 * time.Second
-		if err = wait.PollUntilContextCancel(derivedCtx, interval, false, r.verifyPrecachingCompleteFunc(5, interval)); err != nil {
-			return fmt.Errorf("failed to precache images: %w", err)
-		}
-
-		// Fetch final precaching job report summary
-		msg := "Prep completed successfully"
-		status, err := r.Precache.QueryJobStatus(ctx)
-		if err == nil && status != nil && status.Message != "" {
-			r.Log.Info(msg, "summary", status.Message)
-		}
-		r.PrepTask.Progress = msg + additionalMsg
-
-		// Prep-stage completed successfully
 		return nil
 	})
 
@@ -422,9 +390,7 @@ func (r *ImageBasedUpgradeReconciler) prepStageWorker(ctx context.Context, ibu *
 	return nil
 }
 
-//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (result ctrl.Result, err error) {
-
 	result = doNotRequeue()
 
 	_, err = os.Stat(common.Host)
@@ -444,41 +410,82 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 
 	switch {
 	case !r.PrepTask.Active:
-		r.PrepTask.done = make(chan struct{})
-		r.PrepTask.Active = true
-		r.PrepTask.Success = false
-		r.PrepTask.Progress = "Prep stage initialized"
+		r.initPrepTask()
 		go func() {
 			err = r.prepStageWorker(ctx, ibu)
-			close(r.PrepTask.done)
 			if err != nil {
-				r.Log.Error(err, "Prep stage failed with error")
-				r.PrepTask.Success = false
-			} else {
-				r.Log.Info("Prep stage completed successfully!")
-				r.PrepTask.Success = true
+				r.failPrepTask(err, "prep stage failed with error from prep worker")
 			}
 		}()
 		utils.SetPrepStatusInProgress(ibu, r.PrepTask.Progress)
 		result = requeueWithShortInterval()
 	case r.PrepTask.Active:
+		// check pre-cache and update PrepTask
+		r.updatePrepTaskForPrecacheJob(ctx)
+
 		select {
 		case <-r.PrepTask.done:
 			if r.PrepTask.Success {
+				r.Log.Info("Prep stage completed successfully!")
+				r.PrepTask.Progress += r.PrepTask.AdditionalComplete
 				utils.SetPrepStatusCompleted(ibu, r.PrepTask.Progress)
 			} else {
 				utils.SetPrepStatusFailed(ibu, r.PrepTask.Progress)
 			}
 			// Reset Task values
 			r.PrepTask.Reset()
+			r.Log.Info("Done handlePrep")
 			result = doNotRequeue()
 		default:
+			r.Log.Info("Prep stage in progress", "current msg", r.PrepTask.Progress)
 			utils.SetPrepStatusInProgress(ibu, r.PrepTask.Progress)
 			result = requeueWithShortInterval()
 		}
 	}
 
 	return
+}
+
+// updatePrepTaskForPrecacheJob check up on precache job and update PrepTask as needed
+func (r *ImageBasedUpgradeReconciler) updatePrepTaskForPrecacheJob(ctx context.Context) {
+	r.Log.Info("Checking if precaching job is complete")
+	done, err := r.verifyPrecachingComplete(ctx)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			r.Log.Info("Precache job not launched yet")
+		} else {
+			r.failPrepTask(err, "prep stage failed, unable to verify precache status")
+		}
+		return
+	}
+
+	if done {
+		r.successPrepTask("Prep completed successfully")
+	}
+}
+
+// initPrepTask init PrepTask variables
+func (r *ImageBasedUpgradeReconciler) initPrepTask() {
+	r.PrepTask.done = make(chan struct{})
+	r.PrepTask.Active = true
+	r.PrepTask.Success = false
+	r.PrepTask.Progress = "Prep stage initialized"
+	r.PrepTask.AdditionalComplete = ""
+}
+
+// successPrepTask set PrepTask to success
+func (r *ImageBasedUpgradeReconciler) successPrepTask(msg string) {
+	r.PrepTask.Progress = msg
+	r.PrepTask.Success = true
+	close(r.PrepTask.done)
+}
+
+// failPrepTask set PrepTask to fail
+func (r *ImageBasedUpgradeReconciler) failPrepTask(err error, msg string) {
+	r.Log.Error(err, msg)
+	r.PrepTask.Progress = fmt.Sprintf("%s: %s", msg, err.Error())
+	r.PrepTask.Success = false
+	close(r.PrepTask.done)
 }
 
 func getSeedManifestPath(osname string) string {

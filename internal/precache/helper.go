@@ -25,6 +25,10 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/runtime"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -37,18 +41,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-func getJob(ctx context.Context, c client.Client, name, namespace string) (*batchv1.Job, error) {
+func getJob(ctx context.Context, c client.Client) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
 	if err := c.Get(ctx, types.NamespacedName{
-		Name:      name,
-		Namespace: namespace,
+		Name:      LcaPrecacheJobName,
+		Namespace: common.LcaNamespace,
 	}, job); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to list jobs: %w", err)
+		return nil, err //nolint:wrapcheck
 	}
 
 	return job, nil
@@ -70,9 +72,11 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 }
 
 func validateJobConfig(ctx context.Context, c client.Client, imageList []string) error {
-	job, err := getJob(ctx, c, LcaPrecacheJobName, common.LcaNamespace)
+	job, err := getJob(ctx, c)
 	if err != nil {
-		return err
+		if !k8serrors.IsNotFound(err) {
+			return err
+		}
 	}
 	if job != nil {
 		return errors.New("precaching job already exists, cannot create new job")
@@ -96,7 +100,7 @@ func validateJobConfig(ctx context.Context, c client.Client, imageList []string)
 	return nil
 }
 
-func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
+func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade, scheme *runtime.Scheme) (*batchv1.Job, error) {
 
 	var ValidIoNiceClasses = []int{IoNiceClassNone, IoNiceClassRealTime, IoNiceClassBestEffort, IoNiceClassIdle}
 
@@ -243,6 +247,14 @@ func renderJob(config *Config, log logr.Logger) (*batchv1.Job, error) {
 		},
 	}
 
+	// set reference
+	if err := ctrl.SetControllerReference(ibu, job, scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	// set finalizer
+	controllerutil.AddFinalizer(job, LcaPrecacheFinalizer)
+
 	return job, nil
 }
 
@@ -255,49 +267,62 @@ func generateDeleteOptions() *client.DeleteOptions {
 	return &delOpt
 }
 
-func deleteConfigMap(ctx context.Context, c client.Client, name, namespace string) error {
-
-	cm, err := common.GetConfigMap(ctx, c, v1alpha1.ConfigMapRef{
-		Name:      name,
-		Namespace: namespace,
-	})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get delete configMap: %w", err)
+// deleteConfigMap delete the precache configMap
+func deleteConfigMap(ctx context.Context, c client.Client) error {
+	cm := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      LcaPrecacheConfigMapName,
+			Namespace: common.LcaNamespace,
+		},
 	}
 
-	if cm == nil {
-		return nil
-	}
-
-	if err := c.Delete(ctx, cm, generateDeleteOptions()); err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
+	if err := c.Delete(ctx, &cm, generateDeleteOptions()); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete configMaps: %w", err)
 		}
-		return fmt.Errorf("failed to delete configMaps: %w", err)
 	}
 
 	return nil
 }
 
-func deleteJob(ctx context.Context, c client.Client, name, namespace string) error {
-	// Delete the Job
-	job, err := getJob(ctx, c, name, namespace)
+// deleteJob delete the precache job
+func deleteJob(ctx context.Context, c client.Client) error {
+	if err := removePrecacheFinalizer(ctx, c); err != nil {
+		return fmt.Errorf("failed to remove finalizer during cleanup: %w", err)
+	}
+
+	precache := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      LcaPrecacheJobName,
+			Namespace: common.LcaNamespace,
+		},
+	}
+	if err := c.Delete(ctx, &precache, generateDeleteOptions()); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to job: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// removePrecacheFinalizer remove the finalizer if present
+func removePrecacheFinalizer(ctx context.Context, c client.Client) error {
+	precache, err := getJob(ctx, c)
 	if err != nil {
-		return err
-	}
-
-	if job == nil {
-		return nil
-	}
-
-	if err := c.Delete(ctx, job, generateDeleteOptions()); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to job: %w", err)
+		return fmt.Errorf("failed get precache job to remove finalizer: %w", err)
+	}
+
+	if controllerutil.ContainsFinalizer(precache, LcaPrecacheFinalizer) {
+		finalizersUpdated := controllerutil.RemoveFinalizer(precache, LcaPrecacheFinalizer)
+		if finalizersUpdated {
+			if err := c.Update(ctx, precache); err != nil {
+				return fmt.Errorf("failed to remove finalizer during update: %w", err)
+			}
+		}
 	}
 
 	return nil
