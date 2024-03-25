@@ -355,8 +355,8 @@ spec:
   includedClusterScopedResources:
   - klusterlets.operator.open-cluster-management.io
   - clusterclaims.cluster.open-cluster-management.io
-  - clusterroles
-  - clusterrolebindings
+  - clusterroles.rbac.authorization.k8s.io
+  - clusterrolebindings.rbac.authorization.k8s.io
   includedNamespaceScopedResources:
   - deployments
   - serviceaccounts
@@ -366,25 +366,6 @@ spec:
 > [!IMPORTANT]
 > Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
 > defined and the secret exists on the open-cluster-management-agent namespace in your hub cluster. If it does not exist, you can safely remove it from the `apply-label` annotation.
-
-backup_localvolume.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Backup
-metadata:
-  labels:
-    velero.io/storage-location: default
-  name: localvolume
-  namespace: openshift-adp
-spec:
-  includedNamespaces:
-  - openshift-local-storage
-  includedNamespaceScopedResources:
-  - localvolumes
-  excludedClusterScopedResources:
-  - Namespace
-```
 
 backup_app.yaml
 
@@ -425,23 +406,6 @@ spec:
     acm-klusterlet
 ```
 
-restore_localvolumes.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: localvolume
-  namespace: openshift-adp
-  labels:
-    velero.io/storage-location: default
-  annotations:
-    lca.openshift.io/apply-wave: "2"
-spec:
-  backupName:
-    localvolume
-```
-
 restore_app.yaml
 
 ```yaml
@@ -476,10 +440,8 @@ configMapGenerator:
   namespace: openshift-adp
   files:
   - backup_acm_klusterlet.yaml
-  - backup_localvolume.yaml
   - backup_app.yaml
   - restore_acm_klusterlet.yaml
-  - restore_localvolume.yaml
   - restore_app.yaml
 generatorOptions:
   disableNameSuffixHash: true

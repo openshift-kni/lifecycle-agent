@@ -190,7 +190,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), &setupLog)
+	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), true, &setupLog)
 	if err != nil {
 		setupLog.Error(err, "unable to create dynamic client")
 		os.Exit(1)
