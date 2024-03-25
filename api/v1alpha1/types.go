@@ -72,8 +72,9 @@ type ImageBasedUpgradeSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content"
 	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Extra Manifests"
-	// ExtraManifests defines the ConfigMap resource for the user-specific extra manifests in the Prep stage.
-	// Users can also add their custom catalog sources that you want to retain after the upgrade.
+	// ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
+	// applied during the upgrade post-pivot stage.
+	// Users can also add their custom catalog sources that may want to retain after the upgrade.
 	ExtraManifests []ConfigMapRef `json:"extraManifests,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
 	AutoRollbackOnFailure AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
