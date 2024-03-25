@@ -18,12 +18,14 @@ package extramanifest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -87,6 +89,26 @@ metadata:
     resourceName: fh
 `
 
+const sriovnetwork1_invalid = `
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata: adsafsd
+  name: sriov-nw-mh
+  namespace: openshift-sriov-network-operator
+  spec:
+    resourceName: mh
+`
+
+const sriovnetwork2_invalid = `
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: sriov-nw-fh
+  namespace: openshift-sriov-network-operator
+  spec: sdfasdfa
+    resourceName: mh
+`
+
 func TestExportExtraManifests(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
 
@@ -106,12 +128,20 @@ func TestExportExtraManifests(t *testing.T) {
 			},
 			Data: map[string]string{
 				"sriovnetwork1.yaml": sriovnetwork1,
-				"sriovnetwork2.yaml": sriovnetwork2,
 			},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "extra-manifest-cm2",
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"sriovnetwork2.yaml": sriovnetwork2,
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extra-manifest-cm3",
 				Namespace: "default",
 			},
 			Data: map[string]string{
@@ -128,8 +158,9 @@ func TestExportExtraManifests(t *testing.T) {
 	}
 
 	handler := &EMHandler{
-		Client: fakeClient,
-		Log:    ctrl.Log.WithName("ExtraManifest"),
+		Client:        fakeClient,
+		DynamicClient: nil,
+		Log:           ctrl.Log.WithName("ExtraManifest"),
 	}
 
 	// Export the manifests to the temporary directory
@@ -137,6 +168,7 @@ func TestExportExtraManifests(t *testing.T) {
 		[]lcav1alpha1.ConfigMapRef{
 			{Name: "extra-manifest-cm1", Namespace: "default"},
 			{Name: "extra-manifest-cm2", Namespace: "default"},
+			{Name: "extra-manifest-cm3", Namespace: "default"},
 		}, toDir)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -144,16 +176,89 @@ func TestExportExtraManifests(t *testing.T) {
 
 	// Check that the manifests were exported to the correct files
 	expectedFilePaths := []string{
-		filepath.Join(toDir, ExtraManifestPath, "0_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "0_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "1_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "1_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "0_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "2_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "3_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
 	}
 
 	for _, expectedFile := range expectedFilePaths {
 		if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 			t.Fatalf("Expected file %s does not exist", expectedFile)
 		}
+	}
+}
+
+func TestValidateExtraManifestConfigmaps(t *testing.T) {
+	testcases := []struct {
+		name        string
+		configmaps  []lcav1alpha1.ConfigMapRef
+		expectedErr error
+	}{
+		{
+			name: "configmap is not found",
+			configmaps: []lcav1alpha1.ConfigMapRef{
+				{Name: "cm1", Namespace: "default"},
+			},
+			expectedErr: fmt.Errorf("the extraManifests configMap is not found"),
+		},
+		{
+			name: "extra manifest contains invalid format in metadata",
+			configmaps: []lcav1alpha1.ConfigMapRef{
+				{Name: "extra-manifest-cm1", Namespace: "default"},
+			},
+			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
+		},
+		{
+			name: "extra manifest contains invalid format in spec",
+			configmaps: []lcav1alpha1.ConfigMapRef{
+				{Name: "extra-manifest-cm1", Namespace: "default"},
+			},
+			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().Build()
+
+			handler := &EMHandler{
+				Client:        fakeClient,
+				DynamicClient: nil,
+				Log:           ctrl.Log.WithName("ExtraManifest"),
+			}
+
+			cms := []*corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "extra-manifest-cm1",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"sriovnetwork1_invalid.yaml": sriovnetwork1_invalid,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "extra-manifest-cm2",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"sriovnetwork2_invalid.yaml": sriovnetwork2_invalid,
+					},
+				},
+			}
+
+			for _, cm := range cms {
+				err := fakeClient.Create(context.Background(), cm)
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+
+			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps)
+			assert.ErrorContains(t, err, tc.expectedErr.Error())
+		})
 	}
 }
 
@@ -328,10 +433,10 @@ func TestExportPolicyManifests(t *testing.T) {
 			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
 			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{
@@ -370,10 +475,10 @@ func TestExportPolicyManifests(t *testing.T) {
 			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
 			policyLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.16.1"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{

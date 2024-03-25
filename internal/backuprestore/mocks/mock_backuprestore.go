@@ -174,16 +174,16 @@ func (mr *MockBackuperRestorerMockRecorder) StartOrTrackRestore(ctx, restores an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartOrTrackRestore", reflect.TypeOf((*MockBackuperRestorer)(nil).StartOrTrackRestore), ctx, restores)
 }
 
-// ValidateOadpConfigmap mocks base method.
-func (m *MockBackuperRestorer) ValidateOadpConfigmap(ctx context.Context, content []v1alpha1.ConfigMapRef) error {
+// ValidateOadpConfigmaps mocks base method.
+func (m *MockBackuperRestorer) ValidateOadpConfigmaps(ctx context.Context, content []v1alpha1.ConfigMapRef) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ValidateOadpConfigmap", ctx, content)
+	ret := m.ctrl.Call(m, "ValidateOadpConfigmaps", ctx, content)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// ValidateOadpConfigmap indicates an expected call of ValidateOadpConfigmap.
-func (mr *MockBackuperRestorerMockRecorder) ValidateOadpConfigmap(ctx, content any) *gomock.Call {
+// ValidateOadpConfigmaps indicates an expected call of ValidateOadpConfigmaps.
+func (mr *MockBackuperRestorerMockRecorder) ValidateOadpConfigmaps(ctx, content any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateOadpConfigmap", reflect.TypeOf((*MockBackuperRestorer)(nil).ValidateOadpConfigmap), ctx, content)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateOadpConfigmaps", reflect.TypeOf((*MockBackuperRestorer)(nil).ValidateOadpConfigmaps), ctx, content)
 }

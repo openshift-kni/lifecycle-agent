@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 
 	"github.com/go-logr/logr"
@@ -62,6 +63,7 @@ type ImageBasedUpgradeReconciler struct {
 	Recorder        record.EventRecorder
 	Precache        *precache.PHandler
 	BackupRestore   backuprestore.BackuperRestorer
+	ExtraManifest   extramanifest.EManifestHandler
 	RPMOstreeClient rpmostreeclient.IClient
 	Executor        ops.Execute
 	OstreeClient    ostreeclient.IClient
@@ -199,21 +201,6 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if isTransitionRequested(ibu) {
 		// Update in progress condition to true and idle condition to false when transitioning to non idle stage
 		if validateStageTransition(ibu, isAfterPivot) {
-			// Validate the IBU spec if the transition is to prep stage
-			if ibu.Spec.Stage == lcav1alpha1.Stages.Prep {
-				var isValid bool
-				isValid, err = r.validateIBUSpec(ctx, ibu)
-				if err != nil {
-					return
-				}
-				if !isValid {
-					ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
-					if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
-						r.Log.Error(updateErr, "failed to update IBU CR status")
-					}
-					return
-				}
-			}
 			ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
 			// Update status
 			if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
@@ -463,33 +450,6 @@ func validateStageTransition(ibu *lcav1alpha1.ImageBasedUpgrade, isAfterPivot bo
 		)
 	}
 	return true
-}
-
-// validateIBUSpec validates the IBU CR, returns true if the spec is valid, false otherwise
-func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
-	r.Log.Info("Validating IBU spec")
-
-	// If OADP configmap is provided, validate the configmap and check if OADP operator is available
-	if len(ibu.Spec.OADPContent) != 0 {
-		err := r.BackupRestore.ValidateOadpConfigmap(ctx, ibu.Spec.OADPContent)
-		if err != nil {
-			if backuprestore.IsBRFailedValidationError(err) {
-				utils.SetPrepStatusFailed(ibu, err.Error())
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to validate oadp configMap: %w", err)
-		}
-
-		err = r.BackupRestore.CheckOadpOperatorAvailability(ctx)
-		if err != nil {
-			if backuprestore.IsBRFailedValidationError(err) {
-				utils.SetPrepStatusFailed(ibu, err.Error())
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to check oadp operator availability: %w", err)
-		}
-	}
-	return true, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

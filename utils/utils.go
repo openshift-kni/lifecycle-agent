@@ -19,6 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -341,4 +343,26 @@ func AppendToListIfNotExists(list []string, value string) []string {
 		return list
 	}
 	return append(list, value)
+}
+
+func CreateDynamicClient(kubeconfig string, log *logr.Logger) (dynamic.Interface, error) {
+	// Read kubeconfig
+	var config *rest.Config
+	if _, err := os.Stat(kubeconfig); err != nil {
+		log.Error(err, "could not find KubeconfigFile. Using empty config only for test environment")
+		config = &rest.Config{}
+	} else {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			return nil, fmt.Errorf("unable to read kubeconfig: %w", err)
+		}
+	}
+
+	// Create dynamic client
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return dynamicClient, nil
 }
