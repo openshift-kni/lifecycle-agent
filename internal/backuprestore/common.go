@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 
@@ -57,11 +56,9 @@ import (
 // +kubebuilder:rbac:groups=oadp.openshift.io,resources=dataprotectionapplications,verbs=get;list;create;update;watch
 
 const (
-	applyWaveAnn     = "lca.openshift.io/apply-wave"
-	applyLabelAnn    = "lca.openshift.io/apply-label"
-	backupLabel      = "lca.openshift.io/backup"
-	clusterIDLabel   = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
-	defaultApplyWave = math.MaxInt32                   // 2147483647, an enough large number
+	applyLabelAnn  = "lca.openshift.io/apply-label"
+	backupLabel    = "lca.openshift.io/backup"
+	clusterIDLabel = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
 
 	OadpPath        = "/opt/OADP"
 	OadpRestorePath = OadpPath + "/veleroRestore"
@@ -77,8 +74,6 @@ var (
 
 	dpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
 	dpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
-	backupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
-	restoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
 )
 
 // BackuperRestorer interface also used for mocks
@@ -295,25 +290,6 @@ func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 	backup.SetLabels(labels)
 }
 
-func (h *BRHandler) createObjectWithDryRun(ctx context.Context, object *unstructured.Unstructured, cm string) error {
-	// Create the resource in dry-run mode to detect any validation errors in the CR
-	// i.e., missing required fields
-	err := h.Create(ctx, object, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-	if err != nil {
-		if k8serrors.IsInvalid(err) {
-			errMsg := fmt.Sprintf("Invalid %s %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
-				object.GetKind(), object.GetName(), cm, err.Error())
-			h.Log.Error(err, errMsg)
-			return NewBRFailedValidationError(object.GetKind(), errMsg)
-		}
-
-		if !k8serrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create configMap with dry run: %w", err)
-		}
-	}
-	return nil
-}
-
 func isDPAReconciled(dpa *unstructured.Unstructured) bool {
 	if dpa.Object["status"] == nil {
 		return false
@@ -399,13 +375,44 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		return fmt.Errorf("failed to oadp configMaps: %w", err)
 	}
 
-	backups, err := h.extractBackupFromConfigmaps(ctx, configmaps)
+	backups, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](ctx, configmaps, common.BackupGvk)
 	if err != nil {
 		return err
 	}
-	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
+	for _, backup := range backups {
+		err := h.Create(ctx, backup, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err != nil {
+			if k8serrors.IsInvalid(err) {
+				errMsg := fmt.Sprintf("Invalid backup %s detected in configmap, error: %s. Please update the invalid Backup in configmap.",
+					backup.GetName(), err.Error())
+				h.Log.Error(err, errMsg)
+				return NewBRFailedValidationError("backup", errMsg)
+			}
+
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create backup with dry run: %w", err)
+			}
+		}
+	}
+
+	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](ctx, configmaps, common.RestoreGvk)
 	if err != nil {
 		return err
+	}
+	for _, restore := range restores {
+		err := h.Create(ctx, restore, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err != nil {
+			if k8serrors.IsInvalid(err) {
+				errMsg := fmt.Sprintf("Invalid Restore %s detected in configmap, error: %s. Please update the invalid Restore in configmap.",
+					restore.GetName(), err.Error())
+				h.Log.Error(err, errMsg)
+				return NewBRFailedValidationError("restore", errMsg)
+			}
+
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create Restore with dry run: %w", err)
+			}
+		}
 	}
 
 	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {

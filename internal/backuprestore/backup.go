@@ -17,15 +17,11 @@ limitations under the License.
 package backuprestore
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +34,8 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -77,13 +71,12 @@ func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content [
 	}
 
 	// extract backup CRs from configmaps
-	backupCRs, err := h.extractBackupFromConfigmaps(ctx, oadpConfigmaps)
+	backupCRs, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](ctx, oadpConfigmaps, common.BackupGvk)
 	if err != nil {
 		return nil, err
 	}
 
-	// sort backup CRs by wave-apply
-	sortedBackupGroups, err := sortByApplyWaveBackupCrs(backupCRs)
+	sortedBackupGroups, err := common.SortAndGroupByApplyWave[*velerov1.Backup](backupCRs)
 	if err != nil {
 		return nil, err
 	}
@@ -261,90 +254,6 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 	return nil
 }
 
-// sortByApplyWaveBackupCrs sorts the backups by the apply-wave annotation
-func sortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
-	var resourcesApplyWaveMap = make(map[int][]*velerov1.Backup)
-	var sortedResources [][]*velerov1.Backup
-
-	// sort backups by annotation lca.openshift.io/apply-wave
-	for _, resource := range resources {
-		applyWave, _ := resource.GetAnnotations()[applyWaveAnn]
-		if applyWave == "" {
-			// Empty apply-wave annotation or no annotation
-			resourcesApplyWaveMap[defaultApplyWave] = append(resourcesApplyWaveMap[defaultApplyWave], resource)
-			continue
-		}
-
-		applyWaveInt, err := strconv.Atoi(applyWave)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert %s in Backup CR %s to interger: %w", applyWave, resource.GetName(), err)
-		}
-		resourcesApplyWaveMap[applyWaveInt] = append(resourcesApplyWaveMap[applyWaveInt], resource)
-	}
-
-	var sortedApplyWaves []int
-	for applyWave := range resourcesApplyWaveMap {
-		sortedApplyWaves = append(sortedApplyWaves, applyWave)
-	}
-	sort.Ints(sortedApplyWaves)
-
-	for index, applyWave := range sortedApplyWaves {
-		sortedResources = append(sortedResources, resourcesApplyWaveMap[applyWave])
-		sortBackupsByName(sortedResources[index])
-	}
-
-	return sortedResources, nil
-}
-
-// sortBackupsByName sorts a list of backups by name alphebetically
-func sortBackupsByName(resources []*velerov1.Backup) {
-	sort.Slice(resources, func(i, j int) bool {
-		nameI := resources[i].GetName()
-		nameJ := resources[j].GetName()
-		return nameI < nameJ
-	})
-}
-
-// extractBackupFromConfigmaps extacts Backup CRs from configmaps
-func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
-	var backups []*velerov1.Backup
-
-	for _, cm := range configmaps {
-		for _, value := range cm.Data {
-			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
-			for {
-				resource := unstructured.Unstructured{}
-				err := decoder.Decode(&resource)
-				if err != nil {
-					if errors.Is(err, io.EOF) {
-						// Reach the end of the data, exit the loop
-						break
-					}
-					errMsg := fmt.Sprintf("Failed to decode yaml in configmap: %v", err.Error())
-					h.Log.Error(nil, errMsg)
-					return nil, NewBRFailedValidationError(resource.GetKind(), errMsg)
-				}
-
-				if resource.GroupVersionKind() != backupGvk {
-					continue
-				}
-
-				err = h.createObjectWithDryRun(ctx, &resource, cm.Name)
-				if err != nil {
-					return nil, err
-				}
-
-				backup := velerov1.Backup{}
-				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &backup); err != nil {
-					return nil, fmt.Errorf("failed to convert to backup CR %s from unstructured to typed: %w", backup.GetName(), err)
-				}
-				backups = append(backups, &backup)
-			}
-		}
-	}
-	return backups, nil
-}
-
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CR and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	dpaList := &unstructured.UnstructuredList{}
@@ -436,45 +345,6 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 		}
 		h.Log.Info("Exported secret to file", "path", filePath)
 	}
-	return nil
-}
-
-// ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
-// returns: error
-func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
-	configmaps, err := common.GetConfigMaps(ctx, h.Client, configMaps)
-	if err != nil {
-		return fmt.Errorf("failed to get configMaps: %w", err)
-	}
-
-	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
-	if err != nil {
-		return fmt.Errorf("failed to get restore CR from configmaps: %w", err)
-	}
-
-	sortedRestores, err := sortByApplyWaveRestoreCrs(restores)
-	if err != nil {
-		return fmt.Errorf("failed to sort restore CRs: %w", err)
-	}
-
-	for i, restoreGroup := range sortedRestores {
-		// Create a directory for each group
-		group := filepath.Join(toDir, OadpRestorePath, "restore"+strconv.Itoa(i+1))
-		// If the directory already exists, it does nothing
-		if err := os.MkdirAll(group, 0o700); err != nil {
-			return fmt.Errorf("failed make dir in %s: %w", group, err)
-		}
-
-		for j, restore := range restoreGroup {
-			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + yamlExt
-			filePath := filepath.Join(group, restoreFileName)
-			if err := utils.MarshalToYamlFile(restore, filePath); err != nil {
-				return fmt.Errorf("failed marshal file %s: %w", filePath, err)
-			}
-			h.Log.Info("Exported restore CR to file", "path", filePath)
-		}
-	}
-
 	return nil
 }
 

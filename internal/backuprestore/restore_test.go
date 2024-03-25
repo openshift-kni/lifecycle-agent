@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -43,6 +44,7 @@ func init() {
 }
 
 func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
+	restoreGvk := common.RestoreGvk
 	restore := &velerov1.Restore{
 		TypeMeta: v1.TypeMeta{
 			Kind:       restoreGvk.Kind,
@@ -51,7 +53,7 @@ func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
 	}
 	restore.SetName(name)
 	restore.SetNamespace(OadpNs)
-	restore.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
+	restore.SetAnnotations(map[string]string{common.ApplyWaveAnn: applyWave})
 
 	restore.Spec = velerov1.RestoreSpec{
 		BackupName: backupName,
@@ -66,91 +68,6 @@ func fakeRestoreCrWithStatus(name, applyWave, backupName string, phase velerov1.
 	}
 
 	return restore
-}
-
-func TestSortRestoreCrs(t *testing.T) {
-	testcases := []struct {
-		name           string
-		resources      []*velerov1.Restore
-		expectedResult [][]*velerov1.Restore
-	}{
-		{
-			name: "Multiple resources contain the same wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "3", "backup1"),
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-			}, {
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("c_Restore", "3", "backup1"),
-			}, {
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-			}, {
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-			},
-			},
-		},
-		{
-			name: "Multiple resources have no wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("g_Restore", "", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-			}, {
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-			}, {
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-			}, {
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-			}, {
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("g_Restore", "", "backup1"),
-			},
-			},
-		},
-		{
-			name: "All resources have no wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "", "backup1"),
-				fakeRestoreCr("a_Restore", "", "backup1"),
-				fakeRestoreCr("b_Restore", "", "backup1"),
-				fakeRestoreCr("f_Restore", "", "backup1"),
-				fakeRestoreCr("e_Restore", "", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("a_Restore", "", "backup1"),
-				fakeRestoreCr("b_Restore", "", "backup1"),
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "", "backup1"),
-				fakeRestoreCr("e_Restore", "", "backup1"),
-				fakeRestoreCr("f_Restore", "", "backup1"),
-			},
-			},
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, _ := sortByApplyWaveRestoreCrs(tc.resources)
-			assert.Equal(t, tc.expectedResult, result)
-		})
-	}
 }
 
 func TestTriggerRestore(t *testing.T) {

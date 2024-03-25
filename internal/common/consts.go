@@ -16,6 +16,12 @@ limitations under the License.
 
 package common
 
+import (
+	"math"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
 // Common constants mainly used by packages in lca-cli
 const (
 	VarFolder       = "/var"
@@ -84,6 +90,13 @@ const (
 
 	NMConnectionFolder = "/etc/NetworkManager/system-connections"
 	NetworkDir         = "network-configuration"
+	ApplyWaveAnn       = "lca.openshift.io/apply-wave"
+	defaultApplyWave   = math.MaxInt32 // 2147483647, an enough large number
+)
+
+var (
+	BackupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
+	RestoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up

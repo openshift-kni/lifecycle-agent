@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -110,4 +111,67 @@ func TestCopyReplaceMirrorRegistry(t *testing.T) {
 			assert.Equal(t, strings.HasPrefix(newImage, tc.clusterRegistry), tc.shouldChange)
 		})
 	}
+}
+
+func TestLoadGroupedManifestsFromPath(t *testing.T) {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "staterootB")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create restores directory
+	restoreDir := filepath.Join(tmpDir, "manifests")
+	if err := os.MkdirAll(restoreDir, 0755); err != nil {
+		t.Fatalf("Failed to create restore directory: %v", err)
+	}
+
+	// Create two subdirectories for restores
+	restoreSubDir1 := filepath.Join(restoreDir, "group1")
+	if err := os.Mkdir(restoreSubDir1, 0755); err != nil {
+		t.Fatalf("Failed to create restore subdirectory: %v", err)
+	}
+	restoreSubDir2 := filepath.Join(restoreDir, "group2")
+	if err := os.Mkdir(restoreSubDir2, 0755); err != nil {
+		t.Fatalf("Failed to create restore subdirectory: %v", err)
+	}
+
+	restore1File := filepath.Join(restoreSubDir1, "1_default-restore1.yaml")
+	if err := os.WriteFile(restore1File, []byte("apiVersion: velero.io/v1\n"+
+		"kind: Restore\n"+
+		"metadata:\n"+
+		"  name: restore1\n"+
+		"spec:\n"+
+		"  backupName: backup1\n"), 0644); err != nil {
+		t.Fatalf("Failed to create restore file: %v", err)
+	}
+	restore2File := filepath.Join(restoreSubDir1, "2_default-restore2.yaml")
+	if err := os.WriteFile(restore2File, []byte("apiVersion: velero.io/v1\n"+
+		"kind: Restore\n"+
+		"metadata:\n"+
+		"  name: restore2\n"+
+		"spec:\n"+
+		"  backupName: backup2\n"), 0644); err != nil {
+		t.Fatalf("Failed to create restore file: %v", err)
+	}
+	restore3File := filepath.Join(restoreSubDir2, "1_default-restore3.yaml")
+	if err := os.WriteFile(restore3File, []byte("apiVersion: velero.io/v1\n"+
+		"kind: Restore\n"+
+		"metadata:\n"+
+		"  name: restore3\n"+
+		"spec:\n"+
+		"  backupName: backup3\n"), 0644); err != nil {
+		t.Fatalf("Failed to create restore file: %v", err)
+	}
+
+	manifests, err := LoadGroupedManifestsFromPath(restoreDir, &logr.Logger{})
+
+	if err != nil {
+		t.Fatalf("Failed to load restores: %v", err)
+	}
+
+	assert.Equal(t, 2, len(manifests[0]))
+	assert.Equal(t, 1, len(manifests[1]))
+
 }

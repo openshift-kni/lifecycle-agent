@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -264,24 +265,30 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		return fmt.Errorf("failed to extract manifests from configMap: %w", err)
 	}
 
-	// TODO: sort/group manifests by apply-wave
+	sortedManifests, err := common.SortAndGroupByApplyWave[*unstructured.Unstructured](manifests)
+	if err != nil {
+		return fmt.Errorf("failed to sort and group manifests: %w", err)
+	}
 
 	// Create the directory for the extra manifests
 	exMDirPath := filepath.Join(toDir, ExtraManifestPath)
 	if err := os.MkdirAll(exMDirPath, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory for extra manifests in %s: %w", exMDirPath, err)
 	}
-
-	for i, manifest := range manifests {
-		gvk := manifest.GroupVersionKind()
-
-		fileName := fmt.Sprintf("%d_%s_%s_%s.yaml", i, gvk.Kind, manifest.GetName(), manifest.GetNamespace())
-		filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
-		err = utils.MarshalToYamlFile(manifest, filePath)
-		if err != nil {
-			return fmt.Errorf("failed to marshal manifest %s to yaml: %w", manifest.GetName(), err)
+	for i, manifestGroup := range sortedManifests {
+		group := filepath.Join(toDir, ExtraManifestPath, "group"+strconv.Itoa(i+1))
+		if err := os.MkdirAll(group, 0o700); err != nil {
+			return fmt.Errorf("failed make dir in %s: %w", group, err)
 		}
-		h.Log.Info("Exported manifest to file", "path", filePath)
+
+		for j, manifest := range manifestGroup {
+			fileName := fmt.Sprintf("%d_%s_%s_%s.yaml", j+1, manifest.GetKind(), manifest.GetName(), manifest.GetNamespace())
+			filePath := filepath.Join(group, fileName)
+			if err := utils.MarshalToYamlFile(manifest, filePath); err != nil {
+				return fmt.Errorf("failed to marshal manifest %s to yaml: %w", manifest.GetName(), err)
+			}
+			h.Log.Info("Exported manifest to file", "path", filePath)
+		}
 	}
 
 	return nil
@@ -331,52 +338,38 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 
 // ApplyExtraManifests applies the extra manifests from the preserved extra manifests directory
 func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) error {
-	manifestYamls, err := os.ReadDir(fromDir)
+	manifests, err := utils.LoadGroupedManifestsFromPath(fromDir, &h.Log)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read extraManifest from dir %s: %w", fromDir, err)
+		return fmt.Errorf("failed to read extra manifests from path: %w", err)
 	}
-
-	h.Log.Info("Applying extra manifests")
-	if len(manifestYamls) == 0 {
-		h.Log.Info("No extra manifests found", "path", fromDir)
+	if manifests == nil || len(manifests) == 0 {
+		h.Log.Info("No extra manifests to apply")
 		return nil
 	}
 
-	for _, manifestYaml := range manifestYamls {
-		manifestYamlPath := filepath.Join(fromDir, manifestYaml.Name())
-		if manifestYaml.IsDir() {
-			h.Log.Info("Unexpected directory found, skipping", "directory", manifestYamlPath)
-			continue
-		}
+	for _, group := range manifests {
+		for _, manifest := range group {
+			h.Log.Info("Applying manifest", "kind", manifest.GetKind(), "name", manifest.GetName())
+			err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, false)
+			if err != nil {
+				h.Log.Error(err, "Failed to apply manifest")
+				errMsg := fmt.Sprintf("failed to apply manifest: %v", err.Error())
 
-		manifest := &unstructured.Unstructured{}
-		if err := utils.ReadYamlOrJSONFile(manifestYamlPath, manifest); err != nil {
-			return fmt.Errorf("failed to read manifest: %w", err)
-		}
+				// Capture both invalid syntax and webhook validation errors
+				if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
+					return NewEMFailedError(errMsg)
+				}
 
-		h.Log.Info("Applying manifest from file", "path", manifestYamlPath)
-		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, false)
-		if err != nil {
-			h.Log.Error(err, "Failed to apply manifest")
-			errMsg := fmt.Sprintf("failed to apply manifest: %v", err.Error())
-
-			// Capture both invalid syntax and webhook validation errors
-			if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
-				return NewEMFailedError(errMsg)
+				// Capture unknown CRD issue
+				var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+				if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
+					return NewEMFailedError(errMsg)
+				}
+				return fmt.Errorf(errMsg)
 			}
 
-			// Capture unknown CRD issue
-			var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-			if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
-				return NewEMFailedError(errMsg)
-			}
-			return fmt.Errorf(errMsg)
+			h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
 		}
-
-		h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
 	}
 
 	// Remove the extra manifests directory
