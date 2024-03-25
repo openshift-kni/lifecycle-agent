@@ -346,6 +346,10 @@ following data to be set:
 - `seedImage`: The pullspec (i.e., registry/repo:tag) for the generated image
 - `recertImage`: (Optional) Allows user to specify the recert tool image to pass to the image builder
 
+> :warning: **If the recert image is given as a registry moving tag (e.g. "latest" or "v0") the image could change between seed generation and post-pivot recert.**
+Recert makes no guarantees that a seed invalidated using one version can be "fixed" by a newer version.
+To ensure your seed image is using the same recert image it's recommended to mirror the recert image and use SHA reference in the seedgen CR
+
 In addition, a `Secret` named `seedgen` is required in the `openshift-lifecycle-agent` namespace. This allows the user
 to provide the following information in the `Data` section:
 
