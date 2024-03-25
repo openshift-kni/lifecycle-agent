@@ -84,6 +84,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	CleanupBackups(ctx context.Context) (bool, error)
+	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
