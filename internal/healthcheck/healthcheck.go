@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	k8sv1 "k8s.io/api/certificates/v1"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -26,6 +28,7 @@ import (
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodestates,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
+// +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=get;list;watch
 
 const (
 	NodeRoleControlPlane = "node-role.kubernetes.io/control-plane"
@@ -76,6 +79,11 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 			l.Info("sriovNetworkNodeState health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
 		}
+	}
+
+	if err := AreCertificateSigningRequestsReady(ctx, c, l); err != nil {
+		l.Info("certificateSigningRequest (csr) health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
 	}
 
 	if len(failures) > 0 {
@@ -285,4 +293,30 @@ func IsSriovNetworkNodeReady(ctx context.Context, c client.Reader, l logr.Logger
 
 	l.Info("SriovNetworkNodeState is ready")
 	return nil
+}
+
+func AreCertificateSigningRequestsReady(ctx context.Context, c client.Reader, l logr.Logger) error {
+	csrList := k8sv1.CertificateSigningRequestList{}
+	if err := c.List(ctx, &csrList); err != nil {
+		return fmt.Errorf("failed to get csr list: %w", err)
+	}
+
+	for _, csr := range csrList.Items {
+		if !isApproved(csr) {
+			return fmt.Errorf("certificateSigningRequest (csr) %s not yet approved", csr.GetName())
+		}
+	}
+
+	l.Info("All CSRs are approved")
+	return nil
+}
+
+func isApproved(csr k8sv1.CertificateSigningRequest) bool {
+	for _, condition := range csr.Status.Conditions {
+		if condition.Type == k8sv1.CertificateApproved {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+
+	return false
 }
