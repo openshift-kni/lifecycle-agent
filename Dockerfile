@@ -26,7 +26,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 
 #####################################################################################################
 # Build the operator image
-FROM quay.io/openshift/origin-cli-artifacts:4.16 AS origincli
+# note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.16`
+FROM quay.io/openshift/origin-cli-artifacts:latest AS origincli
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 RUN if [[ ! -f /bin/nsenter ]]; then \
@@ -48,6 +49,6 @@ COPY lca-cli/installation_configuration_files/ /usr/local/installation_configura
 
 COPY --from=origincli /usr/share/openshift/linux_amd64/oc.rhel9 /usr/bin/oc
 
-COPY must-gather/collection-scripts/* /usr/bin/
+COPY must-gather/collection-scripts/ /usr/bin/
 
 ENTRYPOINT ["/usr/local/bin/manager"]
