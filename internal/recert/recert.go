@@ -29,6 +29,8 @@ type RecertConfig struct {
 	ClusterRename    string `json:"cluster_rename,omitempty"`
 	Hostname         string `json:"hostname,omitempty"`
 	IP               string `json:"ip,omitempty"`
+	Proxy            string `json:"proxy,omitempty"`
+	InstallConfig    string `json:"install_config,omitempty"`
 	// We intentionally don't omitEmpty this field because an empty string here
 	// means "delete the kubeadmin password secret" while a complete omission
 	// of the field means "don't touch the secret". We never want the latter,
@@ -42,6 +44,17 @@ type RecertConfig struct {
 	UseKeyRules           []string `json:"use_key_rules,omitempty"`
 	UseCertRules          []string `json:"use_cert_rules,omitempty"`
 	PullSecret            string   `json:"pull_secret,omitempty"`
+}
+
+func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
+	if proxy == nil || statusProxy == nil {
+		// Both must be set, anything else is invalid
+		return ""
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		proxy.HTTPProxy, proxy.HTTPSProxy, proxy.NoProxy,
+		statusProxy.HTTPProxy, statusProxy.HTTPSProxy, statusProxy.NoProxy,
+	)
 }
 
 // CreateRecertConfigFile function to create recert config file
@@ -62,6 +75,10 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	if seedReconfig.NodeIP != seedClusterInfo.NodeIP {
 		config.IP = seedReconfig.NodeIP
 	}
+
+	config.Proxy = FormatRecertProxyFromSeedReconfigProxy(seedReconfig.Proxy, seedReconfig.StatusProxy)
+
+	config.InstallConfig = seedReconfig.InstallConfig
 
 	config.SummaryFile = SummaryFile
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
@@ -163,7 +180,10 @@ func createBasicEmptyRecertConfig() RecertConfig {
 		DryRun:       false,
 		EtcdEndpoint: common.EtcdDefaultEndpoint,
 		StaticDirs:   staticDirs,
-		StaticFiles:  []string{"/host-etc/mcs-machine-config-content.json"},
+		StaticFiles: []string{
+			"/host-etc/mcs-machine-config-content.json",
+			"/host-etc/mco/proxy.env",
+		},
 	}
 }
 

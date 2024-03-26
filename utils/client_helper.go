@@ -243,6 +243,19 @@ func GetMirrorRegistrySourceRegistries(ctx context.Context, client runtimeclient
 	return sourceRegistries, nil
 }
 
+func HasProxy(ctx context.Context, client runtimeclient.Client) (bool, error) {
+	proxy := &ocp_config_v1.Proxy{}
+	if err := client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, proxy); err != nil {
+		return false, fmt.Errorf("failed to get proxy CR: %w", err)
+	}
+
+	if proxy.Spec.HTTPProxy == "" && proxy.Spec.HTTPSProxy == "" && proxy.Spec.NoProxy == "" {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, mirrorRegistryConfigured bool, releaseRegistry string) (bool, error) {
 	mirroredRegistries, err := GetMirrorRegistrySourceRegistries(ctx, client)
 	if err != nil {

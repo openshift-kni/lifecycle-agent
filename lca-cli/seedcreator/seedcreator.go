@@ -147,7 +147,13 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to run once backup_mco_config: %w", err)
 	}
 
-	if err := s.createAndPushSeedImage(); err != nil {
+	clusterInfoJSONSBytes, err := os.ReadFile(path.Join(s.backupDir, common.SeedClusterInfoFileName))
+	if err != nil {
+		return fmt.Errorf("failed to read cluster info file: %w", err)
+	}
+
+	clusterInfoJSON := string(clusterInfoJSONSBytes)
+	if err := s.createAndPushSeedImage(clusterInfoJSON); err != nil {
 		return fmt.Errorf("failed to create and push seed image: %w", err)
 	}
 
@@ -184,7 +190,12 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		return fmt.Errorf("failed to get cluster info: %w", err)
 	}
 
-	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage)
+	hasProxy, err := utils.HasProxy(ctx, s.client)
+	if err != nil {
+		return fmt.Errorf("failed to get proxy information: %w", err)
+	}
+
+	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage, hasProxy)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)
@@ -393,7 +404,7 @@ func (s *SeedCreator) backupMCOConfig() error {
 }
 
 // Building and pushing OCI image
-func (s *SeedCreator) createAndPushSeedImage() error {
+func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	s.log.Info("Build and push OCI image to ", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
@@ -426,6 +437,7 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 		"--file", tmpfile.Name(),
 		"--tag", s.containerRegistry,
 		"--label", fmt.Sprintf("%s=%d", common.SeedFormatOCILabel, common.SeedFormatVersion),
+		"--label", fmt.Sprintf("%s=%s", common.SeedClusterInfoOCILabel, clusterInfo),
 		s.backupDir,
 	}
 	_, err = s.ops.RunInHostNamespace(
