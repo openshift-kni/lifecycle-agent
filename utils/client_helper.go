@@ -65,6 +65,19 @@ func GetClusterBaseDomain(ctx context.Context, client runtimeclient.Client) (str
 	return installConfig.BaseDomain, nil
 }
 
+func GetClusterIntenalNetworks(ctx context.Context, client runtimeclient.Client) ([]string, []string, error) {
+	installConfig, err := getInstallConfig(ctx, client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get install config: %w", err)
+	}
+	var clusterNetworks []string
+	for _, cnet := range installConfig.Networking.ClusterNetworks {
+		clusterNetworks = append(clusterNetworks, cnet.Cidr)
+	}
+
+	return clusterNetworks, installConfig.Networking.ServiceNetworks, nil
+}
+
 type ClusterInfo struct {
 	OCPVersion               string
 	BaseDomain               string
@@ -74,6 +87,10 @@ type ClusterInfo struct {
 	ReleaseRegistry          string
 	Hostname                 string
 	MirrorRegistryConfigured bool
+
+	// Required for no proxy configurations, used only on seed creation
+	ClusterNetworks []string
+	ServiceNetworks []string
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
@@ -115,6 +132,11 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		return nil, err
 	}
 
+	clusterNetworks, serviceNetworks, err := GetClusterIntenalNetworks(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ClusterInfo{
 		ClusterName:              clusterName,
 		BaseDomain:               clusterBaseDomain,
@@ -124,6 +146,8 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		ReleaseRegistry:          releaseRegistry,
 		Hostname:                 hostname,
 		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
+		ClusterNetworks:          clusterNetworks,
+		ServiceNetworks:          serviceNetworks,
 	}, nil
 }
 
@@ -150,9 +174,19 @@ type installConfigMetadata struct {
 	Name string `json:"name"`
 }
 
+type ClusterNetwork struct {
+	Cidr string `json:"cidr"`
+}
+
+type InstallConfigNetworking struct {
+	ClusterNetworks []ClusterNetwork `json:"clusterNetwork"`
+	ServiceNetworks []string         `json:"serviceNetwork"`
+}
+
 type basicInstallConfig struct {
-	BaseDomain string                `json:"baseDomain"`
-	Metadata   installConfigMetadata `json:"metadata"`
+	BaseDomain string                  `json:"baseDomain"`
+	Networking InstallConfigNetworking `json:"networking"`
+	Metadata   installConfigMetadata   `json:"metadata"`
 }
 
 func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*basicInstallConfig, error) {
