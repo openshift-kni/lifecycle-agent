@@ -93,7 +93,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot
 		r.Log.Error(err, "")
-		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 
