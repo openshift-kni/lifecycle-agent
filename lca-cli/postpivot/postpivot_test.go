@@ -3,6 +3,7 @@ package postpivot
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -508,6 +509,7 @@ func fakeManifests(tmpDir string) error {
 	}
 	return nil
 }
+
 func TestApplyManifests(t *testing.T) {
 	var (
 		mockController = gomock.NewController(t)
@@ -602,6 +604,53 @@ func TestApplyManifests(t *testing.T) {
 			assert.Equal(t, 1, len(currentCms.Items))
 			assert.Equal(t, "user-ca-bundle", currentCms.Items[0].GetName())
 			assert.Equal(t, "openshift-config", currentCms.Items[0].GetNamespace())
+		})
+	}
+}
+
+func TestSetNodeIPHint(t *testing.T) {
+	testcases := []struct {
+		name          string
+		nodeCidr      string
+		expectedError bool
+	}{
+		{
+			name:          "Wrong cidr provide, expected error",
+			nodeCidr:      "192.167.1.2",
+			expectedError: true,
+		},
+		{
+			name:          "Happy flow",
+			nodeCidr:      "192.167.1.0/24",
+			expectedError: false,
+		},
+		{
+			name:          "No cidr providered",
+			nodeCidr:      "",
+			expectedError: false,
+		},
+	}
+
+	for _, tc := range testcases {
+		tmpDir := t.TempDir()
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, nil, "", tmpDir, "")
+			nodeIPHintFile = path.Join(tmpDir, "hint")
+			err := pp.setNodeIpHint(tc.nodeCidr)
+			assert.Equal(t, tc.expectedError, err != nil, err)
+			if !tc.expectedError {
+				if tc.nodeCidr != "" {
+					hint, err := os.ReadFile(nodeIPHintFile)
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+					ip, _, _ := net.ParseCIDR(tc.nodeCidr)
+					assert.Equal(t, fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip), string(hint))
+				} else if _, err := os.Stat(nodeIPHintFile); err == nil {
+					t.Errorf("expected no node ip hint file to be created")
+				}
+			}
 		})
 	}
 }

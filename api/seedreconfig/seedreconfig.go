@@ -92,6 +92,11 @@ type SeedReconfiguration struct {
 
 	// PullSecret is the secret to use when pulling images. Equivalent to install-config.yaml's pullSecret.
 	PullSecret string `json:"pull_secret,omitempty"`
+
+	// MachineNetwork is the subnet provided by user for the ocp cluster.
+	// This will be used to create the node network and choose ip address for the node.
+	// Equivalent to install-config.yaml's machineNetwork.
+	MachineNetwork string `json:"machine_network,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {

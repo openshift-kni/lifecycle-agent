@@ -64,6 +64,7 @@ var (
 	hostnameFile       = "/etc/hostname"
 	nmConnectionFolder = common.NMConnectionFolder
 	nodeIpFile         = "/run/nodeip-configuration/primary-ip"
+	nodeIPHintFile     = "/etc/default/nodeip-configuration"
 )
 
 const (
@@ -105,6 +106,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
 		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
+	}
+
+	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
+		return fmt.Errorf("failed to configure networking, err: %w", err)
 	}
 
 	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFile,
@@ -741,6 +746,24 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
+// setNodeIpHint writes provided subnet to nodeIPHintFile
+func (p *PostPivot) setNodeIpHint(machineNetwork string) error {
+	if machineNetwork == "" {
+		p.log.Infof("No machine network was provided, skipping setting node ip hint")
+		return nil
+	}
+
+	ip, _, err := net.ParseCIDR(machineNetwork)
+	if err != nil {
+		return fmt.Errorf("failed to parse machine network %s, err: %w", machineNetwork, err)
+	}
+	p.log.Infof("Writing machine network cidr %s into %s", ip, nodeIPHintFile)
+	if err := os.WriteFile(nodeIPHintFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip)), 0o600); err != nil {
+		return fmt.Errorf("failed to write machine network cidr %s to %s, err %w", machineNetwork, nodeIPHintFile, err)
+	}
+	return nil
+}
+
 // networkConfiguration is on charge of configuring network prior installation process.
 // This function should include all network configurations of post-pivot flow.
 // It's logic currently includes:
@@ -756,6 +779,10 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 	}
 
 	if err := p.applyNMStateConfiguration(seedReconfiguration); err != nil {
+		return err
+	}
+
+	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
 		return err
 	}
 
