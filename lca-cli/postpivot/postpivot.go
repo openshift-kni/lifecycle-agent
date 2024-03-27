@@ -244,7 +244,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfiguration
 	if err != nil {
 		return fmt.Errorf("failed to get etcd members list")
 	}
-	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("http://%s:2380", newEtcdIp)})
+	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("https://%s:2380", newEtcdIp)})
 	if err != nil {
 		return fmt.Errorf("failed to change etcd peer url, err: %w", err)
 	}
