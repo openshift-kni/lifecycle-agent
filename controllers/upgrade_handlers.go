@@ -103,7 +103,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 
 func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) {
 	// Clear any error status that may have been set
-	utils.SetUpgradeStatusInProgress(ibu, "In progress")
+	utils.SetUpgradeStatusInProgress(ibu, utils.InProgress)
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
