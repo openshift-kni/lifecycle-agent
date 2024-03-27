@@ -64,6 +64,7 @@ var (
 	hostnameFile       = "/etc/hostname"
 	nmConnectionFolder = common.NMConnectionFolder
 	nodeIpFile         = "/run/nodeip-configuration/primary-ip"
+	nodeIPHintFile     = "/etc/default/nodeip-configuration"
 )
 
 const (
@@ -741,6 +742,23 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
+// setNodeIpHint writes provided subnet to nodeIPHintFile
+func (p *PostPivot) setNodeIpHint(nodeCidr string) error {
+	if nodeCidr == "" {
+		return nil
+	}
+
+	ip, _, err := net.ParseCIDR(nodeCidr)
+	if err != nil {
+		return fmt.Errorf("failed to parse subnet %s, err: %w", nodeCidr, err)
+	}
+	p.log.Infof("Writing subnet %s into %s", ip, nodeIPHintFile)
+	if err := os.WriteFile(nodeIPHintFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip)), 0o600); err != nil {
+		return fmt.Errorf("failed to write subnet %s to %s, err %w", nodeCidr, nodeIPHintFile, err)
+	}
+	return nil
+}
+
 // networkConfiguration is on charge of configuring network prior installation process.
 // This function should include all network configurations of post-pivot flow.
 // It's logic currently includes:
@@ -756,6 +774,10 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 	}
 
 	if err := p.applyNMStateConfiguration(seedReconfiguration); err != nil {
+		return err
+	}
+
+	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
 		return err
 	}
 
