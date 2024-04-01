@@ -7,14 +7,15 @@ The lifecycle Agent operator (LCA) provides functionality for backing up and res
 Before the cluster is rebooted to the new stateroot:
 
 - Process the configmaps specified via `spec.oadpContent`.
-- Apply all backup CRs wrapped in the configmaps. If any backup CR fails, the upgrade process is terminated.
+- Cleanup any stale backup (with the same name) from the object storage. This cleanup is also done during the Prep stage.
+- Apply all backup CRs wrapped in the configmaps (with the same `clusterID` label). If any backup CR fails, the upgrade process is terminated.
 - Export all restore CRs wrapped in the configmaps to the new stateroot.
 - Export the live DataProtectionApplication(DPA) CR and the associated secrets used in the DPA to the new stateroot.
 
 After the cluster is rebooted to the new stateroot:
 
 - Restore the preserved secrets and DPA
-- Apply all preverved restore CRs. If any restore CR fails, the upgrade process is terminated.
+- Apply all preserved restore CRs (with the same `clusterID` label). If any restore CR fails, the upgrade process is terminated.
 
 ## Pre-Requisites
 
@@ -51,16 +52,16 @@ kind: Backup
 metadata:
   name: acm-klusterlet
   namespace: openshift-adp
-annotations:
-  lca.openshift.io/apply-label: rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet
-labels:
-  velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-label: rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet
+  labels:
+    velero.io/storage-location: default
 spec:
-  includeNamespace:
+  includedNamespaces:
    - open-cluster-management-agent
-  includeClusterScopedResources:
+  includedClusterScopedResources:
    - clusterroles
-  includeNamespaceScopedResources:
+  includedNamespaceScopedResources:
    - deployments
 ```
 
@@ -206,7 +207,7 @@ spec:
       policyName: "subscriptions-policy"
     - fileName: OadpOperatorStatus.yaml
       policyName: "subscriptions-policy"
-    ...
+...
 ```
 
 *TODO*: Add the OADP CRs to [ZTP source-crs](https://github.com/openshift-kni/cnf-features-deploy/tree/master/ztp/source-crs)
@@ -501,7 +502,7 @@ spec:
 
 ## Manually install OADP and configure OADP on target cluster
 
-If you prefer to install and configure OADP manually, you can copy all the neccessary CRs provided in the section
+If you prefer to install and configure OADP manually, you can copy all the necessary CRs provided in the section
 **Install OADP and configure OADP on target cluster via ZTP GitOps**, remove the `ran.openshift.io/ztp-deploy-wave`
 annotation from CRs and use them as a reference. Remove Make sure to adjust the configuration according to your specific
 requirements.

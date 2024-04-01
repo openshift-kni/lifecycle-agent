@@ -26,6 +26,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -53,6 +54,7 @@ func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
 	}
 	restore.SetName(name)
 	restore.SetNamespace(OadpNs)
+	restore.SetLabels(map[string]string{clusterIDLabel: testClusterID})
 	restore.SetAnnotations(map[string]string{common.ApplyWaveAnn: applyWave})
 
 	restore.Spec = velerov1.RestoreSpec{
@@ -155,9 +157,18 @@ func TestTriggerRestore(t *testing.T) {
 		},
 	}
 
+	clusterVersion := &configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: configv1.ClusterVersionSpec{
+			ClusterID: configv1.ClusterID(testClusterID),
+		},
+	}
+
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{ns}
+			objs := []client.Object{ns, clusterVersion}
 			objs = append(objs, tc.existingBackups...)
 			objs = append(objs, tc.existingRestores...)
 			fakeClient, err := getFakeClientFromObjects(objs...)

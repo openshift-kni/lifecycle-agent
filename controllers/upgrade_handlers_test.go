@@ -139,6 +139,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
 
 			for _, track := range tt.trackers {
+				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(nil)
 				mockBackuprestore.EXPECT().StartOrTrackBackup(gomock.Any(), gomock.Any()).Return(track())
 			}
 
@@ -331,6 +332,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		healthCheckError                                error
 		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
 		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
+		getCleanupStaleBackupsReturn                    func() error
 		remountSysrootReturn                            func() error
 		exportOadpConfigurationToDirReturn              func() error
 		exportRestoresToDirReturn                       func() error
@@ -447,6 +449,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{{&velerov1.Backup{}}}, nil
+			},
+			getCleanupStaleBackupsReturn: func() error {
+				return nil
 			},
 			getStartOrTrackBackupReturn: func() (*backuprestore.BackupTracker, error) {
 				return &backuprestore.BackupTracker{
@@ -712,6 +717,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.getSortedBackupsFromConfigmapReturn != nil {
 				mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.getSortedBackupsFromConfigmapReturn())
+			}
+			if tt.getCleanupStaleBackupsReturn != nil {
+				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(tt.getCleanupStaleBackupsReturn())
 			}
 			if tt.getStartOrTrackBackupReturn != nil {
 				mockBackuprestore.EXPECT().StartOrTrackBackup(gomock.Any(), gomock.Any()).Return(tt.getStartOrTrackBackupReturn())

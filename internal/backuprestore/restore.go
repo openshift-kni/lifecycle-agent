@@ -69,7 +69,7 @@ func (h *BRHandler) StartOrTrackRestore(ctx context.Context, restores []*velerov
 			// OADP is running and connects to the object storage.
 			// Ensure the backup exists before creating the restore.
 			var existingBackup *velerov1.Backup
-			existingBackup, err = getBackup(ctx, h, restore.Spec.BackupName, restore.Namespace)
+			existingBackup, err = getValidBackup(ctx, h, restore.Spec.BackupName, restore.Namespace)
 			if err != nil {
 				return rt, err
 			}

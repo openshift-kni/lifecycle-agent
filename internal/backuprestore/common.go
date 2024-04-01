@@ -205,6 +205,34 @@ func getBackup(ctx context.Context, c client.Client, name, namespace string) (*v
 	return backup, nil
 }
 
+// getValidBackup retrieves a backup by name and namespace, ensuring it belongs to the correct cluster.
+// If the backup doesn't exist or doesn't belong to the cluster, it returns nil.
+func getValidBackup(ctx context.Context, c client.Client, name, namespace string) (*velerov1.Backup, error) {
+	clusterID, err := getClusterID(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	backup := &velerov1.Backup{}
+	if err := c.Get(ctx, types.NamespacedName{
+		Name:      name,
+		Namespace: namespace,
+	}, backup); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
+	}
+
+	// Check if the backup belongs to the correct cluster
+	labels := backup.GetLabels()
+	if labels[clusterIDLabel] != clusterID {
+		return nil, nil
+	}
+
+	return backup, nil
+}
+
 func getClusterID(ctx context.Context, c client.Client) (string, error) {
 
 	clusterVersion := &configv1.ClusterVersion{}
