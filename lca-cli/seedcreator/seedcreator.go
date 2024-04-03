@@ -105,7 +105,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backing up seed cluster certificates for recert tool: %w", err)
 		}
-		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupDir); err != nil {
+		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backup kubeadmin password hash: %w", err)
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")

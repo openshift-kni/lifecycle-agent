@@ -109,7 +109,7 @@ func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) e
 	o.log.Info("Run recert --extend-expiration tool")
 	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
 
-	originalPasswordHash, err := utils.LoadKubeadminPasswordHash(common.BackupDir)
+	originalPasswordHash, err := utils.LoadKubeadminPasswordHash(common.BackupCertsDir)
 	if err != nil {
 		return fmt.Errorf("failed to load kubeadmin password hash: %w", err)
 	}
