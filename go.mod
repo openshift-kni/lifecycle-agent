@@ -19,7 +19,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.10
 	go.uber.org/mock v0.4.0
 	golang.org/x/crypto v0.21.0
-	golang.org/x/sync v0.6.0
+	golang.org/x/sync v0.7.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.28.2
 	k8s.io/apiextensions-apiserver v0.28.2
