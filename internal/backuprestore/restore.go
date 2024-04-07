@@ -18,12 +18,10 @@ package backuprestore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -33,8 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type RestoreTracker struct {
@@ -146,7 +142,7 @@ func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, er
 	return sortedRestores, nil
 }
 
-// EnsureOadpConfiguration checks OADP configuration
+// EnsureOadpConfiguration ensures the expected OADP configuration is present
 func (h *BRHandler) EnsureOadpConfiguration(ctx context.Context) error {
 	h.Log.Info("Checking OADP configuration")
 	dpaYamlDir := filepath.Join(hostPath, OadpDpaPath)
@@ -158,106 +154,18 @@ func (h *BRHandler) EnsureOadpConfiguration(ctx context.Context) error {
 		h.Log.Info("No OADP configuration applied, skipping")
 		return nil
 	}
-
-	// Ensure the DPA is reconciled successfully
-	err = h.ensureDPAReconciled(ctx, dpa.GetName(), dpa.GetNamespace())
-	if err != nil {
-		return fmt.Errorf("failed to ensure DataProtectionApplication reconcile successfully: %w", err)
-	}
-
-	// Ensure the storage backends are created and available
-	if err := h.ensureStorageBackendAvailable(ctx, OadpNs); err != nil {
-		return fmt.Errorf("failed to ensure StorageBackend availability: %w", err)
-	}
-	return nil
-}
-
-// ensureDPAReconciled ensures the DataProtectionApplication CR is reconciled successfully
-func (h *BRHandler) ensureDPAReconciled(ctx context.Context, name, namespace string) error {
-	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, true,
-		func(ctx context.Context) (done bool, err error) {
-			dpa := &unstructured.Unstructured{}
-			dpa.SetGroupVersionKind(dpaGvk)
-			err = h.Get(ctx, types.NamespacedName{
-				Name:      name,
-				Namespace: namespace,
-			}, dpa)
-			if err != nil {
-				if k8serrors.IsNotFound(err) {
-					errMsg := fmt.Sprintf("DataProtectionApplication %s is not found", name)
-					h.Log.Error(err, errMsg)
-					return false, NewBRStorageBackendUnavailableError(errMsg)
-				}
-				return false, nil
-			}
-
-			ok := isDPAReconciled(dpa)
-			if ok {
-				h.Log.Info("DataProtectionApplication CR is reconciled", "name", name, "namespace", namespace)
-				return true, nil
-			}
-			return false, nil
-		})
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			errMsg := fmt.Sprintf("Timeout waiting for DataProtectionApplication CR %s to be reconciled", name)
+	existingDpa := &unstructured.Unstructured{}
+	dpa.SetGroupVersionKind(DpaGvk)
+	if err = h.Get(ctx, types.NamespacedName{
+		Name:      dpa.GetName(),
+		Namespace: dpa.GetNamespace(),
+	}, existingDpa); err != nil {
+		if k8serrors.IsNotFound(err) {
+			errMsg := fmt.Sprintf("DataProtectionApplication %s is not found", dpa.GetName())
 			h.Log.Error(err, errMsg)
 			return NewBRStorageBackendUnavailableError(errMsg)
 		}
-		return err //nolint:wrapcheck
 	}
-	return nil
-}
-
-// ensureStorageBackendAvaialble ensures the storage backend is available.
-// It returns NewBRStorageBackendUnavailableError if the storage backend
-// is not available because of an error, no storage backend is created after
-// 5 minutes, or it's timed out waiting for the storage backend to be available
-// due to unknown reasons.
-// Since DPA has been restored earlier during node startup following the reboot,
-// at this point, all storage backends should already be available.
-func (h *BRHandler) ensureStorageBackendAvailable(ctx context.Context, lookupNs string) error {
-	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
-		func(ctx context.Context) (done bool, err error) {
-			var succeededBsls []string
-			backupStorageLocation := &velerov1.BackupStorageLocationList{}
-			err = h.List(ctx, backupStorageLocation, client.InNamespace(lookupNs))
-			if err != nil {
-				return false, nil
-			}
-
-			if len(backupStorageLocation.Items) == 0 {
-				h.Log.Info("Waiting for backup storage locations to be created")
-				return false, nil
-			}
-
-			for _, bsl := range backupStorageLocation.Items {
-				if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseUnavailable {
-					errMsg := fmt.Sprintf("BackupStorageLocation is unavailable. Name: %s, Error: %s", bsl.Name, bsl.Status.Message)
-					h.Log.Error(nil, errMsg)
-					return false, NewBRStorageBackendUnavailableError(errMsg)
-				} else if bsl.Status.Phase == velerov1.BackupStorageLocationPhaseAvailable {
-					succeededBsls = append(succeededBsls, bsl.Name)
-				}
-			}
-
-			if len(succeededBsls) == len(backupStorageLocation.Items) {
-				h.Log.Info("All backup storage locations are available")
-				return true, nil
-			}
-
-			h.Log.Info("Waiting for backup storage locations to be available")
-			return false, nil
-		})
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			errMsg := "Timeout waiting for backup storage locations to be available"
-			h.Log.Error(err, errMsg)
-			return NewBRStorageBackendUnavailableError(errMsg)
-		}
-		return err //nolint:wrapcheck
-	}
-
 	return nil
 }
 

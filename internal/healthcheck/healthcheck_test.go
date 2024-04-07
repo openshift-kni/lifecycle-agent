@@ -7,14 +7,17 @@ import (
 
 	"github.com/go-logr/logr"
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
+	backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	k8sv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,6 +44,8 @@ func init() {
 	s.AddKnownTypes(sriovv1.SchemeGroupVersion, &sriovv1.SriovNetworkNodeState{})
 	s.AddKnownTypes(k8sv1.SchemeGroupVersion, &k8sv1.CertificateSigningRequest{})
 	s.AddKnownTypes(k8sv1.SchemeGroupVersion, &k8sv1.CertificateSigningRequestList{})
+	s.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupStorageLocationList{})
+	s.AddKnownTypes(velerov1.SchemeGroupVersion, &velerov1.BackupStorageLocation{})
 }
 
 func Test_nodesReady(t *testing.T) {
@@ -564,6 +569,181 @@ func Test_sriovNetworkNodeStateReady(t *testing.T) {
 	}
 }
 
+func Test_DataProtectionApplicationReady(t *testing.T) {
+	type args struct {
+		c client.Reader
+		l logr.Logger
+	}
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "dataprotectionapplications.oadp.openshift.io",
+		},
+	}
+
+	successDpa := &unstructured.Unstructured{
+		Object: map[string]any{
+			"kind":       backuprestore.DpaGvk.Kind,
+			"apiVersion": backuprestore.DpaGvk.Group + "/" + backuprestore.DpaGvk.Version,
+			"metadata": map[string]any{
+				"name":      "oadp",
+				"namespace": backuprestore.OadpNs,
+			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
+						"type":   "Reconciled",
+						"status": "True",
+						"reason": "Complete",
+					},
+				},
+			},
+		},
+	}
+	failedDpa := &unstructured.Unstructured{
+		Object: map[string]any{
+			"kind":       backuprestore.DpaGvk.Kind,
+			"apiVersion": backuprestore.DpaGvk.Group + "/" + backuprestore.DpaGvk.Version,
+			"metadata": map[string]any{
+				"name":      "oadp",
+				"namespace": backuprestore.OadpNs,
+			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
+						"type":   "Reconciled",
+						"status": "False",
+						"reason": "Error",
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name           string
+		args           args
+		objects        []runtime.Object
+		wantErr        bool
+		expectedResult bool
+	}{
+		{
+			name: "happy path",
+			args: args{l: logr.Logger{}},
+			objects: []runtime.Object{
+				crd,
+				&unstructured.UnstructuredList{
+					Items: []unstructured.Unstructured{*successDpa},
+				},
+			},
+			wantErr:        false,
+			expectedResult: true,
+		},
+		{
+			name:           "no dataProtectionAppliation CRD",
+			args:           args{l: logr.Logger{}},
+			objects:        []runtime.Object{},
+			wantErr:        false,
+			expectedResult: false,
+		},
+		{
+			name:           "no dataProtectionAppliation",
+			args:           args{l: logr.Logger{}},
+			objects:        []runtime.Object{crd},
+			wantErr:        false,
+			expectedResult: false,
+		},
+		{
+			name: "dataProtectionApplication not reconciled",
+			args: args{l: logr.Logger{}},
+			objects: []runtime.Object{
+				crd,
+				&unstructured.UnstructuredList{
+					Items: []unstructured.Unstructured{*failedDpa},
+				},
+			},
+			wantErr:        true,
+			expectedResult: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			if ok, err := IsDataProtectionApplicationReconciled(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("IsDataProtectionApplicationReconciled() error = %v, wantErr %v", err, tt.wantErr)
+			} else if ok != tt.expectedResult {
+				t.Errorf("IsDataProtectionApplicationReconciled() reconciled = %t, expectedResult %t", ok, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func Test_backupStorageLocationReady(t *testing.T) {
+	type args struct {
+		c client.Reader
+		l logr.Logger
+	}
+
+	successBsl := &velerov1.BackupStorageLocation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dpa-1",
+			Namespace: backuprestore.OadpNs,
+		},
+		Status: velerov1.BackupStorageLocationStatus{
+			Phase: velerov1.BackupStorageLocationPhaseAvailable,
+		},
+	}
+
+	failedBsl := &velerov1.BackupStorageLocation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dpa-1",
+			Namespace: backuprestore.OadpNs,
+		},
+		Status: velerov1.BackupStorageLocationStatus{
+			Phase: velerov1.BackupStorageLocationPhaseUnavailable,
+		},
+	}
+
+	tests := []struct {
+		name    string
+		args    args
+		objects []runtime.Object
+		wantErr bool
+	}{
+		{
+			name: "happy path",
+			objects: []runtime.Object{
+				&velerov1.BackupStorageLocationList{
+					Items: []velerov1.BackupStorageLocation{*successBsl},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "no backupStorageLocation created",
+			objects: []runtime.Object{},
+			wantErr: true,
+		},
+		{
+			name: "backupStorageLocation unavailable",
+			objects: []runtime.Object{
+				&velerov1.BackupStorageLocationList{
+					Items: []velerov1.BackupStorageLocation{*failedBsl},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			if err := AreBackupStorageLocationsAvailable(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("AreBackupStorageLocationsAvailable() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestHealthChecks(t *testing.T) {
 	type args struct {
 		c client.Reader
@@ -728,6 +908,47 @@ func TestHealthChecks(t *testing.T) {
 				crd,
 				&sriovv1.SriovNetworkNodeStateList{
 					Items: []sriovv1.SriovNetworkNodeState{*successSriovNetworkNodeState},
+				},
+				&apiextensionsv1.CustomResourceDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "dataprotectionapplications.oadp.openshift.io",
+					},
+				},
+				&unstructured.UnstructuredList{
+					Items: []unstructured.Unstructured{
+						{
+							Object: map[string]any{
+								"kind":       backuprestore.DpaGvk.Kind,
+								"apiVersion": backuprestore.DpaGvk.Group + "/" + backuprestore.DpaGvk.Version,
+								"metadata": map[string]any{
+									"name":      "oadp",
+									"namespace": backuprestore.OadpNs,
+								},
+								"status": map[string]any{
+									"conditions": []any{
+										map[string]any{
+											"type":   "Reconciled",
+											"status": "True",
+											"reason": "Complete",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				&velerov1.BackupStorageLocationList{
+					Items: []velerov1.BackupStorageLocation{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "dpa-1",
+								Namespace: backuprestore.OadpNs,
+							},
+							Status: velerov1.BackupStorageLocationStatus{
+								Phase: velerov1.BackupStorageLocationPhaseAvailable,
+							},
+						},
+					},
 				},
 			},
 		},

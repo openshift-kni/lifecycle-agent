@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-logr/logr"
 
@@ -72,8 +73,8 @@ const (
 var (
 	hostPath = common.Host
 
-	dpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
-	dpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
+	DpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
+	DpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
 )
 
 // BackuperRestorer interface also used for mocks
@@ -271,11 +272,11 @@ func CreateOrUpdateSecret(ctx context.Context, secret *corev1.Secret, c client.C
 }
 
 func CreateOrUpdateDataProtectionAppliation(ctx context.Context, dpa *unstructured.Unstructured, c client.Client) error {
-	dpa.SetGroupVersionKind(dpaGvk)
+	dpa.SetGroupVersionKind(DpaGvk)
 	unstructured.RemoveNestedField(dpa.Object, "status")
 
 	existingDpa := &unstructured.Unstructured{}
-	existingDpa.SetGroupVersionKind(dpaGvk)
+	existingDpa.SetGroupVersionKind(DpaGvk)
 	err := c.Get(ctx, types.NamespacedName{
 		Name:      dpa.GetName(),
 		Namespace: dpa.GetNamespace(),
@@ -318,7 +319,7 @@ func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 	backup.SetLabels(labels)
 }
 
-func isDPAReconciled(dpa *unstructured.Unstructured) bool {
+func IsDPAReconciled(dpa *unstructured.Unstructured) bool {
 	if dpa.Object["status"] == nil {
 		return false
 	}
@@ -362,7 +363,7 @@ func ReadOadpDataProtectionApplication(dpaYamlDir string) (*unstructured.Unstruc
 	}
 
 	dpa := &unstructured.Unstructured{}
-	dpa.SetGroupVersionKind(dpaGvk)
+	dpa.SetGroupVersionKind(DpaGvk)
 	if err := utils.ReadYamlOrJSONFile(dpaYamlPath, dpa); err != nil {
 		return nil, fmt.Errorf("failed to read DataProtectionApplication from %s: %w", dpaYamlPath, err)
 	}
@@ -492,22 +493,29 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 }
 
 func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
-	// Check if OADP is running
-	oadpCsv := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.List(ctx, oadpCsv, &client.ListOptions{Namespace: OadpNs}); err != nil {
+	// Check if OADP is installed
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
 		return fmt.Errorf("could not list ClusterServiceVersion: %w", err)
 	}
 
-	if len(oadpCsv.Items) == 0 ||
-		!(oadpCsv.Items[0].Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && oadpCsv.Items[0].Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
-		errMsg := fmt.Sprintf("Please ensure OADP operator is running successfully in the %s", OadpNs)
+	oadpCsvExist := false
+	for _, csv := range oadpCsvList.Items {
+		if strings.Contains(csv.Name, "oadp-operator") {
+			oadpCsvExist = true
+			break
+		}
+	}
+
+	if !oadpCsvExist {
+		errMsg := fmt.Sprintf("Please ensure OADP operator is installed in the %s", OadpNs)
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
 	// Check if OADP DPA is reconciled
 	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(dpaGvkList)
+	dpaList.SetGroupVersionKind(DpaGvkList)
 	opts := []client.ListOption{
 		client.InNamespace(OadpNs),
 	}
@@ -527,18 +535,6 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
-	if !isDPAReconciled(&dpaList.Items[0]) {
-		errMsg := fmt.Sprintf("DataProtectionApplication CR %s is not reconciled", dpaList.Items[0].GetName())
-		h.Log.Error(nil, errMsg)
-		return NewBRFailedValidationError("OADP", errMsg)
-	}
-
-	// Check if the storage backend is ready
-	err := h.ensureStorageBackendAvailable(ctx, OadpNs)
-	if err != nil {
-		return NewBRFailedValidationError("OADP", err.Error())
-	}
-
-	h.Log.Info("OADP operator is running")
+	h.Log.Info("OADP operator is installed and DataProtectionApplication is validated")
 	return nil
 }

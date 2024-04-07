@@ -692,8 +692,8 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	// Test case 2: DPA with velero credentials found
 	dpa := &unstructured.Unstructured{
 		Object: map[string]any{
-			"kind":       dpaGvk.Kind,
-			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"kind":       DpaGvk.Kind,
+			"apiVersion": DpaGvk.Group + "/" + DpaGvk.Version,
 			"metadata": map[string]any{
 				"name":      "dpa-name",
 				"namespace": oadpNs,

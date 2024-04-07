@@ -9,13 +9,16 @@ import (
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
+	backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
@@ -73,17 +76,28 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 		failures = append(failures, err.Error())
 	}
 
+	if err := AreCertificateSigningRequestsReady(ctx, c, l); err != nil {
+		l.Info("certificateSigningRequest (csr) health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
 	if clusterOperatorsReady && clusterServiceVersionsReady {
 		// Only check SriovNetworkNodeState once cluster operators and CSVs are stable
 		if err := IsSriovNetworkNodeReady(ctx, c, l); err != nil {
 			l.Info("sriovNetworkNodeState health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
 		}
-	}
 
-	if err := AreCertificateSigningRequestsReady(ctx, c, l); err != nil {
-		l.Info("certificateSigningRequest (csr) health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
+		// Check oadp storage backend connection when DPA exists and is reconciled
+		if ok, err := IsDataProtectionApplicationReconciled(ctx, c, l); err != nil {
+			l.Info("dataProtentionApplication health check failure", "error", err.Error())
+			failures = append(failures, err.Error())
+		} else if ok {
+			if err := AreBackupStorageLocationsAvailable(ctx, c, l); err != nil {
+				l.Info("backupStorageLocation health check failure", "error", err.Error())
+				failures = append(failures, err.Error())
+			}
+		}
 	}
 
 	if len(failures) > 0 {
@@ -92,6 +106,64 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	}
 
 	l.Info("Health checks done")
+	return nil
+}
+
+func IsDataProtectionApplicationReconciled(ctx context.Context, c client.Reader, l logr.Logger) (bool, error) {
+	dpaCRD := &apiextensionsv1.CustomResourceDefinition{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "dataprotectionapplications.oadp.openshift.io"}, dpaCRD); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check DataProtectionApplication CRD: %w", err)
+	}
+
+	dpaList := &unstructured.UnstructuredList{}
+	dpaList.SetGroupVersionKind(backuprestore.DpaGvkList)
+	opts := []client.ListOption{
+		client.InNamespace(backuprestore.OadpNs),
+	}
+	if err := c.List(ctx, dpaList, opts...); err != nil {
+		return false, fmt.Errorf("failed to list OADP DataProtectionApplication: %w", err)
+	}
+
+	if len(dpaList.Items) == 0 {
+		return false, nil
+	}
+
+	for _, dpa := range dpaList.Items {
+		if backuprestore.IsDPAReconciled(&dpa) { //nolint:gosec
+			l.Info(fmt.Sprintf("DataProtectionApplication %s is reconciled", dpa.GetName()))
+			return true, nil
+		}
+	}
+
+	msg := "dataProtectionApplication not reconciled"
+	l.Info(msg)
+	return false, fmt.Errorf(msg)
+}
+
+func AreBackupStorageLocationsAvailable(ctx context.Context, c client.Reader, l logr.Logger) error {
+	backupStorageLocationList := &velerov1.BackupStorageLocationList{}
+	err := c.List(ctx, backupStorageLocationList, client.InNamespace(backuprestore.OadpNs))
+	if err != nil {
+		return fmt.Errorf("failed to list BackupStorageLocations: %w", err)
+	}
+	if len(backupStorageLocationList.Items) == 0 {
+		msg := "backupsStorageLocations not yet created"
+		l.Info(msg)
+		return fmt.Errorf(msg)
+	}
+
+	for _, bsl := range backupStorageLocationList.Items {
+		if bsl.Status.Phase != velerov1.BackupStorageLocationPhaseAvailable {
+			msg := fmt.Sprintf("backupStorageLocation %s not available", bsl.Name)
+			l.Info(msg)
+			return fmt.Errorf(msg)
+		}
+	}
+
+	l.Info("All BackupStorageLocations are available")
 	return nil
 }
 
