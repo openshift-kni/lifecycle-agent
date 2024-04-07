@@ -27,6 +27,7 @@ import (
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 //+kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.conditions[-1:].type"
 //+kubebuilder:printcolumn:name="Details",type="string",JSONPath=".status.conditions[-1:].message"
+// +kubebuilder:validation:XValidation:message="seedgen is a singleton, metadata.name must be 'seedimage'", rule="self.metadata.name == 'seedimage'"
 
 // SeedGenerator is the Schema for the seedgenerators API
 // +operator-sdk:csv:customresourcedefinitions:displayName="Seed Generator",resources={{Namespace, v1}}

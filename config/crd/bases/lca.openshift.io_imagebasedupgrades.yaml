@@ -240,6 +240,8 @@ spec:
             type: object
         type: object
         x-kubernetes-validations:
+        - message: ibu is a singleton, metadata.name must be 'upgrade'
+          rule: self.metadata.name == 'upgrade'
         - message: can not change spec.seedImageRef while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
             && c.status==''True'') || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef)
