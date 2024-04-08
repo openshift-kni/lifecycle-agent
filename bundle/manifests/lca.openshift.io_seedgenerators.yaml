@@ -140,6 +140,9 @@ spec:
                 type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: seedgen is a singleton, metadata.name must be 'seedimage'
+          rule: self.metadata.name == 'seedimage'
     served: true
     storage: true
     subresources:
