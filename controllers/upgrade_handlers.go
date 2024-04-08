@@ -286,10 +286,12 @@ var getStaterootVarPath = func(stateroot string) string {
 var CheckHealth = healthcheck.HealthChecks
 
 func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
-	// Check whether auto-rollback is desired
-	if ibu.Spec.AutoRollbackOnFailure.DisabledForUpgradeCompletion {
-		// Auto-rollback is not enabled, so do nothing
-		return
+	// Check whether auto-rollback is disabled using annotation
+	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailureUpgradeCompletionAnnotation]; exists {
+		if val == common.AutoRollbackDisableValue {
+			u.Log.Info("Auto-rollback upgrade completion is disabled")
+			return
+		}
 	}
 
 	u.Log.Info("Automatically rolling back due to failure")

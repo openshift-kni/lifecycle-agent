@@ -111,25 +111,6 @@ spec:
         - urn:alm:descriptor:com.tectonic.ui:text
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
-      - description: DisabledForPostRebootConfig when set to true, disables automatic
-          rollback when the reconfiguration of the cluster fails upon the first reboot.
-        displayName: Disabled For Post Reboot Config
-        path: autoRollbackOnFailure.disabledForPostRebootConfig
-        x-descriptors:
-        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
-      - description: DisabledForUpgradeCompletion when set to true, disables automatic
-          rollback after the Lifecycle Agent reports a failed upgrade upon completion.
-        displayName: Disabled For Upgrade Completion
-        path: autoRollbackOnFailure.disabledForUpgradeCompletion
-        x-descriptors:
-        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
-      - description: DisabledInitMonitor when set to true, disables automatic rollback
-          when the upgrade does not complete after reboot within the time frame specified
-          in the initMonitorTimeoutSeconds field.
-        displayName: Disabled Init Monitor
-        path: autoRollbackOnFailure.disabledInitMonitor
-        x-descriptors:
-        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
       - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
           If not defined or set to 0, the default value of 1800 seconds (30 minutes)
           is used.

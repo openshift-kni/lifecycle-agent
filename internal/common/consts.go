@@ -65,6 +65,17 @@ const (
 	IBUAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800
 	IBUInitMonitorService                           = "lca-init-monitor.service"
 	IBUInitMonitorServiceFile                       = "/etc/systemd/system/" + IBUInitMonitorService
+	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.
+	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailurePostRebootConfigAnnotation = "auto-rollback-on-failure.lca.openshift.io/post-reboot-config"
+	// AutoRollbackOnFailureUpgradeCompletionAnnotation configure automatic rollback after the Lifecycle Agent reports a failed upgrade upon completion.
+	// Only acceptable value is AutoRollbackOnFailureDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailureUpgradeCompletionAnnotation = "auto-rollback-on-failure.lca.openshift.io/upgrade-completion"
+	// AutoRollbackOnFailureInitMonitorAnnotation configure automatic rollback LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
+	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailureInitMonitorAnnotation = "auto-rollback-on-failure.lca.openshift.io/init-monitor"
+	// AutoRollbackDisableValue value that decides if rollback is disabled
+	AutoRollbackDisableValue = "Disabled"
 
 	LcaNamespace = "openshift-lifecycle-agent"
 	Host         = "/host"

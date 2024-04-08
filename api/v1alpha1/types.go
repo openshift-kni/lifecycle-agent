@@ -98,18 +98,6 @@ type SeedImageRef struct {
 // AutoRollbackOnFailure defines automatic rollback settings if the upgrade fails or if the upgrade does not
 // complete within the specified time limit.
 type AutoRollbackOnFailure struct {
-	// DisabledForPostRebootConfig when set to true, disables automatic rollback when the reconfiguration of the
-	// cluster fails upon the first reboot.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
-	DisabledForPostRebootConfig bool `json:"disabledForPostRebootConfig,omitempty"` // If true, disable auto-rollback for post-reboot config service-unit(s)
-	// DisabledForUpgradeCompletion when set to true, disables automatic rollback after the Lifecycle Agent reports
-	// a failed upgrade upon completion.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
-	DisabledForUpgradeCompletion bool `json:"disabledForUpgradeCompletion,omitempty"` // If true, disable auto-rollback for Upgrade completion handler
-	// DisabledInitMonitor when set to true, disables automatic rollback when the upgrade does not complete after
-	// reboot within the time frame specified in the initMonitorTimeoutSeconds field.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:booleanSwitch"}
-	DisabledInitMonitor bool `json:"disabledInitMonitor,omitempty"` // If true, disable LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
 	// InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0, the default value of
 	// 1800 seconds (30 minutes) is used.
 	// +kubebuilder:validation:Minimum=0
