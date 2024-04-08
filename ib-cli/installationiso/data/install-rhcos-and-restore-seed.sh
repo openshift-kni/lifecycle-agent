@@ -22,7 +22,9 @@ if [[ "$create_extra_partition" == "true" ]]; then
     # Create new partition for /var/lib/containers
     sfdisk ${installation_disk} <<< write
     sgdisk --new $extra_partition_number:$extra_partition_start --change-name $extra_partition_number:$extra_partition_label ${installation_disk}
-    mkfs.xfs -f ${installation_disk}$extra_partition_number
+    # Get the real path of the $extra_partition_number block device
+    extra_partition_path=$(lsblk ${installation_disk} --json -O | jq .blockdevices[0].children[$((extra_partition_number - 1))].path -r)
+    mkfs.xfs -f $extra_partition_path
 fi
 
 
@@ -30,7 +32,7 @@ fi
 growpart ${installation_disk} 4
 mount /dev/disk/by-partlabel/root /mnt
 mount /dev/disk/by-partlabel/boot /mnt/boot
-xfs_growfs ${installation_disk}4
+xfs_growfs /dev/disk/by-partlabel/root
 
 if [[ "$create_extra_partition" == "true" ]]; then
     # Mount extra partition in /var/lib/containers
