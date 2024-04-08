@@ -222,9 +222,44 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 	return nil
 }
 
+// prepareSELinuxTar prepares a copy of tar executable with install_exec_t context.
+// This type allows SELinux labeling of non-existing labels
+func (o *ops) prepareSELinuxTar() (string, error) {
+	tarPath := common.PathOutsideChroot("/usr/bin/tar")
+	destDir := common.PathOutsideChroot("/var/tmp")
+	newTarPath, err := utils.CopyToTempFile(tarPath, destDir, "tar-")
+	if err != nil {
+		return "", fmt.Errorf("failed to copy tar to temporary file: %w", err)
+	}
+
+	newTarPathInsideChroot, err := common.PathInsideChroot(newTarPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get path for file %s inside chroot: %w", newTarPath, err)
+	}
+
+	// Set SELinux attribute
+	if _, err := o.hostCommandsExecutor.Execute("chcon", "-t", "install_exec_t", newTarPathInsideChroot); err != nil {
+		return "", fmt.Errorf("failed to set SELinux context install_exec_t to %s: %w", newTarPath, err)
+	}
+	return newTarPath, nil
+}
+
 func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
-	if _, err := o.hostCommandsExecutor.Execute(
-		"tar", "xzf", srcPath, "-C", destPath, "--selinux",
+	// Create a copy of /usr/bin/tar with extended permissions
+	tarExec, err := o.prepareSELinuxTar()
+	if err != nil {
+		return fmt.Errorf("failed to create copy of tar with install_exec_t attribute: %w", err)
+	}
+	defer os.Remove(tarExec) // Cleanup temporary tar copy afterwards
+
+	// Path as seen inside the chroot (without /host prepended)
+	tarExecInsideChroot, err := common.PathInsideChroot(tarExec)
+	if err != nil {
+		return fmt.Errorf("failed to get path for file %s inside chroot: %w", tarExec, err)
+	}
+
+	if _, err = o.hostCommandsExecutor.Execute(
+		tarExecInsideChroot, "xzf", srcPath, "-C", destPath, "--selinux",
 	); err != nil {
 		return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 	}

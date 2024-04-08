@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path"
@@ -217,6 +218,43 @@ func CopyFileIfExists(source, dest string) error {
 		}
 		return err
 	}})
+}
+
+// CopyToTempFile copies a file to a temporary file.
+// WARNING: This function only preserves POSIX permissions to the new file
+// If you want to use it, take that into account and extend it if needed to
+// also preserve other things like owner, extended attributes, selinux contexts
+// or whatever might be needed
+func CopyToTempFile(sourceFileName, directory, pattern string) (string, error) {
+	destinationFile, err := os.CreateTemp(directory, pattern)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer destinationFile.Close()
+	destinationFileName := destinationFile.Name()
+
+	sourceFile, err := os.Open(sourceFileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to open %s: %w", sourceFileName, err)
+	}
+	defer sourceFile.Close()
+
+	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
+		return "", fmt.Errorf("failed to copy %s to temporary file %s: %w", sourceFileName, destinationFileName, err)
+	}
+
+	// Preserve POSIX permissions
+	sourceFileInfo, err := os.Stat(sourceFileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get permissions of file %s: %w", sourceFileName, err)
+	}
+	// Chmod
+	err = destinationFile.Chmod(sourceFileInfo.Mode())
+	if err != nil {
+		return "", fmt.Errorf("failed to set permissions on file %s: %w", destinationFileName, err)
+	}
+
+	return destinationFileName, nil
 }
 
 func ReplaceImageRegistry(image, targetRegistry, sourceRegistry string) (string, error) {

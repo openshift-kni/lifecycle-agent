@@ -86,6 +86,15 @@ func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.C
 	return cms, nil
 }
 
+// PathInsideChroot returns filepath removing host fs prefix
+func PathInsideChroot(filename string) (string, error) {
+	relPath, err := filepath.Rel(Host, filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to get relative path of %s inside of %s: %w", filename, Host, err)
+	}
+	return filepath.Join("/", relPath), nil
+}
+
 // PathOutsideChroot returns filepath with host fs
 func PathOutsideChroot(filename string) string {
 	if _, err := os.Stat(Host); err != nil {
