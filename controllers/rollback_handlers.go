@@ -100,14 +100,17 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	return doNotRequeue(), nil
 }
 
-//nolint:unparam
-func (r *ImageBasedUpgradeReconciler) finishRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+	if err := r.RebootClient.RemoveRollbackCsrApprover(); err != nil {
+		utils.SetRollbackStatusFailed(ibu, "manual cleanup of rollback CSR approver required: "+err.Error())
+		return requeueWithShortInterval(), err
+	}
+
 	utils.SetRollbackStatusCompleted(ibu)
 
 	return doNotRequeue(), nil
 }
 
-//nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 	if err != nil {
@@ -118,7 +121,7 @@ func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *l
 
 	if origStaterootBooted {
 		r.Log.Info("Pivot for rollback successful, starting post pivot steps")
-		return r.finishRollback(ctx, ibu)
+		return r.finishRollback(ibu)
 	} else {
 		r.Log.Info("Starting pre pivot for rollback steps and will pivot to previous stateroot with a reboot")
 		return r.startRollback(ctx, ibu)

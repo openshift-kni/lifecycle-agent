@@ -122,6 +122,34 @@ func (mr *MockRebootIntfMockRecorder) RebootToNewStateRoot(rationale any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebootToNewStateRoot", reflect.TypeOf((*MockRebootIntf)(nil).RebootToNewStateRoot), rationale)
 }
 
+// RemoveRollbackCsrApprover mocks base method.
+func (m *MockRebootIntf) RemoveRollbackCsrApprover() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemoveRollbackCsrApprover")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemoveRollbackCsrApprover indicates an expected call of RemoveRollbackCsrApprover.
+func (mr *MockRebootIntfMockRecorder) RemoveRollbackCsrApprover() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveRollbackCsrApprover", reflect.TypeOf((*MockRebootIntf)(nil).RemoveRollbackCsrApprover))
+}
+
+// SetupRollbackCsrApprover mocks base method.
+func (m *MockRebootIntf) SetupRollbackCsrApprover() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetupRollbackCsrApprover")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetupRollbackCsrApprover indicates an expected call of SetupRollbackCsrApprover.
+func (mr *MockRebootIntfMockRecorder) SetupRollbackCsrApprover() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupRollbackCsrApprover", reflect.TypeOf((*MockRebootIntf)(nil).SetupRollbackCsrApprover))
+}
+
 // WriteIBUAutoRollbackConfigFile mocks base method.
 func (m *MockRebootIntf) WriteIBUAutoRollbackConfigFile(ibu *v1alpha1.ImageBasedUpgrade) error {
 	m.ctrl.T.Helper()

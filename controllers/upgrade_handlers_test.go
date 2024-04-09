@@ -344,6 +344,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		exportIBUCROrig                                 bool
 		rebootToNewStateRootReturn                      func() error
 		isOstreeAdminSetDefaultFeatureEnabledReturn     *bool
+		setupRollbackCsrApprover                        func() error
 		want                                            controllerruntime.Result
 		wantErr                                         assert.ErrorAssertionFunc
 		wantConditions                                  []metav1.Condition
@@ -695,6 +696,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			rebootToNewStateRootReturn: func() error {
 				return fmt.Errorf("reboot failed")
 			},
+			setupRollbackCsrApprover: func() error {
+				return nil
+			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
@@ -793,6 +797,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.rebootToNewStateRootReturn != nil {
 				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
+			}
+			if tt.setupRollbackCsrApprover != nil {
+				mockRebootClient.EXPECT().SetupRollbackCsrApprover().Return(tt.setupRollbackCsrApprover()).Times(1)
 			}
 
 			uh := &UpgHandler{

@@ -10,6 +10,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/generated"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
@@ -25,6 +26,11 @@ var (
 const (
 	PostPivotComponent                 = "postpivot"
 	InstallationConfigurationComponent = "config"
+
+	LcaRollbackCsrApproverScript          = "lca-rollback-csr-approver.sh"
+	LcaRollbackCsrApproverScriptPath      = "/usr/local/bin/" + LcaRollbackCsrApproverScript
+	LcaRollbackCsrApproverServiceUnit     = "lca-rollback-csr-approver.service"
+	LcaRollbackCsrApproverServiceUnitFile = "/etc/systemd/system/" + LcaRollbackCsrApproverServiceUnit
 )
 
 type IBUAutoRollbackConfig struct {
@@ -44,6 +50,8 @@ type RebootIntf interface {
 	IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error)
 	InitiateRollback(msg string) error
 	AutoRollbackIfEnabled(component, msg string)
+	SetupRollbackCsrApprover() error
+	RemoveRollbackCsrApprover() error
 }
 
 type RebootClient struct {
@@ -147,7 +155,7 @@ func (c *RebootClient) DisableInitMonitor() error {
 		}
 	}
 
-	// Check whether service-unit is enabled before dsiabling. The "disable" command will exit with 0 if already disabled,
+	// Check whether service-unit is enabled before disabling. The "disable" command will exit with 0 if already disabled,
 	// but would return a failure if the service-unit doesn't exist (for whatever reason).
 	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
 		if _, err := c.hostCommandsExecutor.Execute("systemctl", "disable", common.IBUInitMonitorService); err != nil {
@@ -261,4 +269,67 @@ func (c *RebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	return
+}
+
+func (c *RebootClient) SetupRollbackCsrApprover() error {
+	// Inject the rollback CSR approver script into systemd to run on a rollback
+	content, err := generated.Asset(LcaRollbackCsrApproverScript)
+	if err != nil {
+		return fmt.Errorf("failed to get %s code: %w", LcaRollbackCsrApproverScript, err)
+	}
+
+	if err = os.WriteFile(common.PathOutsideChroot(LcaRollbackCsrApproverScriptPath), content, 0o700); err != nil { //nolint:gosec
+		return fmt.Errorf("failed to write %s: %w", LcaRollbackCsrApproverScriptPath, err)
+	}
+
+	content, err = generated.Asset(LcaRollbackCsrApproverServiceUnit)
+	if err != nil {
+		return fmt.Errorf("failed to get %s code: %w", LcaRollbackCsrApproverServiceUnit, err)
+	}
+
+	if err = os.WriteFile(common.PathOutsideChroot(LcaRollbackCsrApproverServiceUnitFile), content, 0o644); err != nil { //nolint:gosec
+		return fmt.Errorf("failed to write %s: %w", LcaRollbackCsrApproverServiceUnitFile, err)
+	}
+
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("systemctl daemon-reload failed after creating %s: %w", LcaRollbackCsrApproverServiceUnitFile, err)
+	}
+
+	if _, err = c.hostCommandsExecutor.Execute("systemctl", "enable", LcaRollbackCsrApproverServiceUnit); err != nil {
+		return fmt.Errorf("failed to enable %s", LcaRollbackCsrApproverServiceUnit)
+	}
+
+	return nil
+}
+
+func (c *RebootClient) RemoveRollbackCsrApprover() error {
+	// Check whether service-unit is active before stopping. The "stop" command will exit with 0 if already stopped,
+	// but would return a failure if the service-unit doesn't exist (for whatever reason).
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-active", LcaRollbackCsrApproverServiceUnit); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute("systemctl", "stop", LcaRollbackCsrApproverServiceUnit); err != nil {
+			return fmt.Errorf("failed to stop %s: %w", LcaRollbackCsrApproverServiceUnit, err)
+		}
+	}
+
+	// Check whether service-unit is enabled before disabling. The "disable" command will exit with 0 if already disabled,
+	// but would return a failure if the service-unit doesn't exist (for whatever reason).
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-enabled", LcaRollbackCsrApproverServiceUnit); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute("systemctl", "disable", LcaRollbackCsrApproverServiceUnit); err != nil {
+			return fmt.Errorf("failed to disable %s: %w", LcaRollbackCsrApproverServiceUnit, err)
+		}
+	}
+
+	if err := os.Remove(common.PathOutsideChroot(LcaRollbackCsrApproverServiceUnitFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete %s: %w", LcaRollbackCsrApproverServiceUnitFile, err)
+	}
+
+	if _, err := c.hostCommandsExecutor.Execute("systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("systemctl daemon-reload failed after deleting %s: %w", LcaRollbackCsrApproverServiceUnitFile, err)
+	}
+
+	if err := os.Remove(common.PathOutsideChroot(LcaRollbackCsrApproverScriptPath)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete %s: %w", LcaRollbackCsrApproverScriptPath, err)
+	}
+
+	return nil
 }

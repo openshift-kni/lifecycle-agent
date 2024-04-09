@@ -239,6 +239,11 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
 
+	if err := u.RebootClient.SetupRollbackCsrApprover(); err != nil {
+		utils.SetUpgradeStatusFailed(ibu, err.Error())
+		return requeueWithError(fmt.Errorf("failed to setup rollback CSR approver: %w", err))
+	}
+
 	// Set the new default deployment
 	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
 		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)

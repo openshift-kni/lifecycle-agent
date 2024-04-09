@@ -59,6 +59,20 @@ MOCK_GEN = $(shell pwd)/bin/mockgen
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
+# Include the bindata makefile
+include ./vendor/github.com/openshift/build-machinery-go/make/targets/openshift/bindata.mk
+
+# This will call a macro called "add-bindata" which will generate bindata specific targets based on the parameters:
+# $0 - macro name
+# $1 - target suffix
+# $2 - input dirs
+# $3 - prefix
+# $4 - pkg
+# $5 - output
+# It will generate targets {update,verify}-bindata-$(1) logically grouping them in unsuffixed versions of these targets
+# and also hooked into {update,verify}-generated for broader integration.
+$(call add-bindata,internal,./internal/bindata/...,internal/bindata,generated,internal/generated/zz_generated.bindata.go)
+
 default: help
 
 test:
@@ -67,7 +81,7 @@ test:
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=manager-role webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
-generate: controller-gen mock-gen # generate-code
+generate: controller-gen mock-gen update-bindata # generate-code
     ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 	PATH="${PROJECT_DIR}/bin:${PATH}" go generate $(shell go list ./...)

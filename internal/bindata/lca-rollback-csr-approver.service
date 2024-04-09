@@ -1,0 +1,9 @@
+[Unit]
+Description=Lifecycle Agent Rollback CSR Approver
+After=kubelet.service
+
+[Service]
+ExecStart=/usr/local/bin/lca-rollback-csr-approver.sh
+
+[Install]
+WantedBy=multi-user.target

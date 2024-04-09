@@ -141,6 +141,11 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 		errorMessage += err.Error() + " "
 	}
 
+	// The rollback CSR approver should not be setup at this point, but call the cleanup function just in case
+	if err := r.RebootClient.RemoveRollbackCsrApprover(); err != nil {
+		handleError(err, "failed to cleanup rollback CSR approver.")
+	}
+
 	r.Log.Info("Terminating precaching worker thread, will wait up to 30 seconds")
 	if r.PrepTask.Active && r.PrepTask.Cancel != nil {
 		r.PrepTask.Cancel()

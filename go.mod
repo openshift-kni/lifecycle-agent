@@ -4,10 +4,12 @@ go 1.20
 
 require (
 	github.com/coreos/go-semver v0.3.1
+	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.6.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.2.0
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
+	github.com/openshift/build-machinery-go v0.0.0-20230306181456-d321ffa04533
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
 	github.com/operator-framework/api v0.17.6
 	github.com/otiai10/copy v1.14.0
