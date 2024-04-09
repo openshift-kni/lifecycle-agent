@@ -98,13 +98,13 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
-	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
-		return fmt.Errorf("failed to configure networking, err: %w", err)
-	}
-
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
 		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
+	}
+
+	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
+		return fmt.Errorf("failed to configure networking, err: %w", err)
 	}
 
 	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFile,
