@@ -538,7 +538,7 @@ to IBU CR.
   kind: ImageBasedUpgrade
   metadata:
     annotations:
-      lca.openshit.io/manualCleanupDone: ""
+      lca.openshit.io/manual-cleanup-done: ""
 
 ```
 
