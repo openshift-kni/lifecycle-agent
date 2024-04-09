@@ -101,6 +101,9 @@ var _lcaRollbackCsrApproverSh = []byte(`#!/bin/bash
 #
 # For reference on approving pending CSRs, see:
 # https://access.redhat.com/documentation/en-us/openshift_container_platform/4.15/html/machine_management/adding-rhel-compute#installation-approve-csrs_adding-rhel-compute
+#
+# Reference on recovering from expired control plane certificates:
+# https://docs.openshift.com/container-platform/4.15/backup_and_restore/control_plane_backup_and_restore/disaster_recovery/scenario-3-expired-certs.html
 
 declare PROG=
 PROG=$(basename "$0")
@@ -117,8 +120,20 @@ function approve_pending_csrs {
     if [ ${#csrs[@]} -gt 0 ]; then
         log "Found ${#csrs[@]} pending CSRs"
         for csr in "${csrs[@]}"; do
-            log "Approving CSR: ${csr}"
-            oc adm certificate approve "${csr}"
+            signer=$(oc get csr "${csr}" -o jsonpath='{.spec.signerName}' 2>/dev/null)
+            requestor=$(oc get csr "${csr}" -o jsonpath='{.spec.username}' 2>/dev/null)
+
+            # Only approve certificates that are either:
+            # 1. signerName=kubernetes.io/kubelet-serving and username starts with system:node:
+            # 2. signerName=kubernetes.io/kube-apiserver-client-kubelet and username=system:serviceaccount:openshift-machine-config-operator:node-bootstrapper
+            tag="${signer},${requestor}"
+            if [[ "${tag}" =~ ^kubernetes.io/kubelet-serving,system:node: ]] || \
+                [[ "${tag}" = "kubernetes.io/kube-apiserver-client-kubelet,system:serviceaccount:openshift-machine-config-operator:node-bootstrapper" ]]; then
+                log "Approving CSR: ${csr}, with signer=${signer} and requestor=${requestor}"
+                oc adm certificate approve "${csr}"
+            else
+                log "Skipping CSR with signer=${signer} and requestor=${requestor}"
+            fi
         done
     fi
 }
