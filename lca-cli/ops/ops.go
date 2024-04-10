@@ -81,7 +81,7 @@ func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, er
 func (o *ops) RunInHostNamespace(command string, args ...string) (string, error) {
 	execute, err := o.hostCommandsExecutor.Execute(command, args...)
 	if err != nil {
-		return "", fmt.Errorf("failed to run in host namespace with args %s: %w", args, err)
+		return "", fmt.Errorf("failed to run %q in host namespace with args %s: %w", command, args, err)
 	}
 	return execute, nil
 }
