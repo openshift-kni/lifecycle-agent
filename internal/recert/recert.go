@@ -102,7 +102,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 
 func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error {
 	config := createBasicEmptyRecertConfig()
-	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.SummaryFileClean = "/kubernetes/recert-seed-creation-summary.yaml"
 	config.ForceExpire = true
 
 	config.KubeadminPasswordHash = ""
@@ -141,7 +141,7 @@ func generateDisposablePasswordHash() ([]byte, error) {
 
 func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string) error {
 	config := createBasicEmptyRecertConfig()
-	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.SummaryFileClean = "/kubernetes/recert-seed-restoration-summary.yaml"
 	config.ExtendExpiration = true
 	config.UseKeyRules = []string{
 		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", common.BackupCertsDir),

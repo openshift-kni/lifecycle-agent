@@ -56,6 +56,14 @@ function get_recert_summary() {
       oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
       /bin/bash -c "cat /ostree/deploy/${stateroot}/var/tmp/recert-summary.yaml" &> $rcp/recert-summary-${stateroot}.yaml
     done
+
+    echo "INFO: Collecting recert-seed-creation-summary.yaml" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+    /bin/bash -c "cat /etc/kubernetes/recert-seed-creation-summary.yaml" &> $rcp/recert-seed-creation-summary.yaml
+
+    echo "INFO: Collecting recert-seed-restoration-summary.yaml" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc exec -n ${IBU_NS} "${HOST_POD}" -c manager -- chroot /host \
+    /bin/bash -c "cat /etc/kubernetes/recert-seed-restoration-summary.yaml" &> $rcp/recert-seed-restoration-summary.yaml
 }
 
 function get_rpm_ostree_status() {
@@ -80,7 +88,7 @@ function get_logs_from_unbooted() {
       echo "INFO: Collecting everything under /var/log/ for unbooted stateroot ${unbooted}" | tee -a $MUST_GATHER_LOGFILE_PATH
       ublogPath=$LCA_DATA_PATH/unbooted-stateroot-var-log/${unbooted}/var/log/
       mkdir -p $ublogPath
-      oc rsync --compress=true -n ${IBU_NS} -c manager ${HOST_POD}:/host/ostree/deploy/${unbooted}/var/log/ ${ublogPath}/
+      oc rsync --compress=true -n ${IBU_NS} --quiet=true -c manager ${HOST_POD}:/host/ostree/deploy/${unbooted}/var/log/ ${ublogPath}/
     fi
 }
 
@@ -88,7 +96,8 @@ function get_etc() {
     echo "INFO: Collecting everything under /etc" | tee -a $MUST_GATHER_LOGFILE_PATH
     etcP=$LCA_DATA_PATH/host-etc
     mkdir -p $etcP
-    oc rsync --compress=true -n ${IBU_NS} -c manager ${HOST_POD}:/host/etc/ ${etcP}/
+    # /etc/sriov-operator content seems to require increased permission in local machine. But the content (pci info) is already collected in other places so it's safe to ignore this here.
+    oc rsync --compress=true -n ${IBU_NS} --quiet=true --exclude=sriov-operator -c manager ${HOST_POD}:/host/etc/ ${etcP}/
 }
 
 get_ns_resources &
