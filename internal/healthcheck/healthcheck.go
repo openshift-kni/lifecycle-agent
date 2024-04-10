@@ -108,7 +108,7 @@ func AreClusterServiceVersionsReady(ctx context.Context, c client.Reader, l logr
 			l.Info(fmt.Sprintf("Skipping check of %s/%s", csv.Kind, csv.Name))
 			continue
 		}
-		if !(csv.Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && csv.Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
+		if csv.Status.Phase != operatorsv1alpha1.CSVPhaseSucceeded {
 			notready = append(notready, csv.Name)
 			l.Info(fmt.Sprintf("csv not ready: %s", csv.Name))
 		}
