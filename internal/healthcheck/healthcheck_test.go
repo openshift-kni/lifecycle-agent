@@ -2,7 +2,6 @@ package healthcheck
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 
@@ -11,6 +10,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/stretchr/testify/assert"
 	k8sv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -249,7 +249,7 @@ func Test_clusterServiceVersionReady(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "happy path",
+			name: "happy path with reason InstallSucceeded",
 			objects: []runtime.Object{
 				&operatorsv1alpha1.ClusterServiceVersion{
 					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
@@ -261,31 +261,38 @@ func Test_clusterServiceVersionReady(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "fail for when not CSVReasonInstallSuccessful",
+			name: "happy path with reason Copied",
 			objects: []runtime.Object{
 				&operatorsv1alpha1.ClusterServiceVersion{
 					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
 						Phase:  operatorsv1alpha1.CSVPhaseSucceeded,
-						Reason: operatorsv1alpha1.CSVReasonAPIServiceResourceIssue,
+						Reason: operatorsv1alpha1.CSVReasonCopied,
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "fail with phase pending",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.ClusterServiceVersion{
+					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
+						Phase: operatorsv1alpha1.CSVPhasePending,
 					},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "fail for when only lifecycle-agent",
+			name: "fail with phase failed",
 			objects: []runtime.Object{
 				&operatorsv1alpha1.ClusterServiceVersion{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "lifecycle-agent",
-					},
 					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
-						Phase:  operatorsv1alpha1.CSVPhaseSucceeded,
-						Reason: operatorsv1alpha1.CSVReasonAPIServiceResourceIssue,
+						Phase: operatorsv1alpha1.CSVPhaseFailed,
 					},
 				},
 			},
-			wantErr: false, // todo: this should fail
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
