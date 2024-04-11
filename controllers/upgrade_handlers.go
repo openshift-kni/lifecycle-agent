@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -38,6 +39,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -68,8 +70,6 @@ type (
 		RebootClient    reboot.RebootIntf
 	}
 )
-
-const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
 
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
@@ -192,20 +192,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
-	// Extract from policies can be done by matching labels on the policy or the CR itself
-	// Currently we expect user to properly label CRs with site specific content
-	// as those policies must not be applied on the seed
-	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
-	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
-		return requeueWithError(fmt.Errorf("error while exporting manifests from policies: %w", err))
-	}
-
-	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
+	if err := u.extractAndExportExtraManifests(ctx, ibu, staterootVarPath); err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
+		return requeueWithError(fmt.Errorf("error while handling manifests: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
@@ -264,6 +256,49 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return doNotRequeue(), nil
 	}
 	return doNotRequeue(), nil
+}
+
+// extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
+func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+	versions, err := getMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
+	if err != nil {
+		return fmt.Errorf("error while exporting manifests from policies: %w", err)
+	}
+
+	// Extract from policies can be done by matching labels on the policy or the CR itself
+	// Currently we expect user to properly label CRs with site specific content
+	// as those policies must not be applied on the seed
+	labels := map[string]string{extramanifest.TargetOcpVersionLabel: strings.Join(versions, ",")}
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, ostreeVarDir); err != nil {
+		return fmt.Errorf("error while exporting manifests from policies: %w", err)
+	}
+
+	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, ostreeVarDir); err != nil {
+		return fmt.Errorf("error while exporting extra manifests: %w", err)
+	}
+	return nil
+}
+
+// getMatchingTargetOcpVersionLabelVersions generates a list of matching versions that
+// be used for extracting manifests from the policy
+// The matching versions include: [full release version, Major.Minor.Patch, Major.Minor]
+func getMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, error) {
+	var validVersions []string
+
+	semVersion, err := semver.NewVersion(ocpVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse target ocp version %s: %w", ocpVersion, err)
+	}
+
+	validVersions = append(validVersions,
+		fmt.Sprintf("%d.%d.%d", semVersion.Major, semVersion.Minor, semVersion.Patch),
+		fmt.Sprintf("%d.%d", semVersion.Major, semVersion.Minor),
+	)
+	if !lo.Contains(validVersions, ocpVersion) {
+		// full release version
+		validVersions = append(validVersions, ocpVersion)
+	}
+	return validVersions, nil
 }
 
 // exportForUncontrolledRollback Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed

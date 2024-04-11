@@ -592,7 +592,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportExtraManifestToDir with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -626,7 +630,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "FetchClusterConfig with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -663,7 +671,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "Export IBU Crs successfully and reboot fail",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -726,8 +738,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.exportOadpConfigurationToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportOadpConfigurationToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportOadpConfigurationToDirReturn()).Times(1)
-				tt.args.ibu.Spec = lcav1alpha1.ImageBasedUpgradeSpec{OADPContent: []lcav1alpha1.ConfigMapRef{
-					{Name: "atleast-one-oadp-to-proceed-with-export"}}}
+				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-oadp-to-proceed-with-export"}}
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
@@ -1100,4 +1111,34 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetMatchingVersion(t *testing.T) {
+	tests := []struct {
+		targetOCPversion string
+		expected         []string
+	}{
+		{
+			targetOCPversion: "4.15.2-ec.3",
+			expected:         []string{"4.15.2-ec.3", "4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.15.2",
+			expected:         []string{"4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.16.0-0.ci-2024-04-11-051453",
+			expected:         []string{"4.16.0-0.ci-2024-04-11-051453", "4.16.0", "4.16"},
+		},
+	}
+
+	t.Run("TargetOCPversion test", func(t *testing.T) {
+		for _, tc := range tests {
+			result, err := getMatchingTargetOcpVersionLabelVersions(tc.targetOCPversion)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			assert.ElementsMatch(t, tc.expected, result)
+		}
+	})
 }
