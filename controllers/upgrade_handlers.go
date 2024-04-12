@@ -164,13 +164,17 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
-		if backuprestore.IsBRFailedError(err) {
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			return doNotRequeue(), nil
+	if len(ibu.Spec.OADPContent) > 0 {
+		u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
+		if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
+			if backuprestore.IsBRFailedError(err) {
+				utils.SetUpgradeStatusFailed(ibu, err.Error())
+				return doNotRequeue(), nil
+			}
+			return requeueWithError(fmt.Errorf("error while exporting OADP configuration: %w", err))
 		}
-		return requeueWithError(fmt.Errorf("error while exporting OADP configuration: %w", err))
+	} else {
+		u.Log.Info("OADPContent list empty, will not write OadpConfiguration CRs into new stateroot")
 	}
 
 	u.Log.Info("Writing Restore CRs into new stateroot")

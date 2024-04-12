@@ -71,7 +71,7 @@ func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content [
 	}
 
 	// extract backup CRs from configmaps
-	backupCRs, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](ctx, oadpConfigmaps, common.BackupGvk)
+	backupCRs, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](oadpConfigmaps, common.BackupGvk)
 	if err != nil {
 		return nil, err
 	}
