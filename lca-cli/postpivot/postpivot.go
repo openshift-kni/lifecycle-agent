@@ -94,13 +94,13 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	p.log.Info("Reading seed reconfiguration info")
 	seedReconfiguration, err := utils.ReadSeedReconfigurationFromFile(
-		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedClusterInfoFileName))
+		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedReconfigurationFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
-		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
+		seedReconfiguration.SSHKey, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
 
@@ -573,14 +573,14 @@ func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 // setSSHKey  sets ssh public key provided by user in 2 operations:
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
-func (p *PostPivot) setSSHKey(seedReconfiguration *clusterconfig_api.SeedReconfiguration, sshKeyFile string) error {
-	if seedReconfiguration.SSHKey == "" {
+func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
+	if sshKey == "" {
 		p.log.Infof("No ssh public key was provided, skipping")
 		return nil
 	}
 
 	p.log.Infof("Creating file %s with ssh keys for early connection", sshKeyFile)
-	if err := os.WriteFile(sshKeyFile, []byte(seedReconfiguration.SSHKey), 0o600); err != nil {
+	if err := os.WriteFile(sshKeyFile, []byte(sshKey), 0o600); err != nil {
 		return fmt.Errorf("failed to write ssh key to file, err %w", err)
 	}
 
@@ -589,7 +589,7 @@ func (p *PostPivot) setSSHKey(seedReconfiguration *clusterconfig_api.SeedReconfi
 		return fmt.Errorf("failed to set %s user ownership on %s, err :%w", userCore, sshKeyFile, err)
 	}
 
-	return p.createSSHKeyMachineConfigs(seedReconfiguration.SSHKey)
+	return p.createSSHKeyMachineConfigs(sshKey)
 }
 
 func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {

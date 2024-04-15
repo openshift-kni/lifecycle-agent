@@ -75,7 +75,10 @@ const (
 	InstallConfigCM = "cluster-config-v1"
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
-	OpenshiftInfraCRName     = "cluster"
+	// InstallConfigCMNamespace data key
+	InstallConfigCMInstallConfigDataKey = "install-config"
+	OpenshiftInfraCRName                = "cluster"
+	OpenshiftProxyCRName                = "cluster"
 
 	// Env var to configure auto rollback for post-reboot config failure
 	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
@@ -83,6 +86,8 @@ const (
 	// Bump this every time the seed format changes in a backwards incompatible way
 	SeedFormatVersion  = 3
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
+
+	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
 
 	PullSecretName           = "pull-secret"
 	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}" //nolint:gosec
