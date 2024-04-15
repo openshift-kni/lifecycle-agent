@@ -151,7 +151,7 @@ func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.
 //	annotations:
 //	  lca.openshift.io/apply-label: "rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet"
 func getObjsFromAnnotations(backup *velerov1.Backup) ([]ObjMetadata, error) {
-	result := []ObjMetadata{}
+	var result []ObjMetadata
 	for k, v := range backup.GetAnnotations() {
 		if k != applyLabelAnn || v == "" {
 			continue
@@ -251,6 +251,39 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 	}
 
 	h.Log.Info("Backup created", "name", backup.Name, "namespace", backup.Namespace)
+	return nil
+}
+
+// +kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch;update
+
+// PatchPVsReclaimPolicy - when LVMS is configured, we need to patch PVs with Retain as
+// the persistentVolumeReclaimPolicy due to https://github.com/vmware-tanzu/velero/issues/2739.
+func (h *BRHandler) PatchPVsReclaimPolicy(ctx context.Context) error {
+	pvList := &corev1.PersistentVolumeList{}
+	if err := h.List(ctx, pvList); err != nil {
+		return fmt.Errorf("failed to list PersistentVolumes: %w", err)
+	}
+
+	if len(pvList.Items) == 0 {
+		h.Log.Info("No PersistentVolumes found in the cluster, skipping.")
+		return nil
+	}
+
+	for _, pv := range pvList.Items {
+		hasLvmsAnnotation := pv.GetAnnotations()[topolvmAnnotation] == topolvmValue
+
+		if hasLvmsAnnotation && pv.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimDelete {
+			h.Log.Info("Patching persistentVolumeReclaimPolicy to Retain", "pv-name", pv.Name)
+
+			pvPatched := pv
+			pvPatched.Spec.PersistentVolumeReclaimPolicy = "Retain"
+			pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true"
+			if err := h.Client.Update(ctx, &pvPatched); err != nil {
+				return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -171,6 +171,20 @@ func (mr *MockBackuperRestorerMockRecorder) LoadRestoresFromOadpRestorePath() *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadRestoresFromOadpRestorePath", reflect.TypeOf((*MockBackuperRestorer)(nil).LoadRestoresFromOadpRestorePath))
 }
 
+// PatchPVsReclaimPolicy mocks base method.
+func (m *MockBackuperRestorer) PatchPVsReclaimPolicy(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PatchPVsReclaimPolicy", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PatchPVsReclaimPolicy indicates an expected call of PatchPVsReclaimPolicy.
+func (mr *MockBackuperRestorerMockRecorder) PatchPVsReclaimPolicy(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchPVsReclaimPolicy", reflect.TypeOf((*MockBackuperRestorer)(nil).PatchPVsReclaimPolicy), ctx)
+}
+
 // StartOrTrackBackup mocks base method.
 func (m *MockBackuperRestorer) StartOrTrackBackup(ctx context.Context, backups []*v1.Backup) (*backuprestore.BackupTracker, error) {
 	m.ctrl.T.Helper()

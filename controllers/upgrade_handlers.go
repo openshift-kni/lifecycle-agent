@@ -480,6 +480,10 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBas
 		return doNotRequeue(), nil
 	}
 
+	if err := u.BackupRestore.PatchPVsReclaimPolicy(ctx); err != nil {
+		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
+	}
+
 	// trigger and track each group
 	for index, backups := range sortedBackupGroups {
 		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))

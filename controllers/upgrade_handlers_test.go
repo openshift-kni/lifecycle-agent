@@ -137,6 +137,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			//setup
 
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
+			mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
 
 			for _, track := range tt.trackers {
 				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(nil)
@@ -332,6 +333,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		healthCheckError                                error
 		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
 		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
+		getPatchPVsReclaimPolicyReturn                  func() error
 		getCleanupStaleBackupsReturn                    func() error
 		remountSysrootReturn                            func() error
 		exportOadpConfigurationToDirReturn              func() error
@@ -449,6 +451,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{{&velerov1.Backup{}}}, nil
+			},
+			getPatchPVsReclaimPolicyReturn: func() error {
+				return nil
 			},
 			getCleanupStaleBackupsReturn: func() error {
 				return nil
@@ -717,6 +722,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.getSortedBackupsFromConfigmapReturn != nil {
 				mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.getSortedBackupsFromConfigmapReturn())
+			}
+			if tt.getPatchPVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(tt.getPatchPVsReclaimPolicyReturn())
 			}
 			if tt.getCleanupStaleBackupsReturn != nil {
 				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(tt.getCleanupStaleBackupsReturn())
