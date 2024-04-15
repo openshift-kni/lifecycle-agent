@@ -85,7 +85,7 @@ func (r *ImageBasedUpgradeReconciler) getSeedImage(
 	}
 
 	seedHasProxy := false
-	if seedInfo == nil {
+	if seedInfo != nil {
 		// Older images may not have the seed cluster info label, in which case
 		// we assume no proxy so that if the current cluster has proxy, it will
 		// fail the compatibility check.
