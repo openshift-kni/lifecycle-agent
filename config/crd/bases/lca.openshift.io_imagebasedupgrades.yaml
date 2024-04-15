@@ -65,21 +65,6 @@ spec:
                   if the upgrade fails or if the upgrade does not complete within
                   the specified time limit.
                 properties:
-                  disabledForPostRebootConfig:
-                    description: DisabledForPostRebootConfig when set to true, disables
-                      automatic rollback when the reconfiguration of the cluster fails
-                      upon the first reboot.
-                    type: boolean
-                  disabledForUpgradeCompletion:
-                    description: DisabledForUpgradeCompletion when set to true, disables
-                      automatic rollback after the Lifecycle Agent reports a failed
-                      upgrade upon completion.
-                    type: boolean
-                  disabledInitMonitor:
-                    description: DisabledInitMonitor when set to true, disables automatic
-                      rollback when the upgrade does not complete after reboot within
-                      the time frame specified in the initMonitorTimeoutSeconds field.
-                    type: boolean
                   initMonitorTimeoutSeconds:
                     description: InitMonitorTimeoutSeconds defines the time frame
                       in seconds. If not defined or set to 0, the default value of
