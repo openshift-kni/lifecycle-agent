@@ -287,6 +287,37 @@ func (h *BRHandler) PatchPVsReclaimPolicy(ctx context.Context) error {
 	return nil
 }
 
+// RestorePVsReclaimPolicy restores the persistentVolumeReclaimPolicy field back to its original value,
+// in PVs created by LVMS (this field was updated during pre-pivot by LCA).
+func (h *BRHandler) RestorePVsReclaimPolicy(ctx context.Context) error {
+	pvList := &corev1.PersistentVolumeList{}
+	if err := h.List(ctx, pvList); err != nil {
+		return fmt.Errorf("failed to list PersistentVolumes: %w", err)
+	}
+
+	if len(pvList.Items) == 0 {
+		h.Log.Info("No PersistentVolumes found in the cluster, skipping.")
+		return nil
+	}
+
+	for _, pv := range pvList.Items {
+		hasReclaimPolicyAnnotation := pv.GetAnnotations()[updatedReclaimPolicyAnnotation] == "true"
+
+		if hasReclaimPolicyAnnotation {
+			h.Log.Info("Restoring back the persistentVolumeReclaimPolicy to Delete", "pv-name", pv.Name)
+
+			pvPatched := pv
+			pvPatched.Spec.PersistentVolumeReclaimPolicy = "Delete"
+			delete(pvPatched.Annotations, updatedReclaimPolicyAnnotation)
+			if err := h.Client.Update(ctx, &pvPatched); err != nil {
+				return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CR and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	dpaList := &unstructured.UnstructuredList{}

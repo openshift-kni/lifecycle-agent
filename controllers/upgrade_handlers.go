@@ -561,11 +561,16 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 		// Restores are waiting for condition
 		return requeueWithMediumInterval(), nil
 	}
-
 	u.Log.Info("All restores succeeded")
+
+	if err := u.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
+		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
+	}
+
 	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
 		return requeueWithError(fmt.Errorf("error while removing OADP path: %w", err))
 	}
 	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
+
 	return doNotRequeue(), nil
 }

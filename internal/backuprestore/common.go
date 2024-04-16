@@ -88,6 +88,7 @@ type BackuperRestorer interface {
 	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
 	PatchPVsReclaimPolicy(ctx context.Context) error
+	RestorePVsReclaimPolicy(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
