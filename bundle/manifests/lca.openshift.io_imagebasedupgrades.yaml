@@ -111,6 +111,8 @@ spec:
                   image:
                     description: Image defines the full pull-spec of the seed container
                       image to use.
+                    minLength: 1
+                    pattern: ^([a-z0-9]+://)?[\S]+$
                     type: string
                   pullSecretRef:
                     description: PullSecretRef defines the reference to a secret with

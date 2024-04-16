@@ -89,6 +89,8 @@ type SeedImageRef struct {
 	Version string `json:"version,omitempty"`
 	// Image defines the full pull-spec of the seed container image to use.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^([a-z0-9]+://)?[\\S]+$"
 	Image string `json:"image,omitempty"`
 	// PullSecretRef defines the reference to a secret with credentials to pull container images.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Pull Secret Reference"
