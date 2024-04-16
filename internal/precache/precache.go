@@ -181,8 +181,8 @@ func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
 			if err != nil {
 				h.Log.Error(err, "Failed to parse progress", "StatusFile", StatusFile)
 			} else {
-				status.Message = fmt.Sprintf("total: %d (pulled: %d, skipped: %d, failed: %d)",
-					status.Progress.Total, status.Progress.Pulled, status.Progress.Skipped, status.Progress.Failed)
+				status.Message = fmt.Sprintf("total: %d (pulled: %d, failed: %d)",
+					status.Progress.Total, status.Progress.Pulled, status.Progress.Failed)
 			}
 		} else {
 			h.Log.Info("Unable to read precaching progress file", "StatusFile", StatusFile)
