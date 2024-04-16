@@ -181,6 +181,19 @@ If unexpected rejection occurs that block any spec changes, the annotation `lca.
 
 The Lifecycle Agent provides orchestration of the image based upgrade, triggered by patching the `ImageBasedUpgrade` CR through a series of stages.
 
+### Disable auto importing of managed cluster
+
+Before starting the upgrade, apply the annotation "import.open-cluster-management.io/disable-auto-import" to the managed cluster on the hub.This action is taken to disable automatic importing of the managed cluster during the upgrade stage until the cluster is prepared for it.
+The annotation should be removed after the upgrade is completed.
+
+```console
+# Add the annotation to target managedcluster
+oc annotate managedcluster <target-cluster-name> import.open-cluster-management.io/disable-auto-import=true
+
+# Remove the annotation
+oc annotate managedcluster <target-cluster-name> import.open-cluster-management.io/disable-auto-import-
+```
+
 ### Success Path
 
 The success path upgrade will progress through the following stages:

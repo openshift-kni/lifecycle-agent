@@ -346,7 +346,7 @@ kind: Backup
 metadata:
   name: acm-klusterlet
   annotations:
-    lca.openshift.io/apply-label: "apps/v1/deployments/open-cluster-management-agent/klusterlet,v1/secrets/open-cluster-management-agent/bootstrap-hub-kubeconfig,rbac.authorization.k8s.io/v1/clusterroles/klusterlet,v1/serviceaccounts/open-cluster-management-agent/klusterlet,rbac.authorization.k8s.io/v1/clusterroles/open-cluster-management:klusterlet-admin-aggregate-clusterrole,rbac.authorization.k8s.io/v1/clusterrolebindings/klusterlet,operator.open-cluster-management.io/v1/klusterlets/klusterlet,apiextensions.k8s.io/v1/customresourcedefinitions/klusterlets.operator.open-cluster-management.io,v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials"
+    lca.openshift.io/apply-label: "apps/v1/deployments/open-cluster-management-agent/klusterlet,v1/secrets/open-cluster-management-agent/bootstrap-hub-kubeconfig,rbac.authorization.k8s.io/v1/clusterroles/klusterlet,v1/serviceaccounts/open-cluster-management-agent/klusterlet,scheduling.k8s.io/v1/priorityclasses/klusterlet-critical,rbac.authorization.k8s.io/v1/clusterroles/open-cluster-management:klusterlet-admin-aggregate-clusterrole,rbac.authorization.k8s.io/v1/clusterrolebindings/klusterlet,operator.open-cluster-management.io/v1/klusterlets/klusterlet,apiextensions.k8s.io/v1/customresourcedefinitions/klusterlets.operator.open-cluster-management.io,v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials"
   labels:
     velero.io/storage-location: default
   namespace: openshift-adp
@@ -355,9 +355,9 @@ spec:
   - open-cluster-management-agent
   includedClusterScopedResources:
   - klusterlets.operator.open-cluster-management.io
-  - clusterclaims.cluster.open-cluster-management.io
   - clusterroles.rbac.authorization.k8s.io
   - clusterrolebindings.rbac.authorization.k8s.io
+  - priorityclasses.scheduling.k8s.io
   includedNamespaceScopedResources:
   - deployments
   - serviceaccounts
@@ -365,8 +365,10 @@ spec:
 ```
 
 > [!IMPORTANT]
-> Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
+>
+> 1. Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
 > defined and the secret exists on the open-cluster-management-agent namespace in your hub cluster. If it does not exist, you can safely remove it from the `apply-label` annotation.
+> 2. If ACM is below 2.10, and MCE is below 2.5.0, the `scheduling.k8s.io/v1/priorityclasses/klusterlet-critical` must be excluded from `lca.openshift.io/apply-label`, along with `priorityclasses.scheduling.k8s.io` from `spec.includedClusterScopedResources`.
 
 backup_app.yaml
 
