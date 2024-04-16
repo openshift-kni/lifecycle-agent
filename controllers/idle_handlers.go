@@ -164,6 +164,9 @@ func (r *ImageBasedUpgradeReconciler) cleanup(
 	if err := r.BackupRestore.CleanupBackups(ctx); err != nil {
 		handleError(err, "failed to cleanup backups")
 	}
+	if err := r.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
+		handleError(err, "failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS")
+	}
 
 	r.Log.Info("Cleaning up IBU files")
 	if err := cleanupIBUFiles(); err != nil {
