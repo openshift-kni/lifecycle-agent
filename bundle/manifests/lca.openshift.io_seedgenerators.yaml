@@ -49,10 +49,14 @@ spec:
               recertImage:
                 description: RecertImage defines the full pull-spec of the recert
                   container image to use.
+                minLength: 1
+                pattern: ^([a-z0-9]+://)?[\S]+$
                 type: string
               seedImage:
                 description: SeedImage defines the full pull-spec of the seed container
                   image to be created.
+                minLength: 1
+                pattern: ^([a-z0-9]+://)?[\S]+$
                 type: string
             type: object
             x-kubernetes-validations:

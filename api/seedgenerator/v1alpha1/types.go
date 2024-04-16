@@ -43,10 +43,14 @@ type SeedGenerator struct {
 // SeedGeneratorSpec defines the desired state of SeedGenerator
 type SeedGeneratorSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^([a-z0-9]+://)?[\\S]+$"
 	// SeedImage defines the full pull-spec of the seed container image to be created.
 	SeedImage string `json:"seedImage,omitempty"`
 
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^([a-z0-9]+://)?[\\S]+$"
 	// RecertImage defines the full pull-spec of the recert container image to use.
 	RecertImage string `json:"recertImage,omitempty"`
 }
