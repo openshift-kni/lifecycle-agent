@@ -57,7 +57,7 @@ make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=lates
 To watch LCA logs:
 
 ```console
-oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-agent-operator -c manager --follow
+oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecycle-agent-operator -c manager --follow
 ```
 
 ## Creating CR and Updating Stage

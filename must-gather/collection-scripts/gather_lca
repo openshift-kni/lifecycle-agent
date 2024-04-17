@@ -6,7 +6,7 @@ MUST_GATHER_LOGFILE_PATH="${2}"
 IBU_NS="openshift-lifecycle-agent"
 mkdir -p $LCA_DATA_PATH
 
-HOST_POD="$(oc -n ${IBU_NS} get pods -l app.kubernetes.io/name=lifecyle-agent-operator -o jsonpath='{.items[*].metadata.name}')"
+HOST_POD="$(oc -n ${IBU_NS} get pods -l app.kubernetes.io/name=lifecycle-agent-operator -o jsonpath='{.items[*].metadata.name}')"
 
 function get_ibu_crs() {
     IBU_CRDS=($(oc get crd | awk '/lca.openshift.io/{print $1}'))

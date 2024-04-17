@@ -176,7 +176,7 @@ func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade,
 			Name:      LcaPrecacheJobName,
 			Namespace: common.LcaNamespace,
 			Annotations: map[string]string{
-				"app.kubernetes.io/name": "lifecyle-agent-precache",
+				"app.kubernetes.io/name": "lifecycle-agent-precache",
 			},
 		},
 		Spec: batchv1.JobSpec{
