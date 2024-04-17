@@ -54,16 +54,6 @@ spec:
         name: ""
         version: v1
       specDescriptors:
-      - displayName: Additional Images
-        path: additionalImages
-      - displayName: Name
-        path: additionalImages.name
-        x-descriptors:
-        - urn:alm:descriptor:com.tectonic.ui:text
-      - displayName: Namespace
-        path: additionalImages.namespace
-        x-descriptors:
-        - urn:alm:descriptor:com.tectonic.ui:text
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
       - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
