@@ -333,8 +333,8 @@ func TestEnsureOadpConfigurations(t *testing.T) {
 	// Create oadp DPA file
 	dpa := &unstructured.Unstructured{
 		Object: map[string]any{
-			"kind":       dpaGvk.Kind,
-			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"kind":       DpaGvk.Kind,
+			"apiVersion": DpaGvk.Group + "/" + DpaGvk.Version,
 			"metadata": map[string]any{
 				"name":      "oadp",
 				"namespace": OadpNs,
@@ -391,54 +391,5 @@ func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorag
 		Status: velerov1.BackupStorageLocationStatus{
 			Phase: phase,
 		},
-	}
-}
-
-func TestEnsureStorageBackendAvailable(t *testing.T) {
-	testcases := []struct {
-		name        string
-		bsl         []client.Object
-		expectedErr error
-	}{
-		{
-			name: "Backup storage location is unavailable",
-			bsl: []client.Object{
-				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseUnavailable),
-				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
-			},
-			expectedErr: NewBRStorageBackendUnavailableError("BackupStorageLocation is unavailable. Name: oadp1, Error: "),
-		},
-		{
-			name: "Backup storage locations are available",
-			bsl: []client.Object{
-				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseAvailable),
-				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
-			},
-			expectedErr: nil,
-		},
-	}
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: OadpNs,
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{ns}
-			objs = append(objs, tc.bsl...)
-			fakeClient, err := getFakeClientFromObjects(objs...)
-			if err != nil {
-				t.Errorf("error in creating fake client")
-			}
-
-			handler := &BRHandler{
-				Client: fakeClient,
-				Log:    ctrl.Log.WithName("BackupRestore"),
-			}
-
-			err = handler.ensureStorageBackendAvailable(context.Background(), OadpNs)
-			assert.Equal(t, err, tc.expectedErr)
-		})
 	}
 }

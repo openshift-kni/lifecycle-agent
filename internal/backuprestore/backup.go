@@ -257,7 +257,7 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CR and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(dpaGvkList)
+	dpaList.SetGroupVersionKind(DpaGvkList)
 	opts := []client.ListOption{
 		client.InNamespace(oadpNamespace),
 	}

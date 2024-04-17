@@ -910,6 +910,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
+			ensureOadpConfigurationReturn: func() error {
+				return nil
+			},
 			applyPolicyManifestsReturn: func() error {
 				return nil
 			},
@@ -939,12 +942,6 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			name: "RestoreOadpConfigurations return error",
 			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
-				return nil
-			},
-			applyPolicyManifestsReturn: func() error {
-				return nil
-			},
-			applyExtraManifestsReturn: func() error {
 				return nil
 			},
 			ensureOadpConfigurationReturn: func() error {
