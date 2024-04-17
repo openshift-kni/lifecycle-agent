@@ -423,7 +423,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil,
-					backuprestore.NewBRNotFoundError("this is a test - NotFound")
+					backuprestore.NewBRFailedValidationError("OADP", "this is a test - NotFound")
 			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
@@ -496,7 +496,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "this is a test - NotFound stop reconcile",
+					Message: "failed to export OADP configuration: this is a test - NotFound stop reconcile",
 				},
 			},
 		},
@@ -556,7 +556,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "ExportRestoresToDir validation failed",
+					Message: "failed to export restores: ExportRestoresToDir validation failed",
 				},
 			},
 		},
@@ -745,6 +745,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.exportRestoresToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
+				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-restore-to-proceed-with-export"}}
 			}
 			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
