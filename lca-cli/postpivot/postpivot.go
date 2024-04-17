@@ -281,6 +281,20 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 	})
 }
 
+func applyManifest(ctx context.Context, log *logrus.Logger, dc dynamic.Interface, rm meta.RESTMapper, m *unstructured.Unstructured) error {
+	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
+		if err := extramanifest.ApplyExtraManifest(ctx, dc, rm, m, false); err != nil {
+			if common.IsRetriable(err) {
+				log.Infof("Retrying apply of manifest %s %s", m.GetKind(), m.GetName())
+				return false, nil
+			} else {
+				return true, err //nolint:wrapcheck
+			}
+		}
+		return true, nil
+	})
+}
+
 func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper) error {
 	p.log.Infof("Applying manifests from %s", mPath)
 	mFiles, err := os.ReadDir(mPath)
@@ -302,17 +316,18 @@ func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicCli
 			for _, m := range manifests.([]interface{}) {
 				manifest := unstructured.Unstructured{}
 				manifest.Object = m.(map[string]interface{})
-				if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+				if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
 					return fmt.Errorf("failed to apply manifest: %w", err)
 				}
 			}
 		} else {
 			manifest := unstructured.Unstructured{}
 			manifest.Object = obj
-			if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+			if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
 				return fmt.Errorf("failed to apply manifest: %w", err)
 			}
 		}
+
 		p.log.Infof("manifest applied: %s", filepath.Join(mPath, mFile.Name()))
 	}
 	return nil

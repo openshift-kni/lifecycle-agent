@@ -136,12 +136,12 @@ func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
 	return retry.OnError(backoff, isConflictOrRetriable, fn) //nolint:wrapcheck
 }
 
-func isRetriable(err error) bool {
+func IsRetriable(err error) bool {
 	return apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
 }
 
 func RetryOnRetriable(backoff wait.Backoff, fn func() error) error {
-	return retry.OnError(backoff, isRetriable, fn) //nolint:wrapcheck
+	return retry.OnError(backoff, IsRetriable, fn) //nolint:wrapcheck
 }
 
 func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {
