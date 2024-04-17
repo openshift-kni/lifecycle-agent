@@ -219,14 +219,13 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer deadlineCancel()
 	err := wait.PollUntilContextCancel(deadlineCtx, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
-		r.Log.Info("Waiting for MCO to override pull-secret file")
+		r.Log.Info("Waiting for MCO to override pull-secret file", "image registry auth file location", common.ImageRegistryAuthFile)
 		dockerConfigJSON, err := os.ReadFile(filepath.Join(common.Host, common.ImageRegistryAuthFile))
 		if err != nil {
 			r.Log.Info(fmt.Sprintf("Failed to read %s file with error %s, will retry",
 				common.ImageRegistryAuthFile, err))
 			return false, nil
 		}
-		r.Log.Info(fmt.Sprintf("%s data is %s", common.ImageRegistryAuthFile, strings.TrimSpace(string(dockerConfigJSON))))
 		if strings.TrimSpace(string(dockerConfigJSON)) != string(updatedPullSecret.Data[".dockerconfigjson"]) {
 			return false, nil
 		}
