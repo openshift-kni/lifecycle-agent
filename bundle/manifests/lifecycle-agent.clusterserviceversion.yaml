@@ -592,7 +592,7 @@ spec:
       deployments:
       - label:
           app.kubernetes.io/component: lifecycle-agent
-          app.kubernetes.io/name: lifecyle-agent-operator
+          app.kubernetes.io/name: lifecycle-agent-operator
           control-plane: controller-manager
         name: lifecycle-agent-controller-manager
         spec:
@@ -600,7 +600,7 @@ spec:
           selector:
             matchLabels:
               app.kubernetes.io/component: lifecycle-agent
-              app.kubernetes.io/name: lifecyle-agent-operator
+              app.kubernetes.io/name: lifecycle-agent-operator
               control-plane: controller-manager
           strategy:
             type: Recreate
@@ -611,7 +611,7 @@ spec:
                 target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
               labels:
                 app.kubernetes.io/component: lifecycle-agent
-                app.kubernetes.io/name: lifecyle-agent-operator
+                app.kubernetes.io/name: lifecycle-agent-operator
                 control-plane: controller-manager
             spec:
               containers:
