@@ -269,7 +269,7 @@ func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1a
 		return fmt.Errorf("failed to get configMaps: %w", err)
 	}
 
-	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](ctx, configmaps, common.RestoreGvk)
+	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](configmaps, common.RestoreGvk)
 	if err != nil {
 		return fmt.Errorf("failed to get restore CR from configmaps: %w", err)
 	}

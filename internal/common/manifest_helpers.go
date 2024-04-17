@@ -2,7 +2,6 @@ package common
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -62,9 +61,7 @@ func SortAndGroupByApplyWave[T metav1.Object](objs []T) ([][]T, error) {
 	return groups, nil
 }
 
-func ExtractResourcesFromConfigmaps[T metav1.Object](
-	ctx context.Context, configmaps []corev1.ConfigMap, gvk schema.GroupVersionKind,
-) ([]T, error) {
+func ExtractResourcesFromConfigmaps[T metav1.Object](configmaps []corev1.ConfigMap, gvk schema.GroupVersionKind) ([]T, error) {
 	var objs []T
 
 	for _, cm := range configmaps {

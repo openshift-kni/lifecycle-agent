@@ -726,6 +726,8 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.exportOadpConfigurationToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportOadpConfigurationToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportOadpConfigurationToDirReturn()).Times(1)
+				tt.args.ibu.Spec = lcav1alpha1.ImageBasedUpgradeSpec{OADPContent: []lcav1alpha1.ConfigMapRef{
+					{Name: "atleast-one-oadp-to-proceed-with-export"}}}
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())

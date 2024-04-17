@@ -403,7 +403,7 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		return fmt.Errorf("failed to oadp configMaps: %w", err)
 	}
 
-	backups, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](ctx, configmaps, common.BackupGvk)
+	backups, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](configmaps, common.BackupGvk)
 	if err != nil {
 		return err
 	}
@@ -423,7 +423,7 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		}
 	}
 
-	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](ctx, configmaps, common.RestoreGvk)
+	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](configmaps, common.RestoreGvk)
 	if err != nil {
 		return err
 	}
