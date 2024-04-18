@@ -569,12 +569,6 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
-	// Ensure the kubeadmin secret exists
-	if _, err := commonUtils.GetSecretData(ctx, "kubeadmin", "kube-system", "kubeadmin", r.Client); err != nil {
-		msg = "Rejected due to system missing required kube-system/kubeadmin Secret"
-		return
-	}
-
 	return
 }
 
