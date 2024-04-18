@@ -40,6 +40,7 @@ var (
 	workDir             string
 	precacheBestEffort  bool
 	precacheDisabled    bool
+	shutdown            bool
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -55,6 +56,8 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")
 	cmd.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "", false, "Set image precache to best effort mode")
 	cmd.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
+	cmd.Flags().BoolVarP(&shutdown, "shutdown", "", false, "Shutdown of the host after the preparation process is done.")
+
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("extra-partition-start")
 	cmd.MarkFlagRequired("dir")
@@ -97,7 +100,7 @@ func createIso() error {
 	}
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
 	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled); err != nil {
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
 		log.Errorf(err.Error())
 		return err

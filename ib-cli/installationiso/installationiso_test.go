@@ -30,6 +30,7 @@ func TestInstallationIso(t *testing.T) {
 		liveIsoUrlSuccess   bool
 		precacheBestEffort  bool
 		precacheDisabled    bool
+		shutdown            bool
 		renderCommandReturn error
 		embedCommandReturn  error
 		expectedError       string
@@ -43,6 +44,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "",
 		},
 		{
@@ -54,6 +56,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: true,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "",
 		},
 		{
@@ -65,6 +68,19 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: false,
 			precacheDisabled:   true,
+			shutdown:           false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - shutdown set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           true,
 			expectedError:      "",
 		},
 		{
@@ -76,6 +92,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  false,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "work dir doesn't exists",
 		},
 		{
@@ -87,6 +104,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "authFile: no such file or directory",
 		},
 		{
@@ -98,6 +116,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "psFile: no such file or directory",
 		},
 		{
@@ -109,6 +128,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  true,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "sshKey: no such file or directory",
 		},
 		{
@@ -120,6 +140,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:  false,
 			precacheBestEffort: false,
 			precacheDisabled:   false,
+			shutdown:           false,
 			expectedError:      "notfound",
 		},
 		{
@@ -131,6 +152,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:   false,
 			precacheBestEffort:  false,
 			precacheDisabled:    false,
+			shutdown:            false,
 			renderCommandReturn: errors.New("failed to render ignition config"),
 			expectedError:       "failed to render ignition config",
 		},
@@ -143,6 +165,7 @@ func TestInstallationIso(t *testing.T) {
 			liveIsoUrlSuccess:   false,
 			precacheBestEffort:  false,
 			precacheDisabled:    false,
+			shutdown:            false,
 			renderCommandReturn: errors.New("failed to embed ignition config to ISO"),
 			expectedError:       "failed to embed ignition config to ISO",
 		},
@@ -211,7 +234,7 @@ func TestInstallationIso(t *testing.T) {
 			}
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
 			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage,
-				rhcosLiveIsoUrl, installationDisk, extraPartitionStart, tc.precacheBestEffort, tc.precacheDisabled)
+				rhcosLiveIsoUrl, installationDisk, extraPartitionStart, tc.precacheBestEffort, tc.precacheDisabled, tc.shutdown)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
 				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
@@ -225,6 +248,11 @@ func TestInstallationIso(t *testing.T) {
 					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), true)
 				} else {
 					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), false)
+				}
+				if tc.shutdown {
+					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), false)
 				}
 
 			} else {

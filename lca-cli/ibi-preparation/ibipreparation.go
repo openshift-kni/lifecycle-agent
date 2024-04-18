@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/go-logr/logr"
 	"github.com/sirupsen/logrus"
@@ -31,11 +30,12 @@ type IBIPrepare struct {
 	pullSecretFile      string
 	precacheBestEffort  bool
 	precacheDisabled    bool
+	shutdown            bool
 }
 
 func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreeclient.IClient,
 	ostreeClient ostreeclient.IClient, seedImage, authFile, pullSecretFile, seedExpectedVersion string,
-	precacheBestEffort, precacheDisabled bool) *IBIPrepare {
+	precacheBestEffort, precacheDisabled, shutdown bool) *IBIPrepare {
 	return &IBIPrepare{
 		log:                 log,
 		ops:                 ops,
@@ -47,6 +47,7 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 		seedExpectedVersion: seedExpectedVersion,
 		precacheDisabled:    precacheDisabled,
 		precacheBestEffort:  precacheBestEffort,
+		shutdown:            shutdown,
 	}
 }
 
@@ -66,15 +67,21 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
-	if i.precacheDisabled {
-		i.log.Info("Precache disabled, skipping it")
-		return nil
+	if err := i.precacheFlow(imageListFile); err != nil {
+		return fmt.Errorf("failed to precache: %w", err)
 	}
-	return i.precacheFlow(imageListFile)
+
+	return i.shutdownNode()
 }
 
 func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 	// TODO: add support for mirror registry
+	if i.precacheDisabled {
+		i.log.Info("Precache disabled, skipping it")
+		return nil
+	}
+
+	i.log.Info("Precaching imaging")
 	imageList, err := prep.ReadPrecachingList(imageListFile, "", "", false)
 	if err != nil {
 		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
@@ -82,16 +89,32 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 	}
 
 	// Change root directory to /host
-	if err := syscall.Chroot(common.Host); err != nil {
+	unchroot, err := i.ops.Chroot(common.Host)
+	if err != nil {
 		return fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
+
 	}
 
+	i.log.Infof("chroot %s successful", common.Host)
 	if err := os.MkdirAll(filepath.Dir(precache.StatusFile), 0o700); err != nil {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
-	i.log.Infof("chroot %s successful", common.Host)
+
 	if err := workload.Precache(imageList, i.pullSecretFile, i.precacheBestEffort); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
+	}
+
+	return unchroot()
+}
+
+func (i *IBIPrepare) shutdownNode() error {
+	if !i.shutdown {
+		i.log.Info("Skipping shutdown")
+		return nil
+	}
+	i.log.Info("Shutting down the host")
+	if _, err := i.ops.RunInHostNamespace("shutdown", "now"); err != nil {
+		return fmt.Errorf("failed to shutdown the host: %w", err)
 	}
 	return nil
 }

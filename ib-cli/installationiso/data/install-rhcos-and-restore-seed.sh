@@ -55,4 +55,8 @@ if [ -n "${PRECACHE_BEST_EFFORT}" ]; then
     additional_flags="${additional_flags} --precache-best-effort"
 fi
 
+if [ -n "${SHUTDOWN}" ]; then
+    additional_flags="${additional_flags} --shutdown"
+fi
+
 podman run --privileged --security-opt label=type:unconfined_t --rm --pid=host --authfile "${authfile}" -v /:/host --entrypoint /usr/local/bin/lca-cli "${lca_image}" ibi --seed-image "${seed_image}" --authfile "${authfile}" --seed-version "${seed_version}" --pullSecretFile "${pull_secret}" ${additional_flags}
