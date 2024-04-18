@@ -40,9 +40,6 @@ metadata:
   resourceVersion: "2950109"
   uid: 6d60bc28-bf69-4222-b9ff-e6da197495ae
 spec:
-  additionalImages:
-    name: ""
-    namespace: ""
   autoRollbackOnFailure: {}
   extraManifests:
   - name: sno-extramanifests
@@ -114,9 +111,6 @@ items:
     resourceVersion: "2959121"
     uid: c7e46afa-3ac1-4cdc-8be1-53f3e71d6385
   spec:
-    additionalImages:
-      name: ""
-      namespace: ""
     autoRollbackOnFailure: {}
     extraManifests:
     - name: sno-extramanifests
@@ -197,9 +191,6 @@ metadata:
   resourceVersion: "2969303"
   uid: 95b02356-cfe3-4dc1-ba96-b0d3b7d21a82
 spec:
-  additionalImages:
-    name: ""
-    namespace: ""
   autoRollbackOnFailure:
     initMonitorTimeoutSeconds: 300
   extraManifests:

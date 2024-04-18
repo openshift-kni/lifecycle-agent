@@ -68,8 +68,6 @@ type ImageBasedUpgradeSpec struct {
 	Stage ImageBasedUpgradeStage `json:"stage,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image Reference"
 	SeedImageRef SeedImageRef `json:"seedImageRef,omitempty"`
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Additional Images"
-	AdditionalImages ConfigMapRef `json:"additionalImages,omitempty"`
 	// OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content"
 	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`

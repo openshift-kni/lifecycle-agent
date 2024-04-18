@@ -49,17 +49,6 @@ spec:
           spec:
             description: ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
             properties:
-              additionalImages:
-                description: ConfigMapRef defines a reference to a config map
-                properties:
-                  name:
-                    type: string
-                  namespace:
-                    type: string
-                required:
-                - name
-                - namespace
-                type: object
               autoRollbackOnFailure:
                 description: AutoRollbackOnFailure defines automatic rollback settings
                   if the upgrade fails or if the upgrade does not complete within

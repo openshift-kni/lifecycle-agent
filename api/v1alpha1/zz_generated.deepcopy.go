@@ -118,7 +118,6 @@ func (in *ImageBasedUpgradeList) DeepCopyObject() runtime.Object {
 func (in *ImageBasedUpgradeSpec) DeepCopyInto(out *ImageBasedUpgradeSpec) {
 	*out = *in
 	in.SeedImageRef.DeepCopyInto(&out.SeedImageRef)
-	out.AdditionalImages = in.AdditionalImages
 	if in.OADPContent != nil {
 		in, out := &in.OADPContent, &out.OADPContent
 		*out = make([]ConfigMapRef, len(*in))
