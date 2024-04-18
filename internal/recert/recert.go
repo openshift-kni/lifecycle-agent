@@ -35,15 +35,17 @@ type RecertConfig struct {
 	// means "delete the kubeadmin password secret" while a complete omission
 	// of the field means "don't touch the secret". We never want the latter,
 	// we either want to delete the secret or update it, never leave it as is.
-	KubeadminPasswordHash string   `json:"kubeadmin_password_hash"`
-	SummaryFile           string   `json:"summary_file,omitempty"`
-	SummaryFileClean      string   `json:"summary_file_clean,omitempty"`
-	StaticDirs            []string `json:"static_dirs,omitempty"`
-	StaticFiles           []string `json:"static_files,omitempty"`
-	CNSanReplaceRules     []string `json:"cn_san_replace_rules,omitempty"`
-	UseKeyRules           []string `json:"use_key_rules,omitempty"`
-	UseCertRules          []string `json:"use_cert_rules,omitempty"`
-	PullSecret            string   `json:"pull_secret,omitempty"`
+	KubeadminPasswordHash string `json:"kubeadmin_password_hash"`
+	// WARNING: You probably don't want use `SummaryFile`! This will leak
+	// private keys and tokens!
+	SummaryFile       string   `json:"summary_file,omitempty"`
+	SummaryFileClean  string   `json:"summary_file_clean,omitempty"`
+	StaticDirs        []string `json:"static_dirs,omitempty"`
+	StaticFiles       []string `json:"static_files,omitempty"`
+	CNSanReplaceRules []string `json:"cn_san_replace_rules,omitempty"`
+	UseKeyRules       []string `json:"use_key_rules,omitempty"`
+	UseCertRules      []string `json:"use_cert_rules,omitempty"`
+	PullSecret        string   `json:"pull_secret,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -80,7 +82,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 
 	config.InstallConfig = seedReconfig.InstallConfig
 
-	config.SummaryFile = SummaryFile
+	config.SummaryFileClean = SummaryFile
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
 	clusterFullDomain := fmt.Sprintf("%s.%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
 	config.ExtendExpiration = true
