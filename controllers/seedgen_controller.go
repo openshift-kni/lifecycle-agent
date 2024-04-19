@@ -462,6 +462,10 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 		"podman", "run", "--privileged", "--pid=host",
 		fmt.Sprintf("--name=%s", imagerContainerName),
 		"--replace", "--net=host",
+		// --http-proxy=true is already the default, but we're setting it
+		// explicitly to emphasize that we depend on it for the seed image
+		// generator to have network access in proxy-only environments
+		"--http-proxy=true",
 		"-v", "/etc:/etc", "-v", "/var:/var", "-v", "/var/run:/var/run", "-v", "/run/systemd/journal/socket:/run/systemd/journal/socket",
 		"-v", fmt.Sprintf("%s:%s", seedgenAuthFile, seedgenAuthFile),
 		"--entrypoint", "lca-cli",
@@ -478,7 +482,18 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 
 	// In order to have the imager container both survive the LCA pod shutdown and have continued network access
 	// after all other pods are shutdown, we're using systemd-run to launch it as a transient service-unit
-	systemdRunOpts := []string{"--collect", "--wait", "--unit", "lca-generate-seed-image"}
+	systemdRunOpts := []string{
+		"--collect",
+		"--wait",
+		"--unit", "lca-generate-seed-image",
+		// Ensure the proxy environment variables of the LCA container are
+		// passed through systemd-run to the podman process (which will pass it
+		// to the seed image generation container thanks to `--http-proxy=true`)
+		"--setenv", "HTTP_PROXY",
+		"--setenv", "HTTPS_PROXY",
+		"--setenv", "NO_PROXY",
+	}
+
 	if _, err := r.Executor.Execute("systemd-run", append(systemdRunOpts, imagerCmdArgs...)...); err != nil {
 		return fmt.Errorf("failed to run imager container: %w", err)
 	}
