@@ -508,15 +508,6 @@ spec:
         - apiGroups:
           - sriovnetwork.openshift.io
           resources:
-          - sriovnetworknodepolicies
-          verbs:
-          - get
-          - list
-          - patch
-          - watch
-        - apiGroups:
-          - sriovnetwork.openshift.io
-          resources:
           - sriovnetworknodestates
           verbs:
           - get
