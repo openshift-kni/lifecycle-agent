@@ -220,23 +220,23 @@ spec:
           rule: self.metadata.name == 'upgrade'
         - message: can not change spec.seedImageRef while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef)
-            && oldSelf.spec.seedImageRef==self.spec.seedImageRef || !has(self.spec.seedImageRef)
-            && !has(oldSelf.spec.seedImageRef)'
+            && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.seedImageRef)
+            && has(self.spec.seedImageRef) && oldSelf.spec.seedImageRef==self.spec.seedImageRef
+            || !has(self.spec.seedImageRef) && !has(oldSelf.spec.seedImageRef)'
         - message: can not change spec.oadpContent while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.oadpContent) && has(self.spec.oadpContent)
-            && oldSelf.spec.oadpContent==self.spec.oadpContent || !has(self.spec.oadpContent)
-            && !has(oldSelf.spec.oadpContent)'
+            && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.oadpContent)
+            && has(self.spec.oadpContent) && oldSelf.spec.oadpContent==self.spec.oadpContent
+            || !has(self.spec.oadpContent) && !has(oldSelf.spec.oadpContent)'
         - message: can not change spec.extraManifests while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests)
-            && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests)
-            && !has(oldSelf.spec.extraManifests)'
+            && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.extraManifests)
+            && has(self.spec.extraManifests) && oldSelf.spec.extraManifests==self.spec.extraManifests
+            || !has(self.spec.extraManifests) && !has(oldSelf.spec.extraManifests)'
         - message: can not change spec.autoRollbackOnFailure while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure)
-            && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure
+            && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.autoRollbackOnFailure)
+            && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure
             || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)'
         - message: the stage transition is not permitted. Please refer to status.validNextStages
             for valid transitions. If status.validNextStages is not present, it indicates
