@@ -23,6 +23,7 @@ import (
 // This annotation helps with the ordering as well as whether the policy should be applied. This is the same expectation as
 // the normal ZTP process post non-image-based cluster installation.
 const ztpDeployWaveAnnotation = "ran.openshift.io/ztp-deploy-wave"
+const TargetOcpVersionManifestCountAnnotation = "lca.openshift.io/target-ocp-version-manifest-count"
 const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
 
 // GetPolicies gets the policies matching the labels from the namespace and sort them by the ztp wave annotation value

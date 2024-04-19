@@ -26,10 +26,12 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -51,7 +53,8 @@ const (
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
-	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error
+	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
+	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
 	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef) error
 }
 
@@ -294,8 +297,8 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	return nil
 }
 
-// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
-func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
+// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies and writes to a given directory. It matches policies and/or CRs by labels.
+func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	if err := h.Client.Get(ctx, types.NamespacedName{Name: "policies.policy.open-cluster-management.io"}, crd); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -306,21 +309,9 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 		}
 	}
 
-	sortedPolicies, err := h.GetPolicies(ctx, policyLabels)
+	sortedObjects, err := h.ValidateAndExtractManifestFromPolicies(ctx, policyLabels, objectLabels, validationAnns)
 	if err != nil {
-		return fmt.Errorf("failed to get policies: %w", err)
-	}
-
-	var sortedObjects = [][]*unstructured.Unstructured{}
-	for _, policy := range sortedPolicies {
-		objects, err := getConfigurationObjects(&h.Log, policy, objectLabels)
-		if err != nil {
-			return fmt.Errorf("failed to extract manifests from policies: %w", err)
-		}
-
-		if len(objects) > 0 {
-			sortedObjects = append(sortedObjects, objects)
-		}
+		return fmt.Errorf("failed to validate and extract manifests from policies: %w", err)
 	}
 
 	for i, objects := range sortedObjects {
@@ -341,6 +332,38 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 	}
 
 	return nil
+}
+
+func (h *EMHandler) ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error) {
+	var manifestCount int
+	var sortedObjects = [][]*unstructured.Unstructured{}
+
+	sortedPolicies, err := h.GetPolicies(ctx, policyLabels)
+	if err != nil {
+		return sortedObjects, fmt.Errorf("failed to get policies: %w", err)
+	}
+
+	for _, policy := range sortedPolicies {
+		objects, err := getConfigurationObjects(&h.Log, policy, objectLabels)
+		if err != nil {
+			return sortedObjects, fmt.Errorf("failed to extract manifests from policies: %w", err)
+		}
+
+		if len(objects) > 0 {
+			manifestCount += len(objects)
+			sortedObjects = append(sortedObjects, objects)
+		}
+	}
+
+	// check the labeled manifests count
+	if expectedManifestCount, exists := validationAnns[TargetOcpVersionManifestCountAnnotation]; exists {
+		if expectedManifestCount != strconv.Itoa(manifestCount) {
+			errMsg := fmt.Sprintf("The labeled manifests count found in policies %s does not match the expected manifests count %s", strconv.Itoa(manifestCount), expectedManifestCount)
+			h.Log.Error(nil, errMsg)
+			return sortedObjects, NewEMFailedError(errMsg)
+		}
+	}
+	return sortedObjects, nil
 }
 
 // ApplyExtraManifests applies the extra manifests from the preserved extra manifests directory
@@ -385,4 +408,26 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 	}
 	h.Log.Info("Extra manifests path removed", "path", fromDir)
 	return nil
+}
+
+// GetMatchingTargetOcpVersionLabelVersions generates a list of matching versions that
+// be used for extracting manifests from the policy
+// The matching versions include: [full release version, Major.Minor.Patch, Major.Minor]
+func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, error) {
+	var validVersions []string
+
+	semVersion, err := semver.NewVersion(ocpVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse target ocp version %s: %w", ocpVersion, err)
+	}
+
+	validVersions = append(validVersions,
+		fmt.Sprintf("%d.%d.%d", semVersion.Major, semVersion.Minor, semVersion.Patch),
+		fmt.Sprintf("%d.%d", semVersion.Major, semVersion.Minor),
+	)
+	if !lo.Contains(validVersions, ocpVersion) {
+		// full release version
+		validVersions = append(validVersions, ocpVersion)
+	}
+	return validVersions, nil
 }

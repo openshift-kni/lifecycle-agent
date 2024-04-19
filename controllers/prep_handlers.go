@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
@@ -371,6 +372,23 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 		err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests)
 		if err != nil {
 			return fmt.Errorf("failed to validate extraManifests configMap: %w", err)
+		}
+	}
+
+	// Validate the manifests from policies if related annotations are specified
+	var validationAnns = map[string]string{}
+	if count, exists := ibu.GetAnnotations()[extramanifest.TargetOcpVersionManifestCountAnnotation]; exists {
+		validationAnns[extramanifest.TargetOcpVersionManifestCountAnnotation] = count
+	}
+	if len(validationAnns) != 0 {
+		versions, err := extramanifest.GetMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
+		if err != nil {
+			return fmt.Errorf("failed to get matching versions for target-ocp-version label: %w", err)
+		}
+
+		objectLabels := map[string]string{extramanifest.TargetOcpVersionLabel: strings.Join(versions, ",")}
+		if _, err := r.ExtraManifest.ValidateAndExtractManifestFromPolicies(ctx, nil, objectLabels, validationAnns); err != nil {
+			return fmt.Errorf("failed to validate manifests from policies: %w", err)
 		}
 	}
 	return nil

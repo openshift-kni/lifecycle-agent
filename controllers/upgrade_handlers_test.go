@@ -748,7 +748,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-restore-to-proceed-with-export"}}
 			}
 			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
-				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
+				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
 			}
 			if tt.exportExtraManifestToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExportExtraManifestToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportExtraManifestToDirReturn()).Times(1)
@@ -1112,34 +1112,4 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGetMatchingVersion(t *testing.T) {
-	tests := []struct {
-		targetOCPversion string
-		expected         []string
-	}{
-		{
-			targetOCPversion: "4.15.2-ec.3",
-			expected:         []string{"4.15.2-ec.3", "4.15.2", "4.15"},
-		},
-		{
-			targetOCPversion: "4.15.2",
-			expected:         []string{"4.15.2", "4.15"},
-		},
-		{
-			targetOCPversion: "4.16.0-0.ci-2024-04-11-051453",
-			expected:         []string{"4.16.0-0.ci-2024-04-11-051453", "4.16.0", "4.16"},
-		},
-	}
-
-	t.Run("TargetOCPversion test", func(t *testing.T) {
-		for _, tc := range tests {
-			result, err := getMatchingTargetOcpVersionLabelVersions(tc.targetOCPversion)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			assert.ElementsMatch(t, tc.expected, result)
-		}
-	})
 }

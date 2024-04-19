@@ -512,18 +512,21 @@ func TestExportPolicyManifests(t *testing.T) {
 		policies            []*unstructured.Unstructured
 		policyLabels        map[string]string
 		objectLabels        map[string]string
+		validationAnns      map[string]string
 		expectedFilePaths   []string
 		unexpectedFilePaths []string
 		expectedObjects     []unstructured.Unstructured
+		expectedError       string
 	}{
 		{
-			name: "Extraction by matching labels on objects",
+			name: "happy path with validation and extraction by matching labels on objects",
 			policies: []*unstructured.Unstructured{
 				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel),
 				mustConvertYamlStrToUnstructured(policyWithoutLabel),
 				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithNonMatchedLabel),
 			},
-			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2-rc1,4.15.2,4.15"},
+			objectLabels:   map[string]string{TargetOcpVersionLabel: "4.15.2-rc1,4.15.2,4.15"},
+			validationAnns: map[string]string{TargetOcpVersionManifestCountAnnotation: "1"},
 			expectedFilePaths: []string{
 				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
@@ -564,9 +567,10 @@ func TestExportPolicyManifests(t *testing.T) {
 			},
 		},
 		{
-			name:         "Extraction by matching labels on policies",
-			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
-			policyLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.16.1"},
+			name:           "happy path with validation and extraction by matching labels on policies",
+			policies:       []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
+			policyLabels:   map[string]string{TargetOcpVersionLabel: "4.16.1"},
+			validationAnns: map[string]string{TargetOcpVersionManifestCountAnnotation: "1"},
 			expectedFilePaths: []string{
 				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
@@ -601,6 +605,14 @@ func TestExportPolicyManifests(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name:              "manifests count does not match with expected",
+			policies:          []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel)},
+			objectLabels:      map[string]string{TargetOcpVersionLabel: "4.15.2-rc1,4.15.2,4.15"},
+			validationAnns:    map[string]string{TargetOcpVersionManifestCountAnnotation: "3"},
+			expectedFilePaths: []string{},
+			expectedError:     "does not match the expected manifests count",
 		},
 	}
 
@@ -640,9 +652,13 @@ func TestExportPolicyManifests(t *testing.T) {
 
 			// Export the manifests to the temporary directory
 			err = handler.ExtractAndExportManifestFromPoliciesToDir(context.Background(),
-				tc.policyLabels, tc.objectLabels, toDir)
+				tc.policyLabels, tc.objectLabels, tc.validationAnns, toDir)
 			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+				if tc.expectedError != "" {
+					assert.Contains(t, err.Error(), tc.expectedError)
+				} else {
+					t.Errorf("Unexpected error: %v", err)
+				}
 			}
 
 			// Check that the manifests were exported to the correct files
@@ -687,4 +703,34 @@ func mustConvertYamlStrToUnstructured(cr string) *unstructured.Unstructured {
 		panic("unstructured.Unstructured expected")
 	}
 	return uCr
+}
+
+func TestGetMatchingVersion(t *testing.T) {
+	tests := []struct {
+		targetOCPversion string
+		expected         []string
+	}{
+		{
+			targetOCPversion: "4.15.2-ec.3",
+			expected:         []string{"4.15.2-ec.3", "4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.15.2",
+			expected:         []string{"4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.16.0-0.ci-2024-04-11-051453",
+			expected:         []string{"4.16.0-0.ci-2024-04-11-051453", "4.16.0", "4.16"},
+		},
+	}
+
+	t.Run("TargetOCPversion test", func(t *testing.T) {
+		for _, tc := range tests {
+			result, err := GetMatchingTargetOcpVersionLabelVersions(tc.targetOCPversion)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			assert.ElementsMatch(t, tc.expected, result)
+		}
+	})
 }
