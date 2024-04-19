@@ -65,7 +65,7 @@ func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content [
 		if k8serrors.IsNotFound(err) {
 			errMsg := fmt.Sprintf("OADP configmap not found, error: %s. Please create the configmap.", err.Error())
 			h.Log.Error(nil, errMsg)
-			return nil, NewBRNotFoundError(errMsg)
+			return nil, NewBRFailedValidationError("OADP", errMsg)
 		}
 		return nil, fmt.Errorf("failed to get oadp configMaps : %w", err)
 	}

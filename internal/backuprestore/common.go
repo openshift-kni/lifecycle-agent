@@ -119,14 +119,6 @@ func (e *BRStatusError) Error() string {
 	return fmt.Sprintf(e.ErrMessage)
 }
 
-func NewBRNotFoundError(msg string) *BRStatusError {
-	return &BRStatusError{
-		Type:       "configmap",
-		Reason:     "NotFound",
-		ErrMessage: msg,
-	}
-}
-
 func NewBRFailedError(brType, msg string) *BRStatusError {
 	return &BRStatusError{
 		Type:       brType,
@@ -149,16 +141,6 @@ func NewBRStorageBackendUnavailableError(msg string) *BRStatusError {
 		Reason:     "Unavailable",
 		ErrMessage: msg,
 	}
-}
-
-func IsBRNotFoundError(err error) bool {
-	var brErr *BRStatusError
-	if errors.As(err, &brErr) {
-		if brErr.Type == "configmap" {
-			return brErr.Reason == "NotFound"
-		}
-	}
-	return false
 }
 
 func IsBRFailedError(err error) bool {

@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -36,6 +37,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -65,8 +67,6 @@ type (
 		RebootClient    reboot.RebootIntf
 	}
 )
-
-const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
 
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
@@ -132,8 +132,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.Log.Info("Handling backups with OADP operator")
 	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
-		if backuprestore.IsBRNotFoundError(err) ||
-			backuprestore.IsBRFailedValidationError(err) ||
+		if backuprestore.IsBRFailedValidationError(err) ||
 			backuprestore.IsBRFailedError(err) {
 
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -161,26 +160,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	if len(ibu.Spec.OADPContent) > 0 {
-		u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-		if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
-			if backuprestore.IsBRFailedError(err) {
-				utils.SetUpgradeStatusFailed(ibu, err.Error())
-				return doNotRequeue(), nil
-			}
-			return requeueWithError(fmt.Errorf("error while exporting OADP configuration: %w", err))
-		}
-	} else {
-		u.Log.Info("OADPContent list empty, will not write OadpConfiguration CRs into new stateroot")
-	}
-
-	u.Log.Info("Writing Restore CRs into new stateroot")
-	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
-		if backuprestore.IsBRFailedValidationError(err) {
+	if err := u.exportOadpConfigurationAndRestore(ctx, ibu, staterootVarPath); err != nil {
+		if backuprestore.IsBRFailedError(err) || backuprestore.IsBRFailedValidationError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while exporting restores: %w", err))
+		return requeueWithError(fmt.Errorf("error while exporting OADP configuration and restores: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
@@ -189,20 +174,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
-	// Extract from policies can be done by matching labels on the policy or the CR itself
-	// Currently we expect user to properly label CRs with site specific content
-	// as those policies must not be applied on the seed
-	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
-	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
-		return requeueWithError(fmt.Errorf("error while exporting manifests from policies: %w", err))
-	}
-
-	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
+	if err := u.extractAndExportExtraManifests(ctx, ibu, staterootVarPath); err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
+		return requeueWithError(fmt.Errorf("error while exporting manifests: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
@@ -224,15 +201,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.resetProgressMessage(ctx, ibu)
 
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
-
-	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
-	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
-		return requeueWithError(err)
-	}
-
-	filePath := filepath.Join(staterootPath, utils.IBUFilePath)
-	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		return requeueWithError(fmt.Errorf("error while saving IBU CR to the new state root: %w", err))
+	if err := exportIBUToNewStateroot(ibu, staterootPath); err != nil {
+		return requeueWithError(fmt.Errorf("error while exporting IBU CR to the new state root: %w", err))
 	}
 
 	u.Log.Info("Save a copy of the IBU in the current stateroot for rollback")
@@ -240,15 +210,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
 
-	// Set the new default deployment
-	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
-		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
-		if err != nil {
-			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
-		}
-		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
-			return requeueWithError(fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err))
-		}
+	if err := u.setDefaultDeploymentToNewStateroot(stateroot); err != nil {
+		return requeueWithError(fmt.Errorf("error while setting default deployment: %w", err))
 	}
 
 	// Write an event to indicate reboot attempt
@@ -261,6 +224,95 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return doNotRequeue(), nil
 	}
 	return doNotRequeue(), nil
+}
+
+// exportOadpConfigurationAndRestore exports OADP configuration and restore CRs to the new stateroot
+func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+	if len(ibu.Spec.OADPContent) == 0 {
+		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
+	}
+
+	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
+	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, ostreeVarDir, backuprestore.OadpNs); err != nil {
+		return fmt.Errorf("failed to export OADP configuration: %w", err)
+	}
+
+	u.Log.Info("Writing Restore CRs into new stateroot")
+	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export restores: %w", err)
+	}
+
+	return nil
+}
+
+// extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
+func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+	versions, err := getMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
+	if err != nil {
+		return fmt.Errorf("failed to export manifests from policies: %w", err)
+	}
+
+	// Extract from policies can be done by matching labels on the policy or the CR itself
+	// Currently we expect user to properly label CRs with site specific content
+	// as those policies must not be applied on the seed
+	labels := map[string]string{extramanifest.TargetOcpVersionLabel: strings.Join(versions, ",")}
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export manifests from policies: %w", err)
+	}
+
+	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export manifests from configmaps: %w", err)
+	}
+	return nil
+}
+
+// getMatchingTargetOcpVersionLabelVersions generates a list of matching versions that
+// be used for extracting manifests from the policy
+// The matching versions include: [full release version, Major.Minor.Patch, Major.Minor]
+func getMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, error) {
+	var validVersions []string
+
+	semVersion, err := semver.NewVersion(ocpVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse target ocp version %s: %w", ocpVersion, err)
+	}
+
+	validVersions = append(validVersions,
+		fmt.Sprintf("%d.%d.%d", semVersion.Major, semVersion.Minor, semVersion.Patch),
+		fmt.Sprintf("%d.%d", semVersion.Major, semVersion.Minor),
+	)
+	if !lo.Contains(validVersions, ocpVersion) {
+		// full release version
+		validVersions = append(validVersions, ocpVersion)
+	}
+	return validVersions, nil
+}
+
+func (u *UpgHandler) setDefaultDeploymentToNewStateroot(stateroot string) error {
+	// Set the new default deployment
+	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
+		if err != nil {
+			return fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err)
+		}
+		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+			return fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err)
+		}
+	}
+	return nil
+}
+
+func exportIBUToNewStateroot(ibu *lcav1alpha1.ImageBasedUpgrade, staterootPath string) error {
+	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
+	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
+		return fmt.Errorf("failed to mkdir: %w", err)
+	}
+
+	filePath := filepath.Join(staterootPath, utils.IBUFilePath)
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
+		return fmt.Errorf("error while saving IBU CR to the new state root: %w", err)
+	}
+	return nil
 }
 
 // exportForUncontrolledRollback Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed

@@ -306,30 +306,37 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 		}
 	}
 
-	// Create the directory for the extra manifests
-	manifestsDir := filepath.Join(toDir, PolicyManifestPath)
-	if err := os.MkdirAll(manifestsDir, 0o700); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", manifestsDir, err)
-	}
-
-	policies, err := h.GetPolicies(ctx, policyLabels)
+	sortedPolicies, err := h.GetPolicies(ctx, policyLabels)
 	if err != nil {
 		return fmt.Errorf("failed to get policies: %w", err)
 	}
 
-	for i, policy := range policies {
-		objects, err := getConfigurationObjects(policy, objectLabels)
+	var sortedObjects = [][]*unstructured.Unstructured{}
+	for _, policy := range sortedPolicies {
+		objects, err := getConfigurationObjects(&h.Log, policy, objectLabels)
 		if err != nil {
 			return fmt.Errorf("failed to extract manifests from policies: %w", err)
 		}
-		for _, object := range objects {
+
+		if len(objects) > 0 {
+			sortedObjects = append(sortedObjects, objects)
+		}
+	}
+
+	for i, objects := range sortedObjects {
+		group := filepath.Join(toDir, PolicyManifestPath, "group"+strconv.Itoa(i+1))
+		if err := os.MkdirAll(group, 0o700); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", group, err)
+		}
+
+		for j, object := range objects {
 			gvk := object.GroupVersionKind()
-			manifestFilePath := filepath.Join(manifestsDir, fmt.Sprintf(
-				"%d_%s_%s_%s.yaml", i, gvk.Kind, object.GetName(), object.GetNamespace()))
+			manifestFilePath := filepath.Join(group, fmt.Sprintf(
+				"%d_%s_%s_%s.yaml", j+1, gvk.Kind, object.GetName(), object.GetNamespace()))
 			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil { //nolint:gosec
 				return fmt.Errorf("failed to save manifests to file %s: %w", manifestFilePath, err)
 			}
-			h.Log.Info("Extracted from policy and exported manifest to file", "policy", policy.GetName(), "path", manifestFilePath)
+			h.Log.Info("Extracted from policy and exported manifest to file", "path", manifestFilePath)
 		}
 	}
 
@@ -343,7 +350,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		return fmt.Errorf("failed to read extra manifests from path: %w", err)
 	}
 	if manifests == nil || len(manifests) == 0 {
-		h.Log.Info("No extra manifests to apply")
+		h.Log.Info(fmt.Sprintf("No extra manifests to apply in path %s", fromDir))
 		return nil
 	}
 

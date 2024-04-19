@@ -79,12 +79,20 @@ This is generally intended for platform configuration that is site specific and 
 
 There are two implementations of extra manifests:
 
-- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted by the operator during the upgrade stage.
-Manifests that have the `ran.openshift.io/ztp-deploy-wave` annotation and are labeled with `lca.openshift.io/target-ocp-version: “4.y.x” will be extracted and applied after
-rebooting to the new version.
+- If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted from the policies by the operator during the upgrade stage.
+Manifests defined in the policies that have the `ran.openshift.io/ztp-deploy-wave` annotation and labeled with `lca.openshift.io/target-ocp-version: "4.y.x"` or `lca.openshift.io/target-ocp-version: "4.y"` will be extracted and applied after rebooting to the new version.
 
 - If the target cluster is not integrated with ZTP GitOps the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
 `extraManifests` field in the [IBU CR](#imagebasedupgrade-cr). After rebooting to the new version, these extra manifests are applied.
+
+  The annotation `lca.openshift.io/apply-wave` is supported for defining the manifest applying order. The value of the annotation should be a string number, for example:
+
+  ```yaml
+  annotations:
+    lca.openshift.io/apply-wave: "1"
+  ```
+
+  If the annotation is provided in the manifests, they will be applied in increasing order based on the annotation value. Manifests without the annotation will be applied last.
 
 ## Target SNO Prerequisites
 

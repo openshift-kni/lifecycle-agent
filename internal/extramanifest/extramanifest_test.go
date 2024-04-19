@@ -403,6 +403,59 @@ spec:
   remediationAction: inform
 `
 
+const policyWithAnnotationAndObjectWithNonMatchedLabel = `---
+kind: Policy
+apiVersion: policy.open-cluster-management.io/v1
+metadata:
+  name: ztp-common.p4
+  namespace: spoke
+  annotations:
+    ran.openshift.io/ztp-deploy-wave: "2"
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: common-cnfdf22-new-config-policy-config
+        spec:
+          evaluationInterval:
+            compliant: 10m
+            noncompliant: 10s
+          namespaceselector:
+            exclude:
+              - kube-*
+            include:
+              - "*"
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: CatalogSource
+                metadata:
+                  name: redhat-operators-non-match
+                  namespace: openshift-marketplace
+                  annotations:
+                    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+                  labels:
+                    lca.openshift.io/target-ocp-version: "4.15.6"
+                spec:
+                  displayName: Red Hat Operators Catalog
+                  image: registry.redhat.io/redhat/redhat-operator-index:v4.15
+                  publisher: Red Hat
+                  sourceType: grpc
+                  updateStrategy:
+                    registryPoll:
+                      interval: 1h
+                status:
+                  connectionState:
+                    lastObservedState: READY
+          remediationAction: inform
+          severity: low
+  remediationAction: inform
+`
+
 const policyWithoutLabel = `---
 kind: Policy
 apiVersion: policy.open-cluster-management.io/v1
@@ -464,14 +517,19 @@ func TestExportPolicyManifests(t *testing.T) {
 		expectedObjects     []unstructured.Unstructured
 	}{
 		{
-			name:         "Extraction by matching labels on objects",
-			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
-			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2"},
+			name: "Extraction by matching labels on objects",
+			policies: []*unstructured.Unstructured{
+				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel),
+				mustConvertYamlStrToUnstructured(policyWithoutLabel),
+				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithNonMatchedLabel),
+			},
+			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2-rc1,4.15.2,4.15"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group2", "1_CatalogSource_redhat-operators-non-match_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "2_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{
@@ -510,10 +568,10 @@ func TestExportPolicyManifests(t *testing.T) {
 			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
 			policyLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.16.1"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{
