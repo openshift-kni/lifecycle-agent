@@ -3,11 +3,13 @@
 - [Image Based Upgrade](#image-based-upgrade)
   - [Overview](#overview)
   - [Handling Site Specific Artifacts](#handling-site-specific-artifacts)
-    - [Extra Manifests](#extra-manifests)
     - [Backup and Restore](#backup-and-restore)
+    - [Extra Manifests](#extra-manifests)
   - [Target SNO Prerequisites](#target-sno-prerequisites)
   - [ImageBasedUpgrade CR](#imagebasedupgrade-cr)
+    - [Stage transitions](#stage-transitions)
   - [Image Based Upgrade Walkthrough](#image-based-upgrade-walkthrough)
+    - [Disable auto importing of managed cluster](#disable-auto-importing-of-managed-cluster)
     - [Success Path](#success-path)
       - [Starting the Prep stage](#starting-the-prep-stage)
       - [Starting the Upgrade stage](#starting-the-upgrade-stage)
@@ -15,6 +17,7 @@
     - [Automatic Rollback on Upgrade Failure](#automatic-rollback-on-upgrade-failure)
       - [Configuring Automatic Rollback](#configuring-automatic-rollback)
     - [Finalizing or Aborting](#finalizing-or-aborting)
+      - [Finalize or Abort failure](#finalize-or-abort-failure)
     - [Monitoring Progress](#monitoring-progress)
 
 ## Overview
@@ -183,20 +186,26 @@ When LCA is installed, the IBU CR is auto-created:
 apiVersion: lca.openshift.io/v1alpha1
 kind: ImageBasedUpgrade
 metadata:
+  creationTimestamp: "2024-04-19T19:20:04Z"
   generation: 1
   name: upgrade
+  resourceVersion: "333525"
+  uid: 511d9069-ce61-4029-bb7f-76832d5af356
 spec:
   autoRollbackOnFailure: {}
+  seedImageRef: {}
   stage: Idle
 status:
   conditions:
-  - lastTransitionTime: "2024-01-19T05:42:58Z"
+  - lastTransitionTime: "2024-04-19T19:20:04Z"
     message: Idle
     observedGeneration: 1
     reason: Idle
     status: "True"
     type: Idle
   observedGeneration: 1
+  validNextStages:
+  - Prep
 ```
 
 ### Stage transitions
@@ -297,59 +306,66 @@ Prep in progress:
 
 ```console
   conditions:
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
     message: In progress
-    observedGeneration: 2
+    observedGeneration: 5
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
-    message: Pulling seed image
-    observedGeneration: 2
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
+    message: Setting up stateroot
+    observedGeneration: 5
     reason: InProgress
     status: "True"
     type: PrepInProgress
-  observedGeneration: 2
+  observedGeneration: 5
+  validNextStages:
+  - Idle
 
   conditions:
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
     message: In progress
-    observedGeneration: 2
+    observedGeneration: 5
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
-    message: 'Precaching progress: total: 228 (pulled: 21, skipped: 20, failed: 0)'
-    observedGeneration: 2
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
+    message: 'Precaching progress: total: 115 (pulled: 10, failed: 0)'
+    observedGeneration: 5
     reason: InProgress
     status: "True"
     type: PrepInProgress
-  observedGeneration: 2
+  observedGeneration: 5
+  validNextStages:
+  - Idle
 ```
 
 Prep completed:
 
 ```console
   conditions:
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
     message: In progress
-    observedGeneration: 2
+    observedGeneration: 5
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
     message: Prep completed
-    observedGeneration: 2
+    observedGeneration: 5
     reason: Completed
     status: "False"
     type: PrepInProgress
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
-    message: 'Prep completed successfully: total: 228 (pulled: 208, skipped: 20, failed: 0)'
-    observedGeneration: 2
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
+    message: Prep completed successfully
+    observedGeneration: 5
     reason: Completed
     status: "True"
     type: PrepCompleted
-  observedGeneration: 2
+  observedGeneration: 5
+  validNextStages:
+  - Idle
+  - Upgrade
 ```
 
 #### Starting the Upgrade stage
@@ -382,6 +398,8 @@ Post-Pivot
 
 - Before OCP is started, a systemd service will run which will restore the basic platform configuration and regenerate the platform certificates using the [recert tool](https://github.com/rh-ecosystem-edge/recert).
 - Once LCA starts, it will restore the saved IBU CR.
+- Update the IBU CR status to set the `rollbackAvailabilityExpiration` timestamp, reflecting the latest point at which a rollback could be performed without potentially
+  requiring manual actions to recover from expired control plane certificates on the original stateroot.
 - Restore the remaining platform configuration.
 - Wait for the platform to recover - Cluster/day2 operators and MCP are stable.
 - Apply extra manifests that were saved pre-pivot.
@@ -396,72 +414,90 @@ Refer to [Finalizing or Aborting](#finalizing-or-aborting)
 
 Condition samples:
 
-Upgrade in progress:
+Upgrade in progress, pre-pivot:
 
 ```console
+status:
   conditions:
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
     message: In progress
-    observedGeneration: 2
+    observedGeneration: 5
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
     message: Prep completed
-    observedGeneration: 2
+    observedGeneration: 5
     reason: Completed
     status: "False"
     type: PrepInProgress
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
-    message: 'Prep completed successfully: total: 228 (pulled: 208, skipped: 20, failed: 0)'
-    observedGeneration: 2
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
+    message: Prep completed successfully
+    observedGeneration: 5
     reason: Completed
     status: "True"
     type: PrepCompleted
-  - lastTransitionTime: "2024-01-19T06:40:08Z"
-    message: In progress
-    observedGeneration: 3
+  - lastTransitionTime: "2024-04-19T19:28:14Z"
+    message: |-
+      Waiting for system to stabilize: one or more health checks failed
+        - one or more ClusterOperators not yet ready: authentication
+        - one or more MachineConfigPools not yet ready: master
+        - one or more ClusterServiceVersions not yet ready: sriov-fec.v2.8.0
+    observedGeneration: 1
     reason: InProgress
     status: "True"
     type: UpgradeInProgress
-  observedGeneration: 3
+  observedGeneration: 1
+  rollbackAvailabililtyExpiration: "2024-05-19T14:01:52Z"
+  validNextStages:
+  - Rollback
+```
+
+Upgrade in progress, post-pivot:
+
+```console
 ```
 
 Upgrade completed:
 
 ```console
+status:
   conditions:
-  - lastTransitionTime: "2024-01-19T06:26:06Z"
+  - lastTransitionTime: "2024-04-19T19:25:29Z"
     message: In progress
-    observedGeneration: 2
+    observedGeneration: 5
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
     message: Prep completed
-    observedGeneration: 2
+    observedGeneration: 5
     reason: Completed
     status: "False"
     type: PrepInProgress
-  - lastTransitionTime: "2024-01-19T06:30:36Z"
-    message: 'Prep completed successfully: total: 228 (pulled: 208, skipped: 20, failed: 0)'
-    observedGeneration: 2
+  - lastTransitionTime: "2024-04-19T19:26:52Z"
+    message: Prep completed successfully
+    observedGeneration: 5
     reason: Completed
     status: "True"
     type: PrepCompleted
-  - lastTransitionTime: "2024-01-19T06:54:29Z"
+  - lastTransitionTime: "2024-04-19T19:43:55Z"
     message: Upgrade completed
     observedGeneration: 1
     reason: Completed
     status: "False"
     type: UpgradeInProgress
-  - lastTransitionTime: "2024-01-19T06:54:29Z"
+  - lastTransitionTime: "2024-04-19T19:43:55Z"
     message: Upgrade completed
     observedGeneration: 1
     reason: Completed
     status: "True"
     type: UpgradeCompleted
   observedGeneration: 1
+  rollbackAvailabililtyExpiration: "2024-05-19T14:01:52Z"
+  validNextStages:
+  - Idle
+  - Rollback
 ```
 
 ### Rollback after Pivot

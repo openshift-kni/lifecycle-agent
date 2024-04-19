@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -87,6 +88,15 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		}
 		return prePivot, nil
 	} else {
+		if ibu.Status.RollbackAvailabililtyExpiration == "" {
+			// Set the rollback availability expiration field
+			if expiry, err := r.getRollbackAvailabilityExpiration(); err == nil {
+				ibu.Status.RollbackAvailabililtyExpiration = expiry.UTC().Format(time.RFC3339)
+			} else {
+				r.Log.Error(err, "unable to determine rollback availability expiration")
+			}
+		}
+
 		r.Log.Info("Running PostPivot handler")
 		postPivot, err := r.UpgradeHandler.PostPivot(ctx, ibu)
 		if err != nil {

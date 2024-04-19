@@ -18,7 +18,12 @@ package controllers
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -28,6 +33,65 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func (r *ImageBasedUpgradeReconciler) getRollbackAvailabilityExpiration() (time.Time, error) {
+	expiry := time.Time{}
+
+	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
+	if err != nil {
+		return expiry, fmt.Errorf("unable to determine unbooted stateroot: %w", err)
+	}
+
+	staterootPath := common.PathOutsideChroot(common.GetStaterootPath(stateroot))
+
+	certfiles := []string{
+		"/var/lib/kubelet/pki/kubelet-client-current.pem",
+		"/var/lib/kubelet/pki/kubelet-server-current.pem",
+	}
+
+	for _, certfile := range certfiles {
+		fname := filepath.Join(staterootPath, certfile)
+
+		// Evaluate symlinks, if needed
+		if _, err := os.Stat(fname); err != nil {
+			if _, err = os.Lstat(fname); err != nil {
+				r.Log.Error(err, "unable to read file", "filepath", fname)
+				continue
+			} else if target, err := os.Readlink(fname); err != nil {
+				r.Log.Error(err, "unable to read link", "filepath", fname)
+				continue
+			} else {
+				fname = filepath.Join(staterootPath, target)
+			}
+		}
+
+		certs, err := tls.LoadX509KeyPair(fname, fname)
+		if err != nil {
+			r.Log.Error(err, "failed to parse cert file", "certfile", certfile)
+			continue
+		}
+
+		for _, cert := range certs.Certificate {
+			// Check certificate expiry
+			parsed, err := x509.ParseCertificate(cert)
+			if err != nil {
+				r.Log.Error(err, "failed to parse cert from file", "certfile", certfile)
+				continue
+			}
+
+			if expiry.Equal(time.Time{}) || expiry.After(parsed.NotAfter) {
+				expiry = parsed.NotAfter
+			}
+		}
+	}
+
+	if expiry.Equal(time.Time{}) {
+		return expiry, fmt.Errorf("unable to determine control plane expiry for staterootPath=%s", staterootPath)
+	}
+
+	// Subtract 30 minutes from the expiry time
+	return expiry.Add(time.Minute * -30), nil
+}
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
@@ -73,6 +137,9 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 		}
 	}
 
+	// Clear the rollback availability expiration status field
+	ibu.Status.RollbackAvailabililtyExpiration = ""
+
 	// Update in-progress message
 	utils.SetRollbackStatusInProgress(ibu, "Completing rollback")
 	if updateErr := utils.UpdateIBUStatus(ctx, r.Client, ibu); updateErr != nil {
@@ -100,8 +167,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	return doNotRequeue(), nil
 }
 
-//nolint:unparam
-func (r *ImageBasedUpgradeReconciler) finishRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	utils.SetRollbackStatusCompleted(ibu)
 
 	return doNotRequeue(), nil
@@ -118,7 +184,7 @@ func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *l
 
 	if origStaterootBooted {
 		r.Log.Info("Pivot for rollback successful, starting post pivot steps")
-		return r.finishRollback(ctx, ibu)
+		return r.finishRollback(ibu)
 	} else {
 		r.Log.Info("Starting pre pivot for rollback steps and will pivot to previous stateroot with a reboot")
 		return r.startRollback(ctx, ibu)

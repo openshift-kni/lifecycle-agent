@@ -204,6 +204,11 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              rollbackAvailabililtyExpiration:
+                description: RollbackAvailabililtyExpiration reflects the point at
+                  which rolling back may require manual recovery from expired control
+                  plane certficates.
+                type: string
               startedAt:
                 format: date-time
                 type: string
