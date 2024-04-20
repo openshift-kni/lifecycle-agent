@@ -270,16 +270,18 @@ func (h *BRHandler) PatchPVsReclaimPolicy(ctx context.Context) error {
 	}
 
 	for _, pv := range pvList.Items {
-		hasLvmsAnnotation := pv.GetAnnotations()[topolvmAnnotation] == topolvmValue
+		if pvAnnotations := pv.GetAnnotations(); pvAnnotations != nil {
+			hasLvmsAnnotation := pvAnnotations[topolvmAnnotation] == topolvmValue
 
-		if hasLvmsAnnotation && pv.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimDelete {
-			h.Log.Info("Patching persistentVolumeReclaimPolicy to Retain", "pv-name", pv.Name)
+			if hasLvmsAnnotation && pv.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimDelete {
+				h.Log.Info("Patching persistentVolumeReclaimPolicy to Retain", "pv-name", pv.Name)
 
-			pvPatched := pv
-			pvPatched.Spec.PersistentVolumeReclaimPolicy = "Retain"
-			pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true"
-			if err := h.Client.Update(ctx, &pvPatched); err != nil {
-				return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+				pvPatched := pv
+				pvPatched.Spec.PersistentVolumeReclaimPolicy = "Retain"
+				pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true"
+				if err := h.Client.Update(ctx, &pvPatched); err != nil {
+					return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+				}
 			}
 		}
 	}
@@ -301,16 +303,18 @@ func (h *BRHandler) RestorePVsReclaimPolicy(ctx context.Context) error {
 	}
 
 	for _, pv := range pvList.Items {
-		hasReclaimPolicyAnnotation := pv.GetAnnotations()[updatedReclaimPolicyAnnotation] == "true"
+		if pvAnnotations := pv.GetAnnotations(); pvAnnotations != nil {
+			hasReclaimPolicyAnnotation := pvAnnotations[updatedReclaimPolicyAnnotation] == "true"
 
-		if hasReclaimPolicyAnnotation {
-			h.Log.Info("Restoring back the persistentVolumeReclaimPolicy to Delete", "pv-name", pv.Name)
+			if hasReclaimPolicyAnnotation {
+				h.Log.Info("Restoring back the persistentVolumeReclaimPolicy to Delete", "pv-name", pv.Name)
 
-			pvPatched := pv
-			pvPatched.Spec.PersistentVolumeReclaimPolicy = "Delete"
-			delete(pvPatched.Annotations, updatedReclaimPolicyAnnotation)
-			if err := h.Client.Update(ctx, &pvPatched); err != nil {
-				return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+				pvPatched := pv
+				pvPatched.Spec.PersistentVolumeReclaimPolicy = "Delete"
+				delete(pvPatched.Annotations, updatedReclaimPolicyAnnotation)
+				if err := h.Client.Update(ctx, &pvPatched); err != nil {
+					return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+				}
 			}
 		}
 	}
