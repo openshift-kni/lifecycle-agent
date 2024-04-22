@@ -228,6 +228,8 @@ metadata:
     ran.openshift.io/ztp-deploy-wave: "100"
 spec:
   configuration:
+    restic:
+      enable: false
     velero:
       defaultPlugins:
         - aws
@@ -255,6 +257,10 @@ status:
     status: "True"
     type: Reconciled
 ```
+
+> [!NOTE]
+> In IBU scenarios, the PV contents are kept on the SNO disk and reused after pivot, hence the CSI Integration (i.e.,
+> `.spec.configuration.restic`) should be always disabled in the `DataProtectionApplication`, see sample CR above.
 
 OadpSecret.yaml
 
@@ -431,7 +437,109 @@ spec:
 > 1. The examples provided are just for reference. Create your own backup and restore CRs based on your needs.
 > 2. The backup and restore CRs must be created in the same namespace where the OADP is installed which is `openshift-adp`.
 > 3. The OADP configmaps should only contain backup and restore CRs which are in YAML format or multiple document YAML format. Other type of CRs are unknown to the LCA and will be ignored.
->
+
+##### 1.1 Backup resource when LVMS is used
+
+When LVMS is used to provide dynamic storage in the cluster, we need to define the below Backup and Restore CRs, for
+the `LVMCluster` object, in the OADP ConfigMap. These objects will ensure the proper / expected functioning of this
+feature when using LVMS.
+
+> [!IMPORTANT]
+> Mind that on SNOs the persistent storage must be provided by either Logical Volume Manager Storage (LVMS) or Local
+> Storage Operator (LSO), not both.
+
+backup_lvmcluster.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  labels:
+    velero.io/storage-location: default
+  name: lvmcluster
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+    - openshift-storage
+  includedNamespaceScopedResources:
+    - lvmclusters
+    - lvmvolumegroups
+    - lvmvolumegroupnodestatuses
+```
+
+restore_lvmcluster.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: lvmcluster
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "2"
+spec:
+  backupName:
+    lvmcluster
+```
+
+> [!IMPORTANT]
+> Mind that `apply-wave` annotation for the above object should be numerically lower than the app's one, in this way
+> when the app resources are restored, the `LVMCluster` operand will be already up and running in the cluster.
+
+Additionally, the Backup and Restore CR resources for the app should also include some extra fields in order to ensure
+that each PV content is maintained when performing an IBU.
+
+backup_app.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  labels:
+    velero.io/storage-location: default
+  name: small-app
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+  - test
+  includedNamespaceScopedResources:
+  - secrets
+  - persistentvolumeclaims
+  - deployments
+  - statefulsets
+  includedClusterScopedResources:
+  - persistentVolumes              # <- required field
+  - volumesnapshotcontents         # <- required field
+  - logicalvolumes.topolvm.io      # <- required field
+```
+
+> [!NOTE]
+> Given that the above Backup CR included cluster scoped resources (i.e., persistentVolumes, logicalvolumes, etc.)
+> for the small-app, there is no need to also include those in other Backup CRs. However, redundantly specifying those
+> in other Backup CRs would not affect its normal / expected operation.
+
+restore_app.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: small-app
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "3"
+spec:
+  backupName:
+    small-app
+  restorePVs: true               # <- required field
+  restoreStatus:                 # <- required field
+    includedResources:           # <- required field
+      - logicalvolumes           # <- required field
+```
 
 #### 2. Build a configmap to include all CRs
 

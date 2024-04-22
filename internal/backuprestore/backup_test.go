@@ -484,7 +484,7 @@ func TestGetObjsFromAnnotations(t *testing.T) {
 		{
 			name:       "empty",
 			annotation: "",
-			expected:   []ObjMetadata{},
+			expected:   []ObjMetadata(nil),
 		},
 	}
 

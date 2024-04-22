@@ -157,24 +157,24 @@ LCA will reject the stage transition if it is an invalid transition.
 
 This table presents a comprehensive list of conditions and valid next stages based on the current stage.
 
-|Current Stage|Condition         |Status|Reason        |After Pivot|Valid Next Stages|
-|-------------|------------------|------|--------------|-----------|-----------------|
-|`Idle`       |Idle              |True  |Idle          |N/A        |Prep             |
-|             |                  |False |Aborting      |False      |N/A              |
-|             |                  |False |Finalizing    |True       |N/A              |
-|             |                  |False |AbortFailed   |False      |N/A              |
-|             |                  |False |FinalizeFailed|True       |N/A              |
-|`Prep`       |PrepInProgress    |True  |InProgress    |False      |Idle             |
-|             |PrepCompleted     |False |Failed        |False      |Idle             |
-|             |                  |True  |Completed     |False      |Idle, Upgrade    |
-|`Upgrade`    |UpgradeInProgress |True  |InProgress    |False      |Idle             |
-|             |                  |True  |InProgress    |True       |Rollback         |
-|             |UpgradeCompleted  |False |Failed        |False      |Idle             |
-|             |                  |False |Failed        |True       |Rollback         |
-|             |                  |True  |Completed     |True       |Idle, Rollback   |
-|`Rollback`   |RollbackInProgress|True  |InProgress    |True       |N/A              |
-|             |RollbackCompleted |False |Failed        |True       |N/A              |
-|             |                  |True  |Completed     |True       |Idle             |
+| Current Stage | Condition          | Status | Reason         | After Pivot | Valid Next Stages |
+|---------------|--------------------|--------|----------------|-------------|-------------------|
+| `Idle`        | Idle               | True   | Idle           | N/A         | Prep              |
+|               |                    | False  | Aborting       | False       | N/A               |
+|               |                    | False  | Finalizing     | True        | N/A               |
+|               |                    | False  | AbortFailed    | False       | N/A               |
+|               |                    | False  | FinalizeFailed | True        | N/A               |
+| `Prep`        | PrepInProgress     | True   | InProgress     | False       | Idle              |
+|               | PrepCompleted      | False  | Failed         | False       | Idle              |
+|               |                    | True   | Completed      | False       | Idle, Upgrade     |
+| `Upgrade`     | UpgradeInProgress  | True   | InProgress     | False       | Idle              |
+|               |                    | True   | InProgress     | True        | Rollback          |
+|               | UpgradeCompleted   | False  | Failed         | False       | Idle              |
+|               |                    | False  | Failed         | True        | Rollback          |
+|               |                    | True   | Completed      | True        | Idle, Rollback    |
+| `Rollback`    | RollbackInProgress | True   | InProgress     | True        | N/A               |
+|               | RollbackCompleted  | False  | Failed         | True        | N/A               |
+|               |                    | True   | Completed      | True        | Idle              |
 
 If unexpected rejection occurs that block any spec changes, the annotation `lca.openshift.io/trigger-reconcile` serves as a backdoor to trigger the reconciliation for LCA to rectify the situation by adding or updating the annotation in the IBU CR.
 
@@ -234,7 +234,7 @@ The "Prep" stage will:
 - Pull the seed image
 - Perform the following validations:
   - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
-  - If the extraManifests is popluated, validate that the specified configmap has been applied and is valid
+  - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
     - If a required CRD is missing from the current stateroot, a warning message will be included in the prep status condition for user to verify before proceeding to the upgrade stage
   - Validate that the desired upgrade version matches the version of the seed image
   - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
@@ -318,6 +318,7 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade -p='{"spec": {"stage": "Upg
 Pre-pivot:
 
 - LCA collects the required cluster specific info/artifacts and stores them in the new state root. This includes hostname, nmconnection files, cluster ID, NodeIP and various OCP platform CRs(i.e., imagecontentimagecontentsourcepolicies, localvolumes.local.storage.openshift.io) from etcd.
+- If LVMS is used, automatically update dynamic PVs with `.spec.persistentVolumeReclaimPolicy=Delete` to `Retain`.
 - Applies OADP backup CRs as specified by the `oadpContent` field in the IBU spec. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 - Stores OADP restore CRs as specified by the `oadpContent` field in the IBU spec to the new state root. Refer to [backuprestore-with-oadp](backuprestore-with-oadp.md).
 - Stores CRs specified by the `extraManifests` field in the IBU spec as well as the CRs described in the ZTP policies bound to the cluster for the target OCP version to the new state root.
@@ -332,13 +333,14 @@ Pivot
 Post-Pivot
 
 - Before OCP is started, a systemd service will run which will restore the basic platform configuration and regenerate the platform certificates using the [recert tool](https://github.com/rh-ecosystem-edge/recert).
-- Once LCA starts it will restore the saved IBU CR.
+- Once LCA starts, it will restore the saved IBU CR.
 - Restore the remaining platform configuration.
 - Wait for the platform to recover - Cluster/day2 operators and MCP are stable.
 - Apply extra manifests that were saved pre-pivot.
-- Apply any OADP restore CRs that were saved pre-pivot. Platform artifacts will be restored first including ACM artifacts if the system is managed by ACM.
+- Apply any OADP restore CRs that were saved pre-pivot. Platform artifacts will be restored first, including ACM artifacts if the system is managed by ACM.
+- If LVMS is used, automatically restores the `.spec.persistentVolumeReclaimPolicy` field of PVs to its original (pre-pivot) value.
 
-Upon completion, the condition will be updated to "Upgrade Completed".
+Upon completion, the condition will be updated to `Upgrade completed`.
 
 After the upgrade has been completed, the upgrade needs to be finalized. This can be done at anytime prior to the next upgrade attempt.
 This is the point of no return, it will be no longer be possible to rollback/abort once the finalize has been done.

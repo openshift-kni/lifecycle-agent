@@ -68,6 +68,10 @@ const (
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
 	OadpNs = "openshift-adp"
+
+	topolvmValue                   = "topolvm.io"
+	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
+	updatedReclaimPolicyAnnotation = "lca.openshift.io/updated-reclaim-policy" // used to identify LVMS PVs updated by LCA
 )
 
 var (
@@ -83,6 +87,8 @@ type BackuperRestorer interface {
 	CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) error
 	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
+	PatchPVsReclaimPolicy(ctx context.Context) error
+	RestorePVsReclaimPolicy(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error

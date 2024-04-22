@@ -137,6 +137,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			//setup
 
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
+			mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
 
 			for _, track := range tt.trackers {
 				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(nil)
@@ -169,11 +170,12 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name        string
-		inputVelero [][]*velerov1.Restore
-		trackers    []func() (*backuprestore.RestoreTracker, error)
-		wantCtlRes  controllerruntime.Result
-		wantErr     assert.ErrorAssertionFunc
+		name                          string
+		inputVelero                   [][]*velerov1.Restore
+		trackers                      []func() (*backuprestore.RestoreTracker, error)
+		restorePVsReclaimPolicyReturn func() error
+		wantCtlRes                    controllerruntime.Result
+		wantErr                       assert.ErrorAssertionFunc
 	}{
 		{
 			name:        "restore successful",
@@ -184,6 +186,9 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 						SucceededRestores: []string{"name-success"},
 					}, nil
 				},
+			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
 			},
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.NoError,
@@ -255,6 +260,9 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 					}, nil
 				},
 			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
+			},
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.NoError,
 		},
@@ -286,8 +294,12 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 				mockBackuprestore.EXPECT().StartOrTrackRestore(gomock.Any(), gomock.Any()).Return(track()).Times(1)
 			}
 
+			if tt.restorePVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
+			}
+
 			// assert
-			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the numnber of groups and tracker match as pre cond for the test")
+			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the number of groups and tracker match as pre cond for the test")
 			uph := &UpgHandler{
 				Client:          nil,
 				NoncachedClient: nil,
@@ -332,6 +344,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		healthCheckError                                error
 		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
 		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
+		getPatchPVsReclaimPolicyReturn                  func() error
 		getCleanupStaleBackupsReturn                    func() error
 		remountSysrootReturn                            func() error
 		exportOadpConfigurationToDirReturn              func() error
@@ -449,6 +462,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{{&velerov1.Backup{}}}, nil
+			},
+			getPatchPVsReclaimPolicyReturn: func() error {
+				return nil
 			},
 			getCleanupStaleBackupsReturn: func() error {
 				return nil
@@ -730,6 +746,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.getSortedBackupsFromConfigmapReturn != nil {
 				mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.getSortedBackupsFromConfigmapReturn())
 			}
+			if tt.getPatchPVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(tt.getPatchPVsReclaimPolicyReturn())
+			}
 			if tt.getCleanupStaleBackupsReturn != nil {
 				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(tt.getCleanupStaleBackupsReturn())
 			}
@@ -895,6 +914,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		ensureOadpConfigurationReturn     func() error
 		loadRestoresFromOadpRestoreReturn func() ([][]*velerov1.Restore, error)
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
+		restorePVsReclaimPolicyReturn     func() error
 		initiateRollbackReturn            func() error
 		disableInitMonitorReturn          func() error
 		wantConditions                    []metav1.Condition
@@ -1089,6 +1109,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.startOrTrackRestoreReturn != nil {
 				mockBackuprestore.EXPECT().StartOrTrackRestore(gomock.Any(), gomock.Any()).Return(tt.startOrTrackRestoreReturn()).Times(1)
+			}
+			if tt.restorePVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)
 			}
 			if tt.initiateRollbackReturn != nil {
 				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
