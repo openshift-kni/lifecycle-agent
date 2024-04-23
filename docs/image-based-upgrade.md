@@ -81,6 +81,54 @@ There are two implementations of extra manifests:
 
 - If the target cluster is integrated with ZTP GitOps, the site specific manifests can be automatically extracted from the policies by the operator during the upgrade stage.
 Manifests defined in the policies that have the `ran.openshift.io/ztp-deploy-wave` annotation and labeled with `lca.openshift.io/target-ocp-version: "4.y.x"` or `lca.openshift.io/target-ocp-version: "4.y"` will be extracted and applied after rebooting to the new version.
+For example,
+
+  ```yaml
+  kind: Policy
+  apiVersion: policy.open-cluster-management.io/v1
+  metadata:
+    name: example-policy
+    annotations:
+      ran.openshift.io/ztp-deploy-wave: "1"
+  spec:
+    policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: example-policy-config
+        spec:
+          object-templates:
+          - objectDefinition:
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: CatalogSource
+              metadata:
+                name: redhat-operators-new
+                namespace: openshift-marketplace
+                labels:
+                  lca.openshift.io/target-ocp-version: "4.16"
+              spec:
+                displayName: Red Hat Operators Catalog
+                image: registry.redhat.io/redhat/redhat-operator-index:v4.16
+                publisher: Red Hat
+                sourceType: grpc
+                updateStrategy:
+                  registryPoll:
+                    interval: 1h
+  ...
+  ```
+
+  If the annotation `lca.openshift.io/target-ocp-version-manifest-count` is specified in the IBU CR, LCA will verify that the number of manifests labeled with `lca.openshift.io/target-ocp-version` extracted from policies matches the count provided in the annotation during the prep and upgrade stages.
+  For example,
+
+  ```yaml
+  apiVersion: lca.openshift.io/v1alpha1
+  kind: ImageBasedUpgrade
+  metadata:
+    annotations:
+      lca.openshift.io/target-ocp-version-manifest-count: "5"
+    name: upgrade
+  ```
 
 - If the target cluster is not integrated with ZTP GitOps the extra manifests can be provided via configmap(s) applied to the cluster. These configmap(s) specified by the
 `extraManifests` field in the [IBU CR](#imagebasedupgrade-cr). After rebooting to the new version, these extra manifests are applied.

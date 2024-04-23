@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -37,7 +36,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -247,7 +245,12 @@ func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu 
 
 // extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
 func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
-	versions, err := getMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
+	var validationAnns = map[string]string{}
+	if count, exists := ibu.GetAnnotations()[extramanifest.TargetOcpVersionManifestCountAnnotation]; exists {
+		validationAnns[extramanifest.TargetOcpVersionManifestCountAnnotation] = count
+	}
+
+	versions, err := extramanifest.GetMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
 	if err != nil {
 		return fmt.Errorf("failed to export manifests from policies: %w", err)
 	}
@@ -256,7 +259,7 @@ func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lc
 	// Currently we expect user to properly label CRs with site specific content
 	// as those policies must not be applied on the seed
 	labels := map[string]string{extramanifest.TargetOcpVersionLabel: strings.Join(versions, ",")}
-	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, ostreeVarDir); err != nil {
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, validationAnns, ostreeVarDir); err != nil {
 		return fmt.Errorf("failed to export manifests from policies: %w", err)
 	}
 
@@ -264,28 +267,6 @@ func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lc
 		return fmt.Errorf("failed to export manifests from configmaps: %w", err)
 	}
 	return nil
-}
-
-// getMatchingTargetOcpVersionLabelVersions generates a list of matching versions that
-// be used for extracting manifests from the policy
-// The matching versions include: [full release version, Major.Minor.Patch, Major.Minor]
-func getMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, error) {
-	var validVersions []string
-
-	semVersion, err := semver.NewVersion(ocpVersion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse target ocp version %s: %w", ocpVersion, err)
-	}
-
-	validVersions = append(validVersions,
-		fmt.Sprintf("%d.%d.%d", semVersion.Major, semVersion.Minor, semVersion.Patch),
-		fmt.Sprintf("%d.%d", semVersion.Major, semVersion.Minor),
-	)
-	if !lo.Contains(validVersions, ocpVersion) {
-		// full release version
-		validVersions = append(validVersions, ocpVersion)
-	}
-	return validVersions, nil
 }
 
 func (u *UpgHandler) setDefaultDeploymentToNewStateroot(stateroot string) error {
