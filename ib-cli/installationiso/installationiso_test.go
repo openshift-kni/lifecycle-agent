@@ -189,7 +189,8 @@ func TestInstallationIso(t *testing.T) {
 					"quay.io/coreos/butane:release",
 					"--pretty", "--strict",
 					"-d", "/data",
-					path.Join("/data", butaneConfigFile)).Return("", tc.renderCommandReturn).Times(1)
+					path.Join("/data", butaneConfigFile),
+					"-o", path.Join("/data", ibiIgnitionFileName)).Return("", tc.renderCommandReturn).Times(1)
 				if tc.liveIsoUrlSuccess {
 					mockOps.EXPECT().RunInHostNamespace("podman", "run",
 						"-v", fmt.Sprintf("%s:/data:rw,Z", tmpDir),

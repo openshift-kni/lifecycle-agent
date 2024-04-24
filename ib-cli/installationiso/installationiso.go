@@ -115,17 +115,13 @@ func (r *InstallationIso) renderIgnitionFile() error {
 		"--pretty", "--strict",
 		"-d", "/data",
 		path.Join("/data", butaneConfigFile),
+		"-o", path.Join("/data", ibiIgnitionFileName),
 	}
-	ignitionContent, err := r.ops.RunInHostNamespace(command, args...)
+	_, err := r.ops.RunInHostNamespace(command, args...)
 	if err != nil {
 		return fmt.Errorf("failed to render ignition from config: %w", err)
 	}
 
-	p := path.Join(r.workDir, ibiIgnitionFileName)
-	err = os.WriteFile(p, []byte(ignitionContent), 0o644) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("failed write %s: %w", p, err)
-	}
 	return nil
 }
 
