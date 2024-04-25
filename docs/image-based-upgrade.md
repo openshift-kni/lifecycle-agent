@@ -448,7 +448,7 @@ status:
     status: "True"
     type: UpgradeInProgress
   observedGeneration: 1
-  rollbackAvailabililtyExpiration: "2024-05-19T14:01:52Z"
+  rollbackAvailabilityExpiration: "2024-05-19T14:01:52Z"
   validNextStages:
   - Rollback
 ```
@@ -494,7 +494,7 @@ status:
     status: "True"
     type: UpgradeCompleted
   observedGeneration: 1
-  rollbackAvailabililtyExpiration: "2024-05-19T14:01:52Z"
+  rollbackAvailabilityExpiration: "2024-05-19T14:01:52Z"
   validNextStages:
   - Idle
   - Rollback

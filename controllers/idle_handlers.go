@@ -36,7 +36,7 @@ var osReadDir = os.ReadDir
 var osRemoveAll = os.RemoveAll
 
 func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *lcav1alpha1.ImageBasedUpgrade) {
-	ibu.Status.RollbackAvailabililtyExpiration = ""
+	ibu.Status.RollbackAvailabilityExpiration.Reset()
 	utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
 }
 

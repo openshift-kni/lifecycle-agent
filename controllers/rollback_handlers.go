@@ -138,7 +138,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	}
 
 	// Clear the rollback availability expiration status field
-	ibu.Status.RollbackAvailabililtyExpiration = ""
+	ibu.Status.RollbackAvailabilityExpiration.Reset()
 
 	// Update in-progress message
 	utils.SetRollbackStatusInProgress(ibu, "Completing rollback")
