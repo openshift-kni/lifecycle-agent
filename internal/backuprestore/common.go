@@ -397,6 +397,7 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		return err
 	}
 	for _, backup := range backups {
+		// Dry-run the Backup CR to detect early issues
 		err := h.Create(ctx, backup, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
 		if err != nil {
 			if k8serrors.IsInvalid(err) {
@@ -405,41 +406,12 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 				h.Log.Error(err, errMsg)
 				return NewBRFailedValidationError("backup", errMsg)
 			}
-
 			if !k8serrors.IsAlreadyExists(err) {
 				return fmt.Errorf("failed to create backup with dry run: %w", err)
 			}
 		}
-	}
 
-	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](configmaps, common.RestoreGvk)
-	if err != nil {
-		return err
-	}
-	for _, restore := range restores {
-		err := h.Create(ctx, restore, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-		if err != nil {
-			if k8serrors.IsInvalid(err) {
-				errMsg := fmt.Sprintf("Invalid Restore %s detected in configmap, error: %s. Please update the invalid Restore in configmap.",
-					restore.GetName(), err.Error())
-				h.Log.Error(err, errMsg)
-				return NewBRFailedValidationError("restore", errMsg)
-			}
-
-			if !k8serrors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create Restore with dry run: %w", err)
-			}
-		}
-	}
-
-	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {
-		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
-		h.Log.Error(nil, errMsg)
-		return NewBRFailedValidationError("OADP", errMsg)
-	}
-
-	// Check if we can apply backup label to objects included in apply-backup annotation
-	for _, backup := range backups {
+		// Check if we can apply backup label to objects included in apply-backup annotation
 		payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
 		objs, err := getObjsFromAnnotations(backup)
 		if err != nil {
@@ -453,8 +425,26 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		}
 	}
 
-	// Check if the backup CRs defined in restore CRs exist in OADP configmaps
+	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](configmaps, common.RestoreGvk)
+	if err != nil {
+		return err
+	}
 	for _, restore := range restores {
+		// Dry-run the Restore CR to detect early issues
+		err := h.Create(ctx, restore, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err != nil {
+			if k8serrors.IsInvalid(err) {
+				errMsg := fmt.Sprintf("Invalid Restore %s detected in configmap, error: %s. Please update the invalid Restore in configmap.",
+					restore.GetName(), err.Error())
+				h.Log.Error(err, errMsg)
+				return NewBRFailedValidationError("restore", errMsg)
+			}
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create Restore with dry run: %w", err)
+			}
+		}
+
+		// Check if the backup CRs defined in restore CRs exist in OADP configmaps
 		found := false
 		for _, backup := range backups {
 			if restore.Spec.BackupName == backup.Name {
@@ -467,6 +457,12 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 			h.Log.Error(nil, errMsg)
 			return NewBRFailedValidationError("OADP", errMsg)
 		}
+	}
+
+	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {
+		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
+		h.Log.Error(nil, errMsg)
+		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
 	// Check for any stale backup CRs in this cluster
