@@ -23,8 +23,10 @@ import (
 	"os"
 	"sync"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
 	kbatchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
@@ -148,12 +150,11 @@ func main() {
 		Metrics: server.Options{
 			BindAddress: metricsAddr,
 		},
-		Cache: cache.Options{
+		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
 			ByObject: map[client.Object]cache.ByObject{
-				&kbatchv1.Job{}: {
+				&kbatchv1.Job{}: { // cache all job resources in LCA ns
 					Namespaces: map[string]cache.Config{
-						common.LcaNamespace: {
-							FieldSelector: fields.SelectorFromSet(fields.Set{"metadata.name": precache.LcaPrecacheJobName})}},
+						common.LcaNamespace: {}},
 				},
 			},
 		},
@@ -201,6 +202,21 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
+	// a simple in-cluster client-go based client, useful for getting pod logs
+	// as runtime-controller client currently doesn't support pod sub resources
+	// https://github.com/kubernetes-sigs/controller-runtime/issues/452#issuecomment-792266582
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		setupLog.Error(err, "Failed to get InClusterConfig")
+		os.Exit(1)
+	}
+	// creates the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		setupLog.Error(err, "Failed to get clientset")
+		os.Exit(1)
+	}
+
 	if err = (&controllers.ImageBasedUpgradeReconciler{
 		Client:          mgr.GetClient(),
 		NoncachedClient: mgr.GetAPIReader(),
@@ -214,7 +230,6 @@ func main() {
 		RebootClient:    rebootClient,
 		BackupRestore:   backupRestore,
 		ExtraManifest:   extraManifest,
-		PrepTask:        &controllers.Task{Active: false, Success: false, Cancel: nil, Progress: ""},
 		UpgradeHandler: &controllers.UpgHandler{
 			Client:          mgr.GetClient(),
 			NoncachedClient: mgr.GetAPIReader(),
@@ -229,7 +244,8 @@ func main() {
 			OstreeClient:    ostreeClient,
 			RebootClient:    rebootClient,
 		},
-		Mux: mux,
+		Mux:       mux,
+		Clientset: clientset,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)

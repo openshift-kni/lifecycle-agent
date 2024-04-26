@@ -53,7 +53,7 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 	return c, nil
 }
 
-func TestCreateJob(t *testing.T) {
+func TestCreateJobAndConfigMap(t *testing.T) {
 	imageList, imageListStr := generateImageList()
 	testCases := []struct {
 		name               string
@@ -173,7 +173,7 @@ func TestCreateJob(t *testing.T) {
 				Scheme: sc,
 			}
 
-			err = handler.CreateJob(context.TODO(), tc.config, &ibu)
+			err = handler.CreateJobAndConfigMap(context.TODO(), tc.config, &ibu)
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {
@@ -186,7 +186,7 @@ func TestCreateJob(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient)
+				actualJob, err := GetJob(context.TODO(), fakeClient)
 				assert.NoError(t, err)
 				assert.NotNil(t, actualJob)
 
@@ -203,106 +203,6 @@ func TestCreateJob(t *testing.T) {
 					assert.Contains(t, actualJob.Spec.Template.Spec.Containers[0].Env, env)
 				}
 
-			}
-		})
-	}
-}
-
-func TestQueryJobStatus(t *testing.T) {
-	imageList, _ := generateImageList()
-	config := &Config{ImageList: imageList}
-	testCases := []struct {
-		name           string
-		inputJobName   string
-		jobStatus      *batchv1.JobStatus
-		expectedError  error
-		expectedStatus *Status
-	}{
-		{
-			name:           "Failed cleanup, missing Job",
-			inputJobName:   "",
-			jobStatus:      nil,
-			expectedError:  nil,
-			expectedStatus: nil,
-		},
-		{
-			name:         "Success case, Active status",
-			inputJobName: LcaPrecacheJobName,
-			jobStatus: &batchv1.JobStatus{
-				Active: 1,
-			},
-			expectedError: nil,
-			expectedStatus: &Status{
-				Status: "Active",
-			},
-		},
-		{
-			name:         "Success case, Succeeded status",
-			inputJobName: LcaPrecacheJobName,
-			jobStatus: &batchv1.JobStatus{
-				Succeeded: 1,
-			},
-			expectedError: nil,
-			expectedStatus: &Status{
-				Status: "Succeeded",
-			},
-		},
-		{
-			name:         "Success case, Failed status",
-			inputJobName: LcaPrecacheJobName,
-			jobStatus: &batchv1.JobStatus{
-				Failed: 1,
-			},
-			expectedError: nil,
-			expectedStatus: &Status{
-				Status: "Failed",
-			},
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{}
-
-			// Inject ConfigMap, Job
-			cm := renderConfigMap(config.ImageList)
-			objs = append(objs, cm)
-
-			ibu := v1alpha1.ImageBasedUpgrade{}
-			sc := runtime.NewScheme()
-			_ = v1alpha1.AddToScheme(sc)
-
-			Log := ctrl.Log.WithName("Precache")
-			if tc.inputJobName != "" {
-				job, err := renderJob(config, Log, &ibu, sc)
-				assert.NoError(t, err)
-				job.Status = *tc.jobStatus
-				objs = append(objs, job)
-			}
-
-			fakeClient, err := getFakeClientFromObjects(objs...)
-			if err != nil {
-				t.Errorf("error in creating fake client")
-			}
-
-			handler := &PHandler{
-				Client: fakeClient,
-				Log:    Log,
-			}
-
-			status, err := handler.QueryJobStatus(context.TODO())
-			if tc.expectedError != nil {
-				assert.NotNil(t, err)
-				assert.Nil(t, status)
-			} else {
-
-				if tc.expectedStatus == nil {
-					assert.Nil(t, status)
-				} else {
-					assert.NoError(t, err)
-					assert.NotNil(t, status)
-
-					assert.Equal(t, tc.expectedStatus.Status, status.Status)
-				}
 			}
 		})
 	}
@@ -380,7 +280,7 @@ func TestCleanup(t *testing.T) {
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
-				actualJob, err := getJob(context.TODO(), fakeClient)
+				actualJob, err := GetJob(context.TODO(), fakeClient)
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualJob)
 			}

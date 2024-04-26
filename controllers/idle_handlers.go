@@ -21,6 +21,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/internal/prep"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -44,7 +51,7 @@ func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *lcav1alpha1.ImageBa
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
-	if successful, errMsg := r.cleanup(ctx); successful {
+	if successful, errMsg := r.cleanup(ctx, ibu); successful {
 		r.Log.Info("Finished handleAbort successfully")
 		r.resetStatusFields(ibu)
 		return doNotRequeue(), nil
@@ -113,7 +120,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 		return requeueWithHealthCheckInterval(), nil
 	}
 
-	if successful, errMsg := r.cleanup(ctx); successful {
+	if successful, errMsg := r.cleanup(ctx, ibu); successful {
 		r.Log.Info("Finished handleFinalize successfully")
 		r.resetStatusFields(ibu)
 		return doNotRequeue(), nil
@@ -132,7 +139,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 
 // cleanup cleans stateroots, precache, backup, ibu files
 // returns true if all cleanup tasks were successful
-func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context) (bool, string) {
+func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, string) {
 	// try to clean up as much as possible and avoid returning when one of the cleanup tasks fails
 	// successful means that all the cleanup tasks completed without any error
 	successful := true
@@ -144,20 +151,23 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context) (bool, string
 		errorMessage += err.Error() + " "
 	}
 
-	r.Log.Info("Terminating precaching worker thread, will wait up to 30 seconds")
-	if r.PrepTask.Active && r.PrepTask.Cancel != nil {
-		r.PrepTask.Cancel()
-		r.PrepTask.Reset()
-	}
-
 	r.Log.Info("Cleaning up stateroot")
-	if err := r.cleanupUnbootedStateroots(); err != nil {
+	if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); err != nil {
 		handleError(err, "failed to cleanup stateroots.")
+	}
+	r.Log.Info("Cleaning up stateroot setup job")
+	err := prep.DeleteStaterootSetupJob(ctx, r.Client, r.Log)
+	if err != nil {
+		handleError(err, "failed to cleanup stateroots setup job.")
 	}
 
 	r.Log.Info("Cleaning up precache")
 	if err := r.Precache.Cleanup(ctx); err != nil {
 		handleError(err, "failed to cleanup precaching resources.")
+	}
+
+	if err := extramanifest.RemoveAnnotationWarnUnknownCRD(r.Client, ibu, r.Log); err != nil {
+		handleError(err, "failed to remove extra manifest warning annotation from IBU")
 	}
 
 	r.Log.Info("Cleaning up DeleteBackupRequest and Backup CRs")
@@ -189,8 +199,8 @@ func cleanupIBUFiles() error {
 	return nil
 }
 
-func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
-	status, err := r.RPMOstreeClient.QueryStatus()
+func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
+	status, err := rpmOstreeClient.QueryStatus()
 	if err != nil {
 		return fmt.Errorf("failed to query status with rpmostree: %w", err)
 	}
@@ -212,8 +222,8 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 		if stateroot == bootedStateroot {
 			continue
 		}
-		if err := r.cleanupUnbootedStateroot(stateroot); err != nil {
-			r.Log.Error(err, "failed to remove stateroot", "stateroot", stateroot)
+		if err := cleanupUnbootedStateroot(stateroot, ops, ostreeClient, rpmOstreeClient); err != nil {
+			log.Error(err, "failed to remove stateroot", "stateroot", stateroot)
 			failures += 1
 		}
 	}
@@ -230,20 +240,21 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroots() error {
 			}
 			err := osRemoveAll(getStaterootPath(fileInfo.Name()))
 			if err != nil {
-				r.Log.Error(err, "failed to remove undeployed stateroot", "stateroot", fileInfo.Name())
+				log.Error(err, "failed to remove undeployed stateroot", "stateroot", fileInfo.Name())
 				failures += 1
 			}
 		}
 	}
 
 	if failures == 0 {
+		log.Info("Stateroot cleanup successfully")
 		return nil
 	}
 	return fmt.Errorf("failed to remove %d stateroots", failures)
 }
 
-func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string) error {
-	status, err := r.RPMOstreeClient.QueryStatus()
+func cleanupUnbootedStateroot(stateroot string, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
+	status, err := rpmOstreeClient.QueryStatus()
 	if err != nil {
 		return fmt.Errorf("failed to query status with rpmostree during stateroot cleanup: %w", err)
 	}
@@ -261,7 +272,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 		indicesToUndeploy = append(indicesToUndeploy, i)
 	}
 	for _, idx := range indicesToUndeploy {
-		if err := r.OstreeClient.Undeploy(idx); err != nil {
+		if err := ostreeClient.Undeploy(idx); err != nil {
 			return fmt.Errorf("failed to undeploy %s with index %d: %w", stateroot, idx, err)
 		}
 	}
@@ -269,7 +280,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupUnbootedStateroot(stateroot string)
 	if _, err := osStat(common.PathOutsideChroot(staterootPath)); err != nil {
 		return nil
 	}
-	if _, err := r.Ops.RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
+	if _, err := ops.RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
 		fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", staterootPath)); err != nil {
 		return fmt.Errorf("removing stateroot %s failed: %w", stateroot, err)
 	}

@@ -17,8 +17,6 @@
 package precache
 
 import (
-	"fmt"
-
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -28,7 +26,7 @@ const (
 	LcaPrecacheServiceAccount string = "lifecycle-agent-controller-manager"
 	LcaPrecacheJobName        string = "lca-precache-job"
 	LcaPrecacheConfigMapName  string = "lca-precache-cm"
-	LcaPrecacheFinalizer             = "lca.precache.io/finalizer"
+	LcaPrecacheFinalizer             = "lca.openshift.io/precache-finalizer"
 )
 
 // Image paths
@@ -46,6 +44,7 @@ const (
 	EnvPrecacheSpecFile   string = "PRECACHE_SPEC_FILE"
 	EnvMaxPullThreads     string = "MAX_PULL_THREADS"
 	EnvPrecacheBestEffort string = "PRECACHE_BEST_EFFORT"
+	ImageListFile                = "var/tmp/imageListFile"
 )
 
 // Precaching job specs
@@ -90,12 +89,3 @@ const (
 	DefaultIoNiceClass            = IoNiceClassBestEffort
 	DefaultIoNicePriority     int = 4
 )
-
-// Precache status
-const (
-	Active    string = "Active"
-	Failed    string = "Failed"
-	Succeeded string = "Succeeded"
-)
-
-var ErrFailed = fmt.Errorf("precaching failed")

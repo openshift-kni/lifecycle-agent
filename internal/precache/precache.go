@@ -18,10 +18,8 @@ package precache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
@@ -108,23 +106,15 @@ func NewConfig(imageList []string, envVars []corev1.EnvVar, args ...any) *Config
 	return instance
 }
 
-// Status represents the status and progress information for the precaching job
-type Status struct {
-	Status   string
-	Message  string
-	Progress Progress
-}
-
-// CreateJob creates a new precache job.
-func (h *PHandler) CreateJob(ctx context.Context, config *Config, ibu *lcav1alpha1.ImageBasedUpgrade) error {
-	if err := validateJobConfig(ctx, h.Client, config.ImageList); err != nil {
-		return err
+// CreateJobAndConfigMap creates a new precache job.
+func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+	if len(config.ImageList) == 0 {
+		return fmt.Errorf("no images specified for precaching")
 	}
 
 	// Generate ConfigMap for list of images to be pre-cached
 	cm := renderConfigMap(config.ImageList)
-	err := h.Client.Create(ctx, cm)
-	if err != nil {
+	if err := h.Client.Create(ctx, cm); err != nil {
 		return fmt.Errorf("failed to create configMap for precache: %w", err)
 	}
 
@@ -132,63 +122,13 @@ func (h *PHandler) CreateJob(ctx context.Context, config *Config, ibu *lcav1alph
 	if err != nil {
 		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}
-
-	err = h.Client.Create(ctx, job)
-	if err != nil {
+	if err := h.Client.Create(ctx, job); err != nil {
 		return fmt.Errorf("failed to create precache job: %w", err)
 	}
 
 	// Log job details
-	h.Log.Info("Precaching", "CreatedJob", job.Name)
-
+	h.Log.Info("Precaching", "CreatedJob", job.Name, "ConfigMap", cm.Name)
 	return nil
-}
-
-// QueryJobStatus retrieves the status of the precache job.
-func (h *PHandler) QueryJobStatus(ctx context.Context) (*Status, error) {
-	job, err := getJob(ctx, h.Client)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
-	}
-
-	// job deletion not allowed
-	if job.GetDeletionTimestamp() != nil {
-		return nil, fmt.Errorf("precache job is marked to be deleted, this not allowed")
-	}
-
-	status := &Status{Message: ""}
-	// Extract job status: active, successful, failed
-	if job.Status.Active > 0 {
-		status.Status = Active
-		h.Log.Info("Precaching job in-progress", "name:", LcaPrecacheJobName)
-	} else if job.Status.Succeeded > 0 {
-		status.Status = Succeeded
-		h.Log.Info("Precaching job succeeded", "name:", LcaPrecacheJobName)
-	} else if job.Status.Failed > 0 {
-		status.Status = Failed
-		h.Log.Info("Precaching job failed", "name:", LcaPrecacheJobName)
-	}
-
-	// Get precaching progress summary from StatusFile
-	_, err = os.Stat(common.PathOutsideChroot(StatusFile))
-	if err == nil {
-		// in progress
-		var data []byte
-		data, err = os.ReadFile(common.PathOutsideChroot(StatusFile))
-		if err == nil {
-			strProgress := strings.TrimSpace(string(data))
-			err = json.Unmarshal([]byte(strProgress), &status.Progress)
-			if err != nil {
-				h.Log.Error(err, "Failed to parse progress", "StatusFile", StatusFile)
-			} else {
-				status.Message = fmt.Sprintf("total: %d (pulled: %d, failed: %d)",
-					status.Progress.Total, status.Progress.Pulled, status.Progress.Failed)
-			}
-		} else {
-			h.Log.Info("Unable to read precaching progress file", "StatusFile", StatusFile)
-		}
-	}
-	return status, nil
 }
 
 // Cleanup deletes precaching resources
