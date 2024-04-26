@@ -504,11 +504,9 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 			continue
 		}
 
+		// Check cluster ID label of existingBackup
 		labels := existingBackup.GetLabels()
-		hasLocalVolumes := h.searchForLocalVolumes(backup)
-
-		// Check cluster ID label and localVolume presence in existingBackup CR
-		if labels != nil && labels[clusterIDLabel] != clusterID && !hasLocalVolumes {
+		if labels != nil && labels[clusterIDLabel] != clusterID {
 			staleBackupList.Items = append(staleBackupList.Items, *existingBackup)
 
 			deleteBackupRequest := &velerov1.DeleteBackupRequest{
