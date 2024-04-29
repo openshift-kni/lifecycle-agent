@@ -135,6 +135,9 @@ type ImageBasedUpgradeStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Valid Next Stage"
 	ValidNextStages []ImageBasedUpgradeStage `json:"validNextStages,omitempty"`
+	// RollbackAvailabilityExpiration reflects the point at which rolling back may require manual recovery from expired control plane certficates.
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	RollbackAvailabilityExpiration metav1.Time `json:"rollbackAvailabilityExpiration,omitempty"`
 }
 
 // +kubebuilder:object:root=true

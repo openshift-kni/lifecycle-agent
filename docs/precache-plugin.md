@@ -21,7 +21,7 @@ Executing with the pre-compiled `precache` binary, the job incorporates both `ni
 The main workload pulling mechanism resides in the [pullImages.go](../internal/precache/workload/pullImages.go) source file.
 Configuration of the pre-caching job is achieved through the [Config](../internal/precache/precache.go) struct, outlined
 below. A [progress](../internal/precache/progress.go) object is used to track the precaching job's progress, capturing
-details such as the total number of images to be precached, the number of images pulled, skipped, and failed to be pulled,
+details such as the total number of images to be precached, the number of images pulled, and the number failed to be pulled,
 along with a list of failed pulls. The results are persisted to the file `precache_status.json`.
 
 The `QueryJobStatus` function is responsible for querying the status of the precaching job and attempting to load the
@@ -53,7 +53,7 @@ CLI.
 
 The Job is created within the Kubernetes cluster, initiating the pre-caching process. The status of the job is monitored,
 and relevant information is logged, including whether the job is active, succeeded, or failed. Additionally, a progress
-summary is extracted from a specified status file (`precache_status.json`), providing details on the total, pulled, skipped,
+summary is extracted from a specified status file (`precache_status.json`), providing details on the total pulled
 and failed images.
 
 ### 5. Job Cleanup

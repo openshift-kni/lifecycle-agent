@@ -35,13 +35,18 @@ var osStat = os.Stat
 var osReadDir = os.ReadDir
 var osRemoveAll = os.RemoveAll
 
+func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *lcav1alpha1.ImageBasedUpgrade) {
+	ibu.Status.RollbackAvailabilityExpiration.Reset()
+	utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+}
+
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
 	if successful, errMsg := r.cleanup(ctx); successful {
 		r.Log.Info("Finished handleAbort successfully")
-		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+		r.resetStatusFields(ibu)
 		return doNotRequeue(), nil
 	} else {
 		utils.SetStatusCondition(&ibu.Status.Conditions,
@@ -110,7 +115,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 
 	if successful, errMsg := r.cleanup(ctx); successful {
 		r.Log.Info("Finished handleFinalize successfully")
-		utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+		r.resetStatusFields(ibu)
 		return doNotRequeue(), nil
 	} else {
 		utils.SetStatusCondition(&ibu.Status.Conditions,

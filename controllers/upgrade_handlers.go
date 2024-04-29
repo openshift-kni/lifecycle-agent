@@ -87,6 +87,15 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		}
 		return prePivot, nil
 	} else {
+		if ibu.Status.RollbackAvailabilityExpiration.IsZero() {
+			// Set the rollback availability expiration field
+			if expiry, err := r.getRollbackAvailabilityExpiration(); err == nil {
+				ibu.Status.RollbackAvailabilityExpiration.Time = expiry
+			} else {
+				r.Log.Error(err, "unable to determine rollback availability expiration")
+			}
+		}
+
 		r.Log.Info("Running PostPivot handler")
 		postPivot, err := r.UpgradeHandler.PostPivot(ctx, ibu)
 		if err != nil {
