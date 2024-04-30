@@ -442,7 +442,8 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 		return nil
 	}
 
-	// Create deleteBackupRequest CR to delete the backup in the object storage
+	// Create deleteBackupRequest CR to delete the backup in the object storage,
+	// and cleanup labels from objects defined in Backup CRs
 	for _, backup := range backupList.Items {
 		deleteBackupRequest := &velerov1.DeleteBackupRequest{
 			ObjectMeta: metav1.ObjectMeta{
@@ -459,11 +460,9 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 			return fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
 		}
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
-	}
 
-	for _, backup := range backupList.Items {
-		err := h.cleanupBackupLabels(ctx, &backup) //nolint:gosec
-		if err != nil {
+		cleanedBackup := backup
+		if err := h.cleanupBackupLabels(ctx, &cleanedBackup); err != nil {
 			h.Log.Error(err, "failed to clean backup labels")
 		}
 	}
@@ -473,7 +472,6 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 
 // CleanupStaleBackups checks and deletes if there are any stale Backups (with the same name) that
 // may be available in the object storage but do not belong to this cluster.
-// returns: true if all stale backups have been deleted, error
 func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) error {
 	// Get the cluster ID
 	clusterID, err := getClusterID(ctx, h.Client)
