@@ -437,6 +437,11 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 		return fmt.Errorf("failed to list Backup: %w", err)
 	}
 
+	if len(backupList.Items) == 0 {
+		h.Log.Info("No Backups found in the cluster, skipping")
+		return nil
+	}
+
 	// Create deleteBackupRequest CR to delete the backup in the object storage
 	for _, backup := range backupList.Items {
 		deleteBackupRequest := &velerov1.DeleteBackupRequest{
@@ -526,7 +531,8 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 }
 
 func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []velerov1.Backup) error {
-	return wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true, //nolint:wrapcheck
+	// Set immediate poll to false to wait 1 second before performing first check
+	return wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, false, //nolint:wrapcheck
 		func(ctx context.Context) (bool, error) {
 			for _, backup := range backups {
 				backupRequest := &velerov1.DeleteBackupRequest{}
@@ -538,13 +544,12 @@ func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []v
 						return false, nil
 					}
 				} else {
-					if backupRequest.Status.Phase != velerov1.DeleteBackupRequestPhaseProcessed {
-						h.Log.Info("Waiting for DeleteBackupRequest to be processed", "deleteBackupRequest", backupRequest.GetName(), "phase", backupRequest.Status.Phase)
-						return false, nil
-					}
-					if len(backupRequest.Status.Errors) != 0 {
+					// DeleteBackupRequest still exists
+					if backupRequest.Status.Phase == velerov1.DeleteBackupRequestPhaseProcessed && len(backupRequest.Status.Errors) != 0 {
 						return true, fmt.Errorf("deleteBackupRequest %s failed with errors: %v", backupRequest.GetName(), backupRequest.Status.Errors)
 					}
+					h.Log.Info("Waiting for DeleteBackupRequest to be processed and deleted", "deleteBackupRequest", backupRequest.GetName(), "phase", backupRequest.Status.Phase)
+					return false, nil
 				}
 			}
 			return true, nil
@@ -553,11 +558,8 @@ func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []v
 
 func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) error {
 	if err := h.waitForDeleteBackupRequests(ctx, backups); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			h.Log.Error(err, "Timeout waiting for backups to be deleted")
-			return err
-		}
-		return fmt.Errorf("failed deleting backups: %w", err)
+		h.Log.Error(err, "Failed to delete backups")
+		return NewBRFailedError("backup", fmt.Sprintf("failed to delete backups: %s", err.Error()))
 	}
 
 	for _, backup := range backups {
@@ -573,7 +575,7 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 			}
 			return fmt.Errorf("failed to ensure backup %s is deleted: %w", backup.GetName(), err)
 		} else {
-			return fmt.Errorf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName())
+			return NewBRFailedError("backup", fmt.Sprintf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName()))
 		}
 	}
 	h.Log.Info("All Backup CRs have been deleted successfully")
@@ -599,6 +601,11 @@ func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("failed to list DeleteBackupRequest CRs: %w", err)
+	}
+
+	if len(deleteBackupRequestList.Items) == 0 {
+		h.Log.Info("No DeleteBackupRequests found in the cluster, skipping")
+		return nil
 	}
 
 	// Cleanup all DeleteBackupRequest CRs
