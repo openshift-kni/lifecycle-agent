@@ -25,7 +25,6 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -116,10 +115,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
 		return fmt.Errorf("unsupported seed reconfiguration version %d", seedReconfiguration.APIVersion)
-	}
-
-	if err := p.setProxyAndProxyStatus(seedReconfiguration, seedClusterInfo); err != nil {
-		return fmt.Errorf("failed to set no proxy: %w", err)
 	}
 
 	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
@@ -226,48 +221,6 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 	if err != nil {
 		return fmt.Errorf("failed recert full flow: %w", err)
 	}
-
-	return nil
-}
-
-func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
-	if seedReconfig.Proxy != nil != seedClusterInfo.HasProxy {
-		return fmt.Errorf("seedReconfig and seedClusterInfo proxy configuration mismatch")
-	}
-
-	if seedReconfig.Proxy == nil {
-		return nil
-
-	}
-
-	set := sets.NewString(
-		"127.0.0.1",
-		"localhost",
-		".svc",
-		".cluster.local",
-		fmt.Sprintf("api-int.%s.%s", seedReconfig.ClusterName, seedReconfig.BaseDomain),
-	)
-
-	if seedReconfig.MachineNetwork == "" {
-		return fmt.Errorf("machineNetwork is empty, must be provided in case of proxy")
-
-	}
-	set.Insert(seedReconfig.MachineNetwork)
-	for _, nss := range append(seedClusterInfo.ServiceNetworks, seedClusterInfo.ClusterNetworks...) {
-		set.Insert(nss)
-	}
-
-	if len(seedReconfig.Proxy.NoProxy) > 0 {
-		for _, userValue := range strings.Split(seedReconfig.Proxy.NoProxy, ",") {
-			if userValue != "" {
-				set.Insert(userValue)
-			}
-		}
-	}
-	seedReconfig.Proxy.NoProxy = strings.Join(set.List(), ",")
-	// as we are using same logic as network operator
-	// proxy and proxy status are the same
-	seedReconfig.StatusProxy = seedReconfig.Proxy
 
 	return nil
 }
