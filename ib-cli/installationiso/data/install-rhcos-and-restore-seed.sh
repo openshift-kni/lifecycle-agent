@@ -5,7 +5,6 @@ set -e # Halt on error
 seed_image=${1:-$SEED_IMAGE}
 seed_version=${2:-$SEED_VERSION}
 installation_disk=${3:-$INSTALLATION_DISK}
-lca_image=${4:-$LCA_IMAGE}
 extra_partition_start=${5:-$EXTRA_PARTITION_START}
 extra_partition_number=5
 extra_partition_label=varlibcontainers
@@ -59,4 +58,9 @@ if [ -n "${SHUTDOWN}" ]; then
     additional_flags="${additional_flags} --shutdown"
 fi
 
-podman run --privileged --security-opt label=type:unconfined_t --rm --pid=host --authfile "${authfile}" -v /:/host --entrypoint /usr/local/bin/lca-cli "${lca_image}" ibi --seed-image "${seed_image}" --authfile "${authfile}" --seed-version "${seed_version}" --pullSecretFile "${pull_secret}" ${additional_flags}
+
+podman create --name lca-cli "${seed_image}" lca-cli
+podman cp lca-cli:lca-cli /usr/local/bin/lca-cli
+podman rm lca-cli
+
+/usr/local/bin/lca-cli ibi --seed-image "${seed_image}" --authfile "${authfile}" --seed-version "${seed_version}" --pullSecretFile "${pull_secret}" ${additional_flags}

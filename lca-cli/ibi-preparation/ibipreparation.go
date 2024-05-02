@@ -89,13 +89,12 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 	}
 
 	// Change root directory to /host
-	unchroot, err := i.ops.Chroot(common.Host)
+	unchroot, err := i.chrootIfPathExists(common.Host)
 	if err != nil {
 		return fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
 
 	}
 
-	i.log.Infof("chroot %s successful", common.Host)
 	if err := os.MkdirAll(filepath.Dir(precache.StatusFile), 0o700); err != nil {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
@@ -117,4 +116,22 @@ func (i *IBIPrepare) shutdownNode() error {
 		return fmt.Errorf("failed to shutdown the host: %w", err)
 	}
 	return nil
+}
+
+// chrootIfPathExists chroots to the given path if it exists
+// in case path doesn't exist there is no need to chroot
+func (i *IBIPrepare) chrootIfPathExists(chrootPath string) (func() error, error) {
+	if _, err := os.Stat(chrootPath); err != nil {
+		i.log.Info("Path doesn't exist, skipping chroot", "path", chrootPath)
+		return func() error { return nil }, nil
+	}
+
+	unchroot, err := i.ops.Chroot(chrootPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
+
+	}
+
+	i.log.Infof("chroot %s successful", chrootPath)
+	return unchroot, nil
 }

@@ -82,9 +82,16 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to backup dir for seed image to %s: %w", s.backupDir, err)
 	}
 
+	lcaBinaryPath := "/usr/local/bin/lca-cli"
 	s.log.Info("Copy lca-cli binary")
-	err := cp.Copy("/usr/local/bin/lca-cli", "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
+	err := cp.Copy(lcaBinaryPath, "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
+		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
+	}
+
+	// copied to backup dir in order to be included in the seed image without being part of the var archive
+	s.log.Info("Copy lca-cli binary, into backup dir")
+	if err := cp.Copy(lcaBinaryPath, path.Join(s.backupDir, "lca-cli"), cp.Options{AddPermission: os.FileMode(0o777)}); err != nil {
 		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
 	}
 

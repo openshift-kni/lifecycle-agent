@@ -139,7 +139,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		}
 	}()
 
-	workspace, err := filepath.Rel(common.Host, workspaceOutsideChroot)
+	workspace, err := common.PathInsideChroot(workspaceOutsideChroot)
 	if err != nil {
 		return fmt.Errorf("failed to get workspace relative path %w", err)
 	}
