@@ -168,8 +168,7 @@ func init() {
 		&ocpV1.Infrastructure{},
 		&mcv1.MachineConfig{},
 		&ocpV1.ImageContentPolicy{},
-		&ocpV1.ImageContentPolicyList{},
-		&ocpV1.Network{})
+		&ocpV1.ImageContentPolicyList{})
 	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
 		&operatorv1alpha1.ImageContentSourcePolicyList{},
 		&operatorv1alpha1.ImageContentSourcePolicy{})
@@ -233,16 +232,6 @@ func TestClusterConfig(t *testing.T) {
 			Namespace: common.InstallConfigCMNamespace,
 		},
 		Data: map[string]string{"install-config": clusterCmData},
-	}
-
-	network := &ocpV1.Network{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster",
-		},
-		Status: ocpV1.NetworkStatus{
-			ClusterNetwork: []ocpV1.ClusterNetworkEntry{{CIDR: "1.1.1.1/24"}},
-			ServiceNetwork: []string{"2.2.2.2/24"},
-		},
 	}
 
 	testcases := []struct {
@@ -483,8 +472,6 @@ func TestClusterConfig(t *testing.T) {
 				testCase.pullSecret, testCase.clusterVersion, installConfig, testCase.node,
 				testCase.idms, testCase.proxy, testCase.caBundleCM, csvDeployment, infrastructure,
 			}
-
-			k8sResources = append(k8sResources, network)
 
 			if !testCase.deleteKubeadmin {
 				k8sResources = append(k8sResources, kubeadminSecret)
