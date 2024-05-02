@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -43,6 +44,7 @@ type Ops interface {
 	ListBlockDevices() ([]BlockDevice, error)
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
+	Chroot(chrootPath string) (func() error, error)
 }
 
 type BlockDevice struct {
@@ -416,4 +418,27 @@ func (o *ops) Umount(deviceName string) error {
 		return fmt.Errorf("failed to unmount %s, err: %w", deviceName, err)
 	}
 	return nil
+}
+
+func (o *ops) Chroot(chrootPath string) (func() error, error) {
+	root, err := os.Open("/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open root directory: %w", err)
+	}
+
+	if err := syscall.Chroot(chrootPath); err != nil {
+		root.Close()
+		return nil, fmt.Errorf("failed to chroot to %s, err: %w", chrootPath, err)
+	}
+
+	return func() error {
+		defer root.Close()
+		if err := root.Chdir(); err != nil {
+			return fmt.Errorf("failed to change directory to root: %w", err)
+		}
+		if err := syscall.Chroot("."); err != nil {
+			return fmt.Errorf("failed to unchroot: %w", err)
+		}
+		return nil
+	}, nil
 }

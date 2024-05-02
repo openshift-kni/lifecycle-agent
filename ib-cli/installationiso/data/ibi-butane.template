@@ -42,6 +42,9 @@ systemd:
         {{else if .PrecacheBestEffort}}
         Environment=PRECACHE_BEST_EFFORT=true
         {{end}}
+        {{if .Shutdown}}
+        Environment=SHUTDOWN=true
+        {{end}}
         Type=oneshot
         RemainAfterExit=yes
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh

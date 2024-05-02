@@ -37,6 +37,21 @@ func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
 }
 
+// Chroot mocks base method.
+func (m *MockOps) Chroot(chrootPath string) (func() error, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Chroot", chrootPath)
+	ret0, _ := ret[0].(func() error)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Chroot indicates an expected call of Chroot.
+func (mr *MockOpsMockRecorder) Chroot(chrootPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Chroot", reflect.TypeOf((*MockOps)(nil).Chroot), chrootPath)
+}
+
 // ExtractTarWithSELinux mocks base method.
 func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
 	m.ctrl.T.Helper()
