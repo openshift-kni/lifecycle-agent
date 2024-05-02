@@ -223,16 +223,25 @@ func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Ba
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
 	}
+
 	// json patch escape info: https://jsonpatch.com/#json-pointer
 	escaped := strings.Replace(backupLabel, "/", "~1", 1)
 	payload := []byte(fmt.Sprintf(`[{"op":"remove","path":"/metadata/labels/%s"}]`, escaped))
+
 	for _, obj := range objs {
-		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
-		if err != nil {
+		patchedObj := obj
+
+		if err := patchObj(ctx, h.DynamicClient, &patchedObj, false, payload); err != nil {
+			if k8serrors.IsNotFound(err) || k8serrors.IsInvalid(err) {
+				h.Log.Info("backup label doesn't exist, no patching needed, ignoring", "name", obj.Name,
+					"namespace", obj.Namespace, "resource", obj.Resource, "group", obj.Group, "version", obj.Version)
+				continue
+			}
 			h.Log.Error(err, "failed to remove backup label", "name", obj.Name, "namespace", obj.Namespace,
 				"resource", obj.Resource, "group", obj.Group, "version", obj.Version)
 		}
 	}
+
 	return nil
 }
 
