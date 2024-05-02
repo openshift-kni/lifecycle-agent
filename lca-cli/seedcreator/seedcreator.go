@@ -324,7 +324,8 @@ func (s *SeedCreator) backupVar() error {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
 	}
-	tarArgs = append(tarArgs, "--selinux", common.VarFolder)
+	tarArgs = append(tarArgs, common.VarFolder)
+	tarArgs = append(tarArgs, common.TarOpts...)
 
 	// Run the tar command
 	_, err := s.ops.RunBashInHostNamespace("tar", tarArgs...)
@@ -349,7 +350,8 @@ func (s *SeedCreator) backupEtc() error {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
 	}
-	tarArgs = append(tarArgs, "--selinux", "-T", "-")
+	tarArgs = append(tarArgs, "-T", "-")
+	tarArgs = append(tarArgs, common.TarOpts...)
 
 	args := []string{"admin", "config-diff", "|", "awk", `'$1 == "D" {print "/etc/" $2}'`, ">",
 		path.Join(s.backupDir, "/etc.deletions")}
@@ -376,7 +378,8 @@ func (s *SeedCreator) backupOstree() error {
 	ostreeTar := s.backupDir + "/ostree.tgz"
 
 	// Execute 'tar' command and backup /etc
-	args := []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}
+	args := []string{"czf", ostreeTar, "-C", "/ostree/repo", "."}
+	args = append(args, common.TarOpts...)
 	if _, err := s.ops.RunBashInHostNamespace("tar", args...); err != nil {
 		return fmt.Errorf("failed backing ostree with args %s: %w", args, err)
 	}

@@ -122,3 +122,5 @@ var CertPrefixes = []string{
 	"localhost-serving-signer",
 	"service-network-serving-signer",
 }
+
+var TarOpts = []string{"--selinux", "--xattrs", "--xattrs-include=*", "--acls"}
