@@ -260,9 +260,10 @@ func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
 		return fmt.Errorf("failed to get path for file %s inside chroot: %w", tarExec, err)
 	}
 
-	if _, err = o.hostCommandsExecutor.Execute(
-		tarExecInsideChroot, "xzf", srcPath, "-C", destPath, "--selinux",
-	); err != nil {
+	tarArgs := []string{"xzf", srcPath, "-C", destPath}
+	tarArgs = append(tarArgs, common.TarOpts...)
+
+	if _, err = o.hostCommandsExecutor.Execute(tarExecInsideChroot, tarArgs...); err != nil {
 		return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 	}
 	return nil
