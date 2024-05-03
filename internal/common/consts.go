@@ -43,8 +43,12 @@ const (
 	EtcdStaticPodContainer = "etcd"
 	EtcdDefaultEndpoint    = "localhost:2379"
 
-	OvnNodeCerts = "/var/lib/ovn-ic/etc/ovnkube-node-certs"
-	MultusCerts  = "/etc/cni/multus/certs"
+	OvnIcEtcFolder = "/var/lib/ovn-ic/etc"
+	OvnNodeCerts   = OvnIcEtcFolder + "/ovnkube-node-certs"
+
+	MultusCerts = "/etc/cni/multus/certs"
+
+	MCDCurrentConfig = "/etc/machine-config-daemon/currentconfig"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"

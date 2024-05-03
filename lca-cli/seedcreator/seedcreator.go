@@ -2,6 +2,7 @@ package seedcreator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	ignconfig "github.com/coreos/ignition/v2/config"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/samber/lo"
@@ -302,6 +305,40 @@ func (s *SeedCreator) stopServices() error {
 	return nil
 }
 
+// getVarLibFilelist parses the MCD currentconfig to get the list of managed files under /var/lib
+func (s *SeedCreator) getVarLibFilelist() ([]string, error) {
+	var filelist []string
+	varlibRegex := regexp.MustCompile(`^/var/lib/`)
+
+	data, err := os.ReadFile(common.MCDCurrentConfig)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
+	}
+
+	var mc mcv1.MachineConfig
+
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return filelist, fmt.Errorf("unable to parse MCD currentconfig: %w", err)
+	}
+
+	if mc.Spec.Config.Raw == nil {
+		return filelist, fmt.Errorf("unable to find config in MCD currentconfig")
+	}
+
+	ign, _, err := ignconfig.Parse(mc.Spec.Config.Raw)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to parse ignition config from MCD currentconfig: %w", err)
+	}
+
+	for _, f := range ign.Storage.Files {
+		if varlibRegex.MatchString(f.Path) {
+			filelist = append(filelist, f.Path)
+		}
+	}
+
+	return filelist, nil
+}
+
 func (s *SeedCreator) backupVar() error {
 	varTarFile := path.Join(s.backupDir, "var.tgz")
 
@@ -315,11 +352,21 @@ func (s *SeedCreator) backupVar() error {
 		"/var/lib/cni/bin/*",
 		"/var/lib/containers/*",
 		"/var/lib/kubelet/pods/*",
-		common.OvnNodeCerts + "/*",
+		common.OvnIcEtcFolder + "/*",
 	}
 
 	// Build the tar command
 	tarArgs := []string{"czf", varTarFile}
+
+	// Ensure all MCD-managed files in /var/lib are explicitly included, to avoid accidental exclusion
+	if managedfiles, err := s.getVarLibFilelist(); err != nil {
+		return fmt.Errorf("unable to get list of MCD managed files: %w", err)
+	} else {
+		for _, fname := range managedfiles {
+			tarArgs = append(tarArgs, "--add-file", fname)
+		}
+	}
+
 	for _, pattern := range excludePatterns {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
@@ -344,6 +391,8 @@ func (s *SeedCreator) backupEtc() error {
 	excludePatterns := []string{
 		"/etc/NetworkManager/system-connections",
 		"/etc/machine-config-daemon/orig/var/lib/kubelet",
+		"/etc/openvswitch/conf.db",
+		"/etc/openvswitch/.conf.db.~lock~",
 	}
 	tarArgs := []string{"tar", "czf", path.Join(s.backupDir + "/etc.tgz")}
 	for _, pattern := range excludePatterns {
@@ -399,7 +448,7 @@ func (s *SeedCreator) backupRPMOstree() error {
 
 func (s *SeedCreator) backupMCOConfig() error {
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	if _, err := s.ops.RunBashInHostNamespace("cp", "/etc/machine-config-daemon/currentconfig", mcoJSON); err != nil {
+	if _, err := s.ops.RunBashInHostNamespace("cp", common.MCDCurrentConfig, mcoJSON); err != nil {
 		return fmt.Errorf("failed to backup MCO config: %w", err)
 	}
 	s.log.Info("Backup of mco-currentconfig created successfully.")
