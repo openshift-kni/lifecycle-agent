@@ -68,6 +68,16 @@ func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 			args[2*i+1] = string(val)
 		}
 	}
+
+	if mc.Spec.FIPS {
+		args = append(args,
+			"--karg-append", "fips=1",
+			// This is needed because /boot is on a separate partition https://access.redhat.com/solutions/137833
+			// TODO: Should we have this regardless of FIPS?
+			"--karg-append", "boot=LABEL=boot",
+		)
+	}
+
 	return args, nil
 }
 
