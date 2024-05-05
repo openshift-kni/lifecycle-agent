@@ -358,15 +358,22 @@ func ReadOadpDataProtectionApplication(dpaYamlDir string) (*unstructured.Unstruc
 	return dpa, nil
 }
 
+// patchObj patches the objects / resources defined in the Backup CRs of OADP.
+// Also, it has a isDryRun flag that allows to simulate patching the specified resources, which is handy when
+// validating the objects defined in Backup CRs within the OADP ConfigMap.
 func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool, payload []byte) error {
+	var err error
+	resourceClient := client.Resource(schema.GroupVersionResource{
+		Group:    obj.Group,
+		Version:  obj.Version,
+		Resource: obj.Resource,
+	})
+
 	patchOptions := metav1.PatchOptions{}
 	if isDryRun {
 		patchOptions = metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
 	}
-	resourceClient := client.Resource(schema.GroupVersionResource{
-		Group: obj.Group, Version: obj.Version, Resource: obj.Resource},
-	)
-	var err error
+
 	if obj.Namespace != "" {
 		_, err = resourceClient.Namespace(obj.Namespace).Patch(
 			ctx, obj.Name, types.JSONPatchType, payload, patchOptions,
