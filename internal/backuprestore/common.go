@@ -388,16 +388,6 @@ func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, i
 	return nil
 }
 
-func (h *BRHandler) searchForLocalVolumes(backup *velerov1.Backup) bool {
-	for _, resource := range backup.Spec.IncludedNamespaceScopedResources {
-		if strings.Contains(strings.ToLower(resource), "localvolume") {
-			h.Log.Info("localVolume found in Backup CR, skipping its deletion")
-			return true
-		}
-	}
-	return false
-}
-
 func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
