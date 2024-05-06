@@ -393,6 +393,7 @@ func (s *SeedCreator) backupEtc() error {
 		"/etc/machine-config-daemon/orig/var/lib/kubelet",
 		"/etc/openvswitch/conf.db",
 		"/etc/openvswitch/.conf.db.~lock~",
+		"/etc/hostname",
 	}
 	tarArgs := []string{"tar", "czf", path.Join(s.backupDir + "/etc.tgz")}
 	for _, pattern := range excludePatterns {
