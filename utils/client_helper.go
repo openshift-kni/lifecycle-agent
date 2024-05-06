@@ -9,6 +9,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	ocp_config_v1 "github.com/openshift/api/config/v1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
@@ -262,6 +263,30 @@ func HasProxy(ctx context.Context, client runtimeclient.Client) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func HasFIPS(ctx context.Context, client runtimeclient.Client) (bool, error) {
+	nodes := &corev1.NodeList{}
+	if err := client.List(ctx, nodes); err != nil {
+		return false, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	if len(nodes.Items) != 1 {
+		return false, fmt.Errorf("expected exactly one node, got %d", len(nodes.Items))
+	}
+	node := nodes.Items[0]
+
+	currentConfig := node.Annotations["machineconfiguration.openshift.io/currentConfig"]
+	if currentConfig == "" {
+		return false, fmt.Errorf("failed to get currentConfig annotation")
+	}
+
+	machineConfig := &mcv1.MachineConfig{}
+	if err := client.Get(ctx, types.NamespacedName{Name: currentConfig}, machineConfig); err != nil {
+		return false, fmt.Errorf("failed to get machineConfig %s: %w", currentConfig, err)
+	}
+
+	return machineConfig.Spec.FIPS, nil
 }
 
 func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, mirrorRegistryConfigured bool, releaseRegistry string) (bool, error) {
