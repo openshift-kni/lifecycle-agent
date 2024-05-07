@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -65,7 +67,15 @@ func init() {
 
 func runIBI() {
 	log.Info("IBI preparation process has started")
-	hostCommandsExecutor := ops.NewChrootExecutor(log, true, common.Host)
+	var hostCommandsExecutor ops.Execute
+
+	// if we run in container we will get /host as a host path and should use chroot executor
+	if _, err := os.Stat(common.Host); err == nil {
+		hostCommandsExecutor = ops.NewChrootExecutor(log, true, common.Host)
+	} else {
+		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
+	}
+
 	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
