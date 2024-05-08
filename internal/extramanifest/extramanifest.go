@@ -19,6 +19,7 @@ package extramanifest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,8 +47,9 @@ import (
 )
 
 const (
-	ExtraManifestPath  = "/opt/extra-manifests"
-	PolicyManifestPath = "/opt/policy-manifests"
+	ExtraManifestPath           = "/opt/extra-manifests"
+	PolicyManifestPath          = "/opt/policy-manifests"
+	WarnAnnotationUnknownCRDKey = "lca.openshift.io/warn-extramanifest-cm-unknown-crd"
 )
 
 type EManifestHandler interface {
@@ -55,7 +57,7 @@ type EManifestHandler interface {
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
 	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
 	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
-	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef) error
+	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error
 }
 
 // EMHandler handles the extra manifests
@@ -104,22 +106,6 @@ func IsEMFailedError(err error) bool {
 	return false
 }
 
-func IsEMFailedValidationError(err error) bool {
-	var emErr *EMStatusError
-	if errors.As(err, &emErr) {
-		return emErr.Reason == "FailedValidation"
-	}
-	return false
-}
-
-func IsEMUnknownCRDError(err error) bool {
-	var emErr *EMStatusError
-	if errors.As(err, &emErr) {
-		return emErr.Reason == "UnknownCRD"
-	}
-	return false
-}
-
 func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper meta.RESTMapper, manifest *unstructured.Unstructured, isDryRun bool) error {
 	// Mapping resource GVK to CVR
 	mapping, err := restMapper.RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
@@ -164,7 +150,7 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 	return nil
 }
 
-func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
+func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -188,26 +174,43 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 		}
 	}
 
-	// Apply manifest with dryrun
-	dryrun := true
+	// a map to track all the unknown CRDs in one shot
+	unknownCRDs := make(map[string]string)
+
+	// Apply manifest with dryRun
+	dryRun := true
+
+	// Collect unknownCRDs errors and continue to treat them as part of warning.
+	// Any other error should be treated as real error and return early (which should be priority over warnings)
 	for _, manifest := range manifests {
-		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryrun)
-		if err != nil {
-			h.Log.Error(err, "Failed to apply manifest with dryrun")
-			errMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
-
-			// Capture both invalid syntax and webhook validation errors
-			if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
-				return NewEMFailedValidationError(errMsg)
-			}
-
-			// Capture unknown CRD issue
+		if err := ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryRun); err != nil {
+			defaultErrMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
 			var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-			if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
-				return NewEMUnknownCRDError(errMsg)
+			switch {
+			case errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err): // Capture unknown CRD issue
+				key := manifest.GroupVersionKind().String()
+				if _, exists := unknownCRDs[key]; !exists {
+					unknownCRDs[key] = manifest.GetName()
+					h.Log.Info("unknown CRD", "CRD", key)
+				}
+			case k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err): // Capture both invalid syntax and webhook validation errors
+				return NewEMFailedValidationError(defaultErrMsg)
+			default: // Capture unknown runtime error
+				return fmt.Errorf(defaultErrMsg)
 			}
+		}
+	}
 
-			return fmt.Errorf(errMsg)
+	// annotate with the unknown CRDs
+	if len(unknownCRDs) > 0 {
+		b, err := json.Marshal(unknownCRDs)
+		if err != nil {
+			return fmt.Errorf("failed to marshal unknownCRDs map: %w", err)
+		}
+		annotationValue := string(b)
+		h.Log.Info(fmt.Sprintf("Unknown CRDs detected, will annotate with: %s", annotationValue))
+		if err := AddAnnotationWarnUnknownCRD(h.Client, h.Log, ibu, annotationValue); err != nil {
+			return fmt.Errorf("could not add new annotations to IBU: %w", err)
 		}
 	}
 
@@ -430,4 +433,41 @@ func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, erro
 		validVersions = append(validVersions, ocpVersion)
 	}
 	return validVersions, nil
+}
+
+// AddAnnotationWarnUnknownCRD add warning in annotation for when CRD is unknown
+func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade, annotationValue string) error {
+	patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
+
+	ann := ibu.GetAnnotations()
+	if ann == nil {
+		ann = make(map[string]string)
+	}
+	ann[WarnAnnotationUnknownCRDKey] = annotationValue
+	ibu.SetAnnotations(ann)
+
+	if err := c.Patch(context.Background(), ibu, patch); err != nil {
+		return fmt.Errorf("failed to update annotations: %w", err)
+	}
+
+	log.Info("Successfully added annotation", "annotation", WarnAnnotationUnknownCRDKey)
+	return nil
+}
+
+// RemoveAnnotationWarnUnknownCRD remove the warning if present
+func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *lcav1alpha1.ImageBasedUpgrade, log logr.Logger) error {
+	if _, exists := ibu.GetAnnotations()[WarnAnnotationUnknownCRDKey]; exists {
+		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
+
+		ann := ibu.GetAnnotations()
+		delete(ann, WarnAnnotationUnknownCRDKey)
+		ibu.SetAnnotations(ann)
+
+		if err := c.Patch(context.Background(), ibu, patch); err != nil {
+			return fmt.Errorf("failed to update annotations: %w", err)
+		}
+		log.Info("Successfully removed annotation", "annotations", WarnAnnotationUnknownCRDKey)
+	}
+
+	return nil
 }

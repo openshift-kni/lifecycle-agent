@@ -39,7 +39,9 @@ The Lifecycle Agent provides orchestration of an IBU on the target SNO via the `
 
 - Prep
   - This stage can only be set when the IBU is idle.
-  - During this stage, LCA does as much preparation as possible for the upgrade without impacting the current running version. This includes downloading the seed image, unpacking it as a new ostree stateroot and pulling all images specified by the image list built into the seed image, refer to [precache-plugin](precache-plugin.md)
+  - During this stage, LCA does as much preparation as possible for the upgrade without impacting the current running version. This includes downloading the seed image, unpacking it as a new ostree stateroot and pulling all images specified by the image list built into the seed image,
+  refer to [precache-plugin](precache-plugin.md). If for whatever reason prep stage is interrupted (e.g pod restarts or system reboot), the stage will marked as fail and only to way to recover is to move back Idle stage (see above). But before moving to Idle,
+  please consider using [must-gather](must-gather.md) to allow for easier debugging later.
 
 - Upgrade
   - This stage can only be set if the prep stage completed successfully.
@@ -292,7 +294,7 @@ The "Prep" stage will:
 - Perform the following validations:
   - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
   - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
-    - If a required CRD is missing from the current stateroot, a warning message will be included in the prep status condition for user to verify before proceeding to the upgrade stage
+    - If a required CRD is missing from the current stateroot, a warning message will be included in the IBU CRs with annotation `lca.openshift.io/warn-extramanifest-cm-unknown-crd`.
   - Validate that the desired upgrade version matches the version of the seed image
   - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
 - Unpack the seed image and create a new ostree stateroot

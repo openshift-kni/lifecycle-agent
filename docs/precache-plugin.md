@@ -8,13 +8,13 @@ upgrade process. The plugin utilizes a Kubernetes Job and ConfigMap resource for
 ## High-Level Design
 
 The schematic below illustrates the high-level design of the precache plugin, exclusively utilized by the `prep_handler`
-controller. The primary APIs, namely `CreateJob` and `QueryJobStatus`, play pivotal roles in the creation and status
+controller. The primary APIs, namely `CreateJobAndConfigMap` and `QueryJobStatus`, play pivotal roles in the creation and status
 querying of the pre-caching Kubernetes job. Additionally, there exists a third API, `Cleanup` (not depicted in the
 schematic), responsible for resource cleanup.
 
 ![Pre-cache Plugin Design Schematic](assets/precache_design.svg)
 
-The `CreateJob` function initiates the creation of a ConfigMap (`lca-precache-cm`) and a Kubernetes Job (`lca-precache-job`).
+The `CreateJobAndConfigMap` function initiates the creation of a ConfigMap (`lca-precache-cm`) and a Kubernetes Job (`lca-precache-job`).
 The ConfigMap holds the `precache-spec` data, containing the list of images earmarked for pre-caching. This ConfigMap is
 then consumed by the precaching job. The job, in turn, spawns a pod equipped with the `lifecycle-agent-operator:x.y.z` image.
 Executing with the pre-compiled `precache` binary, the job incorporates both `nice` and `ionice` options.
@@ -40,7 +40,7 @@ The `Config` struct defines the configuration options for a pre-caching job. The
 
 ### 2. ConfigMap Generation
 
-The `CreateJob` function begins by validating the precaching job configuration and proceeds to generate a ConfigMap
+The `CreateJobAndConfigMap` function begins by validating the precaching job configuration and proceeds to generate a ConfigMap
 containing the list of images to be pre-cached.
 
 ### 3. Kubernetes Job Creation

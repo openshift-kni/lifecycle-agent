@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/samber/lo"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -72,34 +74,8 @@ type ImageBasedUpgradeReconciler struct {
 	OstreeClient    ostreeclient.IClient
 	Ops             ops.Ops
 	RebootClient    reboot.RebootIntf
-	PrepTask        *Task
 	Mux             *sync.Mutex
-}
-
-// Task contains objects for executing a group of serial tasks asynchronously
-type Task struct {
-	Active             bool
-	Success            bool
-	Cancel             context.CancelFunc
-	Progress           string
-	AdditionalComplete string // additional completion msg
-	done               chan struct{}
-}
-
-// Reset Re-initialize the Task variables to initial values
-func (c *Task) Reset() {
-	c.Active = false
-	c.Success = false
-	c.Cancel = nil
-	c.Progress = ""
-	c.AdditionalComplete = ""
-	select {
-	case _, open := <-c.done:
-		if open {
-			close(c.done)
-		}
-	case <-time.After(30 * time.Second): // max wait timeout in case c.done is still empty
-	}
+	Clientset       *kubernetes.Clientset
 }
 
 func doNotRequeue() ctrl.Result {
@@ -146,6 +122,7 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=prometheusrules,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
+//+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

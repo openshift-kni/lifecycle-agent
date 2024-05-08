@@ -77,7 +77,7 @@ type ImageBasedUpgradeSpec struct {
 	// Users can also add their custom catalog sources that may want to retain after the upgrade.
 	ExtraManifests []ConfigMapRef `json:"extraManifests,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
-	AutoRollbackOnFailure AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
+	AutoRollbackOnFailure *AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
 }
 
 // SeedImageRef defines the seed image and OCP version for the upgrade
