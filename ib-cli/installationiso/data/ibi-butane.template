@@ -45,6 +45,9 @@ systemd:
         {{if .Shutdown}}
         Environment=SHUTDOWN=true
         {{end}}
+        {{if .SkipDiskCleanup}}
+        Environment=SKIP_DISK_CLEANUP=true
+        {{end}}
         Type=oneshot
         RemainAfterExit=yes
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh

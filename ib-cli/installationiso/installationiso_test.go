@@ -31,6 +31,7 @@ func TestInstallationIso(t *testing.T) {
 		precacheBestEffort  bool
 		precacheDisabled    bool
 		shutdown            bool
+		skipDiskCleanup     bool
 		renderCommandReturn error
 		embedCommandReturn  error
 		expectedError       string
@@ -45,6 +46,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "",
 		},
 		{
@@ -57,6 +59,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: true,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "",
 		},
 		{
@@ -69,6 +72,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   true,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "",
 		},
 		{
@@ -81,6 +85,20 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           true,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - skipDiskCleanup set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
 			expectedError:      "",
 		},
 		{
@@ -93,6 +111,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "work dir doesn't exists",
 		},
 		{
@@ -105,6 +124,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "authFile: no such file or directory",
 		},
 		{
@@ -117,6 +137,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "psFile: no such file or directory",
 		},
 		{
@@ -129,6 +150,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "sshKey: no such file or directory",
 		},
 		{
@@ -141,6 +163,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort: false,
 			precacheDisabled:   false,
 			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "notfound",
 		},
 		{
@@ -166,6 +189,7 @@ func TestInstallationIso(t *testing.T) {
 			precacheBestEffort:  false,
 			precacheDisabled:    false,
 			shutdown:            false,
+			skipDiskCleanup:     false,
 			renderCommandReturn: errors.New("failed to embed ignition config to ISO"),
 			expectedError:       "failed to embed ignition config to ISO",
 		},
@@ -234,7 +258,8 @@ func TestInstallationIso(t *testing.T) {
 			}
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
 			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage,
-				rhcosLiveIsoUrl, installationDisk, extraPartitionStart, tc.precacheBestEffort, tc.precacheDisabled, tc.shutdown)
+				rhcosLiveIsoUrl, installationDisk, extraPartitionStart,
+				tc.precacheBestEffort, tc.precacheDisabled, tc.shutdown, tc.skipDiskCleanup)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
 				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
@@ -253,6 +278,12 @@ func TestInstallationIso(t *testing.T) {
 					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), true)
 				} else {
 					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), false)
+				}
+				if tc.skipDiskCleanup {
+					fmt.Println("AAAAAAAAAAAA", string(data))
+					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), false)
 				}
 
 			} else {

@@ -33,6 +33,7 @@ type IgnitionData struct {
 	PrecacheBestEffort  bool
 	PrecacheDisabled    bool
 	Shutdown            bool
+	SkipDiskCleanup     bool
 }
 
 //go:embed data/*
@@ -58,14 +59,15 @@ const (
 )
 
 func (r *InstallationIso) Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	rhcosLiveIsoUrl, installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown bool) error {
+	rhcosLiveIsoUrl, installationDisk string, extraPartitionStart string,
+	precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Info("Creating IBI installation ISO")
 	err := r.validate()
 	if err != nil {
 		return err
 	}
 	err = r.createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown)
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
 	if err != nil {
 		return err
 	}
@@ -89,10 +91,10 @@ func (r *InstallationIso) validate() error {
 }
 
 func (r *InstallationIso) createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown bool) error {
+	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Info("Generating Ignition Config")
 	err := r.renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown)
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
 	if err != nil {
 		return err
 	}
@@ -152,7 +154,7 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 }
 
 func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown bool) error {
+	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Debug("Generating butane config")
 	var sshPublicKey []byte
 	var err error
@@ -202,6 +204,9 @@ func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, p
 	}
 	if shutdown {
 		templateData.Shutdown = true
+	}
+	if skipDiskCleanup {
+		templateData.SkipDiskCleanup = true
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)
