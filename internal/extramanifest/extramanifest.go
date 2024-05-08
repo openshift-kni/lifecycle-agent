@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
@@ -294,7 +295,6 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 			}
 			h.Log.Info("Exported manifest to file", "path", filePath)
 		}
-		h.Log.Info("Exported manifest to file", "path", filePath)
 	}
 
 	return nil
@@ -403,8 +403,6 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 
 			h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
 		}
-
-		h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
 	}
 
 	// Remove the extra manifests directory

@@ -25,10 +25,6 @@ import (
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/runtime"
-
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"

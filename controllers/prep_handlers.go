@@ -459,48 +459,6 @@ func prepInProgressRequeue(log logr.Logger, msg string, ibu *lcav1alpha1.ImageBa
 	return requeueWithShortInterval(), nil
 }
 
-// updatePrepTaskForPrecacheJob check up on precache job and update PrepTask as needed
-func (r *ImageBasedUpgradeReconciler) updatePrepTaskForPrecacheJob(ctx context.Context) {
-	r.Log.Info("Checking if precaching job is complete")
-	done, err := r.verifyPrecachingComplete(ctx)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			r.Log.Info("Precache job not launched yet")
-		} else {
-			r.failPrepTask(err, "prep stage failed, unable to verify precache status")
-		}
-		return
-	}
-
-	if done {
-		r.successPrepTask("Prep completed successfully")
-	}
-}
-
-// initPrepTask init PrepTask variables
-func (r *ImageBasedUpgradeReconciler) initPrepTask() {
-	r.PrepTask.done = make(chan struct{})
-	r.PrepTask.Active = true
-	r.PrepTask.Success = false
-	r.PrepTask.Progress = "Prep stage initialized"
-	r.PrepTask.AdditionalComplete = ""
-}
-
-// successPrepTask set PrepTask to success
-func (r *ImageBasedUpgradeReconciler) successPrepTask(msg string) {
-	r.PrepTask.Progress = msg
-	r.PrepTask.Success = true
-	close(r.PrepTask.done)
-}
-
-// failPrepTask set PrepTask to fail
-func (r *ImageBasedUpgradeReconciler) failPrepTask(err error, msg string) {
-	r.Log.Error(err, msg)
-	r.PrepTask.Progress = fmt.Sprintf("%s: %s", msg, err.Error())
-	r.PrepTask.Success = false
-	close(r.PrepTask.done)
-}
-
 func getSeedManifestPath(osname string) string {
 	return filepath.Join(
 		common.GetStaterootPath(osname),

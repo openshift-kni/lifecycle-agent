@@ -626,38 +626,3 @@ func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
 	h.Log.Info("All DeleteBackupRequest CRs have been deleted")
 	return nil
 }
-
-// CleanupDeleteBackupRequests deletes all DeleteBackupRequest for this cluster from object storage
-func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
-	// Get the cluster ID
-	clusterID, err := getClusterID(ctx, h.Client)
-	if err != nil {
-		return err
-	}
-
-	// List all DeleteBackupRequest CRs created for this cluster
-	deleteBackupRequestList := &velerov1.DeleteBackupRequestList{}
-	if err := h.List(ctx, deleteBackupRequestList, client.MatchingLabels{
-		clusterIDLabel: clusterID,
-	}); err != nil {
-		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-		if errors.As(err, &groupDiscoveryErr) {
-			h.Log.Info("DeleteBackupRequest CR is not installed, nothing to cleanup")
-			return nil
-		}
-		return fmt.Errorf("failed to list DeleteBackupRequest CRs: %w", err)
-	}
-
-	// Cleanup all DeleteBackupRequest CRs
-	for _, deleteBackupRequest := range deleteBackupRequestList.Items {
-		deleteBackupRequestName := deleteBackupRequest.GetName()
-
-		h.Log.Info(fmt.Sprintf("Deleting DeleteBackupRequest CR %s", deleteBackupRequestName))
-		if err := h.Delete(ctx, deleteBackupRequest.DeepCopy()); err != nil {
-			return fmt.Errorf("failed to delete DeleteBackupRequest CR %s: %w", deleteBackupRequestName, err)
-		}
-	}
-
-	h.Log.Info("All DeleteBackupRequest CRs have been deleted")
-	return nil
-}

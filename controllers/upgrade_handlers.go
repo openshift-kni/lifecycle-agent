@@ -22,10 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/go-logr/logr"
-	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -39,7 +37,6 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -183,11 +180,6 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
-	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
-		u.Log.Error(updateErr, "failed to update IBU CR status")
-	}
-
 	u.Log.Info("Writing extra-manifests into new stateroot")
 	if err := u.extractAndExportExtraManifests(ctx, ibu, staterootVarPath); err != nil {
 		if extramanifest.IsEMFailedError(err) {
@@ -195,11 +187,6 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 			return doNotRequeue(), nil
 		}
 		return requeueWithError(fmt.Errorf("error while exporting manifests: %w", err))
-	}
-
-	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
-	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
-		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")

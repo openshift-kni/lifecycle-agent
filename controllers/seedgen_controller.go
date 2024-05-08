@@ -584,12 +584,6 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
-	// Ensure the kubeadmin secret exists
-	if _, err := commonUtils.GetSecretData(ctx, "kubeadmin", "kube-system", "kubeadmin", r.Client); err != nil {
-		msg = "Rejected due to system missing required kube-system/kubeadmin Secret"
-		return
-	}
-
 	return
 }
 
@@ -655,9 +649,7 @@ func (r *SeedGeneratorReconciler) setupWorkspace() error {
 	}
 
 	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
-		rc = fmt.Errorf("failed to create workdir: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
+		return fmt.Errorf("failed to create workdir: %w", err)
 	}
 	return nil
 }
