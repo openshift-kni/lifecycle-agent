@@ -1,6 +1,7 @@
 package initmonitor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -46,7 +47,7 @@ func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExec
 func (m *InitMonitor) RunInitMonitor() error {
 	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 

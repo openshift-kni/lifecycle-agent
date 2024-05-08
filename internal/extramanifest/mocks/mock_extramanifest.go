@@ -14,6 +14,7 @@ import (
 
 	v1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	gomock "go.uber.org/mock/gomock"
+	unstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 //go:generate mockgen -source ../extramanifest.go -destination mock_extramanifest.go -write_generate_directive
@@ -70,29 +71,44 @@ func (mr *MockEManifestHandlerMockRecorder) ExportExtraManifestToDir(ctx, extraM
 }
 
 // ExtractAndExportManifestFromPoliciesToDir mocks base method.
-func (m *MockEManifestHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
+func (m *MockEManifestHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtractAndExportManifestFromPoliciesToDir", ctx, policyLabels, objectLabels, toDir)
+	ret := m.ctrl.Call(m, "ExtractAndExportManifestFromPoliciesToDir", ctx, policyLabels, objectLabels, validationAnns, toDir)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ExtractAndExportManifestFromPoliciesToDir indicates an expected call of ExtractAndExportManifestFromPoliciesToDir.
-func (mr *MockEManifestHandlerMockRecorder) ExtractAndExportManifestFromPoliciesToDir(ctx, policyLabels, objectLabels, toDir any) *gomock.Call {
+func (mr *MockEManifestHandlerMockRecorder) ExtractAndExportManifestFromPoliciesToDir(ctx, policyLabels, objectLabels, validationAnns, toDir any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractAndExportManifestFromPoliciesToDir", reflect.TypeOf((*MockEManifestHandler)(nil).ExtractAndExportManifestFromPoliciesToDir), ctx, policyLabels, objectLabels, toDir)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractAndExportManifestFromPoliciesToDir", reflect.TypeOf((*MockEManifestHandler)(nil).ExtractAndExportManifestFromPoliciesToDir), ctx, policyLabels, objectLabels, validationAnns, toDir)
+}
+
+// ValidateAndExtractManifestFromPolicies mocks base method.
+func (m *MockEManifestHandler) ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateAndExtractManifestFromPolicies", ctx, policyLabels, objectLabels, validationAnns)
+	ret0, _ := ret[0].([][]*unstructured.Unstructured)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ValidateAndExtractManifestFromPolicies indicates an expected call of ValidateAndExtractManifestFromPolicies.
+func (mr *MockEManifestHandlerMockRecorder) ValidateAndExtractManifestFromPolicies(ctx, policyLabels, objectLabels, validationAnns any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateAndExtractManifestFromPolicies", reflect.TypeOf((*MockEManifestHandler)(nil).ValidateAndExtractManifestFromPolicies), ctx, policyLabels, objectLabels, validationAnns)
 }
 
 // ValidateExtraManifestConfigmaps mocks base method.
-func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1alpha1.ConfigMapRef) error {
+func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1alpha1.ConfigMapRef, ibu *v1alpha1.ImageBasedUpgrade) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ValidateExtraManifestConfigmaps", ctx, extraManifestCMs)
+	ret := m.ctrl.Call(m, "ValidateExtraManifestConfigmaps", ctx, extraManifestCMs, ibu)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ValidateExtraManifestConfigmaps indicates an expected call of ValidateExtraManifestConfigmaps.
-func (mr *MockEManifestHandlerMockRecorder) ValidateExtraManifestConfigmaps(ctx, extraManifestCMs any) *gomock.Call {
+func (mr *MockEManifestHandlerMockRecorder) ValidateExtraManifestConfigmaps(ctx, extraManifestCMs, ibu any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateExtraManifestConfigmaps", reflect.TypeOf((*MockEManifestHandler)(nil).ValidateExtraManifestConfigmaps), ctx, extraManifestCMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateExtraManifestConfigmaps", reflect.TypeOf((*MockEManifestHandler)(nil).ValidateExtraManifestConfigmaps), ctx, extraManifestCMs, ibu)
 }

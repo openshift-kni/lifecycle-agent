@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
@@ -16,11 +18,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list
+// +kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list;watch
 
 // This annotation helps with the ordering as well as whether the policy should be applied. This is the same expectation as
 // the normal ZTP process post non-image-based cluster installation.
 const ztpDeployWaveAnnotation = "ran.openshift.io/ztp-deploy-wave"
+const TargetOcpVersionManifestCountAnnotation = "lca.openshift.io/target-ocp-version-manifest-count"
+const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
 
 // GetPolicies gets the policies matching the labels from the namespace and sort them by the ztp wave annotation value
 func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) ([]*policiesv1.Policy, error) {
@@ -66,8 +70,8 @@ func (h *EMHandler) GetPolicies(ctx context.Context, labels map[string]string) (
 }
 
 // Gets encapsulated objects from policy
-func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]string) ([]unstructured.Unstructured, error) {
-	var uobjects []unstructured.Unstructured
+func getConfigurationObjects(log *logr.Logger, policy *policiesv1.Policy, objectLabels map[string]string) ([]*unstructured.Unstructured, error) {
+	var uobjects []*unstructured.Unstructured
 
 	var objects []runtime.RawExtension
 
@@ -99,14 +103,21 @@ func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]
 				if metadata, exists := object.Object["metadata"].(map[string]interface{}); exists {
 					if labels, exists := metadata["labels"].(map[string]interface{}); exists {
 						labelsFound := true
-						for label, value := range objectLabels {
-							if value == "" {
-								_, exists := labels[label]
-								if !exists {
+						for oLabel, oValue := range objectLabels {
+							value, exists := labels[oLabel]
+							if !exists {
+								labelsFound = false
+								break
+							}
+
+							if oLabel == TargetOcpVersionLabel {
+								expectedValues := strings.Split(oValue, ",")
+								if !lo.Contains(expectedValues, value.(string)) {
+									log.Info(fmt.Sprintf("Found %s label in manifest %s %s, but its value %s is not in %v, skipping", oLabel, object.GetKind(), object.GetName(), value, expectedValues))
 									labelsFound = false
 									break
 								}
-							} else if value != labels[label] {
+							} else if oValue != value.(string) {
 								labelsFound = false
 								break
 							}
@@ -123,7 +134,7 @@ func getConfigurationObjects(policy *policiesv1.Policy, objectLabels map[string]
 			}
 
 			object.Object["status"] = map[string]interface{}{} // remove status, we can't apply it
-			uobjects = append(uobjects, object)
+			uobjects = append(uobjects, &object)
 		}
 	}
 	return uobjects, nil

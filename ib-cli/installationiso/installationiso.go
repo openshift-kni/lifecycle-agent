@@ -21,14 +21,19 @@ type InstallationIso struct {
 }
 
 type IgnitionData struct {
-	SeedImage         string
-	SeedVersion       string
-	BackupSecret      string
-	PullSecret        string
-	SshPublicKey      string
-	InstallSeedScript string
-	LCAImage          string
-	InstallationDisk  string
+	SeedImage           string
+	SeedVersion         string
+	BackupSecret        string
+	PullSecret          string
+	SshPublicKey        string
+	InstallSeedScript   string
+	LCAImage            string
+	InstallationDisk    string
+	ExtraPartitionStart string
+	PrecacheBestEffort  bool
+	PrecacheDisabled    bool
+	Shutdown            bool
+	SkipDiskCleanup     bool
 }
 
 //go:embed data/*
@@ -53,13 +58,16 @@ const (
 	coreosInstallerImage      = "quay.io/coreos/coreos-installer:latest"
 )
 
-func (r *InstallationIso) Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, rhcosLiveIsoUrl, installationDisk string) error {
+func (r *InstallationIso) Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
+	rhcosLiveIsoUrl, installationDisk string, extraPartitionStart string,
+	precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Info("Creating IBI installation ISO")
 	err := r.validate()
 	if err != nil {
 		return err
 	}
-	err = r.createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, installationDisk)
+	err = r.createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
 	if err != nil {
 		return err
 	}
@@ -82,9 +90,11 @@ func (r *InstallationIso) validate() error {
 	return nil
 }
 
-func (r *InstallationIso) createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, installationDisk string) error {
+func (r *InstallationIso) createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
+	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Info("Generating Ignition Config")
-	err := r.renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, installationDisk)
+	err := r.renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
+		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
 	if err != nil {
 		return err
 	}
@@ -108,17 +118,13 @@ func (r *InstallationIso) renderIgnitionFile() error {
 		"--pretty", "--strict",
 		"-d", "/data",
 		path.Join("/data", butaneConfigFile),
+		"-o", path.Join("/data", ibiIgnitionFileName),
 	}
-	ignitionContent, err := r.ops.RunInHostNamespace(command, args...)
+	_, err := r.ops.RunInHostNamespace(command, args...)
 	if err != nil {
 		return fmt.Errorf("failed to render ignition from config: %w", err)
 	}
 
-	p := path.Join(r.workDir, ibiIgnitionFileName)
-	err = os.WriteFile(p, []byte(ignitionContent), 0o644) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("failed write %s: %w", p, err)
-	}
 	return nil
 }
 
@@ -147,7 +153,8 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 	return nil
 }
 
-func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage, installationDisk string) error {
+func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
+	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
 	r.log.Debug("Generating butane config")
 	var sshPublicKey []byte
 	var err error
@@ -180,13 +187,27 @@ func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, p
 	}
 
 	templateData := IgnitionData{SeedImage: seedImage,
-		SeedVersion:       seedVersion,
-		BackupSecret:      backupSecretInButane,
-		PullSecret:        pullSecretInButane,
-		SshPublicKey:      string(sshPublicKey),
-		InstallSeedScript: seedInstallScriptInButane,
-		LCAImage:          lcaImage,
-		InstallationDisk:  installationDisk}
+		SeedVersion:         seedVersion,
+		BackupSecret:        backupSecretInButane,
+		PullSecret:          pullSecretInButane,
+		SshPublicKey:        string(sshPublicKey),
+		InstallSeedScript:   seedInstallScriptInButane,
+		LCAImage:            lcaImage,
+		InstallationDisk:    installationDisk,
+		ExtraPartitionStart: extraPartitionStart,
+	}
+	if precacheBestEffort {
+		templateData.PrecacheBestEffort = true
+	}
+	if precacheDisabled {
+		templateData.PrecacheDisabled = true
+	}
+	if shutdown {
+		templateData.Shutdown = true
+	}
+	if skipDiskCleanup {
+		templateData.SkipDiskCleanup = true
+	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)
 	if err != nil {

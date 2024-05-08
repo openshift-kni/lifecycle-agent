@@ -206,9 +206,9 @@ bundle-check: bundle
 	hack/check-git-tree.sh
 
 .PHONY: bundle-run
-bundle-run: # Install bundle on cluster using operator sdk. Index image is require due to upstream issue: https://github.com/operator-framework/operator-registry/issues/984
+bundle-run: # Install bundle on cluster using operator sdk.
 	oc create ns openshift-lifecycle-agent
-	$(OPERATOR_SDK) --index-image=quay.io/operator-framework/opm:v1.28.0 --security-context-config restricted -n openshift-lifecycle-agent run bundle $(BUNDLE_IMG)
+	$(OPERATOR_SDK) --security-context-config restricted -n openshift-lifecycle-agent run bundle $(BUNDLE_IMG)
 
 .PHONY: bundle-upgrade
 bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
@@ -258,7 +258,7 @@ catalog-build: opm ## Build a catalog image.
 # Push the catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
-	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+	${ENGINE} push ${CATALOG_IMG}
 
 ##@ lca-cli
 

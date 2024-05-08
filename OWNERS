@@ -23,6 +23,11 @@ filters:
     - browsell
     - donpenney
     - eranco74
+    - omertuc
+    - imiller0
+    - jc-rh
+    - oourfali
+    - romfreiman
     - tsorya
   ^api/seedreconfig/seedreconfig.go:
     labels:

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -109,15 +111,17 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 	return &nodesList.Items[0], nil
 }
 
-func ReadYamlOrJSONFile(filePath string, into any) error {
-	data, err := os.ReadFile(filePath)
+func ReadYamlOrJSONFile(fp string, into any) error {
+	fp = filepath.Clean(fp)
+
+	data, err := os.ReadFile(fp)
 	if err != nil {
 		return err // nolint:wrapcheck
 	}
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
 	if err := decoder.Decode(into); err != nil {
-		return fmt.Errorf("failed to decode %s: %w", filePath, err)
+		return fmt.Errorf("failed to decode %s: %w", fp, err)
 	}
 
 	return nil
@@ -214,6 +218,43 @@ func CopyFileIfExists(source, dest string) error {
 		}
 		return err
 	}})
+}
+
+// CopyToTempFile copies a file to a temporary file.
+// WARNING: This function only preserves POSIX permissions to the new file
+// If you want to use it, take that into account and extend it if needed to
+// also preserve other things like owner, extended attributes, selinux contexts
+// or whatever might be needed
+func CopyToTempFile(sourceFileName, directory, pattern string) (string, error) {
+	destinationFile, err := os.CreateTemp(directory, pattern)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer destinationFile.Close()
+	destinationFileName := destinationFile.Name()
+
+	sourceFile, err := os.Open(sourceFileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to open %s: %w", sourceFileName, err)
+	}
+	defer sourceFile.Close()
+
+	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
+		return "", fmt.Errorf("failed to copy %s to temporary file %s: %w", sourceFileName, destinationFileName, err)
+	}
+
+	// Preserve POSIX permissions
+	sourceFileInfo, err := os.Stat(sourceFileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get permissions of file %s: %w", sourceFileName, err)
+	}
+	// Chmod
+	err = destinationFile.Chmod(sourceFileInfo.Mode())
+	if err != nil {
+		return "", fmt.Errorf("failed to set permissions on file %s: %w", destinationFileName, err)
+	}
+
+	return destinationFileName, nil
 }
 
 func ReplaceImageRegistry(image, targetRegistry, sourceRegistry string) (string, error) {
@@ -369,4 +410,52 @@ func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Log
 	}
 
 	return dynamicClient, nil
+}
+
+func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstructured.Unstructured, error) {
+	var sortedManifests [][]*unstructured.Unstructured
+
+	groupSubDirs, err := os.ReadDir(filepath.Clean(basePath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read manifest groups subdirs in %s: %w", basePath, err)
+	}
+
+	for _, groupSubDir := range groupSubDirs {
+		if !groupSubDir.IsDir() {
+			log.Info("Unexpected file found, skipping...", "file",
+				filepath.Join(basePath, groupSubDir.Name()))
+			continue
+		}
+
+		// The returned list of entries are sorted by name alphabetically
+		manifestDirPath := filepath.Join(basePath, groupSubDir.Name())
+		manifestYamls, err := os.ReadDir(filepath.Clean(manifestDirPath))
+		if err != nil {
+			return nil, fmt.Errorf("failed get manifest yamls in %s: %w", manifestYamls, err)
+		}
+
+		var manifests []*unstructured.Unstructured
+		for _, yamlFile := range manifestYamls {
+			if yamlFile.IsDir() {
+				log.Info("Unexpected directory found, skipping...", "directory",
+					filepath.Join(manifestDirPath, yamlFile.Name()))
+				continue
+			}
+			yamlFilePath := filepath.Join(manifestDirPath, yamlFile.Name())
+
+			manifest := &unstructured.Unstructured{}
+			err := ReadYamlOrJSONFile(yamlFilePath, manifest)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read manifest file in %s: %w", yamlFilePath, err)
+			}
+			manifests = append(manifests, manifest)
+		}
+
+		sortedManifests = append(sortedManifests, manifests)
+	}
+
+	return sortedManifests, nil
 }

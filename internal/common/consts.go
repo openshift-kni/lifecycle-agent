@@ -16,6 +16,12 @@ limitations under the License.
 
 package common
 
+import (
+	"math"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
 // Common constants mainly used by packages in lca-cli
 const (
 	VarFolder       = "/var"
@@ -37,8 +43,12 @@ const (
 	EtcdStaticPodContainer = "etcd"
 	EtcdDefaultEndpoint    = "localhost:2379"
 
-	OvnNodeCerts = "/var/lib/ovn-ic/etc/ovnkube-node-certs"
-	MultusCerts  = "/etc/cni/multus/certs"
+	OvnIcEtcFolder = "/var/lib/ovn-ic/etc"
+	OvnNodeCerts   = OvnIcEtcFolder + "/ovnkube-node-certs"
+
+	MultusCerts = "/etc/cni/multus/certs"
+
+	MCDCurrentConfig = "/etc/machine-config-daemon/currentconfig"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
@@ -59,6 +69,17 @@ const (
 	IBUAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800
 	IBUInitMonitorService                           = "lca-init-monitor.service"
 	IBUInitMonitorServiceFile                       = "/etc/systemd/system/" + IBUInitMonitorService
+	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.
+	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailurePostRebootConfigAnnotation = "auto-rollback-on-failure.lca.openshift.io/post-reboot-config"
+	// AutoRollbackOnFailureUpgradeCompletionAnnotation configure automatic rollback after the Lifecycle Agent reports a failed upgrade upon completion.
+	// Only acceptable value is AutoRollbackOnFailureDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailureUpgradeCompletionAnnotation = "auto-rollback-on-failure.lca.openshift.io/upgrade-completion"
+	// AutoRollbackOnFailureInitMonitorAnnotation configure automatic rollback LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
+	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailureInitMonitorAnnotation = "auto-rollback-on-failure.lca.openshift.io/init-monitor"
+	// AutoRollbackDisableValue value that decides if rollback is disabled
+	AutoRollbackDisableValue = "Disabled"
 
 	LcaNamespace = "openshift-lifecycle-agent"
 	Host         = "/host"
@@ -69,7 +90,10 @@ const (
 	InstallConfigCM = "cluster-config-v1"
 	// InstallConfigCMNamespace cm namespace
 	InstallConfigCMNamespace = "kube-system"
-	OpenshiftInfraCRName     = "cluster"
+	// InstallConfigCMNamespace data key
+	InstallConfigCMInstallConfigDataKey = "install-config"
+	OpenshiftInfraCRName                = "cluster"
+	OpenshiftProxyCRName                = "cluster"
 
 	// Env var to configure auto rollback for post-reboot config failure
 	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
@@ -78,12 +102,21 @@ const (
 	SeedFormatVersion  = 3
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 
+	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
+
 	PullSecretName           = "pull-secret"
 	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}" //nolint:gosec
 	OpenshiftConfigNamespace = "openshift-config"
 
 	NMConnectionFolder = "/etc/NetworkManager/system-connections"
 	NetworkDir         = "network-configuration"
+	ApplyWaveAnn       = "lca.openshift.io/apply-wave"
+	defaultApplyWave   = math.MaxInt32 // 2147483647, an enough large number
+)
+
+var (
+	BackupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
+	RestoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
 )
 
 // CertPrefixes is the list of certificate prefixes to be backed up
@@ -93,3 +126,5 @@ var CertPrefixes = []string{
 	"localhost-serving-signer",
 	"service-network-serving-signer",
 }
+
+var TarOpts = []string{"--selinux", "--xattrs", "--xattrs-include=*", "--acls"}

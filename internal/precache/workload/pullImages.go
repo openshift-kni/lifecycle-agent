@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -38,19 +37,16 @@ const (
 	DefaultAuthFile string = "/var/lib/kubelet/config.json"
 )
 
-var Executor = ops.NewRegularExecutor(log.StandardLogger(), false)
+var (
+	logExec = &log.Logger{
+		Level: log.ErrorLevel, // reducing log level and only report if the exec calls fail
+	}
+	Executor = ops.NewRegularExecutor(logExec, false)
+)
 
 // CheckPodman verifies that podman is running by checking the version of podman
 func CheckPodman() bool {
 	if _, err := Executor.ExecuteWithLiveLogger("podman", []string{"version"}...); err != nil {
-		return false
-	}
-	return true
-}
-
-// podmanImgExists reports the existence of the given image via podman CLI
-func podmanImgExists(image string) bool {
-	if _, err := Executor.Execute("podman", []string{"image", "exists", image}...); err != nil {
 		return false
 	}
 	return true
@@ -62,7 +58,7 @@ func podmanImgPull(image, authFile string) error {
 	if authFile != "" {
 		args = append(args, []string{"--authfile", authFile}...)
 	}
-	if _, err := Executor.ExecuteWithLiveLogger("podman", args...); err != nil {
+	if _, err := Executor.Execute("podman", args...); err != nil {
 		return fmt.Errorf("failed podman pull with args %s: %w", args, err)
 	}
 	return nil
@@ -112,28 +108,12 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 
 	// Initialize progress tracking
 	progress := &precache.Progress{
-		Total:   len(precacheSpec),
-		Pulled:  0,
-		Skipped: 0,
-		Failed:  0,
+		Total:  len(precacheSpec),
+		Pulled: 0,
+		Failed: 0,
 	}
 
-	var pullSpec = make([]string, 0, len(precacheSpec))
-	// Sift through image list to determine which images exist, and which need to be pulled
-	log.Infof("Checking the pre-cache spec file images to determine if they need to be pulled...")
-	var skip bool
-	for _, image := range precacheSpec {
-		// Never skip tagged images, as the tagged image may have been updated
-		isUntagged := strings.Contains(image, "@sha")
-		skip = isUntagged && podmanImgExists(image)
-		if !skip {
-			pullSpec = append(pullSpec, image)
-		} else {
-			log.Infof("%s exists, skipping it...", image)
-			progress.Skipped++
-		}
-	}
-	log.Infof("Check complete: %d images need to be pulled!", len(pullSpec))
+	log.Infof("Will attempt to pull %d images", len(precacheSpec))
 
 	// Create wait group and pull images
 	var wg sync.WaitGroup
@@ -145,7 +125,7 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 	log.Infof("Configured precaching job to concurrently pull %d images.", numThreads)
 
 	// Start pulling images
-	for _, image := range pullSpec {
+	for _, image := range precacheSpec {
 		threads <- struct{}{}
 		wg.Add(1)
 		go func(image string) {

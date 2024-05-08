@@ -18,7 +18,7 @@ package precache
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,7 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-func getJob(ctx context.Context, c client.Client) (*batchv1.Job, error) {
+func GetJob(ctx context.Context, c client.Client) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
 	if err := c.Get(ctx, types.NamespacedName{
 		Name:      LcaPrecacheJobName,
@@ -69,35 +69,6 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 	}
 
 	return configMap
-}
-
-func validateJobConfig(ctx context.Context, c client.Client, imageList []string) error {
-	job, err := getJob(ctx, c)
-	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return err
-		}
-	}
-	if job != nil {
-		return errors.New("precaching job already exists, cannot create new job")
-	}
-
-	cm, err := common.GetConfigMap(ctx, c, v1alpha1.ConfigMapRef{
-		Name:      LcaPrecacheConfigMapName,
-		Namespace: common.LcaNamespace,
-	})
-	if err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get precache configMap: %w", err)
-	}
-	if cm != nil {
-		return errors.New("precaching configmap already exists, cannot create new job")
-	}
-
-	if len(imageList) < 1 {
-		return errors.New("no images specified for precaching")
-	}
-
-	return nil
 }
 
 func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade, scheme *runtime.Scheme) (*batchv1.Job, error) {
@@ -176,7 +147,7 @@ func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade,
 			Name:      LcaPrecacheJobName,
 			Namespace: common.LcaNamespace,
 			Annotations: map[string]string{
-				"app.kubernetes.io/name": "lifecyle-agent-precache",
+				"app.kubernetes.io/name": "lifecycle-agent-precache",
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -258,15 +229,6 @@ func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade,
 	return job, nil
 }
 
-func generateDeleteOptions() *client.DeleteOptions {
-	propagationPolicy := metav1.DeletePropagationBackground
-
-	delOpt := client.DeleteOptions{
-		PropagationPolicy: &propagationPolicy,
-	}
-	return &delOpt
-}
-
 // deleteConfigMap delete the precache configMap
 func deleteConfigMap(ctx context.Context, c client.Client) error {
 	cm := corev1.ConfigMap{
@@ -276,7 +238,7 @@ func deleteConfigMap(ctx context.Context, c client.Client) error {
 		},
 	}
 
-	if err := c.Delete(ctx, &cm, generateDeleteOptions()); err != nil {
+	if err := c.Delete(ctx, &cm, common.GenerateDeleteOptions()); err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete configMaps: %w", err)
 		}
@@ -297,7 +259,7 @@ func deleteJob(ctx context.Context, c client.Client) error {
 			Namespace: common.LcaNamespace,
 		},
 	}
-	if err := c.Delete(ctx, &precache, generateDeleteOptions()); err != nil {
+	if err := c.Delete(ctx, &precache, common.GenerateDeleteOptions()); err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to job: %w", err)
 		}
@@ -308,7 +270,7 @@ func deleteJob(ctx context.Context, c client.Client) error {
 
 // removePrecacheFinalizer remove the finalizer if present
 func removePrecacheFinalizer(ctx context.Context, c client.Client) error {
-	precache, err := getJob(ctx, c)
+	precache, err := GetJob(ctx, c)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil
@@ -326,4 +288,16 @@ func removePrecacheFinalizer(ctx context.Context, c client.Client) error {
 	}
 
 	return nil
+}
+
+// GetPrecacheStatusFileContent try to read the content for additional in progress status msg
+func GetPrecacheStatusFileContent() string {
+	if data, err := os.ReadFile(common.PathOutsideChroot(StatusFile)); err == nil {
+		curP := Progress{}
+		if err := json.Unmarshal(data, &curP); err != nil {
+			return "could not unmarshal precache status file"
+		}
+		return fmt.Sprintf("total: %d (pulled: %d, failed: %d)", curP.Total, curP.Pulled, curP.Failed)
+	}
+	return "No precache status file to read yet."
 }

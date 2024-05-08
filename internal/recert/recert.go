@@ -29,19 +29,34 @@ type RecertConfig struct {
 	ClusterRename    string `json:"cluster_rename,omitempty"`
 	Hostname         string `json:"hostname,omitempty"`
 	IP               string `json:"ip,omitempty"`
+	Proxy            string `json:"proxy,omitempty"`
+	InstallConfig    string `json:"install_config,omitempty"`
 	// We intentionally don't omitEmpty this field because an empty string here
 	// means "delete the kubeadmin password secret" while a complete omission
 	// of the field means "don't touch the secret". We never want the latter,
 	// we either want to delete the secret or update it, never leave it as is.
-	KubeadminPasswordHash string   `json:"kubeadmin_password_hash"`
-	SummaryFile           string   `json:"summary_file,omitempty"`
-	SummaryFileClean      string   `json:"summary_file_clean,omitempty"`
-	StaticDirs            []string `json:"static_dirs,omitempty"`
-	StaticFiles           []string `json:"static_files,omitempty"`
-	CNSanReplaceRules     []string `json:"cn_san_replace_rules,omitempty"`
-	UseKeyRules           []string `json:"use_key_rules,omitempty"`
-	UseCertRules          []string `json:"use_cert_rules,omitempty"`
-	PullSecret            string   `json:"pull_secret,omitempty"`
+	KubeadminPasswordHash string `json:"kubeadmin_password_hash"`
+	// WARNING: You probably don't want use `SummaryFile`! This will leak
+	// private keys and tokens!
+	SummaryFile       string   `json:"summary_file,omitempty"`
+	SummaryFileClean  string   `json:"summary_file_clean,omitempty"`
+	StaticDirs        []string `json:"static_dirs,omitempty"`
+	StaticFiles       []string `json:"static_files,omitempty"`
+	CNSanReplaceRules []string `json:"cn_san_replace_rules,omitempty"`
+	UseKeyRules       []string `json:"use_key_rules,omitempty"`
+	UseCertRules      []string `json:"use_cert_rules,omitempty"`
+	PullSecret        string   `json:"pull_secret,omitempty"`
+}
+
+func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
+	if proxy == nil || statusProxy == nil {
+		// Both must be set, anything else is invalid
+		return ""
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		proxy.HTTPProxy, proxy.HTTPSProxy, proxy.NoProxy,
+		statusProxy.HTTPProxy, statusProxy.HTTPSProxy, statusProxy.NoProxy,
+	)
 }
 
 // CreateRecertConfigFile function to create recert config file
@@ -63,7 +78,11 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 		config.IP = seedReconfig.NodeIP
 	}
 
-	config.SummaryFile = SummaryFile
+	config.Proxy = FormatRecertProxyFromSeedReconfigProxy(seedReconfig.Proxy, seedReconfig.StatusProxy)
+
+	config.InstallConfig = seedReconfig.InstallConfig
+
+	config.SummaryFileClean = SummaryFile
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
 	clusterFullDomain := fmt.Sprintf("%s.%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
 	config.ExtendExpiration = true
@@ -102,7 +121,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 
 func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error {
 	config := createBasicEmptyRecertConfig()
-	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.SummaryFileClean = "/kubernetes/recert-seed-creation-summary.yaml"
 	config.ForceExpire = true
 
 	config.KubeadminPasswordHash = ""
@@ -141,7 +160,7 @@ func generateDisposablePasswordHash() ([]byte, error) {
 
 func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string) error {
 	config := createBasicEmptyRecertConfig()
-	config.SummaryFileClean = "/kubernetes/recert-seed-summary.yaml"
+	config.SummaryFileClean = "/kubernetes/recert-seed-restoration-summary.yaml"
 	config.ExtendExpiration = true
 	config.UseKeyRules = []string{
 		fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", common.BackupCertsDir),
@@ -163,7 +182,10 @@ func createBasicEmptyRecertConfig() RecertConfig {
 		DryRun:       false,
 		EtcdEndpoint: common.EtcdDefaultEndpoint,
 		StaticDirs:   staticDirs,
-		StaticFiles:  []string{"/host-etc/mcs-machine-config-content.json"},
+		StaticFiles: []string{
+			"/host-etc/mcs-machine-config-content.json",
+			"/host-etc/mco/proxy.env",
+		},
 	}
 }
 

@@ -137,8 +137,10 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			//setup
 
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
+			mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
 
 			for _, track := range tt.trackers {
+				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(nil)
 				mockBackuprestore.EXPECT().StartOrTrackBackup(gomock.Any(), gomock.Any()).Return(track())
 			}
 
@@ -168,11 +170,12 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name        string
-		inputVelero [][]*velerov1.Restore
-		trackers    []func() (*backuprestore.RestoreTracker, error)
-		wantCtlRes  controllerruntime.Result
-		wantErr     assert.ErrorAssertionFunc
+		name                          string
+		inputVelero                   [][]*velerov1.Restore
+		trackers                      []func() (*backuprestore.RestoreTracker, error)
+		restorePVsReclaimPolicyReturn func() error
+		wantCtlRes                    controllerruntime.Result
+		wantErr                       assert.ErrorAssertionFunc
 	}{
 		{
 			name:        "restore successful",
@@ -183,6 +186,9 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 						SucceededRestores: []string{"name-success"},
 					}, nil
 				},
+			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
 			},
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.NoError,
@@ -254,6 +260,9 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 					}, nil
 				},
 			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
+			},
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.NoError,
 		},
@@ -285,8 +294,12 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 				mockBackuprestore.EXPECT().StartOrTrackRestore(gomock.Any(), gomock.Any()).Return(track()).Times(1)
 			}
 
+			if tt.restorePVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
+			}
+
 			// assert
-			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the numnber of groups and tracker match as pre cond for the test")
+			assert.Equalf(t, len(tt.trackers), len(tt.inputVelero), "make sure the number of groups and tracker match as pre cond for the test")
 			uph := &UpgHandler{
 				Client:          nil,
 				NoncachedClient: nil,
@@ -331,6 +344,8 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		healthCheckError                                error
 		getSortedBackupsFromConfigmapReturn             func() ([][]*velerov1.Backup, error)
 		getStartOrTrackBackupReturn                     func() (*backuprestore.BackupTracker, error)
+		getPatchPVsReclaimPolicyReturn                  func() error
+		getCleanupStaleBackupsReturn                    func() error
 		remountSysrootReturn                            func() error
 		exportOadpConfigurationToDirReturn              func() error
 		exportRestoresToDirReturn                       func() error
@@ -378,7 +393,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -404,7 +419,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -421,7 +436,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil,
-					backuprestore.NewBRNotFoundError("this is a test - NotFound")
+					backuprestore.NewBRFailedValidationError("OADP", "this is a test - NotFound")
 			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
@@ -430,7 +445,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -447,6 +462,12 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{{&velerov1.Backup{}}}, nil
+			},
+			getPatchPVsReclaimPolicyReturn: func() error {
+				return nil
+			},
+			getCleanupStaleBackupsReturn: func() error {
+				return nil
 			},
 			getStartOrTrackBackupReturn: func() (*backuprestore.BackupTracker, error) {
 				return &backuprestore.BackupTracker{
@@ -485,13 +506,13 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "this is a test - NotFound stop reconcile",
+					Message: "failed to export OADP configuration: this is a test - NotFound stop reconcile",
 				},
 			},
 		},
@@ -545,13 +566,13 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "ExportRestoresToDir validation failed",
+					Message: "failed to export restores: ExportRestoresToDir validation failed",
 				},
 			},
 		},
@@ -587,7 +608,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportExtraManifestToDir with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -621,7 +646,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "FetchClusterConfig with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -658,7 +687,11 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "Export IBU Crs successfully and reboot fail",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1alpha1.ImageBasedUpgrade{
+					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+					},
+				},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -697,7 +730,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -713,20 +746,28 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.getSortedBackupsFromConfigmapReturn != nil {
 				mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.getSortedBackupsFromConfigmapReturn())
 			}
+			if tt.getPatchPVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(tt.getPatchPVsReclaimPolicyReturn())
+			}
+			if tt.getCleanupStaleBackupsReturn != nil {
+				mockBackuprestore.EXPECT().CleanupStaleBackups(gomock.Any(), gomock.Any()).Return(tt.getCleanupStaleBackupsReturn())
+			}
 			if tt.getStartOrTrackBackupReturn != nil {
 				mockBackuprestore.EXPECT().StartOrTrackBackup(gomock.Any(), gomock.Any()).Return(tt.getStartOrTrackBackupReturn())
 			}
 			if tt.exportOadpConfigurationToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportOadpConfigurationToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportOadpConfigurationToDirReturn()).Times(1)
+				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-oadp-to-proceed-with-export"}}
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
 			}
 			if tt.exportRestoresToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
+				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-restore-to-proceed-with-export"}}
 			}
 			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
-				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
+				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
 			}
 			if tt.exportExtraManifestToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExportExtraManifestToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportExtraManifestToDirReturn()).Times(1)
@@ -833,7 +874,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					savedIbu := lcav1alpha1.ImageBasedUpgrade{}
 					err = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, len(savedIbu.Status.Conditions), 2, "")
-					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, "Upgrade failed", "")
+					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, utils.UpgradeFailed, "")
 					assert.Equalf(t, savedIbu.Status.Conditions[1].Message, "Uncontrolled rollback", "")
 				}
 			}
@@ -873,6 +914,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		ensureOadpConfigurationReturn     func() error
 		loadRestoresFromOadpRestoreReturn func() ([][]*velerov1.Restore, error)
 		startOrTrackRestoreReturn         func() (*backuprestore.RestoreTracker, error)
+		restorePVsReclaimPolicyReturn     func() error
 		initiateRollbackReturn            func() error
 		disableInitMonitorReturn          func() error
 		wantConditions                    []metav1.Condition
@@ -900,6 +942,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
+			ensureOadpConfigurationReturn: func() error {
+				return nil
+			},
 			applyPolicyManifestsReturn: func() error {
 				return nil
 			},
@@ -914,7 +959,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -931,12 +976,6 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
-			applyPolicyManifestsReturn: func() error {
-				return nil
-			},
-			applyExtraManifestsReturn: func() error {
-				return nil
-			},
 			ensureOadpConfigurationReturn: func() error {
 				return backuprestore.NewBRStorageBackendUnavailableError("error RestoreOadpConfigurations")
 			},
@@ -948,7 +987,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -988,7 +1027,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade failed",
+					Message: utils.UpgradeFailed,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
@@ -1025,13 +1064,13 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.Completed),
 					Status:  metav1.ConditionFalse,
-					Message: "Upgrade completed",
+					Message: utils.UpgradeCompleted,
 				},
 				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
 					Reason:  string(utils.ConditionReasons.Completed),
 					Status:  metav1.ConditionTrue,
-					Message: "Upgrade completed",
+					Message: utils.UpgradeCompleted,
 				},
 			},
 			wantErr: assert.NoError,
@@ -1070,6 +1109,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.startOrTrackRestoreReturn != nil {
 				mockBackuprestore.EXPECT().StartOrTrackRestore(gomock.Any(), gomock.Any()).Return(tt.startOrTrackRestoreReturn()).Times(1)
+			}
+			if tt.restorePVsReclaimPolicyReturn != nil {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)
 			}
 			if tt.initiateRollbackReturn != nil {
 				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)

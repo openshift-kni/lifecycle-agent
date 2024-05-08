@@ -36,6 +36,7 @@ import (
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,6 +53,7 @@ import (
 
 	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -115,6 +117,7 @@ var phases = struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
 func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) seedgenReconcilerPhase {
@@ -216,14 +219,13 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer deadlineCancel()
 	err := wait.PollUntilContextCancel(deadlineCtx, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
-		r.Log.Info("Waiting for MCO to override pull-secret file")
+		r.Log.Info("Waiting for MCO to override pull-secret file", "image registry auth file location", common.ImageRegistryAuthFile)
 		dockerConfigJSON, err := os.ReadFile(filepath.Join(common.Host, common.ImageRegistryAuthFile))
 		if err != nil {
 			r.Log.Info(fmt.Sprintf("Failed to read %s file with error %s, will retry",
 				common.ImageRegistryAuthFile, err))
 			return false, nil
 		}
-		r.Log.Info(fmt.Sprintf("%s data is %s", common.ImageRegistryAuthFile, strings.TrimSpace(string(dockerConfigJSON))))
 		if strings.TrimSpace(string(dockerConfigJSON)) != string(updatedPullSecret.Data[".dockerconfigjson"]) {
 			return false, nil
 		}
@@ -237,6 +239,35 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 		return fmt.Errorf("timed out waiting for MCO to override pull-secret file: %w", err)
 	}
 
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.Context) error {
+	r.Log.Info("Cleaning old machine configs")
+	mcps := &mcv1.MachineConfigPoolList{}
+	err := r.Client.List(ctx, mcps)
+	if err != nil {
+		return fmt.Errorf("failed to list machine config pools, err: %w", err)
+	}
+	var currentMCs []string
+	for _, mcp := range mcps.Items {
+		currentMCs = append(currentMCs, mcp.Spec.Configuration.Name)
+	}
+
+	mcs := &mcv1.MachineConfigList{}
+	err = r.Client.List(ctx, mcs)
+	if err != nil {
+		return fmt.Errorf("failed to list machine configs, err: %w", err)
+	}
+	for _, mc := range mcs.Items {
+		if !strings.HasPrefix(mc.Name, "rendered") || lo.Contains(currentMCs, mc.Name) {
+			continue
+		}
+		r.Log.Info(fmt.Sprintf("Deleting machine config %s", mc.Name))
+		if err := r.Client.Delete(ctx, mc.DeepCopy()); err != nil {
+			return fmt.Errorf("failed to delete machine config %s, err: %w", mc.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -431,6 +462,10 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 		"podman", "run", "--privileged", "--pid=host",
 		fmt.Sprintf("--name=%s", imagerContainerName),
 		"--replace", "--net=host",
+		// --http-proxy=true is already the default, but we're setting it
+		// explicitly to emphasize that we depend on it for the seed image
+		// generator to have network access in proxy-only environments
+		"--http-proxy=true",
 		"-v", "/etc:/etc", "-v", "/var:/var", "-v", "/var/run:/var/run", "-v", "/run/systemd/journal/socket:/run/systemd/journal/socket",
 		"-v", fmt.Sprintf("%s:%s", seedgenAuthFile, seedgenAuthFile),
 		"--entrypoint", "lca-cli",
@@ -447,7 +482,18 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGene
 
 	// In order to have the imager container both survive the LCA pod shutdown and have continued network access
 	// after all other pods are shutdown, we're using systemd-run to launch it as a transient service-unit
-	systemdRunOpts := []string{"--collect", "--wait", "--unit", "lca-generate-seed-image"}
+	systemdRunOpts := []string{
+		"--collect",
+		"--wait",
+		"--unit", "lca-generate-seed-image",
+		// Ensure the proxy environment variables of the LCA container are
+		// passed through systemd-run to the podman process (which will pass it
+		// to the seed image generation container thanks to `--http-proxy=true`)
+		"--setenv", "HTTP_PROXY",
+		"--setenv", "HTTPS_PROXY",
+		"--setenv", "NO_PROXY",
+	}
+
 	if _, err := r.Executor.Execute("systemd-run", append(systemdRunOpts, imagerCmdArgs...)...); err != nil {
 		return fmt.Errorf("failed to run imager container: %w", err)
 	}
@@ -538,12 +584,6 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
-	// Ensure the kubeadmin secret exists
-	if _, err := commonUtils.GetSecretData(ctx, "kubeadmin", "kube-system", "kubeadmin", r.Client); err != nil {
-		msg = "Rejected due to system missing required kube-system/kubeadmin Secret"
-		return
-	}
-
 	return
 }
 
@@ -599,6 +639,21 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 	return nil
 }
 
+func (r *SeedGeneratorReconciler) setupWorkspace() error {
+	if err := r.wipeExistingWorkspace(); err != nil {
+		return fmt.Errorf("failed to wipe previous workspace: %w", err)
+	}
+
+	if err := r.rmPreviousImagerContainer(); err != nil {
+		return fmt.Errorf("failed to delete previous imager container: %w", err)
+	}
+
+	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+	return nil
+}
+
 // Generate the seed image
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
@@ -619,21 +674,8 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	nextReconcile = doNotRequeue()
-
-	if err := r.wipeExistingWorkspace(); err != nil {
-		rc = fmt.Errorf("failed to wipe previous workspace: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := r.rmPreviousImagerContainer(); err != nil {
-		rc = fmt.Errorf("failed to delete previous imager container: %w", err)
-		setSeedGenStatusFailed(seedgen, rc.Error())
-		return
-	}
-
-	if err := os.Mkdir(common.PathOutsideChroot(utils.SeedgenWorkspacePath), 0o700); err != nil {
-		rc = fmt.Errorf("failed to create workdir: %w", err)
+	if err := r.setupWorkspace(); err != nil {
+		rc = err
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
@@ -737,6 +779,12 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
 	defer r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData))
+
+	if err := r.cleanupOldRenderedMachineConfigs(ctx); err != nil {
+		rc = fmt.Errorf("failed to cleanup old machine configs, err: %w", err)
+		setSeedGenStatusFailed(seedgen, rc.Error())
+		return
+	}
 
 	// Final stage of initial seed generation is to delete the CR and launch the container.
 	// Update the CR status prior to its saving and deletion

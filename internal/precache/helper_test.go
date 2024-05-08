@@ -17,7 +17,6 @@
 package precache
 
 import (
-	"context"
 	"fmt"
 	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func init() {
@@ -101,73 +99,6 @@ func TestRenderConfigMap(t *testing.T) {
 			assert.Equal(t, tc.expectedConfigMap.ObjectMeta.Name, cm.ObjectMeta.Name)
 			assert.Equal(t, tc.expectedConfigMap.ObjectMeta.Namespace, cm.ObjectMeta.Namespace)
 			assert.Equal(t, tc.expectedConfigMap.Data, cm.Data)
-		})
-	}
-}
-
-func TestValidateJobConfig(t *testing.T) {
-	imageList, _ := generateImageList()
-	testCases := []struct {
-		name               string
-		imageList          []string
-		inputConfigMapName string
-		inputJobName       string
-		expectedError      error
-	}{
-		{
-			name:               "Empty image list",
-			imageList:          []string{},
-			inputConfigMapName: "",
-			inputJobName:       "",
-			expectedError:      assert.AnError,
-		},
-		{
-			name:               "Existing precache configmap",
-			imageList:          imageList,
-			inputConfigMapName: LcaPrecacheConfigMapName,
-			inputJobName:       "",
-			expectedError:      assert.AnError,
-		},
-		{
-			name:               "Existing precache job",
-			imageList:          imageList,
-			inputConfigMapName: "",
-			inputJobName:       LcaPrecacheJobName,
-			expectedError:      assert.AnError,
-		},
-		{
-			name:               "Success case",
-			imageList:          imageList,
-			inputConfigMapName: "",
-			inputJobName:       "",
-			expectedError:      nil,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{}
-
-			// Inject ConfigMap, Job
-			if tc.inputConfigMapName != "" {
-				cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheConfigMapName, Namespace: common.LcaNamespace}}
-				objs = append(objs, cm)
-			}
-			if tc.inputJobName != "" {
-				job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: LcaPrecacheJobName, Namespace: common.LcaNamespace}}
-				objs = append(objs, job)
-			}
-
-			fakeClient, err := getFakeClientFromObjects(objs...)
-			if err != nil {
-				t.Errorf("error in creating fake client")
-			}
-
-			err = validateJobConfig(context.TODO(), fakeClient, tc.imageList)
-			if tc.expectedError != nil {
-				assert.NotNil(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
 		})
 	}
 }

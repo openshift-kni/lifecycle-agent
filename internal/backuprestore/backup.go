@@ -17,15 +17,11 @@ limitations under the License.
 package backuprestore
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +34,8 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -71,19 +65,18 @@ func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content [
 		if k8serrors.IsNotFound(err) {
 			errMsg := fmt.Sprintf("OADP configmap not found, error: %s. Please create the configmap.", err.Error())
 			h.Log.Error(nil, errMsg)
-			return nil, NewBRNotFoundError(errMsg)
+			return nil, NewBRFailedValidationError("OADP", errMsg)
 		}
 		return nil, fmt.Errorf("failed to get oadp configMaps : %w", err)
 	}
 
 	// extract backup CRs from configmaps
-	backupCRs, err := h.extractBackupFromConfigmaps(ctx, oadpConfigmaps)
+	backupCRs, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](oadpConfigmaps, common.BackupGvk)
 	if err != nil {
 		return nil, err
 	}
 
-	// sort backup CRs by wave-apply
-	sortedBackupGroups, err := sortByApplyWaveBackupCrs(backupCRs)
+	sortedBackupGroups, err := common.SortAndGroupByApplyWave[*velerov1.Backup](backupCRs)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +91,7 @@ func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.
 
 	for _, backup := range backups {
 		var existingBackup *velerov1.Backup
-		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
+		existingBackup, err := getValidBackup(ctx, h.Client, backup.Name, backup.Namespace)
 		if err != nil {
 			return &bt, err
 		}
@@ -158,7 +151,7 @@ func (h *BRHandler) StartOrTrackBackup(ctx context.Context, backups []*velerov1.
 //	annotations:
 //	  lca.openshift.io/apply-label: "rbac.authorization.k8s.io/v1/clusterroles/klusterlet,apps/v1/deployments/open-cluster-management-agent/klusterlet"
 func getObjsFromAnnotations(backup *velerov1.Backup) ([]ObjMetadata, error) {
-	result := []ObjMetadata{}
+	var result []ObjMetadata
 	for k, v := range backup.GetAnnotations() {
 		if k != applyLabelAnn || v == "" {
 			continue
@@ -230,16 +223,25 @@ func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Ba
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
 	}
+
 	// json patch escape info: https://jsonpatch.com/#json-pointer
 	escaped := strings.Replace(backupLabel, "/", "~1", 1)
 	payload := []byte(fmt.Sprintf(`[{"op":"remove","path":"/metadata/labels/%s"}]`, escaped))
+
 	for _, obj := range objs {
-		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
-		if err != nil {
+		patchedObj := obj
+
+		if err := patchObj(ctx, h.DynamicClient, &patchedObj, false, payload); err != nil {
+			if k8serrors.IsNotFound(err) || k8serrors.IsInvalid(err) {
+				h.Log.Info("backup label doesn't exist, no patching needed, ignoring", "name", obj.Name,
+					"namespace", obj.Namespace, "resource", obj.Resource, "group", obj.Group, "version", obj.Version)
+				continue
+			}
 			h.Log.Error(err, "failed to remove backup label", "name", obj.Name, "namespace", obj.Namespace,
 				"resource", obj.Resource, "group", obj.Group, "version", obj.Version)
 		}
 	}
+
 	return nil
 }
 
@@ -261,94 +263,78 @@ func (h *BRHandler) createNewBackupCr(ctx context.Context, backup *velerov1.Back
 	return nil
 }
 
-// sortByApplyWaveBackupCrs sorts the backups by the apply-wave annotation
-func sortByApplyWaveBackupCrs(resources []*velerov1.Backup) ([][]*velerov1.Backup, error) {
-	var resourcesApplyWaveMap = make(map[int][]*velerov1.Backup)
-	var sortedResources [][]*velerov1.Backup
+// +kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch;update
 
-	// sort backups by annotation lca.openshift.io/apply-wave
-	for _, resource := range resources {
-		applyWave, _ := resource.GetAnnotations()[applyWaveAnn]
-		if applyWave == "" {
-			// Empty apply-wave annotation or no annotation
-			resourcesApplyWaveMap[defaultApplyWave] = append(resourcesApplyWaveMap[defaultApplyWave], resource)
-			continue
-		}
-
-		applyWaveInt, err := strconv.Atoi(applyWave)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert %s in Backup CR %s to interger: %w", applyWave, resource.GetName(), err)
-		}
-		resourcesApplyWaveMap[applyWaveInt] = append(resourcesApplyWaveMap[applyWaveInt], resource)
+// PatchPVsReclaimPolicy - when LVMS is configured, we need to patch PVs with Retain as
+// the persistentVolumeReclaimPolicy due to https://github.com/vmware-tanzu/velero/issues/2739.
+func (h *BRHandler) PatchPVsReclaimPolicy(ctx context.Context) error {
+	pvList := &corev1.PersistentVolumeList{}
+	if err := h.List(ctx, pvList); err != nil {
+		return fmt.Errorf("failed to list PersistentVolumes: %w", err)
 	}
 
-	var sortedApplyWaves []int
-	for applyWave := range resourcesApplyWaveMap {
-		sortedApplyWaves = append(sortedApplyWaves, applyWave)
-	}
-	sort.Ints(sortedApplyWaves)
-
-	for index, applyWave := range sortedApplyWaves {
-		sortedResources = append(sortedResources, resourcesApplyWaveMap[applyWave])
-		sortBackupsByName(sortedResources[index])
+	if len(pvList.Items) == 0 {
+		h.Log.Info("No PersistentVolumes found in the cluster, skipping.")
+		return nil
 	}
 
-	return sortedResources, nil
-}
+	for _, pv := range pvList.Items {
+		if pvAnnotations := pv.GetAnnotations(); pvAnnotations != nil {
+			hasLvmsAnnotation := pvAnnotations[topolvmAnnotation] == topolvmValue
 
-// sortBackupsByName sorts a list of backups by name alphebetically
-func sortBackupsByName(resources []*velerov1.Backup) {
-	sort.Slice(resources, func(i, j int) bool {
-		nameI := resources[i].GetName()
-		nameJ := resources[j].GetName()
-		return nameI < nameJ
-	})
-}
+			if hasLvmsAnnotation && pv.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimDelete {
+				h.Log.Info("Patching persistentVolumeReclaimPolicy to Retain", "pv-name", pv.Name)
 
-// extractBackupFromConfigmaps extacts Backup CRs from configmaps
-func (h *BRHandler) extractBackupFromConfigmaps(ctx context.Context, configmaps []corev1.ConfigMap) ([]*velerov1.Backup, error) {
-	var backups []*velerov1.Backup
-
-	for _, cm := range configmaps {
-		for _, value := range cm.Data {
-			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
-			for {
-				resource := unstructured.Unstructured{}
-				err := decoder.Decode(&resource)
-				if err != nil {
-					if errors.Is(err, io.EOF) {
-						// Reach the end of the data, exit the loop
-						break
-					}
-					errMsg := fmt.Sprintf("Failed to decode yaml in configmap: %v", err.Error())
-					h.Log.Error(nil, errMsg)
-					return nil, NewBRFailedValidationError(resource.GetKind(), errMsg)
+				pvPatched := pv
+				pvPatched.Spec.PersistentVolumeReclaimPolicy = "Retain"
+				pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true"
+				if err := h.Client.Update(ctx, &pvPatched); err != nil {
+					return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
 				}
-
-				if resource.GroupVersionKind() != backupGvk {
-					continue
-				}
-
-				err = h.createObjectWithDryRun(ctx, &resource, cm.Name)
-				if err != nil {
-					return nil, err
-				}
-
-				backup := velerov1.Backup{}
-				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.Object, &backup); err != nil {
-					return nil, fmt.Errorf("failed to convert to backup CR %s from unstructured to typed: %w", backup.GetName(), err)
-				}
-				backups = append(backups, &backup)
 			}
 		}
 	}
-	return backups, nil
+
+	return nil
+}
+
+// RestorePVsReclaimPolicy restores the persistentVolumeReclaimPolicy field back to its original value,
+// in PVs created by LVMS (this field was updated during pre-pivot by LCA).
+func (h *BRHandler) RestorePVsReclaimPolicy(ctx context.Context) error {
+	pvList := &corev1.PersistentVolumeList{}
+	if err := h.List(ctx, pvList); err != nil {
+		return fmt.Errorf("failed to list PersistentVolumes: %w", err)
+	}
+
+	if len(pvList.Items) == 0 {
+		h.Log.Info("No PersistentVolumes found in the cluster, skipping.")
+		return nil
+	}
+
+	for _, pv := range pvList.Items {
+		if pvAnnotations := pv.GetAnnotations(); pvAnnotations != nil {
+			hasReclaimPolicyAnnotation := pvAnnotations[updatedReclaimPolicyAnnotation] == "true"
+
+			if hasReclaimPolicyAnnotation {
+				h.Log.Info("Restoring back the persistentVolumeReclaimPolicy to Delete", "pv-name", pv.Name)
+
+				pvPatched := pv
+				pvPatched.Spec.PersistentVolumeReclaimPolicy = "Delete"
+				delete(pvPatched.Annotations, updatedReclaimPolicyAnnotation)
+				if err := h.Client.Update(ctx, &pvPatched); err != nil {
+					return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // ExportOadpConfigurationToDir exports the OADP DataProtectionApplication CR and required storage creds to a given location
 func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error {
 	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(dpaGvkList)
+	dpaList.SetGroupVersionKind(DpaGvkList)
 	opts := []client.ListOption{
 		client.InNamespace(oadpNamespace),
 	}
@@ -439,52 +425,12 @@ func (h *BRHandler) ExportOadpConfigurationToDir(ctx context.Context, toDir, oad
 	return nil
 }
 
-// ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
-// returns: error
-func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
-	configmaps, err := common.GetConfigMaps(ctx, h.Client, configMaps)
-	if err != nil {
-		return fmt.Errorf("failed to get configMaps: %w", err)
-	}
-
-	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
-	if err != nil {
-		return fmt.Errorf("failed to get restore CR from configmaps: %w", err)
-	}
-
-	sortedRestores, err := sortByApplyWaveRestoreCrs(restores)
-	if err != nil {
-		return fmt.Errorf("failed to sort restore CRs: %w", err)
-	}
-
-	for i, restoreGroup := range sortedRestores {
-		// Create a directory for each group
-		group := filepath.Join(toDir, OadpRestorePath, "restore"+strconv.Itoa(i+1))
-		// If the directory already exists, it does nothing
-		if err := os.MkdirAll(group, 0o700); err != nil {
-			return fmt.Errorf("failed make dir in %s: %w", group, err)
-		}
-
-		for j, restore := range restoreGroup {
-			restoreFileName := strconv.Itoa(j+1) + "_" + restore.Name + "_" + restore.Namespace + yamlExt
-			filePath := filepath.Join(group, restoreFileName)
-			if err := utils.MarshalToYamlFile(restore, filePath); err != nil {
-				return fmt.Errorf("failed marshal file %s: %w", filePath, err)
-			}
-			h.Log.Info("Exported restore CR to file", "path", filePath)
-		}
-	}
-
-	return nil
-}
-
 // CleanupBackups deletes all backups for this cluster from object storage
-// returns: true if all backups have been deleted, error
-func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
+func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 	// Get the cluster ID
 	clusterID, err := getClusterID(ctx, h.Client)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// List all backups created for this cluster
@@ -495,12 +441,18 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
 		if errors.As(err, &groupDiscoveryErr) {
 			h.Log.Info("Backup CR is not installed, nothing to cleanup")
-			return true, nil
+			return nil
 		}
-		return false, fmt.Errorf("failed to list Backup: %w", err)
+		return fmt.Errorf("failed to list Backup: %w", err)
 	}
 
-	// Create deleteBackupRequest CR to delete the backup in the object storage
+	if len(backupList.Items) == 0 {
+		h.Log.Info("No Backups found in the cluster, skipping")
+		return nil
+	}
+
+	// Create deleteBackupRequest CR to delete the backup in the object storage,
+	// and cleanup labels from objects defined in Backup CRs
 	for _, backup := range backupList.Items {
 		deleteBackupRequest := &velerov1.DeleteBackupRequest{
 			ObjectMeta: metav1.ObjectMeta{
@@ -514,30 +466,26 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) (bool, error) {
 		}
 
 		if err := h.Create(ctx, deleteBackupRequest); err != nil {
-			return false, fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
+			return fmt.Errorf("could not apply deleteBackupRequest CR: %w", err)
 		}
 		h.Log.Info("Backup deletion request has sent", "backup", backup.Name)
-	}
 
-	for _, backup := range backupList.Items {
-		err := h.cleanupBackupLabels(ctx, &backup) //nolint:gosec
-		if err != nil {
+		cleanedBackup := backup
+		if err := h.cleanupBackupLabels(ctx, &cleanedBackup); err != nil {
 			h.Log.Error(err, "failed to clean backup labels")
 		}
 	}
 
-	// Ensure all backups are deleted
 	return h.ensureBackupsDeleted(ctx, backupList.Items)
 }
 
 // CleanupStaleBackups checks and deletes if there are any stale Backups (with the same name) that
 // may be available in the object storage but do not belong to this cluster.
-// returns: true if all stale backups have been deleted, error
-func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error) {
+func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) error {
 	// Get the cluster ID
 	clusterID, err := getClusterID(ctx, h.Client)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// List of stale backups present in this cluster
@@ -550,7 +498,7 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 		// though they are labeled with a different cluster ID.
 		existingBackup, err := getBackup(ctx, h.Client, backup.Name, backup.Namespace)
 		if err != nil {
-			return false, err
+			return err
 		} else if existingBackup == nil {
 			// Backup isn't found, continue to the next one
 			continue
@@ -572,7 +520,7 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 			}
 
 			if err := h.Create(ctx, deleteBackupRequest); err != nil {
-				return false, fmt.Errorf("could not apply DeleteBackupRequest CR: %w", err)
+				return fmt.Errorf("could not apply DeleteBackupRequest CR: %w", err)
 			}
 			h.Log.Info("Found stale Backup, DeleteBackupRequest has been sent", "backup", backup.Name)
 		}
@@ -580,48 +528,63 @@ func (h *BRHandler) CleanupStaleBackups(ctx context.Context, backups []*velerov1
 
 	if len(staleBackupList.Items) == 0 {
 		h.Log.Info("No stale Backups found in the cluster, skipping")
-		return true, nil
+		return nil
 	}
 
 	// Ensure all backups are deleted
 	return h.ensureBackupsDeleted(ctx, staleBackupList.Items)
 }
 
-func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) (bool, error) {
-	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, true,
+func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []velerov1.Backup) error {
+	// Set immediate poll to false to wait 1 second before performing first check
+	return wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Minute, false, //nolint:wrapcheck
 		func(ctx context.Context) (bool, error) {
-			var remainingBackups []string
 			for _, backup := range backups {
-				err := h.Get(ctx, types.NamespacedName{
+				backupRequest := &velerov1.DeleteBackupRequest{}
+				if err := h.Get(ctx, types.NamespacedName{
 					Name:      backup.Name,
 					Namespace: backup.Namespace,
-				}, &velerov1.Backup{})
-				if err != nil {
+				}, backupRequest); err != nil {
 					if !k8serrors.IsNotFound(err) {
-						return false, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
+						return false, nil
 					}
 				} else {
-					// Backup still exists
-					remainingBackups = append(remainingBackups, backup.Name)
+					// DeleteBackupRequest still exists
+					if backupRequest.Status.Phase == velerov1.DeleteBackupRequestPhaseProcessed && len(backupRequest.Status.Errors) != 0 {
+						return true, fmt.Errorf("deleteBackupRequest %s failed with errors: %v", backupRequest.GetName(), backupRequest.Status.Errors)
+					}
+					h.Log.Info("Waiting for DeleteBackupRequest to be processed and deleted", "deleteBackupRequest", backupRequest.GetName(), "phase", backupRequest.Status.Phase)
+					return false, nil
 				}
 			}
-
-			if len(remainingBackups) == 0 {
-				h.Log.Info("All backups have been deleted")
-				return true, nil
-			}
-
-			h.Log.Info("Waiting for backups to be deleted", "backups", remainingBackups)
-			return false, nil
+			return true, nil
 		})
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			h.Log.Error(err, "Timeout waiting for backups to be deleted")
-			return false, nil
-		}
-		return false, fmt.Errorf("api call errors when tring to ensure backup deletion: %w", err)
+}
+
+func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) error {
+	if err := h.waitForDeleteBackupRequests(ctx, backups); err != nil {
+		h.Log.Error(err, "Failed to delete backups")
+		return NewBRFailedError("backup", fmt.Sprintf("failed to delete backups: %s", err.Error()))
 	}
-	return true, nil
+
+	for _, backup := range backups {
+		err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
+			return h.Get(ctx, types.NamespacedName{ //nolint:wrapcheck
+				Name:      backup.Name,
+				Namespace: backup.Namespace,
+			}, &velerov1.Backup{})
+		})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("failed to ensure backup %s is deleted: %w", backup.GetName(), err)
+		} else {
+			return NewBRFailedError("backup", fmt.Sprintf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName()))
+		}
+	}
+	h.Log.Info("All Backup CRs have been deleted successfully")
+	return nil
 }
 
 // CleanupDeleteBackupRequests deletes all DeleteBackupRequest for this cluster from object storage
@@ -643,6 +606,11 @@ func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("failed to list DeleteBackupRequest CRs: %w", err)
+	}
+
+	if len(deleteBackupRequestList.Items) == 0 {
+		h.Log.Info("No DeleteBackupRequests found in the cluster, skipping")
+		return nil
 	}
 
 	// Cleanup all DeleteBackupRequest CRs

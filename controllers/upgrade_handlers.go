@@ -22,10 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/go-logr/logr"
-	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -39,7 +37,6 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -69,8 +66,6 @@ type (
 	}
 )
 
-const TargetOcpVersionLabel = "lca.openshift.io/target-ocp-version"
-
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
@@ -92,6 +87,15 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 		}
 		return prePivot, nil
 	} else {
+		if ibu.Status.RollbackAvailabilityExpiration.IsZero() {
+			// Set the rollback availability expiration field
+			if expiry, err := r.getRollbackAvailabilityExpiration(); err == nil {
+				ibu.Status.RollbackAvailabilityExpiration.Time = expiry
+			} else {
+				r.Log.Error(err, "unable to determine rollback availability expiration")
+			}
+		}
+
 		r.Log.Info("Running PostPivot handler")
 		postPivot, err := r.UpgradeHandler.PostPivot(ctx, ibu)
 		if err != nil {
@@ -103,7 +107,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 
 func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) {
 	// Clear any error status that may have been set
-	utils.SetUpgradeStatusInProgress(ibu, "In progress")
+	utils.SetUpgradeStatusInProgress(ibu, utils.InProgress)
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
@@ -135,8 +139,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.Log.Info("Handling backups with OADP operator")
 	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
-		if backuprestore.IsBRNotFoundError(err) ||
-			backuprestore.IsBRFailedValidationError(err) ||
+		if backuprestore.IsBRFailedValidationError(err) ||
 			backuprestore.IsBRFailedError(err) {
 
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -164,22 +167,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, staterootVarPath, backuprestore.OadpNs); err != nil {
-		if backuprestore.IsBRFailedError(err) {
+	if err := u.exportOadpConfigurationAndRestore(ctx, ibu, staterootVarPath); err != nil {
+		if backuprestore.IsBRFailedError(err) || backuprestore.IsBRFailedValidationError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while exporting OADP configuration: %w", err))
-	}
-
-	u.Log.Info("Writing Restore CRs into new stateroot")
-	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, staterootVarPath); err != nil {
-		if backuprestore.IsBRFailedValidationError(err) {
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			return doNotRequeue(), nil
-		}
-		return requeueWithError(fmt.Errorf("error while exporting restores: %w", err))
+		return requeueWithError(fmt.Errorf("error while exporting OADP configuration and restores: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
@@ -188,20 +181,12 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	}
 
 	u.Log.Info("Writing extra-manifests into new stateroot")
-	// Extract from policies can be done by matching labels on the policy or the CR itself
-	// Currently we expect user to properly label CRs with site specific content
-	// as those policies must not be applied on the seed
-	labels := map[string]string{TargetOcpVersionLabel: ibu.Spec.SeedImageRef.Version}
-	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, staterootVarPath); err != nil {
-		return requeueWithError(fmt.Errorf("error while exporting manifests from policies: %w", err))
-	}
-
-	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, staterootVarPath); err != nil {
+	if err := u.extractAndExportExtraManifests(ctx, ibu, staterootVarPath); err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
-		return requeueWithError(fmt.Errorf("error while exporting extra manifests: %w", err))
+		return requeueWithError(fmt.Errorf("error while exporting manifests: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
@@ -223,15 +208,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 	u.resetProgressMessage(ctx, ibu)
 
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
-
-	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
-	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
-		return requeueWithError(err)
-	}
-
-	filePath := filepath.Join(staterootPath, utils.IBUFilePath)
-	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
-		return requeueWithError(fmt.Errorf("error while saving IBU CR to the new state root: %w", err))
+	if err := exportIBUToNewStateroot(ibu, staterootPath); err != nil {
+		return requeueWithError(fmt.Errorf("error while exporting IBU CR to the new state root: %w", err))
 	}
 
 	u.Log.Info("Save a copy of the IBU in the current stateroot for rollback")
@@ -239,15 +217,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
 
-	// Set the new default deployment
-	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
-		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
-		if err != nil {
-			return requeueWithError(fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err))
-		}
-		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
-			return requeueWithError(fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err))
-		}
+	if err := u.setDefaultDeploymentToNewStateroot(stateroot); err != nil {
+		return requeueWithError(fmt.Errorf("error while setting default deployment: %w", err))
 	}
 
 	// Write an event to indicate reboot attempt
@@ -260,6 +231,78 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 		return doNotRequeue(), nil
 	}
 	return doNotRequeue(), nil
+}
+
+// exportOadpConfigurationAndRestore exports OADP configuration and restore CRs to the new stateroot
+func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+	if len(ibu.Spec.OADPContent) == 0 {
+		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
+	}
+
+	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
+	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, ostreeVarDir, backuprestore.OadpNs); err != nil {
+		return fmt.Errorf("failed to export OADP configuration: %w", err)
+	}
+
+	u.Log.Info("Writing Restore CRs into new stateroot")
+	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export restores: %w", err)
+	}
+
+	return nil
+}
+
+// extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
+func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+	var validationAnns = map[string]string{}
+	if count, exists := ibu.GetAnnotations()[extramanifest.TargetOcpVersionManifestCountAnnotation]; exists {
+		validationAnns[extramanifest.TargetOcpVersionManifestCountAnnotation] = count
+	}
+
+	versions, err := extramanifest.GetMatchingTargetOcpVersionLabelVersions(ibu.Spec.SeedImageRef.Version)
+	if err != nil {
+		return fmt.Errorf("failed to export manifests from policies: %w", err)
+	}
+
+	// Extract from policies can be done by matching labels on the policy or the CR itself
+	// Currently we expect user to properly label CRs with site specific content
+	// as those policies must not be applied on the seed
+	labels := map[string]string{extramanifest.TargetOcpVersionLabel: strings.Join(versions, ",")}
+	if err := u.ExtraManifest.ExtractAndExportManifestFromPoliciesToDir(ctx, nil, labels, validationAnns, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export manifests from policies: %w", err)
+	}
+
+	if err := u.ExtraManifest.ExportExtraManifestToDir(ctx, ibu.Spec.ExtraManifests, ostreeVarDir); err != nil {
+		return fmt.Errorf("failed to export manifests from configmaps: %w", err)
+	}
+	return nil
+}
+
+func (u *UpgHandler) setDefaultDeploymentToNewStateroot(stateroot string) error {
+	// Set the new default deployment
+	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
+		if err != nil {
+			return fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err)
+		}
+		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+			return fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err)
+		}
+	}
+	return nil
+}
+
+func exportIBUToNewStateroot(ibu *lcav1alpha1.ImageBasedUpgrade, staterootPath string) error {
+	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
+	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
+		return fmt.Errorf("failed to mkdir: %w", err)
+	}
+
+	filePath := filepath.Join(staterootPath, utils.IBUFilePath)
+	if err := lcautils.MarshalToFile(ibu, filePath); err != nil {
+		return fmt.Errorf("error while saving IBU CR to the new state root: %w", err)
+	}
+	return nil
 }
 
 // exportForUncontrolledRollback Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
@@ -286,10 +329,12 @@ var getStaterootVarPath = func(stateroot string) string {
 var CheckHealth = healthcheck.HealthChecks
 
 func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
-	// Check whether auto-rollback is desired
-	if ibu.Spec.AutoRollbackOnFailure.DisabledForUpgradeCompletion {
-		// Auto-rollback is not enabled, so do nothing
-		return
+	// Check whether auto-rollback is disabled using annotation
+	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailureUpgradeCompletionAnnotation]; exists {
+		if val == common.AutoRollbackDisableValue {
+			u.Log.Info("Auto-rollback upgrade completion is disabled")
+			return
+		}
 	}
 
 	u.Log.Info("Automatically rolling back due to failure")
@@ -303,86 +348,26 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, m
 	return
 }
 
-// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=get;list;watch;patch
-
-func (u *UpgHandler) sriovNetworkNodeStateWorkaround(ctx context.Context, msg string) error {
-	//
-	// Workaround: If the health checks fail, reporting that the SriovNetworkNodeState does not exist,
-	// add an annotation to the sriov default policy to kick the reconciler.
-	//
-	// After the postpivot, the various pods are all coming up at the same time, once kubelet is enabled by
-	// the postpivot service-unit. There is a bit of a race condition where the sriov-network-operator starts
-	// around the same time as the kube-apiserver. This means sriov-network-operator may start its reconcilers
-	// prior to being able to connect to etcd, which can be hidden by the use of cached API. When this happens,
-	// its reconcilers run with no CRs, but also no failures. It thinks the reconcilers were successful, and waits
-	// 5 minutes before running the reconcilers again.
-	//
-	// When this occurs, no SriovNetworkNodePolicies (other than default) or SriovNetworkNodeStates are created.
-	// This, in turn, results in a failure when trying to apply extra-manifests that include sriov config.
-	//
-	// Eventually, the periodic reconciler kicks in and creates the required CRs.
-	//
-	// The inclusion of the SriovNetworkNodeState health check blocks the Upgrade handler from attempting to apply
-	// the extra-manifests until it has a node in Succeeded state, protecting LCA from this failure. However, this
-	// LCA is waiting up to 5 minutes for the health checks to pass as a result, which increases the time required
-	// to perform an IBU.
-	//
-	// As a workaround, until such time that sriov-network-operator handles this scenario, this function kicks the
-	// reconciler by adding an annotation to the default SriovNetworkNodePolicy. This change to the CR triggers
-	// the reconciler to run, creating the necessary resources.
-	//
-	// If the health check failure message includes the message from the SriovNetworkNodeState health check that there
-	// were no SriovNetworkNodeState CRs, it is an indication that the sriov-network-operator reconciler ran without
-	// creating the CRs, which triggers the workaround to give the reconciler a little kick before requeuing. The health
-	// check should then be fine on the next pass of the IBU reconciler, as there will have been enough time for the CRs
-	// to have been created.
-	//
-
-	if !strings.Contains(msg, healthcheck.SriovNetworkNodeStateNotPresentMsg) {
-		return nil
-	}
-
-	policies := &sriovv1.SriovNetworkNodePolicyList{}
-	if err := u.List(ctx, policies); err != nil {
-		return fmt.Errorf("failed to get SriovNetworkNodePolicy list: %w", err)
-	}
-
-	for _, networkNodePolicy := range policies.Items {
-		if networkNodePolicy.Name != "default" {
-			continue
-		}
-
-		u.Log.Info("Adding annotation to default SriovNetworkNodePolicy to trigger sriov reconciler")
-
-		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s": "%s"}}}`,
-			"imagebasedupgrades.lca.openshift.io-kick-reconciler", time.Now().Format(time.RFC3339)))
-		if err := u.Patch(ctx, &sriovv1.SriovNetworkNodePolicy{
-			ObjectMeta: networkNodePolicy.ObjectMeta,
-		}, client.RawPatch(types.MergePatchType, patch)); err != nil {
-			return fmt.Errorf("failed to annotate default SriovNetworkNodePolicy: %w", err)
-		}
-
-		return nil
-	}
-
-	return fmt.Errorf("failed to find default SriovNetworkNodePolicy")
-}
-
-// postPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
+// PostPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Starting health check for different components")
-	err := CheckHealth(ctx, u.NoncachedClient, u.Log)
-	if err != nil {
-		// Trigger sriov workaround, if necessary
-		if err := u.sriovNetworkNodeStateWorkaround(ctx, err.Error()); err != nil {
-			u.Log.Error(err, "failure triggering sriov reconciler")
-		}
-
+	if err := CheckHealth(ctx, u.NoncachedClient, u.Log); err != nil {
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
 		return requeueWithHealthCheckInterval(), nil
+	}
+
+	err := u.BackupRestore.EnsureOadpConfiguration(ctx)
+	if err != nil {
+		if backuprestore.IsBRStorageBackendUnavailableError(err) {
+			utils.SetUpgradeStatusFailed(ibu, err.Error())
+			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to missing DataProtectionApplication: %s", err))
+			return doNotRequeue(), nil
+		}
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Checking Application Configuration: Failure occurred: %s", err.Error()))
+		return requeueWithError(fmt.Errorf("error while checking OADP configuration: %w", err))
 	}
 
 	// Applying extra manifests
@@ -416,17 +401,6 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 		}
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Applying Config Manifests: Failure occurred: %s", err.Error()))
 		return requeueWithError(fmt.Errorf("error while applying config manifests: %w", err))
-	}
-
-	err = u.BackupRestore.EnsureOadpConfiguration(ctx)
-	if err != nil {
-		if backuprestore.IsBRStorageBackendUnavailableError(err) {
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to backup storage failure: %s", err))
-			return doNotRequeue(), nil
-		}
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Checking Application Configuration: Failure occurred: %s", err.Error()))
-		return requeueWithError(fmt.Errorf("error while checking OADP configuration: %w", err))
 	}
 
 	// Handling restores with OADP operator
@@ -474,9 +448,19 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBas
 		return doNotRequeue(), nil
 	}
 
+	if err := u.BackupRestore.PatchPVsReclaimPolicy(ctx); err != nil {
+		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
+	}
+
 	// trigger and track each group
 	for index, backups := range sortedBackupGroups {
 		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
+
+		// check for any stale backup in the group
+		if err := u.BackupRestore.CleanupStaleBackups(ctx, backups); err != nil {
+			return requeueWithError(fmt.Errorf("failed to cleanup stale Backups: %w", err))
+		}
+
 		backupTracker, err := u.BackupRestore.StartOrTrackBackup(ctx, backups)
 		if err != nil {
 			return requeueWithError(fmt.Errorf("error while starting or tracking backup: %w", err))
@@ -545,11 +529,16 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 		// Restores are waiting for condition
 		return requeueWithMediumInterval(), nil
 	}
-
 	u.Log.Info("All restores succeeded")
+
+	if err := u.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
+		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
+	}
+
 	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
 		return requeueWithError(fmt.Errorf("error while removing OADP path: %w", err))
 	}
 	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
+
 	return doNotRequeue(), nil
 }
