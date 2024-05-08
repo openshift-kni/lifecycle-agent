@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package main
+package cmd
 
 import (
 	"fmt"
@@ -22,14 +22,29 @@ import (
 	"strings"
 	"syscall"
 
-	log "github.com/sirupsen/logrus"
-
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache/workload"
+
+	"github.com/spf13/cobra"
 )
 
-// Exit codes
+// ibuPrecacheWorkloadCmd represents the ibuPrecacheWorkload command
+var ibuPrecacheWorkloadCmd = &cobra.Command{
+	Use:     "ibuPrecacheWorkload",
+	Aliases: []string{"ibu-precache-workload"},
+	Short:   "Start precache during IBU",
+	Long:    `Start precache during IBU. This is to be called from a k8s job!`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ibuPrecacheWorkloadRun()
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(ibuPrecacheWorkloadCmd)
+}
+
+// Failure Exit codes
 const (
 	Failure int = 1
 )
@@ -71,8 +86,7 @@ func readPrecacheSpecFile() (precacheSpec []string, err error) {
 	return precacheSpec, nil
 }
 
-func main() {
-
+func ibuPrecacheWorkloadRun() {
 	log.Info("Starting to execute pre-cache workload")
 
 	bestEffort := false
