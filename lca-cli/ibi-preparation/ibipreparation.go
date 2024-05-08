@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-logr/logr"
+	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -20,39 +21,60 @@ import (
 const imageListFile = "var/tmp/imageListFile"
 
 type IBIPrepare struct {
-	log                 *logrus.Logger
-	ops                 ops.Ops
-	authFile            string
-	seedImage           string
-	rpmostreeClient     rpmostreeclient.IClient
-	ostreeClient        ostreeclient.IClient
-	seedExpectedVersion string
-	pullSecretFile      string
-	precacheBestEffort  bool
-	precacheDisabled    bool
-	shutdown            bool
+	log                        *logrus.Logger
+	ops                        ops.Ops
+	authFile                   string
+	seedImage                  string
+	rpmostreeClient            rpmostreeclient.IClient
+	ostreeClient               ostreeclient.IClient
+	seedExpectedVersion        string
+	pullSecretFile             string
+	precacheBestEffort         bool
+	precacheDisabled           bool
+	shutdown                   bool
+	installationDisk           string
+	shouldCreateExtraPartition bool
+	extraPartitionLabel        string
+	extraPartitionStart        string
+	extraPartitionNumber       int
+	cleanupDevice              preinstallUtils.CleanupDevice
+	skipDiskCleanup            bool
 }
 
 func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreeclient.IClient,
-	ostreeClient ostreeclient.IClient, seedImage, authFile, pullSecretFile, seedExpectedVersion string,
-	precacheBestEffort, precacheDisabled, shutdown bool) *IBIPrepare {
+	ostreeClient ostreeclient.IClient, cleanupDevice preinstallUtils.CleanupDevice,
+	seedImage, authFile, pullSecretFile,
+	seedExpectedVersion, installationDisk, extraPartitionLabel, extraPartitionStart string,
+	precacheBestEffort, precacheDisabled, shutdown, shouldCreateExtraPartition, skipDiskCleanup bool,
+	extraPartitionNumber int) *IBIPrepare {
 	return &IBIPrepare{
-		log:                 log,
-		ops:                 ops,
-		authFile:            authFile,
-		pullSecretFile:      pullSecretFile,
-		seedImage:           seedImage,
-		rpmostreeClient:     rpmostreeClient,
-		ostreeClient:        ostreeClient,
-		seedExpectedVersion: seedExpectedVersion,
-		precacheDisabled:    precacheDisabled,
-		precacheBestEffort:  precacheBestEffort,
-		shutdown:            shutdown,
+		log:                        log,
+		ops:                        ops,
+		authFile:                   authFile,
+		pullSecretFile:             pullSecretFile,
+		seedImage:                  seedImage,
+		rpmostreeClient:            rpmostreeClient,
+		ostreeClient:               ostreeClient,
+		seedExpectedVersion:        seedExpectedVersion,
+		precacheDisabled:           precacheDisabled,
+		precacheBestEffort:         precacheBestEffort,
+		shutdown:                   shutdown,
+		installationDisk:           installationDisk,
+		shouldCreateExtraPartition: shouldCreateExtraPartition,
+		extraPartitionLabel:        extraPartitionLabel,
+		extraPartitionStart:        extraPartitionStart,
+		extraPartitionNumber:       extraPartitionNumber,
+		cleanupDevice:              cleanupDevice,
+		skipDiskCleanup:            skipDiskCleanup,
 	}
 }
 
 func (i *IBIPrepare) Run() error {
 	// Pull seed image
+	if err := i.diskPreparation(); err != nil {
+		return fmt.Errorf("failed to prepare disk: %w", err)
+	}
+
 	i.log.Info("Pulling seed image")
 	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", i.authFile, i.seedImage); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
@@ -134,4 +156,43 @@ func (i *IBIPrepare) chrootIfPathExists(chrootPath string) (func() error, error)
 
 	i.log.Infof("chroot %s successful", chrootPath)
 	return unchroot, nil
+}
+
+func (i *IBIPrepare) cleanupDisk() {
+	if i.skipDiskCleanup {
+		i.log.Info("Skipping disk cleanup")
+		return
+	}
+	i.log.Infof("Cleaning up %s disk", i.installationDisk)
+	// We don't want to fail the process if the cleanup fails as the installation still can succeed
+	if err := i.cleanupDevice.CleanupInstallDevice(i.installationDisk); err != nil {
+		i.log.Errorf("failed to cleanup installation disk %s, though installation will continue"+
+			", error : %v", i.installationDisk, err)
+	}
+}
+
+func (i *IBIPrepare) diskPreparation() error {
+	i.log.Info("Start preparing disk")
+
+	i.cleanupDisk()
+
+	i.log.Info("Writing image to disk")
+	if _, err := i.ops.RunInHostNamespace("coreos-installer", "install", i.installationDisk); err != nil {
+		return fmt.Errorf("failed to write image to disk: %w", err)
+	}
+
+	if i.shouldCreateExtraPartition {
+		if err := i.ops.CreateExtraPartition(i.installationDisk, i.extraPartitionLabel,
+			i.extraPartitionStart, i.extraPartitionNumber); err != nil {
+			return fmt.Errorf("failed to create extra partition: %w", err)
+		}
+	} else {
+		if err := i.ops.SetupContainersFolderCommands(); err != nil {
+			return fmt.Errorf("failed to setup containers folder: %w", err)
+		}
+	}
+
+	i.log.Info("Disk was successfully prepared")
+
+	return nil
 }

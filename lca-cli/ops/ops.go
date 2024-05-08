@@ -22,6 +22,10 @@ var podmanRecertArgs = []string{
 	"run", "--rm", "--network=host", "--privileged", "--replace",
 }
 
+const (
+	containersFolder = "/var/lib/containers"
+)
+
 // Ops is an interface for executing commands and actions in the host namespace
 //
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
@@ -29,6 +33,7 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
+	RunListOfCommands(cmds []*CMD) error
 	ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error
 	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
 	RunUnauthenticatedEtcdServer(authFile, name string) error
@@ -45,6 +50,17 @@ type Ops interface {
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
 	Chroot(chrootPath string) (func() error, error)
+	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error
+	SetupContainersFolderCommands() error
+}
+
+type CMD struct {
+	command string
+	args    []string
+}
+
+func NewCMD(command string, args ...string) *CMD {
+	return &CMD{command: command, args: args}
 }
 
 type BlockDevice struct {
@@ -442,4 +458,69 @@ func (o *ops) Chroot(chrootPath string) (func() error, error) {
 		}
 		return nil
 	}, nil
+}
+
+func (o *ops) RunListOfCommands(cmds []*CMD) error {
+	for _, c := range cmds {
+		if _, err := o.hostCommandsExecutor.Execute(c.command, c.args...); err != nil {
+			return fmt.Errorf("failed to run %s with args %s: %w", c.command, c.args, err)
+		}
+	}
+	return nil
+}
+
+func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error {
+	o.log.Info("Creating extra partition")
+	if _, err := o.RunBashInHostNamespace(
+		"echo", "write", "|", "sfdisk", installationDisk); err != nil {
+		return fmt.Errorf("failed to create extra partition: %w", err)
+	}
+	if _, err := o.RunInHostNamespace("sgdisk", "--new",
+		fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionStart),
+		"--change-name", fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionLabel),
+		installationDisk); err != nil {
+		return fmt.Errorf("failed to create extra partition: %w", err)
+	}
+
+	extraPartitionPath, err := o.RunBashInHostNamespace("lsblk", installationDisk, "--json", "-O", "|", "jq",
+		fmt.Sprintf(".blockdevices[0].children[%d].path", extraPartitionNumber-1), "-r")
+	if err != nil {
+		return fmt.Errorf("failed to get extra partition path: %w", err)
+	}
+
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("mkfs.xfs", "-f", extraPartitionPath))
+	cmds = append(cmds, o.growRootPartitionCommands(installationDisk)...)
+	cmds = append(cmds, NewCMD("mount",
+		fmt.Sprintf("/dev/disk/by-partlabel/%s", extraPartitionLabel), "/var/lib/containers"),
+		NewCMD("restorecon", "-R", containersFolder))
+	if err := o.RunListOfCommands(cmds); err != nil {
+		return fmt.Errorf("failed to grow root partition: %w", err)
+	}
+
+	return nil
+}
+
+func (o *ops) SetupContainersFolderCommands() error {
+	o.log.Info("Setting up containers folder")
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("chattr", "-i", "/mnt/"),
+		NewCMD("mkdir", "-p", "/mnt/containers"),
+		NewCMD("chattr", "+i", "/mnt/"),
+		NewCMD("mount", "-o", "bind", "/mnt/containers", containersFolder),
+		NewCMD("restorecon", "-R", containersFolder))
+	if err := o.RunListOfCommands(cmds); err != nil {
+		return fmt.Errorf("failed to setup containers folder: %w", err)
+	}
+	return nil
+}
+
+func (o *ops) growRootPartitionCommands(installationDisk string) []*CMD {
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("growpart", installationDisk, "4"),
+		NewCMD("mount", "/dev/disk/by-partlabel/root", "/mnt"),
+		NewCMD("mount", "/dev/disk/by-partlabel/boot", "/mnt/boot"),
+		NewCMD("xfs_growfs", "/dev/disk/by-partlabel/root"))
+
+	return cmds
 }

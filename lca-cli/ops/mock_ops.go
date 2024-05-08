@@ -52,6 +52,20 @@ func (mr *MockOpsMockRecorder) Chroot(chrootPath any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Chroot", reflect.TypeOf((*MockOps)(nil).Chroot), chrootPath)
 }
 
+// CreateExtraPartition mocks base method.
+func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateExtraPartition", installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateExtraPartition indicates an expected call of CreateExtraPartition.
+func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
+}
+
 // ExtractTarWithSELinux mocks base method.
 func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
 	m.ctrl.T.Helper()
@@ -226,6 +240,20 @@ func (mr *MockOpsMockRecorder) RunInHostNamespace(command any, args ...any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunInHostNamespace", reflect.TypeOf((*MockOps)(nil).RunInHostNamespace), varargs...)
 }
 
+// RunListOfCommands mocks base method.
+func (m *MockOps) RunListOfCommands(cmds []*CMD) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunListOfCommands", cmds)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RunListOfCommands indicates an expected call of RunListOfCommands.
+func (mr *MockOpsMockRecorder) RunListOfCommands(cmds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunListOfCommands", reflect.TypeOf((*MockOps)(nil).RunListOfCommands), cmds)
+}
+
 // RunRecert mocks base method.
 func (m *MockOps) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
 	m.ctrl.T.Helper()
@@ -257,6 +285,20 @@ func (m *MockOps) RunUnauthenticatedEtcdServer(authFile, name string) error {
 func (mr *MockOpsMockRecorder) RunUnauthenticatedEtcdServer(authFile, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunUnauthenticatedEtcdServer", reflect.TypeOf((*MockOps)(nil).RunUnauthenticatedEtcdServer), authFile, name)
+}
+
+// SetupContainersFolderCommands mocks base method.
+func (m *MockOps) SetupContainersFolderCommands() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetupContainersFolderCommands")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetupContainersFolderCommands indicates an expected call of SetupContainersFolderCommands.
+func (mr *MockOpsMockRecorder) SetupContainersFolderCommands() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupContainersFolderCommands", reflect.TypeOf((*MockOps)(nil).SetupContainersFolderCommands))
 }
 
 // SystemctlAction mocks base method.
