@@ -19,16 +19,19 @@ package extramanifest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,15 +46,17 @@ import (
 )
 
 const (
-	ExtraManifestPath  = "/opt/extra-manifests"
-	PolicyManifestPath = "/opt/policy-manifests"
+	ExtraManifestPath           = "/opt/extra-manifests"
+	PolicyManifestPath          = "/opt/policy-manifests"
+	WarnAnnotationUnknownCRDKey = "lca.openshift.io/warn-extramanifest-cm-unknown-crd"
 )
 
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
-	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error
-	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef) error
+	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
+	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
+	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error
 }
 
 // EMHandler handles the extra manifests
@@ -100,22 +105,6 @@ func IsEMFailedError(err error) bool {
 	return false
 }
 
-func IsEMFailedValidationError(err error) bool {
-	var emErr *EMStatusError
-	if errors.As(err, &emErr) {
-		return emErr.Reason == "FailedValidation"
-	}
-	return false
-}
-
-func IsEMUnknownCRDError(err error) bool {
-	var emErr *EMStatusError
-	if errors.As(err, &emErr) {
-		return emErr.Reason == "UnknownCRD"
-	}
-	return false
-}
-
 func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper meta.RESTMapper, manifest *unstructured.Unstructured, isDryRun bool) error {
 	// Mapping resource GVK to CVR
 	mapping, err := restMapper.RESTMapping(manifest.GroupVersionKind().GroupKind(), manifest.GroupVersionKind().Version)
@@ -160,7 +149,7 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 	return nil
 }
 
-func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
+func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -184,26 +173,43 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 		}
 	}
 
-	// Apply manifest with dryrun
-	dryrun := true
+	// a map to track all the unknown CRDs in one shot
+	unknownCRDs := make(map[string]string)
+
+	// Apply manifest with dryRun
+	dryRun := true
+
+	// Collect unknownCRDs errors and continue to treat them as part of warning.
+	// Any other error should be treated as real error and return early (which should be priority over warnings)
 	for _, manifest := range manifests {
-		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryrun)
-		if err != nil {
-			h.Log.Error(err, "Failed to apply manifest with dryrun")
-			errMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
-
-			// Capture both invalid syntax and webhook validation errors
-			if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
-				return NewEMFailedValidationError(errMsg)
-			}
-
-			// Capture unknown CRD issue
+		if err := ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryRun); err != nil {
+			defaultErrMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
 			var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-			if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
-				return NewEMUnknownCRDError(errMsg)
+			switch {
+			case errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err): // Capture unknown CRD issue
+				key := manifest.GroupVersionKind().String()
+				if _, exists := unknownCRDs[key]; !exists {
+					unknownCRDs[key] = manifest.GetName()
+					h.Log.Info("unknown CRD", "CRD", key)
+				}
+			case k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err): // Capture both invalid syntax and webhook validation errors
+				return NewEMFailedValidationError(defaultErrMsg)
+			default: // Capture unknown runtime error
+				return fmt.Errorf(defaultErrMsg)
 			}
+		}
+	}
 
-			return fmt.Errorf(errMsg)
+	// annotate with the unknown CRDs
+	if len(unknownCRDs) > 0 {
+		b, err := json.Marshal(unknownCRDs)
+		if err != nil {
+			return fmt.Errorf("failed to marshal unknownCRDs map: %w", err)
+		}
+		annotationValue := string(b)
+		h.Log.Info(fmt.Sprintf("Unknown CRDs detected, will annotate with: %s", annotationValue))
+		if err := AddAnnotationWarnUnknownCRD(h.Client, h.Log, ibu, annotationValue); err != nil {
+			return fmt.Errorf("could not add new annotations to IBU: %w", err)
 		}
 	}
 
@@ -264,22 +270,29 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		return fmt.Errorf("failed to extract manifests from configMap: %w", err)
 	}
 
-	// TODO: sort/group manifests by apply-wave
+	sortedManifests, err := common.SortAndGroupByApplyWave[*unstructured.Unstructured](manifests)
+	if err != nil {
+		return fmt.Errorf("failed to sort and group manifests: %w", err)
+	}
 
 	// Create the directory for the extra manifests
 	exMDirPath := filepath.Join(toDir, ExtraManifestPath)
 	if err := os.MkdirAll(exMDirPath, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory for extra manifests in %s: %w", exMDirPath, err)
 	}
+	for i, manifestGroup := range sortedManifests {
+		group := filepath.Join(toDir, ExtraManifestPath, "group"+strconv.Itoa(i+1))
+		if err := os.MkdirAll(group, 0o700); err != nil {
+			return fmt.Errorf("failed make dir in %s: %w", group, err)
+		}
 
-	for i, manifest := range manifests {
-		gvk := manifest.GroupVersionKind()
-
-		fileName := fmt.Sprintf("%d_%s_%s_%s.yaml", i, gvk.Kind, manifest.GetName(), manifest.GetNamespace())
-		filePath := filepath.Join(toDir, ExtraManifestPath, fileName)
-		err = utils.MarshalToYamlFile(manifest, filePath)
-		if err != nil {
-			return fmt.Errorf("failed to marshal manifest %s to yaml: %w", manifest.GetName(), err)
+		for j, manifest := range manifestGroup {
+			fileName := fmt.Sprintf("%d_%s_%s_%s.yaml", j+1, manifest.GetKind(), manifest.GetName(), manifest.GetNamespace())
+			filePath := filepath.Join(group, fileName)
+			if err := utils.MarshalToYamlFile(manifest, filePath); err != nil {
+				return fmt.Errorf("failed to marshal manifest %s to yaml: %w", manifest.GetName(), err)
+			}
+			h.Log.Info("Exported manifest to file", "path", filePath)
 		}
 		h.Log.Info("Exported manifest to file", "path", filePath)
 	}
@@ -287,8 +300,8 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	return nil
 }
 
-// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies. It matches policies and/or CRs by labels.
-func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels map[string]string, toDir string) error {
+// ExtractAndExportManifestFromPoliciesToDir extracts CR specs from policies and writes to a given directory. It matches policies and/or CRs by labels.
+func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	if err := h.Client.Get(ctx, types.NamespacedName{Name: "policies.policy.open-cluster-management.io"}, crd); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -299,81 +312,96 @@ func (h *EMHandler) ExtractAndExportManifestFromPoliciesToDir(ctx context.Contex
 		}
 	}
 
-	// Create the directory for the extra manifests
-	manifestsDir := filepath.Join(toDir, PolicyManifestPath)
-	if err := os.MkdirAll(manifestsDir, 0o700); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", manifestsDir, err)
-	}
-
-	policies, err := h.GetPolicies(ctx, policyLabels)
+	sortedObjects, err := h.ValidateAndExtractManifestFromPolicies(ctx, policyLabels, objectLabels, validationAnns)
 	if err != nil {
-		return fmt.Errorf("failed to get policies: %w", err)
+		return fmt.Errorf("failed to validate and extract manifests from policies: %w", err)
 	}
 
-	for i, policy := range policies {
-		objects, err := getConfigurationObjects(policy, objectLabels)
-		if err != nil {
-			return fmt.Errorf("failed to extract manifests from policies: %w", err)
+	for i, objects := range sortedObjects {
+		group := filepath.Join(toDir, PolicyManifestPath, "group"+strconv.Itoa(i+1))
+		if err := os.MkdirAll(group, 0o700); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", group, err)
 		}
-		for _, object := range objects {
+
+		for j, object := range objects {
 			gvk := object.GroupVersionKind()
-			manifestFilePath := filepath.Join(manifestsDir, fmt.Sprintf(
-				"%d_%s_%s_%s.yaml", i, gvk.Kind, object.GetName(), object.GetNamespace()))
+			manifestFilePath := filepath.Join(group, fmt.Sprintf(
+				"%d_%s_%s_%s.yaml", j+1, gvk.Kind, object.GetName(), object.GetNamespace()))
 			if err := utils.MarshalToYamlFile(&object, manifestFilePath); err != nil { //nolint:gosec
 				return fmt.Errorf("failed to save manifests to file %s: %w", manifestFilePath, err)
 			}
-			h.Log.Info("Extracted from policy and exported manifest to file", "policy", policy.GetName(), "path", manifestFilePath)
+			h.Log.Info("Extracted from policy and exported manifest to file", "path", manifestFilePath)
 		}
 	}
 
 	return nil
 }
 
-// ApplyExtraManifests applies the extra manifests from the preserved extra manifests directory
-func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) error {
-	manifestYamls, err := os.ReadDir(fromDir)
+func (h *EMHandler) ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error) {
+	var manifestCount int
+	var sortedObjects = [][]*unstructured.Unstructured{}
+
+	sortedPolicies, err := h.GetPolicies(ctx, policyLabels)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read extraManifest from dir %s: %w", fromDir, err)
+		return sortedObjects, fmt.Errorf("failed to get policies: %w", err)
 	}
 
-	h.Log.Info("Applying extra manifests")
-	if len(manifestYamls) == 0 {
-		h.Log.Info("No extra manifests found", "path", fromDir)
+	for _, policy := range sortedPolicies {
+		objects, err := getConfigurationObjects(&h.Log, policy, objectLabels)
+		if err != nil {
+			return sortedObjects, fmt.Errorf("failed to extract manifests from policies: %w", err)
+		}
+
+		if len(objects) > 0 {
+			manifestCount += len(objects)
+			sortedObjects = append(sortedObjects, objects)
+		}
+	}
+
+	// check the labeled manifests count
+	if expectedManifestCount, exists := validationAnns[TargetOcpVersionManifestCountAnnotation]; exists {
+		if expectedManifestCount != strconv.Itoa(manifestCount) {
+			errMsg := fmt.Sprintf("The labeled manifests count found in policies %s does not match the expected manifests count %s", strconv.Itoa(manifestCount), expectedManifestCount)
+			h.Log.Error(nil, errMsg)
+			return sortedObjects, NewEMFailedError(errMsg)
+		}
+	}
+	return sortedObjects, nil
+}
+
+// ApplyExtraManifests applies the extra manifests from the preserved extra manifests directory
+func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) error {
+	manifests, err := utils.LoadGroupedManifestsFromPath(fromDir, &h.Log)
+	if err != nil {
+		return fmt.Errorf("failed to read extra manifests from path: %w", err)
+	}
+	if manifests == nil || len(manifests) == 0 {
+		h.Log.Info(fmt.Sprintf("No extra manifests to apply in path %s", fromDir))
 		return nil
 	}
 
-	for _, manifestYaml := range manifestYamls {
-		manifestYamlPath := filepath.Join(fromDir, manifestYaml.Name())
-		if manifestYaml.IsDir() {
-			h.Log.Info("Unexpected directory found, skipping", "directory", manifestYamlPath)
-			continue
-		}
+	for _, group := range manifests {
+		for _, manifest := range group {
+			h.Log.Info("Applying manifest", "kind", manifest.GetKind(), "name", manifest.GetName())
+			err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, false)
+			if err != nil {
+				h.Log.Error(err, "Failed to apply manifest")
+				errMsg := fmt.Sprintf("failed to apply manifest: %v", err.Error())
 
-		manifest := &unstructured.Unstructured{}
-		if err := utils.ReadYamlOrJSONFile(manifestYamlPath, manifest); err != nil {
-			return fmt.Errorf("failed to read manifest: %w", err)
-		}
+				// Capture both invalid syntax and webhook validation errors
+				if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
+					return NewEMFailedError(errMsg)
+				}
 
-		h.Log.Info("Applying manifest from file", "path", manifestYamlPath)
-		err = ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, false)
-		if err != nil {
-			h.Log.Error(err, "Failed to apply manifest")
-			errMsg := fmt.Sprintf("failed to apply manifest: %v", err.Error())
-
-			// Capture both invalid syntax and webhook validation errors
-			if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
-				return NewEMFailedError(errMsg)
+				// Capture unknown CRD issue
+				var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+				if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
+					return NewEMFailedError(errMsg)
+				}
+				return fmt.Errorf(errMsg)
 			}
 
-			// Capture unknown CRD issue
-			var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-			if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
-				return NewEMFailedError(errMsg)
-			}
-			return fmt.Errorf(errMsg)
+			h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
 		}
 
 		h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
@@ -384,5 +412,64 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 		return fmt.Errorf("failed to remove manifests from %s: %w", fromDir, err)
 	}
 	h.Log.Info("Extra manifests path removed", "path", fromDir)
+	return nil
+}
+
+// GetMatchingTargetOcpVersionLabelVersions generates a list of matching versions that
+// be used for extracting manifests from the policy
+// The matching versions include: [full release version, Major.Minor.Patch, Major.Minor]
+func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, error) {
+	var validVersions []string
+
+	semVersion, err := semver.NewVersion(ocpVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse target ocp version %s: %w", ocpVersion, err)
+	}
+
+	validVersions = append(validVersions,
+		fmt.Sprintf("%d.%d.%d", semVersion.Major, semVersion.Minor, semVersion.Patch),
+		fmt.Sprintf("%d.%d", semVersion.Major, semVersion.Minor),
+	)
+	if !lo.Contains(validVersions, ocpVersion) {
+		// full release version
+		validVersions = append(validVersions, ocpVersion)
+	}
+	return validVersions, nil
+}
+
+// AddAnnotationWarnUnknownCRD add warning in annotation for when CRD is unknown
+func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade, annotationValue string) error {
+	patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
+
+	ann := ibu.GetAnnotations()
+	if ann == nil {
+		ann = make(map[string]string)
+	}
+	ann[WarnAnnotationUnknownCRDKey] = annotationValue
+	ibu.SetAnnotations(ann)
+
+	if err := c.Patch(context.Background(), ibu, patch); err != nil {
+		return fmt.Errorf("failed to update annotations: %w", err)
+	}
+
+	log.Info("Successfully added annotation", "annotation", WarnAnnotationUnknownCRDKey)
+	return nil
+}
+
+// RemoveAnnotationWarnUnknownCRD remove the warning if present
+func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *lcav1alpha1.ImageBasedUpgrade, log logr.Logger) error {
+	if _, exists := ibu.GetAnnotations()[WarnAnnotationUnknownCRDKey]; exists {
+		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
+
+		ann := ibu.GetAnnotations()
+		delete(ann, WarnAnnotationUnknownCRDKey)
+		ibu.SetAnnotations(ann)
+
+		if err := c.Patch(context.Background(), ibu, patch); err != nil {
+			return fmt.Errorf("failed to update annotations: %w", err)
+		}
+		log.Info("Successfully removed annotation", "annotations", WarnAnnotationUnknownCRDKey)
+	}
+
 	return nil
 }

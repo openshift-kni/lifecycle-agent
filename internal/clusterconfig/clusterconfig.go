@@ -33,8 +33,7 @@ import (
 const (
 	manifestDir = "manifests"
 
-	proxyName     = "cluster"
-	proxyFileName = "proxy.json"
+	proxyName = "cluster"
 
 	pullSecretName = "pull-secret"
 
@@ -78,9 +77,6 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	}
 	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
 
-	if err := r.fetchProxy(ctx, manifestsDir); err != nil {
-		return err
-	}
 	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
 		return err
 	}
@@ -102,7 +98,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	return nil
 }
 
-func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context) (string, error) {
+func (r *UpgradeClusterConfigGather) getPullSecret(ctx context.Context) (string, error) {
 	r.Log.Info("Fetching pull-secret")
 	sd, err := utils.GetSecretData(ctx, common.PullSecretName, common.OpenshiftConfigNamespace, corev1.DockerConfigJsonKey, r.Client)
 	if err != nil {
@@ -111,36 +107,7 @@ func (r *UpgradeClusterConfigGather) fetchPullSecret(ctx context.Context) (strin
 	return sd, nil
 }
 
-func (r *UpgradeClusterConfigGather) fetchProxy(ctx context.Context, manifestsDir string) error {
-	r.Log.Info("Fetching cluster-wide proxy", "name", proxyName)
-
-	proxy := v1.Proxy{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, &proxy); err != nil {
-		return fmt.Errorf("failed to get proxy: %w", err)
-	}
-
-	p := v1.Proxy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: proxy.Name,
-		},
-		Spec: proxy.Spec,
-	}
-	typeMeta, err := r.typeMetaForObject(&p)
-	if err != nil {
-		return err
-	}
-	p.TypeMeta = *typeMeta
-
-	filePath := filepath.Join(manifestsDir, proxyFileName)
-	r.Log.Info("Writing proxy to file", "path", filePath)
-	err = utils.MarshalToFile(p, filePath)
-	if err != nil {
-		return fmt.Errorf("filed to write proxy to file to path %s :%w", filePath, err)
-	}
-	return nil
-}
-
-func (r *UpgradeClusterConfigGather) fetchSSHPublicKey() (string, error) {
+func (r *UpgradeClusterConfigGather) getSSHPublicKey() (string, error) {
 	sshKey, err := os.ReadFile(filepath.Join(hostPath, sshKeyFile))
 	if err != nil {
 		return "", fmt.Errorf("failed to read sshKey: %w", err)
@@ -148,7 +115,7 @@ func (r *UpgradeClusterConfigGather) fetchSSHPublicKey() (string, error) {
 	return string(sshKey), err
 }
 
-func (r *UpgradeClusterConfigGather) fetchInfraID(ctx context.Context) (string, error) {
+func (r *UpgradeClusterConfigGather) getInfraID(ctx context.Context) (string, error) {
 	infra, err := utils.GetInfrastructure(ctx, r.Client)
 	if err != nil {
 		return "", fmt.Errorf("failed to get infrastructure: %w", err)
@@ -177,8 +144,50 @@ func (r *UpgradeClusterConfigGather) GetKubeadminPasswordHash(ctx context.Contex
 	return kubeadminPasswordHash, nil
 }
 
-func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
-	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention, sshKey, infraID, pullSecret, kubeadminPasswordHash string) *seedreconfig.SeedReconfiguration {
+func (r *UpgradeClusterConfigGather) GetProxy(ctx context.Context) (*seedreconfig.Proxy, *seedreconfig.Proxy, error) {
+	proxy := v1.Proxy{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, &proxy); err != nil {
+		return nil, nil, fmt.Errorf("failed to get proxy: %w", err)
+	}
+
+	if proxy.Spec.HTTPProxy == "" && proxy.Spec.HTTPSProxy == "" && proxy.Spec.NoProxy == "" {
+		return nil, nil, nil
+	}
+
+	return &seedreconfig.Proxy{
+			HTTPProxy:  proxy.Spec.HTTPProxy,
+			HTTPSProxy: proxy.Spec.HTTPSProxy,
+			NoProxy:    proxy.Spec.NoProxy,
+		},
+		&seedreconfig.Proxy{
+			HTTPProxy:  proxy.Status.HTTPProxy,
+			HTTPSProxy: proxy.Status.HTTPSProxy,
+			NoProxy:    proxy.Status.NoProxy,
+		},
+		nil
+
+}
+
+func (r *UpgradeClusterConfigGather) GetInstallConfig(ctx context.Context) (string, error) {
+	configmap := corev1.ConfigMap{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: common.InstallConfigCMNamespace, Name: common.InstallConfigCM}, &configmap); err != nil {
+		return "", fmt.Errorf("failed to get install-config configmap: %w", err)
+	}
+	return configmap.Data[common.InstallConfigCMInstallConfigDataKey], nil
+
+}
+
+func SeedReconfigurationFromClusterInfo(
+	clusterInfo *utils.ClusterInfo,
+	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention,
+	sshKey string,
+	infraID string,
+	pullSecret string,
+	kubeadminPasswordHash string,
+	proxy,
+	statusProxy *seedreconfig.Proxy,
+	installConfig string,
+) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
 		BaseDomain:                clusterInfo.BaseDomain,
@@ -192,6 +201,9 @@ func SeedReconfigurationFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		SSHKey:                    sshKey,
 		PullSecret:                pullSecret,
 		KubeadminPasswordHash:     kubeadminPasswordHash,
+		Proxy:                     proxy,
+		StatusProxy:               statusProxy,
+		InstallConfig:             installConfig,
 	}
 }
 
@@ -208,17 +220,17 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return fmt.Errorf("failed to get kubeconfig retention from crypto dir: %w", err)
 	}
 
-	sshKey, err := r.fetchSSHPublicKey()
+	sshKey, err := r.getSSHPublicKey()
 	if err != nil {
 		return err
 	}
 
-	infraID, err := r.fetchInfraID(ctx)
+	infraID, err := r.getInfraID(ctx)
 	if err != nil {
 		return err
 	}
 
-	pullSecret, err := r.fetchPullSecret(ctx)
+	pullSecret, err := r.getPullSecret(ctx)
 	if err != nil {
 		return err
 	}
@@ -228,11 +240,24 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
+	proxy, statusProxy, err := r.GetProxy(ctx)
+	if err != nil {
+		return err
+	}
+
+	installConfig, err := r.GetInstallConfig(ctx)
+	if err != nil {
+		return err
+	}
+
 	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention,
 		sshKey,
 		infraID,
 		pullSecret,
 		kubeadminPasswordHash,
+		proxy,
+		statusProxy,
+		installConfig,
 	)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)

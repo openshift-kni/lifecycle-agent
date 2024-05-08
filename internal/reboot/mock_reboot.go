@@ -121,17 +121,3 @@ func (mr *MockRebootIntfMockRecorder) RebootToNewStateRoot(rationale any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebootToNewStateRoot", reflect.TypeOf((*MockRebootIntf)(nil).RebootToNewStateRoot), rationale)
 }
-
-// WriteIBUAutoRollbackConfigFile mocks base method.
-func (m *MockRebootIntf) WriteIBUAutoRollbackConfigFile(ibu *v1alpha1.ImageBasedUpgrade) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WriteIBUAutoRollbackConfigFile", ibu)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// WriteIBUAutoRollbackConfigFile indicates an expected call of WriteIBUAutoRollbackConfigFile.
-func (mr *MockRebootIntfMockRecorder) WriteIBUAutoRollbackConfigFile(ibu any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteIBUAutoRollbackConfigFile", reflect.TypeOf((*MockRebootIntf)(nil).WriteIBUAutoRollbackConfigFile), ibu)
-}

@@ -2,6 +2,7 @@ package seedcreator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	ignconfig "github.com/coreos/ignition/v2/config"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/samber/lo"
@@ -79,9 +82,16 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to backup dir for seed image to %s: %w", s.backupDir, err)
 	}
 
+	lcaBinaryPath := "/usr/local/bin/lca-cli"
 	s.log.Info("Copy lca-cli binary")
-	err := cp.Copy("/usr/local/bin/lca-cli", "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
+	err := cp.Copy(lcaBinaryPath, "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
+		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
+	}
+
+	// copied to backup dir in order to be included in the seed image without being part of the var archive
+	s.log.Info("Copy lca-cli binary, into backup dir")
+	if err := cp.Copy(lcaBinaryPath, path.Join(s.backupDir, "lca-cli"), cp.Options{AddPermission: os.FileMode(0o777)}); err != nil {
 		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
 	}
 
@@ -105,7 +115,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backing up seed cluster certificates for recert tool: %w", err)
 		}
-		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupDir); err != nil {
+		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backup kubeadmin password hash: %w", err)
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
@@ -147,7 +157,13 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to run once backup_mco_config: %w", err)
 	}
 
-	if err := s.createAndPushSeedImage(); err != nil {
+	clusterInfoJSONSBytes, err := os.ReadFile(path.Join(s.backupDir, common.SeedClusterInfoFileName))
+	if err != nil {
+		return fmt.Errorf("failed to read cluster info file: %w", err)
+	}
+
+	clusterInfoJSON := string(clusterInfoJSONSBytes)
+	if err := s.createAndPushSeedImage(clusterInfoJSON); err != nil {
 		return fmt.Errorf("failed to create and push seed image: %w", err)
 	}
 
@@ -184,7 +200,12 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		return fmt.Errorf("failed to get cluster info: %w", err)
 	}
 
-	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage)
+	hasProxy, err := utils.HasProxy(ctx, s.client)
+	if err != nil {
+		return fmt.Errorf("failed to get proxy information: %w", err)
+	}
+
+	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage, hasProxy)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)
@@ -291,6 +312,40 @@ func (s *SeedCreator) stopServices() error {
 	return nil
 }
 
+// getVarLibFilelist parses the MCD currentconfig to get the list of managed files under /var/lib
+func (s *SeedCreator) getVarLibFilelist() ([]string, error) {
+	var filelist []string
+	varlibRegex := regexp.MustCompile(`^/var/lib/`)
+
+	data, err := os.ReadFile(common.MCDCurrentConfig)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
+	}
+
+	var mc mcv1.MachineConfig
+
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return filelist, fmt.Errorf("unable to parse MCD currentconfig: %w", err)
+	}
+
+	if mc.Spec.Config.Raw == nil {
+		return filelist, fmt.Errorf("unable to find config in MCD currentconfig")
+	}
+
+	ign, _, err := ignconfig.Parse(mc.Spec.Config.Raw)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to parse ignition config from MCD currentconfig: %w", err)
+	}
+
+	for _, f := range ign.Storage.Files {
+		if varlibRegex.MatchString(f.Path) {
+			filelist = append(filelist, f.Path)
+		}
+	}
+
+	return filelist, nil
+}
+
 func (s *SeedCreator) backupVar() error {
 	varTarFile := path.Join(s.backupDir, "var.tgz")
 
@@ -304,16 +359,27 @@ func (s *SeedCreator) backupVar() error {
 		"/var/lib/cni/bin/*",
 		"/var/lib/containers/*",
 		"/var/lib/kubelet/pods/*",
-		common.OvnNodeCerts + "/*",
+		common.OvnIcEtcFolder + "/*",
 	}
 
 	// Build the tar command
 	tarArgs := []string{"czf", varTarFile}
+
+	// Ensure all MCD-managed files in /var/lib are explicitly included, to avoid accidental exclusion
+	if managedfiles, err := s.getVarLibFilelist(); err != nil {
+		return fmt.Errorf("unable to get list of MCD managed files: %w", err)
+	} else {
+		for _, fname := range managedfiles {
+			tarArgs = append(tarArgs, "--add-file", fname)
+		}
+	}
+
 	for _, pattern := range excludePatterns {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
 	}
-	tarArgs = append(tarArgs, "--selinux", common.VarFolder)
+	tarArgs = append(tarArgs, common.VarFolder)
+	tarArgs = append(tarArgs, common.TarOpts...)
 
 	// Run the tar command
 	_, err := s.ops.RunBashInHostNamespace("tar", tarArgs...)
@@ -332,13 +398,17 @@ func (s *SeedCreator) backupEtc() error {
 	excludePatterns := []string{
 		"/etc/NetworkManager/system-connections",
 		"/etc/machine-config-daemon/orig/var/lib/kubelet",
+		"/etc/openvswitch/conf.db",
+		"/etc/openvswitch/.conf.db.~lock~",
+		"/etc/hostname",
 	}
 	tarArgs := []string{"tar", "czf", path.Join(s.backupDir + "/etc.tgz")}
 	for _, pattern := range excludePatterns {
 		// We're handling the excluded patterns in bash, we need to single quote them to prevent expansion
 		tarArgs = append(tarArgs, "--exclude", fmt.Sprintf("'%s'", pattern))
 	}
-	tarArgs = append(tarArgs, "--selinux", "-T", "-")
+	tarArgs = append(tarArgs, "-T", "-")
+	tarArgs = append(tarArgs, common.TarOpts...)
 
 	args := []string{"admin", "config-diff", "|", "awk", `'$1 == "D" {print "/etc/" $2}'`, ">",
 		path.Join(s.backupDir, "/etc.deletions")}
@@ -365,7 +435,8 @@ func (s *SeedCreator) backupOstree() error {
 	ostreeTar := s.backupDir + "/ostree.tgz"
 
 	// Execute 'tar' command and backup /etc
-	args := []string{"czf", ostreeTar, "--selinux", "-C", "/ostree/repo", "."}
+	args := []string{"czf", ostreeTar, "-C", "/ostree/repo", "."}
+	args = append(args, common.TarOpts...)
 	if _, err := s.ops.RunBashInHostNamespace("tar", args...); err != nil {
 		return fmt.Errorf("failed backing ostree with args %s: %w", args, err)
 	}
@@ -385,7 +456,7 @@ func (s *SeedCreator) backupRPMOstree() error {
 
 func (s *SeedCreator) backupMCOConfig() error {
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	if _, err := s.ops.RunBashInHostNamespace("cp", "/etc/machine-config-daemon/currentconfig", mcoJSON); err != nil {
+	if _, err := s.ops.RunBashInHostNamespace("cp", common.MCDCurrentConfig, mcoJSON); err != nil {
 		return fmt.Errorf("failed to backup MCO config: %w", err)
 	}
 	s.log.Info("Backup of mco-currentconfig created successfully.")
@@ -393,7 +464,7 @@ func (s *SeedCreator) backupMCOConfig() error {
 }
 
 // Building and pushing OCI image
-func (s *SeedCreator) createAndPushSeedImage() error {
+func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	s.log.Info("Build and push OCI image to ", s.containerRegistry)
 	s.log.Debug(s.ostreeClient.RpmOstreeVersion()) // If verbose, also dump out current rpm-ostree version available
 
@@ -426,6 +497,7 @@ func (s *SeedCreator) createAndPushSeedImage() error {
 		"--file", tmpfile.Name(),
 		"--tag", s.containerRegistry,
 		"--label", fmt.Sprintf("%s=%d", common.SeedFormatOCILabel, common.SeedFormatVersion),
+		"--label", fmt.Sprintf("%s=%s", common.SeedClusterInfoOCILabel, clusterInfo),
 		s.backupDir,
 	}
 	_, err = s.ops.RunInHostNamespace(

@@ -64,6 +64,7 @@ var (
 	hostnameFile       = "/etc/hostname"
 	nmConnectionFolder = common.NMConnectionFolder
 	nodeIpFile         = "/run/nodeip-configuration/primary-ip"
+	nodeIPHintFile     = "/etc/default/nodeip-configuration"
 )
 
 const (
@@ -93,18 +94,18 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	p.log.Info("Reading seed reconfiguration info")
 	seedReconfiguration, err := utils.ReadSeedReconfigurationFromFile(
-		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedClusterInfoFileName))
+		path.Join(p.workingDir, common.ClusterConfigDir, common.SeedReconfigurationFileName))
 	if err != nil {
 		return fmt.Errorf("failed to get cluster info from %s, err: %w", "", err)
 	}
 
-	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
-		return fmt.Errorf("failed to configure networking, err: %w", err)
+	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
+		seedReconfiguration.SSHKey, sshKeyEarlyAccessFile); err != nil {
+		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
 
-	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
-		seedReconfiguration, sshKeyEarlyAccessFile); err != nil {
-		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
+	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
+		return fmt.Errorf("failed to configure networking, err: %w", err)
 	}
 
 	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFile,
@@ -244,7 +245,7 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfiguration
 	if err != nil {
 		return fmt.Errorf("failed to get etcd members list")
 	}
-	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("http://%s:2380", newEtcdIp)})
+	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("https://%s:2380", newEtcdIp)})
 	if err != nil {
 		return fmt.Errorf("failed to change etcd peer url, err: %w", err)
 	}
@@ -280,6 +281,20 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 	})
 }
 
+func applyManifest(ctx context.Context, log *logrus.Logger, dc dynamic.Interface, rm meta.RESTMapper, m *unstructured.Unstructured) error {
+	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
+		if err := extramanifest.ApplyExtraManifest(ctx, dc, rm, m, false); err != nil {
+			if common.IsRetriable(err) {
+				log.Infof("Retrying apply of manifest %s %s", m.GetKind(), m.GetName())
+				return false, nil
+			} else {
+				return true, err //nolint:wrapcheck
+			}
+		}
+		return true, nil
+	})
+}
+
 func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper) error {
 	p.log.Infof("Applying manifests from %s", mPath)
 	mFiles, err := os.ReadDir(mPath)
@@ -301,17 +316,18 @@ func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicCli
 			for _, m := range manifests.([]interface{}) {
 				manifest := unstructured.Unstructured{}
 				manifest.Object = m.(map[string]interface{})
-				if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+				if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
 					return fmt.Errorf("failed to apply manifest: %w", err)
 				}
 			}
 		} else {
 			manifest := unstructured.Unstructured{}
 			manifest.Object = obj
-			if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+			if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
 				return fmt.Errorf("failed to apply manifest: %w", err)
 			}
 		}
+
 		p.log.Infof("manifest applied: %s", filepath.Join(mPath, mFile.Name()))
 	}
 	return nil
@@ -572,14 +588,14 @@ func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 // setSSHKey  sets ssh public key provided by user in 2 operations:
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
-func (p *PostPivot) setSSHKey(seedReconfiguration *clusterconfig_api.SeedReconfiguration, sshKeyFile string) error {
-	if seedReconfiguration.SSHKey == "" {
+func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
+	if sshKey == "" {
 		p.log.Infof("No ssh public key was provided, skipping")
 		return nil
 	}
 
 	p.log.Infof("Creating file %s with ssh keys for early connection", sshKeyFile)
-	if err := os.WriteFile(sshKeyFile, []byte(seedReconfiguration.SSHKey), 0o600); err != nil {
+	if err := os.WriteFile(sshKeyFile, []byte(sshKey), 0o600); err != nil {
 		return fmt.Errorf("failed to write ssh key to file, err %w", err)
 	}
 
@@ -588,7 +604,7 @@ func (p *PostPivot) setSSHKey(seedReconfiguration *clusterconfig_api.SeedReconfi
 		return fmt.Errorf("failed to set %s user ownership on %s, err :%w", userCore, sshKeyFile, err)
 	}
 
-	return p.createSSHKeyMachineConfigs(seedReconfiguration.SSHKey)
+	return p.createSSHKeyMachineConfigs(sshKey)
 }
 
 func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
@@ -741,6 +757,24 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
+// setNodeIpHint writes provided subnet to nodeIPHintFile
+func (p *PostPivot) setNodeIpHint(machineNetwork string) error {
+	if machineNetwork == "" {
+		p.log.Infof("No machine network was provided, skipping setting node ip hint")
+		return nil
+	}
+
+	ip, _, err := net.ParseCIDR(machineNetwork)
+	if err != nil {
+		return fmt.Errorf("failed to parse machine network %s, err: %w", machineNetwork, err)
+	}
+	p.log.Infof("Writing machine network cidr %s into %s", ip, nodeIPHintFile)
+	if err := os.WriteFile(nodeIPHintFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip)), 0o600); err != nil {
+		return fmt.Errorf("failed to write machine network cidr %s to %s, err %w", machineNetwork, nodeIPHintFile, err)
+	}
+	return nil
+}
+
 // networkConfiguration is on charge of configuring network prior installation process.
 // This function should include all network configurations of post-pivot flow.
 // It's logic currently includes:
@@ -756,6 +790,10 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 	}
 
 	if err := p.applyNMStateConfiguration(seedReconfiguration); err != nil {
+		return err
+	}
+
+	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
 		return err
 	}
 

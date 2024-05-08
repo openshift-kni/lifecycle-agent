@@ -24,7 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +45,7 @@ func init() {
 }
 
 func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
+	restoreGvk := common.RestoreGvk
 	restore := &velerov1.Restore{
 		TypeMeta: v1.TypeMeta{
 			Kind:       restoreGvk.Kind,
@@ -51,7 +54,8 @@ func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
 	}
 	restore.SetName(name)
 	restore.SetNamespace(OadpNs)
-	restore.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
+	restore.SetLabels(map[string]string{clusterIDLabel: testClusterID})
+	restore.SetAnnotations(map[string]string{common.ApplyWaveAnn: applyWave})
 
 	restore.Spec = velerov1.RestoreSpec{
 		BackupName: backupName,
@@ -66,91 +70,6 @@ func fakeRestoreCrWithStatus(name, applyWave, backupName string, phase velerov1.
 	}
 
 	return restore
-}
-
-func TestSortRestoreCrs(t *testing.T) {
-	testcases := []struct {
-		name           string
-		resources      []*velerov1.Restore
-		expectedResult [][]*velerov1.Restore
-	}{
-		{
-			name: "Multiple resources contain the same wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "3", "backup1"),
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-			}, {
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("c_Restore", "3", "backup1"),
-			}, {
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-			}, {
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-			},
-			},
-		},
-		{
-			name: "Multiple resources have no wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("g_Restore", "", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("b_Restore", "1", "backup1"),
-			}, {
-				fakeRestoreCr("a_Restore", "3", "backup1"),
-			}, {
-				fakeRestoreCr("d_Restore", "10", "backup1"),
-			}, {
-				fakeRestoreCr("e_Restore", "100", "backup1"),
-				fakeRestoreCr("f_Restore", "100", "backup1"),
-			}, {
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("g_Restore", "", "backup1"),
-			},
-			},
-		},
-		{
-			name: "All resources have no wave number",
-			resources: []*velerov1.Restore{
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "", "backup1"),
-				fakeRestoreCr("a_Restore", "", "backup1"),
-				fakeRestoreCr("b_Restore", "", "backup1"),
-				fakeRestoreCr("f_Restore", "", "backup1"),
-				fakeRestoreCr("e_Restore", "", "backup1"),
-			},
-			expectedResult: [][]*velerov1.Restore{{
-				fakeRestoreCr("a_Restore", "", "backup1"),
-				fakeRestoreCr("b_Restore", "", "backup1"),
-				fakeRestoreCr("c_Restore", "", "backup1"),
-				fakeRestoreCr("d_Restore", "", "backup1"),
-				fakeRestoreCr("e_Restore", "", "backup1"),
-				fakeRestoreCr("f_Restore", "", "backup1"),
-			},
-			},
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, _ := sortByApplyWaveRestoreCrs(tc.resources)
-			assert.Equal(t, tc.expectedResult, result)
-		})
-	}
 }
 
 func TestTriggerRestore(t *testing.T) {
@@ -238,9 +157,18 @@ func TestTriggerRestore(t *testing.T) {
 		},
 	}
 
+	clusterVersion := &configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "version",
+		},
+		Spec: configv1.ClusterVersionSpec{
+			ClusterID: configv1.ClusterID(testClusterID),
+		},
+	}
+
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{ns}
+			objs := []client.Object{ns, clusterVersion}
 			objs = append(objs, tc.existingBackups...)
 			objs = append(objs, tc.existingRestores...)
 			fakeClient, err := getFakeClientFromObjects(objs...)
@@ -405,8 +333,8 @@ func TestEnsureOadpConfigurations(t *testing.T) {
 	// Create oadp DPA file
 	dpa := &unstructured.Unstructured{
 		Object: map[string]any{
-			"kind":       dpaGvk.Kind,
-			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"kind":       DpaGvk.Kind,
+			"apiVersion": DpaGvk.Group + "/" + DpaGvk.Version,
 			"metadata": map[string]any{
 				"name":      "oadp",
 				"namespace": OadpNs,
@@ -463,54 +391,5 @@ func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorag
 		Status: velerov1.BackupStorageLocationStatus{
 			Phase: phase,
 		},
-	}
-}
-
-func TestEnsureStorageBackendAvailable(t *testing.T) {
-	testcases := []struct {
-		name        string
-		bsl         []client.Object
-		expectedErr error
-	}{
-		{
-			name: "Backup storage location is unavailable",
-			bsl: []client.Object{
-				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseUnavailable),
-				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
-			},
-			expectedErr: NewBRStorageBackendUnavailableError("BackupStorageLocation is unavailable. Name: oadp1, Error: "),
-		},
-		{
-			name: "Backup storage locations are available",
-			bsl: []client.Object{
-				fakeBackupStorageBackendWithStatus("oadp1", velerov1.BackupStorageLocationPhaseAvailable),
-				fakeBackupStorageBackendWithStatus("oadp2", velerov1.BackupStorageLocationPhaseAvailable),
-			},
-			expectedErr: nil,
-		},
-	}
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: OadpNs,
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{ns}
-			objs = append(objs, tc.bsl...)
-			fakeClient, err := getFakeClientFromObjects(objs...)
-			if err != nil {
-				t.Errorf("error in creating fake client")
-			}
-
-			handler := &BRHandler{
-				Client: fakeClient,
-				Log:    ctrl.Log.WithName("BackupRestore"),
-			}
-
-			err = handler.ensureStorageBackendAvailable(context.Background(), OadpNs)
-			assert.Equal(t, err, tc.expectedErr)
-		})
 	}
 }

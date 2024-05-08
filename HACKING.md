@@ -57,7 +57,7 @@ make IMAGE_TAG_BASE=quay.io/${MY_REPO_ID}/lifecycle-agent-operator VERSION=lates
 To watch LCA logs:
 
 ```console
-oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecyle-agent-operator -c manager --follow
+oc logs -n openshift-lifecycle-agent --selector app.kubernetes.io/name=lifecycle-agent-operator -c manager --follow
 ```
 
 ## Creating CR and Updating Stage
@@ -433,51 +433,47 @@ Bootloader updated; bootconfig swap: yes; bootversion: boot.0.1, deployment coun
 
 ## Automatic Rollback on Failure
 
-In an IBU, the LCA provides capability for automatic rollback upon failure at certain points of the upgrade, after the
-Upgrade stage reboot. The automatic rollback feature is enabled by default in an IBU. To disable it, there are
-configuration options in the `ImageBasedUpgrade` CRD that can be defined:
+In an IBU, the LCA provides capability for automatic rollback upon failure at
+certain points of the upgrade after the Upgrade stage reboot. In addition,
+there is an `lca-init-monitor.service` that runs post-reboot with a
+configurable timeout. When LCA marks the upgrade complete, it shuts down this
+monitor. If this point is not reached within the configured timeout, the
+init-monitor will trigger an automatic rollback.
 
-- In the `prepare-installation-configuration` systemd service-unit (`prepare-installation-configuration`). Disabled by
-  setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
-- In the `installation-configuration` systemd service-unit (`lca-cli postpivot`). Disabled by
-  setting `.spec.autoRollbackOnFailure.disabledForPostRebootConfig: true` in the IBU `upgrade` CR
-- In the LCA IBU post-reboot Upgrade stage handler. Disabled by
-  setting `.spec.autoRollbackOnFailure.disabledForUpgradeCompletion: true` in the IBU `upgrade` CR
+The automatic rollback feature is enabled by default in an IBU. To disable it, you can annotate the IBU CR:
+
+- Disable rollback when the reconfiguration of the cluster fails upon the first reboot using the `auto-rollback-on-failure.lca.openshift.io/post-reboot-config: Disabled` annotation.
+- Disable rollback after the Lifecycle Agent reports a failed upgrade upon completion using the `auto-rollback-on-failure.lca.openshift.io/upgrade-completion: Disabled` annotation.
+- Disable rollback from LCA Init Monitor watchdog using the `auto-rollback-on-failure.lca.openshift.io/init-monitor: Disabled` annotation.
 
 These values can be set via patch command, for example:
 
 ```console
-# Disable automatic rollback for the post-reboot config service-units
-oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledForPostRebootConfig": true}}}'
-
-# Disable automatic rollback for the post-reboot Upgrade stage handler
-oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledForUpgradeCompletion": true}}}'
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/post-reboot-config='Disabled'
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/upgrade-completion='Disabled'
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/init-monitor='Disabled'
 
 # Reset to default
-oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "replace", "path": "/spec/autoRollbackOnFailure", "value": {} }]'
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/post-reboot-config-
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/upgrade-completion-
+oc -n  openshift-lifecycle-agent annotate ibu upgrade auto-rollback-on-failure.lca.openshift.io/init-monitor-
 ```
 
 Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
 
 ```yaml
-  autoRollbackOnFailure:
-    disabledForPostRebootConfig: true
-    disabledForUpgradeCompletion: true
+metadata:
+  annotations:
+    auto-rollback-on-failure.lca.openshift.io/post-reboot-config: Disabled
+    auto-rollback-on-failure.lca.openshift.io/upgrade-completion: Disabled
+    auto-rollback-on-failure.lca.openshift.io/init-monitor: Disabled
 ```
 
-In addition, there is an `lca-init-monitor.service` that runs post-reboot with a configurable timeout. When LCA marks
-the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the
-init-monitor will trigger an automatic rollback. This can be configured via the `.spec.autoRollbackOnFailure` fields:
+You can also configure the timeout value by setting `.spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`
 
-- To disable the init-monitor automatic rollback, set `.spec.autoRollbackOnFailure.disabledInitMonitor` to `true`
-- Configure the timeout value, in seconds, by setting `.spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`
-
-These values can be set via patch command, for example:
+This value can be set via patch command, for example:
 
 ```console
-# Disable automatic rollback for the init-monitor
-oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"disabledInitMonitor": true}}}'
-
 # Set the init-monitor timeout to one hour. The default timeout is 30 minutes (1800 seconds)
 oc patch imagebasedupgrades.lca.openshift.io upgrade --type=merge -p='{"spec": {"autoRollbackOnFailure": {"initMonitorTimeoutSeconds": 3600}}}'
 
@@ -491,7 +487,10 @@ oc patch imagebasedupgrades.lca.openshift.io upgrade --type json -p='[{"op": "re
 Alternatively, use `oc edit ibu upgrade` and add the following to the `.spec` section:
 
 ```yaml
+metadata:
+  annotations:
+    auto-rollback-on-failure.lca.openshift.io/init-monitor: Disabled
+spec:
   autoRollbackOnFailure:
-    disabledInitMonitor: true
     initMonitorTimeoutSeconds: 3600
 ```

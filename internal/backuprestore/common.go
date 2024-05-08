@@ -20,9 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-logr/logr"
 
@@ -57,11 +57,9 @@ import (
 // +kubebuilder:rbac:groups=oadp.openshift.io,resources=dataprotectionapplications,verbs=get;list;create;update;watch
 
 const (
-	applyWaveAnn     = "lca.openshift.io/apply-wave"
-	applyLabelAnn    = "lca.openshift.io/apply-label"
-	backupLabel      = "lca.openshift.io/backup"
-	clusterIDLabel   = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
-	defaultApplyWave = math.MaxInt32                   // 2147483647, an enough large number
+	applyLabelAnn  = "lca.openshift.io/apply-label"
+	backupLabel    = "lca.openshift.io/backup"
+	clusterIDLabel = "config.openshift.io/clusterID" // label for backups applied by lifecycle agent
 
 	OadpPath        = "/opt/OADP"
 	OadpRestorePath = OadpPath + "/veleroRestore"
@@ -70,23 +68,27 @@ const (
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
 	OadpNs = "openshift-adp"
+
+	topolvmValue                   = "topolvm.io"
+	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
+	updatedReclaimPolicyAnnotation = "lca.openshift.io/updated-reclaim-policy" // used to identify LVMS PVs updated by LCA
 )
 
 var (
 	hostPath = common.Host
 
-	dpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
-	dpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
-	backupGvk  = schema.GroupVersionKind{Group: "velero.io", Kind: "Backup", Version: "v1"}
-	restoreGvk = schema.GroupVersionKind{Group: "velero.io", Kind: "Restore", Version: "v1"}
+	DpaGvk     = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplication", Version: "v1alpha1"}
+	DpaGvkList = schema.GroupVersionKind{Group: "oadp.openshift.io", Kind: "DataProtectionApplicationList", Version: "v1alpha1"}
 )
 
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
-	CleanupBackups(ctx context.Context) (bool, error)
-	CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) (bool, error)
+	CleanupBackups(ctx context.Context) error
+	CleanupStaleBackups(ctx context.Context, backups []*velerov1.Backup) error
 	CleanupDeleteBackupRequests(ctx context.Context) error
 	CheckOadpOperatorAvailability(ctx context.Context) error
+	PatchPVsReclaimPolicy(ctx context.Context) error
+	RestorePVsReclaimPolicy(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
 	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
@@ -123,14 +125,6 @@ func (e *BRStatusError) Error() string {
 	return fmt.Sprintf(e.ErrMessage)
 }
 
-func NewBRNotFoundError(msg string) *BRStatusError {
-	return &BRStatusError{
-		Type:       "configmap",
-		Reason:     "NotFound",
-		ErrMessage: msg,
-	}
-}
-
 func NewBRFailedError(brType, msg string) *BRStatusError {
 	return &BRStatusError{
 		Type:       brType,
@@ -153,16 +147,6 @@ func NewBRStorageBackendUnavailableError(msg string) *BRStatusError {
 		Reason:     "Unavailable",
 		ErrMessage: msg,
 	}
-}
-
-func IsBRNotFoundError(err error) bool {
-	var brErr *BRStatusError
-	if errors.As(err, &brErr) {
-		if brErr.Type == "configmap" {
-			return brErr.Reason == "NotFound"
-		}
-	}
-	return false
 }
 
 func IsBRFailedError(err error) bool {
@@ -210,6 +194,34 @@ func getBackup(ctx context.Context, c client.Client, name, namespace string) (*v
 	return backup, nil
 }
 
+// getValidBackup retrieves a backup by name and namespace, ensuring it belongs to the correct cluster.
+// If the backup doesn't exist or doesn't belong to the cluster, it returns nil.
+func getValidBackup(ctx context.Context, c client.Client, name, namespace string) (*velerov1.Backup, error) {
+	clusterID, err := getClusterID(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	backup := &velerov1.Backup{}
+	if err := c.Get(ctx, types.NamespacedName{
+		Name:      name,
+		Namespace: namespace,
+	}, backup); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get backup %s: %w", backup.GetName(), err)
+	}
+
+	// Check if the backup belongs to the correct cluster
+	labels := backup.GetLabels()
+	if labels[clusterIDLabel] != clusterID {
+		return nil, nil
+	}
+
+	return backup, nil
+}
+
 func getClusterID(ctx context.Context, c client.Client) (string, error) {
 
 	clusterVersion := &configv1.ClusterVersion{}
@@ -248,11 +260,11 @@ func CreateOrUpdateSecret(ctx context.Context, secret *corev1.Secret, c client.C
 }
 
 func CreateOrUpdateDataProtectionAppliation(ctx context.Context, dpa *unstructured.Unstructured, c client.Client) error {
-	dpa.SetGroupVersionKind(dpaGvk)
+	dpa.SetGroupVersionKind(DpaGvk)
 	unstructured.RemoveNestedField(dpa.Object, "status")
 
 	existingDpa := &unstructured.Unstructured{}
-	existingDpa.SetGroupVersionKind(dpaGvk)
+	existingDpa.SetGroupVersionKind(DpaGvk)
 	err := c.Get(ctx, types.NamespacedName{
 		Name:      dpa.GetName(),
 		Namespace: dpa.GetNamespace(),
@@ -295,26 +307,7 @@ func setBackupLabel(backup *velerov1.Backup, newLabels map[string]string) {
 	backup.SetLabels(labels)
 }
 
-func (h *BRHandler) createObjectWithDryRun(ctx context.Context, object *unstructured.Unstructured, cm string) error {
-	// Create the resource in dry-run mode to detect any validation errors in the CR
-	// i.e., missing required fields
-	err := h.Create(ctx, object, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-	if err != nil {
-		if k8serrors.IsInvalid(err) {
-			errMsg := fmt.Sprintf("Invalid %s %s detected in configmap %s, error: %s. Please update the invalid CRs in configmap.",
-				object.GetKind(), object.GetName(), cm, err.Error())
-			h.Log.Error(err, errMsg)
-			return NewBRFailedValidationError(object.GetKind(), errMsg)
-		}
-
-		if !k8serrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create configMap with dry run: %w", err)
-		}
-	}
-	return nil
-}
-
-func isDPAReconciled(dpa *unstructured.Unstructured) bool {
+func IsDPAReconciled(dpa *unstructured.Unstructured) bool {
 	if dpa.Object["status"] == nil {
 		return false
 	}
@@ -358,22 +351,29 @@ func ReadOadpDataProtectionApplication(dpaYamlDir string) (*unstructured.Unstruc
 	}
 
 	dpa := &unstructured.Unstructured{}
-	dpa.SetGroupVersionKind(dpaGvk)
+	dpa.SetGroupVersionKind(DpaGvk)
 	if err := utils.ReadYamlOrJSONFile(dpaYamlPath, dpa); err != nil {
 		return nil, fmt.Errorf("failed to read DataProtectionApplication from %s: %w", dpaYamlPath, err)
 	}
 	return dpa, nil
 }
 
+// patchObj patches the objects / resources defined in the Backup CRs of OADP.
+// Also, it has a isDryRun flag that allows to simulate patching the specified resources, which is handy when
+// validating the objects defined in Backup CRs within the OADP ConfigMap.
 func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool, payload []byte) error {
+	var err error
+	resourceClient := client.Resource(schema.GroupVersionResource{
+		Group:    obj.Group,
+		Version:  obj.Version,
+		Resource: obj.Resource,
+	})
+
 	patchOptions := metav1.PatchOptions{}
 	if isDryRun {
 		patchOptions = metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
 	}
-	resourceClient := client.Resource(schema.GroupVersionResource{
-		Group: obj.Group, Version: obj.Version, Resource: obj.Resource},
-	)
-	var err error
+
 	if obj.Namespace != "" {
 		_, err = resourceClient.Namespace(obj.Namespace).Patch(
 			ctx, obj.Name, types.JSONPatchType, payload, patchOptions,
@@ -399,23 +399,26 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		return fmt.Errorf("failed to oadp configMaps: %w", err)
 	}
 
-	backups, err := h.extractBackupFromConfigmaps(ctx, configmaps)
+	backups, err := common.ExtractResourcesFromConfigmaps[*velerov1.Backup](configmaps, common.BackupGvk)
 	if err != nil {
 		return err
 	}
-	restores, err := h.extractRestoreFromConfigmaps(ctx, configmaps)
-	if err != nil {
-		return err
-	}
-
-	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {
-		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
-		h.Log.Error(nil, errMsg)
-		return NewBRFailedValidationError("OADP", errMsg)
-	}
-
-	// Check if we can apply backup label to objects included in apply-backup annotation
 	for _, backup := range backups {
+		// Dry-run the Backup CR to detect early issues
+		err := h.Create(ctx, backup, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err != nil {
+			if k8serrors.IsInvalid(err) {
+				errMsg := fmt.Sprintf("Invalid backup %s detected in configmap, error: %s. Please update the invalid Backup in configmap.",
+					backup.GetName(), err.Error())
+				h.Log.Error(err, errMsg)
+				return NewBRFailedValidationError("backup", errMsg)
+			}
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create backup with dry run: %w", err)
+			}
+		}
+
+		// Check if we can apply backup label to objects included in apply-backup annotation
 		payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
 		objs, err := getObjsFromAnnotations(backup)
 		if err != nil {
@@ -429,8 +432,26 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		}
 	}
 
-	// Check if the backup CRs defined in restore CRs exist in OADP configmaps
+	restores, err := common.ExtractResourcesFromConfigmaps[*velerov1.Restore](configmaps, common.RestoreGvk)
+	if err != nil {
+		return err
+	}
 	for _, restore := range restores {
+		// Dry-run the Restore CR to detect early issues
+		err := h.Create(ctx, restore, &client.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err != nil {
+			if k8serrors.IsInvalid(err) {
+				errMsg := fmt.Sprintf("Invalid Restore %s detected in configmap, error: %s. Please update the invalid Restore in configmap.",
+					restore.GetName(), err.Error())
+				h.Log.Error(err, errMsg)
+				return NewBRFailedValidationError("restore", errMsg)
+			}
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create Restore with dry run: %w", err)
+			}
+		}
+
+		// Check if the backup CRs defined in restore CRs exist in OADP configmaps
 		found := false
 		for _, backup := range backups {
 			if restore.Spec.BackupName == backup.Name {
@@ -445,13 +466,15 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 		}
 	}
 
-	// Check for any stale backup CRs in this cluster
-	if allStaleBackupsRemoved, err := h.CleanupStaleBackups(ctx, backups); err != nil {
-		errMsg := fmt.Sprintf("Failed to cleanup stale Backups: %s", err)
+	if len(backups) == 0 || len(restores) == 0 || len(backups) != len(restores) {
+		errMsg := "Both backup and restore CRs should be specified in OADP configmaps and each backup CR should be paired with a corresponding restore CR."
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
-	} else if !allStaleBackupsRemoved {
-		errMsg := fmt.Sprintf("Failed to delete all the stale Backup CRs: %s", err)
+	}
+
+	// Check for any stale backup CRs in this cluster
+	if err := h.CleanupStaleBackups(ctx, backups); err != nil {
+		errMsg := fmt.Sprintf("Failed to cleanup stale Backups: %s", err)
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
@@ -461,22 +484,29 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1a
 }
 
 func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
-	// Check if OADP is running
-	oadpCsv := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.List(ctx, oadpCsv, &client.ListOptions{Namespace: OadpNs}); err != nil {
+	// Check if OADP is installed
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
 		return fmt.Errorf("could not list ClusterServiceVersion: %w", err)
 	}
 
-	if len(oadpCsv.Items) == 0 ||
-		!(oadpCsv.Items[0].Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded && oadpCsv.Items[0].Status.Reason == operatorsv1alpha1.CSVReasonInstallSuccessful) {
-		errMsg := fmt.Sprintf("Please ensure OADP operator is running successfully in the %s", OadpNs)
+	oadpCsvExist := false
+	for _, csv := range oadpCsvList.Items {
+		if strings.Contains(csv.Name, "oadp-operator") {
+			oadpCsvExist = true
+			break
+		}
+	}
+
+	if !oadpCsvExist {
+		errMsg := fmt.Sprintf("Please ensure OADP operator is installed in the %s", OadpNs)
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
 	// Check if OADP DPA is reconciled
 	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(dpaGvkList)
+	dpaList.SetGroupVersionKind(DpaGvkList)
 	opts := []client.ListOption{
 		client.InNamespace(OadpNs),
 	}
@@ -496,18 +526,6 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
-	if !isDPAReconciled(&dpaList.Items[0]) {
-		errMsg := fmt.Sprintf("DataProtectionApplication CR %s is not reconciled", dpaList.Items[0].GetName())
-		h.Log.Error(nil, errMsg)
-		return NewBRFailedValidationError("OADP", errMsg)
-	}
-
-	// Check if the storage backend is ready
-	err := h.ensureStorageBackendAvailable(ctx, OadpNs)
-	if err != nil {
-		return NewBRFailedValidationError("OADP", err.Error())
-	}
-
-	h.Log.Info("OADP operator is running")
+	h.Log.Info("OADP operator is installed and DataProtectionApplication is validated")
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -27,6 +28,10 @@ func TestInstallationIso(t *testing.T) {
 		pullSecretExists    bool
 		sshPublicKeyExists  bool
 		liveIsoUrlSuccess   bool
+		precacheBestEffort  bool
+		precacheDisabled    bool
+		shutdown            bool
+		skipDiskCleanup     bool
 		renderCommandReturn error
 		embedCommandReturn  error
 		expectedError       string
@@ -38,6 +43,62 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   true,
 			sshPublicKeyExists: true,
 			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - precache best-effort set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: true,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - precache disabled set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   true,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - shutdown set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           true,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow - skipDiskCleanup set",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
 			expectedError:      "",
 		},
 		{
@@ -47,6 +108,10 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   false,
 			sshPublicKeyExists: false,
 			liveIsoUrlSuccess:  false,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "work dir doesn't exists",
 		},
 		{
@@ -56,6 +121,10 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   true,
 			sshPublicKeyExists: true,
 			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "authFile: no such file or directory",
 		},
 		{
@@ -65,6 +134,10 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   false,
 			sshPublicKeyExists: true,
 			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "psFile: no such file or directory",
 		},
 		{
@@ -74,6 +147,10 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   true,
 			sshPublicKeyExists: false,
 			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "sshKey: no such file or directory",
 		},
 		{
@@ -83,6 +160,10 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:   true,
 			sshPublicKeyExists: true,
 			liveIsoUrlSuccess:  false,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
 			expectedError:      "notfound",
 		},
 		{
@@ -92,6 +173,9 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:    true,
 			sshPublicKeyExists:  true,
 			liveIsoUrlSuccess:   false,
+			precacheBestEffort:  false,
+			precacheDisabled:    false,
+			shutdown:            false,
 			renderCommandReturn: errors.New("failed to render ignition config"),
 			expectedError:       "failed to render ignition config",
 		},
@@ -102,17 +186,22 @@ func TestInstallationIso(t *testing.T) {
 			pullSecretExists:    true,
 			sshPublicKeyExists:  true,
 			liveIsoUrlSuccess:   false,
+			precacheBestEffort:  false,
+			precacheDisabled:    false,
+			shutdown:            false,
+			skipDiskCleanup:     false,
 			renderCommandReturn: errors.New("failed to embed ignition config to ISO"),
 			expectedError:       "failed to embed ignition config to ISO",
 		},
 	}
 	var (
-		mockController   = gomock.NewController(t)
-		mockOps          = ops.NewMockOps(mockController)
-		seedImage        = "seedImage"
-		seedVersion      = "seedVersion"
-		lcaImage         = "lcaImage"
-		installationDisk = "/dev/sda"
+		mockController      = gomock.NewController(t)
+		mockOps             = ops.NewMockOps(mockController)
+		seedImage           = "seedImage"
+		seedVersion         = "seedVersion"
+		lcaImage            = "lcaImage"
+		installationDisk    = "/dev/sda"
+		extraPartitionStart = "-40G"
 	)
 
 	for _, tc := range testcases {
@@ -147,7 +236,8 @@ func TestInstallationIso(t *testing.T) {
 					"quay.io/coreos/butane:release",
 					"--pretty", "--strict",
 					"-d", "/data",
-					path.Join("/data", butaneConfigFile)).Return("", tc.renderCommandReturn).Times(1)
+					path.Join("/data", butaneConfigFile),
+					"-o", path.Join("/data", ibiIgnitionFileName)).Return("", tc.renderCommandReturn).Times(1)
 				if tc.liveIsoUrlSuccess {
 					mockOps.EXPECT().RunInHostNamespace("podman", "run",
 						"-v", fmt.Sprintf("%s:/data:rw,Z", tmpDir),
@@ -167,12 +257,39 @@ func TestInstallationIso(t *testing.T) {
 				defer server.Close()
 			}
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
-			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage, rhcosLiveIsoUrl, installationDisk)
+			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage,
+				rhcosLiveIsoUrl, installationDisk, extraPartitionStart,
+				tc.precacheBestEffort, tc.precacheDisabled, tc.shutdown, tc.skipDiskCleanup)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
+				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
+				assert.Equal(t, errReading, nil)
+				if tc.precacheDisabled {
+					assert.Equal(t, strings.Contains(string(data), "PRECACHE_DISABLED"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "PRECACHE_DISABLED"), false)
+				}
+				if tc.precacheBestEffort {
+					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), false)
+				}
+				if tc.shutdown {
+					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), false)
+				}
+				if tc.skipDiskCleanup {
+					fmt.Println("AAAAAAAAAAAA", string(data))
+					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), false)
+				}
+
 			} else {
 				assert.Contains(t, err.Error(), tc.expectedError)
 			}
+
 		})
 	}
 }

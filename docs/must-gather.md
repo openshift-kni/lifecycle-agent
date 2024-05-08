@@ -10,7 +10,7 @@ We are collecting the following set of data with best-effort
   - logs from seed-gen container and install service  
   - all CRs used for healthchecks
   - rpm-ostree status
-  - recert-summary
+  - recert-summary (recert-seed-restoration-summary.yaml + recert-seed-creation-summary.yaml + recert-summary.yaml)
   - unbooted stateroot's /var/log files
   - host's /etc
 - Oadp  

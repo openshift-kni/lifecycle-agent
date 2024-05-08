@@ -55,6 +55,8 @@ kind: SriovNetworkNodePolicy
 metadata:
   name: sriov-nnp-mh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "1"   
   spec:
     deviceType: netdevice
     isRdma: false
@@ -64,6 +66,8 @@ kind: SriovNetworkNodePolicy
 metadata:
   name: sriov-nnp-fh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "3"
   spec:
     deviceType: netdevice
     isRdma: true
@@ -75,6 +79,8 @@ kind: SriovNetwork
 metadata:
   name: sriov-nw-mh
   namespace: openshift-sriov-network-operator
+  annotations:
+    lca.openshift.io/apply-wave: "1"
   spec:
     resourceName: mh
 `
@@ -189,10 +195,10 @@ func TestExportExtraManifests(t *testing.T) {
 
 	// Check that the manifests were exported to the correct files
 	expectedFilePaths := []string{
-		filepath.Join(toDir, ExtraManifestPath, "0_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "2_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "3_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group2", "1_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group1", "1_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group3", "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, ExtraManifestPath, "group1", "2_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
 	}
 
 	for _, expectedFile := range expectedFilePaths {
@@ -285,7 +291,7 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 				}
 			}
 
-			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps)
+			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps, &lcav1alpha1.ImageBasedUpgrade{})
 			assert.ErrorContains(t, err, tc.expectedErr.Error())
 		})
 	}
@@ -397,6 +403,59 @@ spec:
   remediationAction: inform
 `
 
+const policyWithAnnotationAndObjectWithNonMatchedLabel = `---
+kind: Policy
+apiVersion: policy.open-cluster-management.io/v1
+metadata:
+  name: ztp-common.p4
+  namespace: spoke
+  annotations:
+    ran.openshift.io/ztp-deploy-wave: "2"
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: common-cnfdf22-new-config-policy-config
+        spec:
+          evaluationInterval:
+            compliant: 10m
+            noncompliant: 10s
+          namespaceselector:
+            exclude:
+              - kube-*
+            include:
+              - "*"
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: CatalogSource
+                metadata:
+                  name: redhat-operators-non-match
+                  namespace: openshift-marketplace
+                  annotations:
+                    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+                  labels:
+                    lca.openshift.io/target-ocp-version: "4.15.6"
+                spec:
+                  displayName: Red Hat Operators Catalog
+                  image: registry.redhat.io/redhat/redhat-operator-index:v4.15
+                  publisher: Red Hat
+                  sourceType: grpc
+                  updateStrategy:
+                    registryPoll:
+                      interval: 1h
+                status:
+                  connectionState:
+                    lastObservedState: READY
+          remediationAction: inform
+          severity: low
+  remediationAction: inform
+`
+
 const policyWithoutLabel = `---
 kind: Policy
 apiVersion: policy.open-cluster-management.io/v1
@@ -453,19 +512,27 @@ func TestExportPolicyManifests(t *testing.T) {
 		policies            []*unstructured.Unstructured
 		policyLabels        map[string]string
 		objectLabels        map[string]string
+		validationAnns      map[string]string
 		expectedFilePaths   []string
 		unexpectedFilePaths []string
 		expectedObjects     []unstructured.Unstructured
+		expectedError       string
 	}{
 		{
-			name:         "Extraction by matching labels on objects",
-			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
-			objectLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.15.2"},
+			name: "happy path with validation and extraction by matching labels on objects",
+			policies: []*unstructured.Unstructured{
+				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel),
+				mustConvertYamlStrToUnstructured(policyWithoutLabel),
+				mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithNonMatchedLabel),
+			},
+			objectLabels:   map[string]string{TargetOcpVersionLabel: "4.15.2-rc1,4.15.2,4.15"},
+			validationAnns: map[string]string{TargetOcpVersionManifestCountAnnotation: "1"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group2", "1_CatalogSource_redhat-operators-non-match_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "2_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{
@@ -500,14 +567,15 @@ func TestExportPolicyManifests(t *testing.T) {
 			},
 		},
 		{
-			name:         "Extraction by matching labels on policies",
-			policies:     []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
-			policyLabels: map[string]string{"lca.openshift.io/target-ocp-version": "4.16.1"},
+			name:           "happy path with validation and extraction by matching labels on policies",
+			policies:       []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithLabelAndAnnotation), mustConvertYamlStrToUnstructured(policyWithoutLabel)},
+			policyLabels:   map[string]string{TargetOcpVersionLabel: "4.16.1"},
+			validationAnns: map[string]string{TargetOcpVersionManifestCountAnnotation: "1"},
 			expectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "0_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators-new_openshift-marketplace.yaml"),
 			},
 			unexpectedFilePaths: []string{
-				filepath.Join(PolicyManifestPath, "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
+				filepath.Join(PolicyManifestPath, "group1", "1_CatalogSource_redhat-operators_openshift-marketplace.yaml"),
 			},
 			expectedObjects: []unstructured.Unstructured{
 				{
@@ -537,6 +605,14 @@ func TestExportPolicyManifests(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name:              "manifests count does not match with expected",
+			policies:          []*unstructured.Unstructured{mustConvertYamlStrToUnstructured(policyWithAnnotationAndObjectWithLabel)},
+			objectLabels:      map[string]string{TargetOcpVersionLabel: "4.15.2-rc1,4.15.2,4.15"},
+			validationAnns:    map[string]string{TargetOcpVersionManifestCountAnnotation: "3"},
+			expectedFilePaths: []string{},
+			expectedError:     "does not match the expected manifests count",
 		},
 	}
 
@@ -576,9 +652,13 @@ func TestExportPolicyManifests(t *testing.T) {
 
 			// Export the manifests to the temporary directory
 			err = handler.ExtractAndExportManifestFromPoliciesToDir(context.Background(),
-				tc.policyLabels, tc.objectLabels, toDir)
+				tc.policyLabels, tc.objectLabels, tc.validationAnns, toDir)
 			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+				if tc.expectedError != "" {
+					assert.Contains(t, err.Error(), tc.expectedError)
+				} else {
+					t.Errorf("Unexpected error: %v", err)
+				}
 			}
 
 			// Check that the manifests were exported to the correct files
@@ -623,4 +703,34 @@ func mustConvertYamlStrToUnstructured(cr string) *unstructured.Unstructured {
 		panic("unstructured.Unstructured expected")
 	}
 	return uCr
+}
+
+func TestGetMatchingVersion(t *testing.T) {
+	tests := []struct {
+		targetOCPversion string
+		expected         []string
+	}{
+		{
+			targetOCPversion: "4.15.2-ec.3",
+			expected:         []string{"4.15.2-ec.3", "4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.15.2",
+			expected:         []string{"4.15.2", "4.15"},
+		},
+		{
+			targetOCPversion: "4.16.0-0.ci-2024-04-11-051453",
+			expected:         []string{"4.16.0-0.ci-2024-04-11-051453", "4.16.0", "4.16"},
+		},
+	}
+
+	t.Run("TargetOCPversion test", func(t *testing.T) {
+		for _, tc := range tests {
+			result, err := GetMatchingTargetOcpVersionLabelVersions(tc.targetOCPversion)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			assert.ElementsMatch(t, tc.expected, result)
+		}
+	})
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -21,6 +22,10 @@ var podmanRecertArgs = []string{
 	"run", "--rm", "--network=host", "--privileged", "--replace",
 }
 
+const (
+	containersFolder = "/var/lib/containers"
+)
+
 // Ops is an interface for executing commands and actions in the host namespace
 //
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
@@ -28,6 +33,7 @@ type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
+	RunListOfCommands(cmds []*CMD) error
 	ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error
 	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
 	RunUnauthenticatedEtcdServer(authFile, name string) error
@@ -43,6 +49,18 @@ type Ops interface {
 	ListBlockDevices() ([]BlockDevice, error)
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
+	Chroot(chrootPath string) (func() error, error)
+	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error
+	SetupContainersFolderCommands() error
+}
+
+type CMD struct {
+	command string
+	args    []string
+}
+
+func NewCMD(command string, args ...string) *CMD {
+	return &CMD{command: command, args: args}
 }
 
 type BlockDevice struct {
@@ -81,7 +99,7 @@ func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, er
 func (o *ops) RunInHostNamespace(command string, args ...string) (string, error) {
 	execute, err := o.hostCommandsExecutor.Execute(command, args...)
 	if err != nil {
-		return "", fmt.Errorf("failed to run in host namespace with args %s: %w", args, err)
+		return "", fmt.Errorf("failed to run %q in host namespace with args %s: %w", command, args, err)
 	}
 	return execute, nil
 }
@@ -109,7 +127,7 @@ func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) e
 	o.log.Info("Run recert --extend-expiration tool")
 	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
 
-	originalPasswordHash, err := utils.LoadKubeadminPasswordHash(common.BackupDir)
+	originalPasswordHash, err := utils.LoadKubeadminPasswordHash(common.BackupCertsDir)
 	if err != nil {
 		return fmt.Errorf("failed to load kubeadmin password hash: %w", err)
 	}
@@ -222,10 +240,46 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 	return nil
 }
 
+// prepareSELinuxTar prepares a copy of tar executable with install_exec_t context.
+// This type allows SELinux labeling of non-existing labels
+func (o *ops) prepareSELinuxTar() (string, error) {
+	tarPath := common.PathOutsideChroot("/usr/bin/tar")
+	destDir := common.PathOutsideChroot("/var/tmp")
+	newTarPath, err := utils.CopyToTempFile(tarPath, destDir, "tar-")
+	if err != nil {
+		return "", fmt.Errorf("failed to copy tar to temporary file: %w", err)
+	}
+
+	newTarPathInsideChroot, err := common.PathInsideChroot(newTarPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get path for file %s inside chroot: %w", newTarPath, err)
+	}
+
+	// Set SELinux attribute
+	if _, err := o.hostCommandsExecutor.Execute("chcon", "-t", "install_exec_t", newTarPathInsideChroot); err != nil {
+		return "", fmt.Errorf("failed to set SELinux context install_exec_t to %s: %w", newTarPath, err)
+	}
+	return newTarPath, nil
+}
+
 func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
-	if _, err := o.hostCommandsExecutor.Execute(
-		"tar", "xzf", srcPath, "-C", destPath, "--selinux",
-	); err != nil {
+	// Create a copy of /usr/bin/tar with extended permissions
+	tarExec, err := o.prepareSELinuxTar()
+	if err != nil {
+		return fmt.Errorf("failed to create copy of tar with install_exec_t attribute: %w", err)
+	}
+	defer os.Remove(tarExec) // Cleanup temporary tar copy afterwards
+
+	// Path as seen inside the chroot (without /host prepended)
+	tarExecInsideChroot, err := common.PathInsideChroot(tarExec)
+	if err != nil {
+		return fmt.Errorf("failed to get path for file %s inside chroot: %w", tarExec, err)
+	}
+
+	tarArgs := []string{"xzf", srcPath, "-C", destPath}
+	tarArgs = append(tarArgs, common.TarOpts...)
+
+	if _, err = o.hostCommandsExecutor.Execute(tarExecInsideChroot, tarArgs...); err != nil {
 		return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 	}
 	return nil
@@ -381,4 +435,92 @@ func (o *ops) Umount(deviceName string) error {
 		return fmt.Errorf("failed to unmount %s, err: %w", deviceName, err)
 	}
 	return nil
+}
+
+func (o *ops) Chroot(chrootPath string) (func() error, error) {
+	root, err := os.Open("/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open root directory: %w", err)
+	}
+
+	if err := syscall.Chroot(chrootPath); err != nil {
+		root.Close()
+		return nil, fmt.Errorf("failed to chroot to %s, err: %w", chrootPath, err)
+	}
+
+	return func() error {
+		defer root.Close()
+		if err := root.Chdir(); err != nil {
+			return fmt.Errorf("failed to change directory to root: %w", err)
+		}
+		if err := syscall.Chroot("."); err != nil {
+			return fmt.Errorf("failed to unchroot: %w", err)
+		}
+		return nil
+	}, nil
+}
+
+func (o *ops) RunListOfCommands(cmds []*CMD) error {
+	for _, c := range cmds {
+		if _, err := o.hostCommandsExecutor.Execute(c.command, c.args...); err != nil {
+			return fmt.Errorf("failed to run %s with args %s: %w", c.command, c.args, err)
+		}
+	}
+	return nil
+}
+
+func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error {
+	o.log.Info("Creating extra partition")
+	if _, err := o.RunBashInHostNamespace(
+		"echo", "write", "|", "sfdisk", installationDisk); err != nil {
+		return fmt.Errorf("failed to create extra partition: %w", err)
+	}
+	if _, err := o.RunInHostNamespace("sgdisk", "--new",
+		fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionStart),
+		"--change-name", fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionLabel),
+		installationDisk); err != nil {
+		return fmt.Errorf("failed to create extra partition: %w", err)
+	}
+
+	extraPartitionPath, err := o.RunBashInHostNamespace("lsblk", installationDisk, "--json", "-O", "|", "jq",
+		fmt.Sprintf(".blockdevices[0].children[%d].path", extraPartitionNumber-1), "-r")
+	if err != nil {
+		return fmt.Errorf("failed to get extra partition path: %w", err)
+	}
+
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("mkfs.xfs", "-f", extraPartitionPath))
+	cmds = append(cmds, o.growRootPartitionCommands(installationDisk)...)
+	cmds = append(cmds, NewCMD("mount",
+		fmt.Sprintf("/dev/disk/by-partlabel/%s", extraPartitionLabel), "/var/lib/containers"),
+		NewCMD("restorecon", "-R", containersFolder))
+	if err := o.RunListOfCommands(cmds); err != nil {
+		return fmt.Errorf("failed to grow root partition: %w", err)
+	}
+
+	return nil
+}
+
+func (o *ops) SetupContainersFolderCommands() error {
+	o.log.Info("Setting up containers folder")
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("chattr", "-i", "/mnt/"),
+		NewCMD("mkdir", "-p", "/mnt/containers"),
+		NewCMD("chattr", "+i", "/mnt/"),
+		NewCMD("mount", "-o", "bind", "/mnt/containers", containersFolder),
+		NewCMD("restorecon", "-R", containersFolder))
+	if err := o.RunListOfCommands(cmds); err != nil {
+		return fmt.Errorf("failed to setup containers folder: %w", err)
+	}
+	return nil
+}
+
+func (o *ops) growRootPartitionCommands(installationDisk string) []*CMD {
+	var cmds []*CMD
+	cmds = append(cmds, NewCMD("growpart", installationDisk, "4"),
+		NewCMD("mount", "/dev/disk/by-partlabel/root", "/mnt"),
+		NewCMD("mount", "/dev/disk/by-partlabel/boot", "/mnt/boot"),
+		NewCMD("xfs_growfs", "/dev/disk/by-partlabel/root"))
+
+	return cmds
 }

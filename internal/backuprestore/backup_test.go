@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -49,7 +50,8 @@ import (
 const oadpNs = "openshift-adp"
 
 var (
-	testscheme = scheme.Scheme
+	testscheme    = scheme.Scheme
+	testClusterID = "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36"
 )
 
 func init() {
@@ -66,6 +68,7 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 }
 
 func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
+	backupGvk := common.BackupGvk
 	backup := &velerov1.Backup{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       backupGvk.Kind,
@@ -74,7 +77,8 @@ func fakeBackupCr(name, applyWave, backupResource string) *velerov1.Backup {
 	}
 	backup.SetName(name)
 	backup.SetNamespace(oadpNs)
-	backup.SetAnnotations(map[string]string{applyWaveAnn: applyWave})
+	backup.SetLabels(map[string]string{clusterIDLabel: testClusterID})
+	backup.SetAnnotations(map[string]string{common.ApplyWaveAnn: applyWave})
 
 	backup.Spec = velerov1.BackupSpec{
 		IncludedNamespaces:               []string{"openshift-test"},
@@ -480,7 +484,7 @@ func TestGetObjsFromAnnotations(t *testing.T) {
 		{
 			name:       "empty",
 			annotation: "",
-			expected:   []ObjMetadata{},
+			expected:   []ObjMetadata(nil),
 		},
 	}
 
@@ -491,91 +495,6 @@ func TestGetObjsFromAnnotations(t *testing.T) {
 			result, err := getObjsFromAnnotations(backup)
 			assert.Equal(t, tc.expected, result)
 			assert.NoError(t, err)
-		})
-	}
-}
-
-func TestSortBackupCrs(t *testing.T) {
-	testcases := []struct {
-		name           string
-		resources      []*velerov1.Backup
-		expectedResult [][]*velerov1.Backup
-	}{
-		{
-			name: "Multiple resources contain the same wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "3", "fakeResource"),
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-			}, {
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("c_backup", "3", "fakeResource"),
-			}, {
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-			}, {
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-			},
-			},
-		},
-		{
-			name: "Multiple resources have no wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("g_backup", "", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("b_backup", "1", "fakeResource"),
-			}, {
-				fakeBackupCr("a_backup", "3", "fakeResource"),
-			}, {
-				fakeBackupCr("d_backup", "10", "fakeResource"),
-			}, {
-				fakeBackupCr("e_backup", "100", "fakeResource"),
-				fakeBackupCr("f_backup", "100", "fakeResource"),
-			}, {
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("g_backup", "", "fakeResource"),
-			},
-			},
-		},
-		{
-			name: "All resources have no wave number",
-			resources: []*velerov1.Backup{
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "", "fakeResource"),
-				fakeBackupCr("a_backup", "", "fakeResource"),
-				fakeBackupCr("b_backup", "", "fakeResource"),
-				fakeBackupCr("f_backup", "", "fakeResource"),
-				fakeBackupCr("e_backup", "", "fakeResource"),
-			},
-			expectedResult: [][]*velerov1.Backup{{
-				fakeBackupCr("a_backup", "", "fakeResource"),
-				fakeBackupCr("b_backup", "", "fakeResource"),
-				fakeBackupCr("c_backup", "", "fakeResource"),
-				fakeBackupCr("d_backup", "", "fakeResource"),
-				fakeBackupCr("e_backup", "", "fakeResource"),
-				fakeBackupCr("f_backup", "", "fakeResource"),
-			},
-			},
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, _ := sortByApplyWaveBackupCrs(tc.resources)
-			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
 }
@@ -644,7 +563,7 @@ func TestTriggerBackup(t *testing.T) {
 			Name: "version",
 		},
 		Spec: configv1.ClusterVersionSpec{
-			ClusterID: "42fd3c76-4a1b-4e8b-8397-1c7210fd3e36",
+			ClusterID: configv1.ClusterID(testClusterID),
 		},
 	}
 
@@ -773,8 +692,8 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	// Test case 2: DPA with velero credentials found
 	dpa := &unstructured.Unstructured{
 		Object: map[string]any{
-			"kind":       dpaGvk.Kind,
-			"apiVersion": dpaGvk.Group + "/" + dpaGvk.Version,
+			"kind":       DpaGvk.Kind,
+			"apiVersion": DpaGvk.Group + "/" + DpaGvk.Version,
 			"metadata": map[string]any{
 				"name":      "dpa-name",
 				"namespace": oadpNs,
@@ -892,36 +811,37 @@ func TestCleanupBackups(t *testing.T) {
 		Log:    ctrl.Log.WithName("BackupRestore"),
 	}
 
-	resultChan := make(chan bool)
 	errorChan := make(chan error)
 
 	// Test backup cleanup for cluster1
 	go func() {
-		result, err := handler.CleanupBackups(context.Background())
-		resultChan <- result
+		err := handler.CleanupBackups(context.Background())
 		errorChan <- err
 	}()
 
 	// Mock the deletion of backup for cluster1
 	time.Sleep(1 * time.Second)
+
+	for _, backup := range backups {
+		dbr := &velerov1.DeleteBackupRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: backup.GetName(), Namespace: backup.GetNamespace()},
+		}
+		fakeClient.Delete(context.Background(), dbr)
+	}
+
 	if err := fakeClient.Delete(context.Background(), backups[0]); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	result := <-resultChan
 	err = <-errorChan
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-
-	// Verify that the backup for cluster1 was deleted
-	assert.Equal(t, true, result)
 
 	// Verify backupDeletionRequest was created for cluster1 only
 	deletionRequests := &velerov1.DeleteBackupRequestList{}
 	if err := fakeClient.List(context.Background(), deletionRequests); err != nil {
 		t.Errorf("failed to list deleteBackupRequest: %v", err)
 	}
-	assert.Equal(t, 1, len(deletionRequests.Items))
-	assert.Equal(t, "backupCluster1", deletionRequests.Items[0].Name)
+	assert.Equal(t, 0, len(deletionRequests.Items))
 }

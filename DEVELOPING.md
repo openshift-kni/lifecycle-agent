@@ -60,3 +60,18 @@ Run locally
 # $1 - path to local output dir. It will created if not present
 ./must-gather/collection-scripts/gather must-gather/tmp
 ```
+
+## Stateroot job
+
+To debug or run Stateroot job independently just print out the full CR after construction with the following.
+
+```go
+import (
+  "sigs.k8s.io/yaml"
+)
+
+b, _ := yaml.Marshal(job)
+log.Printf("Yaml of the job is: %q", string(b))
+```
+
+> 📝 currently it's not idempotent, but experimentally it was achieved by calling `CleanupUnbootedStateroots` as a pre-condition in the cli.

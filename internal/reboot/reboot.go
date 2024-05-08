@@ -37,7 +37,6 @@ type IBUAutoRollbackConfig struct {
 //
 //go:generate mockgen -source=reboot.go -package=reboot -destination=mock_reboot.go
 type RebootIntf interface {
-	WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error
 	ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error)
 	DisableInitMonitor() error
 	RebootToNewStateRoot(rationale string) error
@@ -69,7 +68,7 @@ func NewRebootClient(log *logr.Logger,
 	}
 }
 
-func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func WriteIBUAutoRollbackConfigFile(log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade) error {
 	stateroot := common.GetStaterootName(ibu.Spec.SeedImageRef.Version)
 	staterootPath := common.GetStaterootPath(stateroot)
 	cfgfile := common.PathOutsideChroot(filepath.Join(staterootPath, common.IBUAutoRollbackConfigFile))
@@ -79,24 +78,45 @@ func (c *RebootClient) WriteIBUAutoRollbackConfigFile(ibu *lcav1alpha1.ImageBase
 		return fmt.Errorf("unable to create config dir: %s: %w", cfgdir, err)
 	}
 
-	monitorTimeout := ibu.Spec.AutoRollbackOnFailure.InitMonitorTimeoutSeconds
-	if monitorTimeout <= 0 {
-		monitorTimeout = common.IBUAutoRollbackInitMonitorTimeoutDefaultSeconds
+	monitorTimeout := common.IBUAutoRollbackInitMonitorTimeoutDefaultSeconds
+	if ibu.Spec.AutoRollbackOnFailure != nil && ibu.Spec.AutoRollbackOnFailure.InitMonitorTimeoutSeconds > 0 {
+		monitorTimeout = ibu.Spec.AutoRollbackOnFailure.InitMonitorTimeoutSeconds
 	}
 
+	log.Info("Auto-rollback init monitor timeout", "monitorTimeout", monitorTimeout)
+
+	// check autoRollback's InitMonitor config from annotation
+	initMonitorEnabled := true
+	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailureInitMonitorAnnotation]; exists {
+		if val == common.AutoRollbackDisableValue {
+			initMonitorEnabled = false
+		}
+	}
+	log.Info("Auto-rollback init monitor config", "initMonitorEnabled", initMonitorEnabled)
+
 	rollbackCfg := IBUAutoRollbackConfig{
-		InitMonitorEnabled: !ibu.Spec.AutoRollbackOnFailure.DisabledInitMonitor,
+		InitMonitorEnabled: initMonitorEnabled,
 		InitMonitorTimeout: monitorTimeout,
 		EnabledComponents:  make(map[string]bool),
 	}
 
-	rollbackCfg.EnabledComponents[InstallationConfigurationComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
-	rollbackCfg.EnabledComponents[PostPivotComponent] = !ibu.Spec.AutoRollbackOnFailure.DisabledForPostRebootConfig
+	// check autoRollback's PostReboot config from annotation
+	postRebootConfigEnabled := true
+	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailurePostRebootConfigAnnotation]; exists {
+		if val == common.AutoRollbackDisableValue {
+			postRebootConfigEnabled = false
+		}
+	}
+	log.Info("Auto-rollback post reboot config", "postRebootConfigEnabled", postRebootConfigEnabled)
+
+	rollbackCfg.EnabledComponents[InstallationConfigurationComponent] = postRebootConfigEnabled
+	rollbackCfg.EnabledComponents[PostPivotComponent] = postRebootConfigEnabled
 
 	if err := lcautils.MarshalToFile(rollbackCfg, cfgfile); err != nil {
 		return fmt.Errorf("failed to write rollback config file in %s: %w", cfgfile, err)
 	}
 
+	log.Info(fmt.Sprintf("Config saved to %s", cfgdir))
 	return nil
 }
 

@@ -29,7 +29,6 @@ type Progress struct {
 	Total          int      `json:"total"`
 	Pulled         int      `json:"pulled"`
 	Failed         int      `json:"failed"`
-	Skipped        int      `json:"skipped"`
 	FailedPullList []string `json:"failed_pulls"`
 	mux            sync.Mutex
 }
@@ -52,7 +51,6 @@ func (p *Progress) Update(success bool, image string) {
 func (p *Progress) Log() {
 	logrus.Infof("Total Images: %d", p.Total)
 	logrus.Infof("Images Pulled Successfully: %d", p.Pulled)
-	logrus.Infof("Images Skipped: %d", p.Skipped)
 	logrus.Infof("Images Failed to Pull: %d", p.Failed)
 	for _, img := range p.FailedPullList {
 		logrus.Infof("failed: %s", img)

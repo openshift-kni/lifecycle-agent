@@ -138,7 +138,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 				return os.Stat(".")
 			}
 
-			if err := r.cleanupUnbootedStateroot(tt.input); (err != nil) != tt.wantErr {
+			if err := cleanupUnbootedStateroot(tt.input, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
 				t.Errorf("ImageBasedUpgradeReconciler.cleanupUnbootedStateroot() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -296,7 +296,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 				Ops:             mockOps,
 			}
 
-			if err := r.cleanupUnbootedStateroots(); (err != nil) != tt.wantErr {
+			if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
 				t.Errorf("ImageBasedUpgradeReconciler.cleanupUnbootedStateroots() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

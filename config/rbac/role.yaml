@@ -51,6 +51,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - create
@@ -143,6 +149,15 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  verbs:
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
   - lca.openshift.io
   resources:
   - imagebasedupgrades
@@ -214,6 +229,7 @@ rules:
   resources:
   - machineconfigs
   verbs:
+  - delete
   - get
   - list
   - watch
@@ -284,6 +300,7 @@ rules:
   verbs:
   - get
   - list
+  - watch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
@@ -304,15 +321,6 @@ rules:
   - securitycontextconstraints
   verbs:
   - use
-- apiGroups:
-  - sriovnetwork.openshift.io
-  resources:
-  - sriovnetworknodepolicies
-  verbs:
-  - get
-  - list
-  - patch
-  - watch
 - apiGroups:
   - sriovnetwork.openshift.io
   resources:

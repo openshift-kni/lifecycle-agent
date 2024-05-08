@@ -68,6 +68,16 @@ func buildKernelArgumentsFromMCOFile(path string) ([]string, error) {
 			args[2*i+1] = string(val)
 		}
 	}
+
+	if mc.Spec.FIPS {
+		args = append(args,
+			"--karg-append", "fips=1",
+			// This is needed because /boot is on a separate partition https://access.redhat.com/solutions/137833
+			// TODO: Should we have this regardless of FIPS?
+			"--karg-append", "boot=LABEL=boot",
+		)
+	}
+
 	return args, nil
 }
 
@@ -129,7 +139,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		}
 	}()
 
-	workspace, err := filepath.Rel(common.Host, workspaceOutsideChroot)
+	workspace, err := common.PathInsideChroot(workspaceOutsideChroot)
 	if err != nil {
 		return fmt.Errorf("failed to get workspace relative path %w", err)
 	}
@@ -240,6 +250,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed to copy image list file: %w", err)
 	}
 
+	log.Info("Stateroot setup done successfully")
 	return nil
 }
 
