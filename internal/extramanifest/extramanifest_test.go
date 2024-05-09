@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -542,6 +543,7 @@ func TestExportPolicyManifests(t *testing.T) {
 						"metadata": map[string]interface{}{
 							"annotations": map[string]interface{}{
 								"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}",
+								common.ApplyTypeAnnotation:                common.ApplyTypeMerge,
 							},
 							"labels": map[string]interface{}{
 								"lca.openshift.io/target-ocp-version": "4.15.2",

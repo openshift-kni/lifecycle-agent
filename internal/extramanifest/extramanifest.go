@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -135,6 +136,17 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 			return fmt.Errorf("failed to create manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
 		}
 	} else {
+		applyType := common.ApplyTypeReplace
+		if metadata, exists := manifest.Object["metadata"].(map[string]interface{}); exists {
+			if annotations, exists := metadata["annotations"].(map[string]interface{}); exists {
+				if at, exists := annotations[common.ApplyTypeAnnotation]; exists {
+					applyType = at.(string)
+					// Remove the annotation as it serves no purpose at runtime
+					delete(annotations, common.ApplyTypeAnnotation)
+				}
+			}
+		}
+
 		opts := metav1.UpdateOptions{}
 		if isDryRun {
 			opts = metav1.UpdateOptions{
@@ -142,10 +154,27 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 			}
 		}
 
-		manifest.SetResourceVersion(existingManifest.GetResourceVersion())
-		if _, err := resource.Update(ctx, manifest, opts); err != nil {
-			return fmt.Errorf("failed to update manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+		switch applyType {
+		case common.ApplyTypeReplace:
+			manifest.SetResourceVersion(existingManifest.GetResourceVersion())
+			if _, err := resource.Update(ctx, manifest, opts); err != nil {
+				return fmt.Errorf("failed to replace manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
+		case common.ApplyTypeMerge:
+			mergedObj, err := mergeSpecs(manifest.Object, existingManifest.Object, string(policyv1.MustHave), false)
+			if err != nil {
+				return fmt.Errorf("failed to merge manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
+			merged := &unstructured.Unstructured{Object: mergedObj.(map[string]interface{})}
+			merged.SetResourceVersion(existingManifest.GetResourceVersion())
+			if _, err := resource.Update(ctx, merged, opts); err != nil {
+				return fmt.Errorf("failed to update manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
 		}
+
 	}
 	return nil
 }

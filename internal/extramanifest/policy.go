@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -89,7 +90,7 @@ func getConfigurationObjects(log *logr.Logger, policy *policiesv1.Policy, object
 			return uobjects, fmt.Errorf("failed to unmarshal ConfigurationPolicy: %w", err)
 		}
 		for _, ot := range pol.Spec.ObjectTemplates {
-			if !strings.EqualFold(string(ot.ComplianceType), string(policyv1.MustHave)) {
+			if strings.EqualFold(string(ot.ComplianceType), string(policyv1.MustNotHave)) {
 				continue
 			}
 
@@ -125,6 +126,15 @@ func getConfigurationObjects(log *logr.Logger, policy *policiesv1.Policy, object
 						if !labelsFound {
 							continue
 						}
+						annotations, exists := metadata["annotations"].(map[string]interface{})
+						if !exists {
+							annotations = make(map[string]interface{})
+						}
+						applyType := getApplyType(string(ot.ComplianceType))
+						if applyType == "" {
+							return uobjects, fmt.Errorf("unsupported compliance type: %s", ot.ComplianceType)
+						}
+						annotations[common.ApplyTypeAnnotation] = applyType
 					} else {
 						continue
 					}
@@ -138,6 +148,16 @@ func getConfigurationObjects(log *logr.Logger, policy *policiesv1.Policy, object
 		}
 	}
 	return uobjects, nil
+}
+
+func getApplyType(complianceType string) string {
+	var applyType string
+	if strings.EqualFold(complianceType, string(policyv1.MustHave)) {
+		applyType = common.ApplyTypeMerge
+	} else if strings.EqualFold(complianceType, string(policyv1.MustOnlyHave)) {
+		applyType = common.ApplyTypeReplace
+	}
+	return applyType
 }
 
 // getParentPolicyNameAndNamespace gets the parent policy name and namespace from a given child policy
