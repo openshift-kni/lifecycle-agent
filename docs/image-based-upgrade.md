@@ -290,14 +290,20 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
 
 The "Prep" stage will:
 
-- Pull the seed image
 - Perform the following validations:
   - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
   - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
     - If a required CRD is missing from the current stateroot, a warning message will be included in the IBU CRs with annotation `lca.openshift.io/warn-extramanifest-cm-unknown-crd`.
   - Validate that the desired upgrade version matches the version of the seed image
   - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
+- Pull the seed image
 - Unpack the seed image and create a new ostree stateroot
+
+> [!CAUTION]
+> At this point of `Prep` stage, it is VERY important to let it run to completion.
+> To help avoid unintended consequences of accidental deletion (e.g moving to `Idle` stage while `Prep` in progress), there are blocks in place to allow it to run its normal course before continuing with the deletion request.
+> During this wait (could be up to several minutes), please refer to the pod logs for more information.
+
 - Pull all images specified by the image list built into the seed image. Refer to [precache-plugin](precache-plugin.md)
 
 Upon completion, the condition will be updated to "Prep Completed"
