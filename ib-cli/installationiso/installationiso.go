@@ -9,9 +9,11 @@ import (
 	"os"
 	"path"
 
+	"github.com/sirupsen/logrus"
+
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-	"github.com/sirupsen/logrus"
 )
 
 type InstallationIso struct {
@@ -21,19 +23,15 @@ type InstallationIso struct {
 }
 
 type IgnitionData struct {
-	SeedImage           string
-	SeedVersion         string
-	BackupSecret        string
-	PullSecret          string
-	SshPublicKey        string
-	InstallSeedScript   string
-	LCAImage            string
-	InstallationDisk    string
-	ExtraPartitionStart string
-	PrecacheBestEffort  bool
-	PrecacheDisabled    bool
-	Shutdown            bool
-	SkipDiskCleanup     bool
+	AuthFilePath         string
+	PullSecretPath       string
+	IBIConfigurationPath string
+	BackupSecret         string
+	PullSecret           string
+	SshPublicKey         string
+	InstallSeedScript    string
+	SeedImage            string
+	IBIConfiguration     string
 }
 
 //go:embed data/*
@@ -56,22 +54,23 @@ const (
 	rhcosIsoFileName          = "rhcos-live.x86_64.iso"
 	ibiIsoFileName            = "rhcos-ibi.iso"
 	coreosInstallerImage      = "quay.io/coreos/coreos-installer:latest"
+	ibiConfigFileName         = "ibi-configuration.json"
+	authIgnitionFilePath      = "/var/tmp/backup-secret.json"
+	psIgnitioFilePath         = "/var/tmp/pull-secret.json"
+	ibiConfigIgnitionFilePath = "/var/tmp/" + ibiConfigFileName
 )
 
-func (r *InstallationIso) Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	rhcosLiveIsoUrl, installationDisk string, extraPartitionStart string,
-	precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
+func (r *InstallationIso) Create(ibiConfig *ibiconfig.IBIPrepareConfig) error {
 	r.log.Info("Creating IBI installation ISO")
 	err := r.validate()
 	if err != nil {
 		return err
 	}
-	err = r.createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
+	err = r.createIgnitionFile(ibiConfig)
 	if err != nil {
 		return err
 	}
-	if err := r.downloadLiveIso(rhcosLiveIsoUrl); err != nil {
+	if err := r.downloadLiveIso(ibiConfig.RHCOSLiveISO); err != nil {
 		return err
 	}
 	if err := r.embedIgnitionToIso(); err != nil {
@@ -90,11 +89,9 @@ func (r *InstallationIso) validate() error {
 	return nil
 }
 
-func (r *InstallationIso) createIgnitionFile(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
+func (r *InstallationIso) createIgnitionFile(ibiConfig *ibiconfig.IBIPrepareConfig) error {
 	r.log.Info("Generating Ignition Config")
-	err := r.renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup)
+	err := r.renderButaneConfig(ibiConfig)
 	if err != nil {
 		return err
 	}
@@ -153,15 +150,14 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 	return nil
 }
 
-func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyPath, lcaImage,
-	installationDisk string, extraPartitionStart string, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup bool) error {
+func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConfig) error {
 	r.log.Debug("Generating butane config")
 	var sshPublicKey []byte
 	var err error
-	if sshPublicKeyPath == "" {
+	if ibiConfig.SSHPublicKeyFile == "" {
 		r.log.Info("ssh key not provided skipping")
 	} else {
-		sshPublicKey, err = os.ReadFile(sshPublicKeyPath)
+		sshPublicKey, err = os.ReadFile(ibiConfig.SSHPublicKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read ssh public key: %w", err)
 		}
@@ -178,35 +174,31 @@ func (r *InstallationIso) renderButaneConfig(seedImage, seedVersion, authFile, p
 		return err
 	}
 	pullSecretInButane := path.Join(butaneFiles, "pullSecret")
-	if err := r.copyFileToButaneDir(pullSecretFile, path.Join(r.workDir, pullSecretInButane)); err != nil {
+	if err := r.copyFileToButaneDir(ibiConfig.PullSecretFile, path.Join(r.workDir, pullSecretInButane)); err != nil {
 		return err
 	}
 	backupSecretInButane := path.Join(butaneFiles, "backupSecret")
-	if err := r.copyFileToButaneDir(authFile, path.Join(r.workDir, backupSecretInButane)); err != nil {
+	if err := r.copyFileToButaneDir(ibiConfig.AuthFile, path.Join(r.workDir, backupSecretInButane)); err != nil {
 		return err
 	}
+	// inside ignition auth and pull secret files paths differs from the ones provided in ibi cli
+	ibiConfig.AuthFile = authIgnitionFilePath
+	ibiConfig.PullSecretFile = psIgnitioFilePath
+	ibiConfigurationInButane := path.Join(butaneFiles, ibiConfigFileName)
+	if err := utils.MarshalToFile(ibiConfig, path.Join(r.workDir, ibiConfigurationInButane)); err != nil {
+		return fmt.Errorf("failed to marshal ibi config to file: %w", err)
+	}
 
-	templateData := IgnitionData{SeedImage: seedImage,
-		SeedVersion:         seedVersion,
-		BackupSecret:        backupSecretInButane,
-		PullSecret:          pullSecretInButane,
-		SshPublicKey:        string(sshPublicKey),
-		InstallSeedScript:   seedInstallScriptInButane,
-		LCAImage:            lcaImage,
-		InstallationDisk:    installationDisk,
-		ExtraPartitionStart: extraPartitionStart,
-	}
-	if precacheBestEffort {
-		templateData.PrecacheBestEffort = true
-	}
-	if precacheDisabled {
-		templateData.PrecacheDisabled = true
-	}
-	if shutdown {
-		templateData.Shutdown = true
-	}
-	if skipDiskCleanup {
-		templateData.SkipDiskCleanup = true
+	templateData := IgnitionData{
+		AuthFilePath:         authIgnitionFilePath,
+		PullSecretPath:       psIgnitioFilePath,
+		IBIConfigurationPath: ibiConfigIgnitionFilePath,
+		BackupSecret:         backupSecretInButane,
+		PullSecret:           pullSecretInButane,
+		SshPublicKey:         string(sshPublicKey),
+		InstallSeedScript:    seedInstallScriptInButane,
+		IBIConfiguration:     ibiConfigurationInButane,
+		SeedImage:            ibiConfig.SeedImage,
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)

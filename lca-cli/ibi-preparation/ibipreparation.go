@@ -9,6 +9,7 @@ import (
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -21,51 +22,23 @@ import (
 const imageListFile = "var/tmp/imageListFile"
 
 type IBIPrepare struct {
-	log                        *logrus.Logger
-	ops                        ops.Ops
-	authFile                   string
-	seedImage                  string
-	rpmostreeClient            rpmostreeclient.IClient
-	ostreeClient               ostreeclient.IClient
-	seedExpectedVersion        string
-	pullSecretFile             string
-	precacheBestEffort         bool
-	precacheDisabled           bool
-	shutdown                   bool
-	installationDisk           string
-	shouldCreateExtraPartition bool
-	extraPartitionLabel        string
-	extraPartitionStart        string
-	extraPartitionNumber       int
-	cleanupDevice              preinstallUtils.CleanupDevice
-	skipDiskCleanup            bool
+	log             *logrus.Logger
+	ops             ops.Ops
+	rpmostreeClient rpmostreeclient.IClient
+	ostreeClient    ostreeclient.IClient
+	cleanupDevice   preinstallUtils.CleanupDevice
+	config          *ibiconfig.IBIPrepareConfig
 }
 
 func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreeclient.IClient,
-	ostreeClient ostreeclient.IClient, cleanupDevice preinstallUtils.CleanupDevice,
-	seedImage, authFile, pullSecretFile,
-	seedExpectedVersion, installationDisk, extraPartitionLabel, extraPartitionStart string,
-	precacheBestEffort, precacheDisabled, shutdown, shouldCreateExtraPartition, skipDiskCleanup bool,
-	extraPartitionNumber int) *IBIPrepare {
+	ostreeClient ostreeclient.IClient, cleanupDevice preinstallUtils.CleanupDevice, config *ibiconfig.IBIPrepareConfig) *IBIPrepare {
 	return &IBIPrepare{
-		log:                        log,
-		ops:                        ops,
-		authFile:                   authFile,
-		pullSecretFile:             pullSecretFile,
-		seedImage:                  seedImage,
-		rpmostreeClient:            rpmostreeClient,
-		ostreeClient:               ostreeClient,
-		seedExpectedVersion:        seedExpectedVersion,
-		precacheDisabled:           precacheDisabled,
-		precacheBestEffort:         precacheBestEffort,
-		shutdown:                   shutdown,
-		installationDisk:           installationDisk,
-		shouldCreateExtraPartition: shouldCreateExtraPartition,
-		extraPartitionLabel:        extraPartitionLabel,
-		extraPartitionStart:        extraPartitionStart,
-		extraPartitionNumber:       extraPartitionNumber,
-		cleanupDevice:              cleanupDevice,
-		skipDiskCleanup:            skipDiskCleanup,
+		log:             log,
+		ops:             ops,
+		rpmostreeClient: rpmostreeClient,
+		ostreeClient:    ostreeClient,
+		cleanupDevice:   cleanupDevice,
+		config:          config,
 	}
 }
 
@@ -76,7 +49,7 @@ func (i *IBIPrepare) Run() error {
 	}
 
 	i.log.Info("Pulling seed image")
-	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", i.authFile, i.seedImage); err != nil {
+	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", i.config.AuthFile, i.config.SeedImage); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
@@ -85,7 +58,7 @@ func (i *IBIPrepare) Run() error {
 	common.OstreeDeployPathPrefix = "/mnt/"
 	// Setup state root
 	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
-		i.seedImage, i.seedExpectedVersion, imageListFile, true); err != nil {
+		i.config.SeedImage, i.config.SeedVersion, imageListFile, true); err != nil {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
@@ -98,7 +71,7 @@ func (i *IBIPrepare) Run() error {
 
 func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 	// TODO: add support for mirror registry
-	if i.precacheDisabled {
+	if i.config.PrecacheDisabled {
 		i.log.Info("Precache disabled, skipping it")
 		return nil
 	}
@@ -121,7 +94,7 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, i.pullSecretFile, i.precacheBestEffort); err != nil {
+	if err := workload.Precache(imageList, i.config.PullSecretFile, i.config.PrecacheBestEffort); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
@@ -129,7 +102,7 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 }
 
 func (i *IBIPrepare) shutdownNode() error {
-	if !i.shutdown {
+	if !i.config.Shutdown {
 		i.log.Info("Skipping shutdown")
 		return nil
 	}
@@ -159,15 +132,15 @@ func (i *IBIPrepare) chrootIfPathExists(chrootPath string) (func() error, error)
 }
 
 func (i *IBIPrepare) cleanupDisk() {
-	if i.skipDiskCleanup {
+	if i.config.SkipDiskCleanup {
 		i.log.Info("Skipping disk cleanup")
 		return
 	}
-	i.log.Infof("Cleaning up %s disk", i.installationDisk)
+	i.log.Infof("Cleaning up %s disk", i.config.InstallationDisk)
 	// We don't want to fail the process if the cleanup fails as the installation still can succeed
-	if err := i.cleanupDevice.CleanupInstallDevice(i.installationDisk); err != nil {
+	if err := i.cleanupDevice.CleanupInstallDevice(i.config.InstallationDisk); err != nil {
 		i.log.Errorf("failed to cleanup installation disk %s, though installation will continue"+
-			", error : %v", i.installationDisk, err)
+			", error : %v", i.config.InstallationDisk, err)
 	}
 }
 
@@ -177,18 +150,18 @@ func (i *IBIPrepare) diskPreparation() error {
 	i.cleanupDisk()
 
 	i.log.Info("Writing image to disk")
-	if _, err := i.ops.RunInHostNamespace("coreos-installer", "install", i.installationDisk); err != nil {
+	if _, err := i.ops.RunInHostNamespace("coreos-installer", "install", i.config.InstallationDisk); err != nil {
 		return fmt.Errorf("failed to write image to disk: %w", err)
 	}
 
-	if i.shouldCreateExtraPartition {
-		if err := i.ops.CreateExtraPartition(i.installationDisk, i.extraPartitionLabel,
-			i.extraPartitionStart, i.extraPartitionNumber); err != nil {
-			return fmt.Errorf("failed to create extra partition: %w", err)
-		}
-	} else {
+	if i.config.UseContainersFolder {
 		if err := i.ops.SetupContainersFolderCommands(); err != nil {
 			return fmt.Errorf("failed to setup containers folder: %w", err)
+		}
+	} else {
+		if err := i.ops.CreateExtraPartition(i.config.InstallationDisk, i.config.ExtraPartitionLabel,
+			i.config.ExtraPartitionStart, i.config.ExtraPartitionNumber); err != nil {
+			return fmt.Errorf("failed to create extra partition: %w", err)
 		}
 	}
 
