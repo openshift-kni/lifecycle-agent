@@ -1099,7 +1099,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.PolicyManifestPath)).Return(tt.applyPolicyManifestsReturn()).Times(1)
 			}
 			if tt.applyExtraManifestsReturn != nil {
-				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.ExtraManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
+				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.CmManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
 			if tt.ensureOadpConfigurationReturn != nil {
 				mockBackuprestore.EXPECT().EnsureOadpConfiguration(gomock.Any()).Return(tt.ensureOadpConfigurationReturn()).Times(1)
