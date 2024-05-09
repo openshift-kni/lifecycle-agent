@@ -210,7 +210,7 @@ func TestRenderJob(t *testing.T) {
 			name:          "Fully specified, valid precaching config",
 			config:        NewConfig([]string{}, []corev1.EnvVar{}, "NumConcurrentPulls", 1, "NicePriority", 1, "IoNiceClass", IoNiceClassRealTime, "IoNicePriority", 5),
 			expectedError: nil,
-			expectedArgs:  []string{fmt.Sprintf("nice -n 1 ionice -c %d -n 5 precache", IoNiceClassRealTime)},
+			expectedArgs:  []string{fmt.Sprintf("nice -n 1 ionice -c %d -n 5 lca-cli ibu-precache-workload", IoNiceClassRealTime)},
 			expectedEnvVars: []corev1.EnvVar{
 				{
 					Name:  EnvMaxPullThreads,
@@ -222,7 +222,7 @@ func TestRenderJob(t *testing.T) {
 			name:          "Partially specified, with some invalid precaching config",
 			config:        NewConfig([]string{}, []corev1.EnvVar{}, "NumConcurrentPulls", 10, "NicePriority", 100, "IoNiceClass", IoNiceClassRealTime),
 			expectedError: nil,
-			expectedArgs: []string{fmt.Sprintf("nice -n %d ionice -c %d -n %d precache",
+			expectedArgs: []string{fmt.Sprintf("nice -n %d ionice -c %d -n %d lca-cli ibu-precache-workload",
 				DefaultNicePriority, IoNiceClassRealTime, DefaultIoNicePriority)},
 			expectedEnvVars: []corev1.EnvVar{
 				{
@@ -235,7 +235,7 @@ func TestRenderJob(t *testing.T) {
 			name:          "Only image list provided in precaching config",
 			config:        NewConfig([]string{}, []corev1.EnvVar{}),
 			expectedError: nil,
-			expectedArgs: []string{fmt.Sprintf("nice -n %d ionice -c %d -n %d precache",
+			expectedArgs: []string{fmt.Sprintf("nice -n %d ionice -c %d -n %d lca-cli ibu-precache-workload",
 				DefaultNicePriority, DefaultIoNiceClass, DefaultIoNicePriority)},
 			expectedEnvVars: []corev1.EnvVar{
 				{

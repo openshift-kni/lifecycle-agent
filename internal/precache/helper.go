@@ -128,7 +128,7 @@ func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade,
 		ioNicePriority = DefaultIoNicePriority
 	}
 
-	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d precache",
+	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d lca-cli ibu-precache-workload",
 		nicePriority, ioNiceClass, ioNicePriority)
 
 	precacheEnvVars := append(config.EnvVars, []corev1.EnvVar{
