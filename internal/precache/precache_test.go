@@ -18,15 +18,16 @@ package precache
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/runtime"
 	"os"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"github.com/stretchr/testify/assert"
@@ -145,9 +146,9 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{}
-			ibu := v1alpha1.ImageBasedUpgrade{}
+			ibu := v1.ImageBasedUpgrade{}
 			sc := runtime.NewScheme()
-			_ = v1alpha1.AddToScheme(sc)
+			_ = v1.AddToScheme(sc)
 
 			Log := ctrl.Log.WithName("Precache")
 
@@ -179,7 +180,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 
-				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
+				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
 					Namespace: common.LcaNamespace,
 				})
@@ -242,9 +243,9 @@ func TestCleanup(t *testing.T) {
 
 			Log := ctrl.Log.WithName("Precache")
 
-			ibu := v1alpha1.ImageBasedUpgrade{}
+			ibu := v1.ImageBasedUpgrade{}
 			sc := runtime.NewScheme()
-			_ = v1alpha1.AddToScheme(sc)
+			_ = v1.AddToScheme(sc)
 
 			// Inject ConfigMap, Job
 			if tc.inputConfigMapName != "" {
@@ -273,7 +274,7 @@ func TestCleanup(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 
-				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1alpha1.ConfigMapRef{
+				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, v1.ConfigMapRef{
 					Name:      LcaPrecacheConfigMapName,
 					Namespace: common.LcaNamespace,
 				})

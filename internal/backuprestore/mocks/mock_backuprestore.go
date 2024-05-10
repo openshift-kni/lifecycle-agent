@@ -12,9 +12,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	v1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
-	v1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	v10 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -86,7 +86,7 @@ func (mr *MockBackuperRestorerMockRecorder) CleanupDeleteBackupRequests(ctx any)
 }
 
 // CleanupStaleBackups mocks base method.
-func (m *MockBackuperRestorer) CleanupStaleBackups(ctx context.Context, backups []*v1.Backup) error {
+func (m *MockBackuperRestorer) CleanupStaleBackups(ctx context.Context, backups []*v10.Backup) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CleanupStaleBackups", ctx, backups)
 	ret0, _ := ret[0].(error)
@@ -128,7 +128,7 @@ func (mr *MockBackuperRestorerMockRecorder) ExportOadpConfigurationToDir(ctx, to
 }
 
 // ExportRestoresToDir mocks base method.
-func (m *MockBackuperRestorer) ExportRestoresToDir(ctx context.Context, configMaps []v1alpha1.ConfigMapRef, toDir string) error {
+func (m *MockBackuperRestorer) ExportRestoresToDir(ctx context.Context, configMaps []v1.ConfigMapRef, toDir string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ExportRestoresToDir", ctx, configMaps, toDir)
 	ret0, _ := ret[0].(error)
@@ -142,10 +142,10 @@ func (mr *MockBackuperRestorerMockRecorder) ExportRestoresToDir(ctx, configMaps,
 }
 
 // GetSortedBackupsFromConfigmap mocks base method.
-func (m *MockBackuperRestorer) GetSortedBackupsFromConfigmap(ctx context.Context, content []v1alpha1.ConfigMapRef) ([][]*v1.Backup, error) {
+func (m *MockBackuperRestorer) GetSortedBackupsFromConfigmap(ctx context.Context, content []v1.ConfigMapRef) ([][]*v10.Backup, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSortedBackupsFromConfigmap", ctx, content)
-	ret0, _ := ret[0].([][]*v1.Backup)
+	ret0, _ := ret[0].([][]*v10.Backup)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -157,10 +157,10 @@ func (mr *MockBackuperRestorerMockRecorder) GetSortedBackupsFromConfigmap(ctx, c
 }
 
 // LoadRestoresFromOadpRestorePath mocks base method.
-func (m *MockBackuperRestorer) LoadRestoresFromOadpRestorePath() ([][]*v1.Restore, error) {
+func (m *MockBackuperRestorer) LoadRestoresFromOadpRestorePath() ([][]*v10.Restore, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LoadRestoresFromOadpRestorePath")
-	ret0, _ := ret[0].([][]*v1.Restore)
+	ret0, _ := ret[0].([][]*v10.Restore)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -200,7 +200,7 @@ func (mr *MockBackuperRestorerMockRecorder) RestorePVsReclaimPolicy(ctx any) *go
 }
 
 // StartOrTrackBackup mocks base method.
-func (m *MockBackuperRestorer) StartOrTrackBackup(ctx context.Context, backups []*v1.Backup) (*backuprestore.BackupTracker, error) {
+func (m *MockBackuperRestorer) StartOrTrackBackup(ctx context.Context, backups []*v10.Backup) (*backuprestore.BackupTracker, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "StartOrTrackBackup", ctx, backups)
 	ret0, _ := ret[0].(*backuprestore.BackupTracker)
@@ -215,7 +215,7 @@ func (mr *MockBackuperRestorerMockRecorder) StartOrTrackBackup(ctx, backups any)
 }
 
 // StartOrTrackRestore mocks base method.
-func (m *MockBackuperRestorer) StartOrTrackRestore(ctx context.Context, restores []*v1.Restore) (*backuprestore.RestoreTracker, error) {
+func (m *MockBackuperRestorer) StartOrTrackRestore(ctx context.Context, restores []*v10.Restore) (*backuprestore.RestoreTracker, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "StartOrTrackRestore", ctx, restores)
 	ret0, _ := ret[0].(*backuprestore.RestoreTracker)
@@ -230,7 +230,7 @@ func (mr *MockBackuperRestorerMockRecorder) StartOrTrackRestore(ctx, restores an
 }
 
 // ValidateOadpConfigmaps mocks base method.
-func (m *MockBackuperRestorer) ValidateOadpConfigmaps(ctx context.Context, content []v1alpha1.ConfigMapRef) error {
+func (m *MockBackuperRestorer) ValidateOadpConfigmaps(ctx context.Context, content []v1.ConfigMapRef) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ValidateOadpConfigmaps", ctx, content)
 	ret0, _ := ret[0].(error)

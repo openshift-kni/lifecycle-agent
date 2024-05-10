@@ -18,14 +18,15 @@ package precache
 
 import (
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
 	"testing"
+
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -247,9 +248,9 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ibu := v1alpha1.ImageBasedUpgrade{}
+			ibu := v1.ImageBasedUpgrade{}
 			sc := runtime.NewScheme()
-			_ = v1alpha1.AddToScheme(sc)
+			_ = v1.AddToScheme(sc)
 
 			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"), &ibu, sc)
 			if tc.expectedError != nil {

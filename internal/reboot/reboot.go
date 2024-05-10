@@ -7,15 +7,13 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
 )
 
 var (
@@ -40,7 +38,7 @@ type RebootIntf interface {
 	ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error)
 	DisableInitMonitor() error
 	RebootToNewStateRoot(rationale string) error
-	IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error)
+	IsOrigStaterootBooted(ibu *lcav1.ImageBasedUpgrade) (bool, error)
 	InitiateRollback(msg string) error
 	AutoRollbackIfEnabled(component, msg string)
 }
@@ -68,7 +66,7 @@ func NewRebootClient(log *logr.Logger,
 	}
 }
 
-func WriteIBUAutoRollbackConfigFile(log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func WriteIBUAutoRollbackConfigFile(log logr.Logger, ibu *lcav1.ImageBasedUpgrade) error {
 	stateroot := common.GetStaterootName(ibu.Spec.SeedImageRef.Version)
 	staterootPath := common.GetStaterootPath(stateroot)
 	cfgfile := common.PathOutsideChroot(filepath.Join(staterootPath, common.IBUAutoRollbackConfigFile))
@@ -183,7 +181,7 @@ func (c *RebootClient) RebootToNewStateRoot(rationale string) error {
 	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
 }
 
-func (c *RebootClient) IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error) {
+func (c *RebootClient) IsOrigStaterootBooted(ibu *lcav1.ImageBasedUpgrade) (bool, error) {
 	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName()
 	if err != nil {
 		return false, fmt.Errorf("failed to get current stateroot name: %w", err)
@@ -209,7 +207,7 @@ func (c *RebootClient) InitiateRollback(msg string) error {
 
 	filePath := common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), utils.IBUFilePath))
 
-	savedIbu := &lcav1alpha1.ImageBasedUpgrade{}
+	savedIbu := &lcav1.ImageBasedUpgrade{}
 	if err := lcautils.ReadYamlOrJSONFile(filePath, savedIbu); err != nil {
 		return fmt.Errorf("unable to read saved IBU CR from %s: %w", filePath, err)
 	}

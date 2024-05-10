@@ -9,7 +9,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -133,7 +133,7 @@ func ClearStatusCondition(existingConditions *[]metav1.Condition, conditionType 
 }
 
 // ClearInvalidTransitionStatusConditions clears any invalid transitions if exist
-func ClearInvalidTransitionStatusConditions(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func ClearInvalidTransitionStatusConditions(ibu *lcav1.ImageBasedUpgrade) {
 	for _, condition := range ibu.Status.Conditions {
 		if condition.Reason == string(ConditionReasons.InvalidTransition) {
 			if condition.Type == string(ConditionTypes.Idle) {
@@ -168,7 +168,7 @@ func ResetStatusConditions(existingConditions *[]metav1.Condition, generation in
 }
 
 // IsStageCompleted checks if the completed condition status for the stage is true
-func IsStageCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+func IsStageCompleted(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
 	if condition != nil && condition.Status == metav1.ConditionTrue {
 		return true
@@ -177,7 +177,7 @@ func IsStageCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.Imag
 }
 
 // IsStageFailed checks if the completed condition status for the stage is false
-func IsStageFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+func IsStageFailed(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
 	if condition != nil && condition.Status == metav1.ConditionFalse {
 		return true
@@ -186,7 +186,7 @@ func IsStageFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBa
 }
 
 // IsStageCompletedOrFailed checks if the completed condition for the stage is present
-func IsStageCompletedOrFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+func IsStageCompletedOrFailed(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
 	if condition != nil {
 		return true
@@ -195,9 +195,9 @@ func IsStageCompletedOrFailed(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alp
 }
 
 // IsStageInProgress checks if ibu is working on the stage
-func IsStageInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) bool {
+func IsStageInProgress(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) bool {
 	condition := GetInProgressCondition(ibu, stage)
-	if stage == lcav1alpha1.Stages.Idle {
+	if stage == lcav1.Stages.Idle {
 		if condition == nil || condition.Status == metav1.ConditionTrue {
 			return false
 		}
@@ -217,12 +217,12 @@ func IsStageInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.Ima
 }
 
 // GetInProgressStage returns the stage that is currently in progress
-func GetInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBasedUpgradeStage {
-	stages := []lcav1alpha1.ImageBasedUpgradeStage{
-		lcav1alpha1.Stages.Idle,
-		lcav1alpha1.Stages.Prep,
-		lcav1alpha1.Stages.Upgrade,
-		lcav1alpha1.Stages.Rollback,
+func GetInProgressStage(ibu *lcav1.ImageBasedUpgrade) lcav1.ImageBasedUpgradeStage {
+	stages := []lcav1.ImageBasedUpgradeStage{
+		lcav1.Stages.Idle,
+		lcav1.Stages.Prep,
+		lcav1.Stages.Upgrade,
+		lcav1.Stages.Rollback,
 	}
 
 	for _, stage := range stages {
@@ -234,7 +234,7 @@ func GetInProgressStage(ibu *lcav1alpha1.ImageBasedUpgrade) lcav1alpha1.ImageBas
 }
 
 // GetInProgressCondition returns the in progress condition based on the stage
-func GetInProgressCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) *metav1.Condition {
+func GetInProgressCondition(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) *metav1.Condition {
 	conditionType := GetInProgressConditionType(stage)
 	if conditionType != "" {
 		return meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
@@ -243,22 +243,22 @@ func GetInProgressCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha
 }
 
 // GetInProgressConditionType returns the in progress condition type based on the stage
-func GetInProgressConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
+func GetInProgressConditionType(stage lcav1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
-	case lcav1alpha1.Stages.Idle:
+	case lcav1.Stages.Idle:
 		conditionType = ConditionTypes.Idle
-	case lcav1alpha1.Stages.Prep:
+	case lcav1.Stages.Prep:
 		conditionType = ConditionTypes.PrepInProgress
-	case lcav1alpha1.Stages.Upgrade:
+	case lcav1.Stages.Upgrade:
 		conditionType = ConditionTypes.UpgradeInProgress
-	case lcav1alpha1.Stages.Rollback:
+	case lcav1.Stages.Rollback:
 		conditionType = ConditionTypes.RollbackInProgress
 	}
 	return
 }
 
 // GetCompletedCondition returns the completed condition based on the stage
-func GetCompletedCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1.ImageBasedUpgradeStage) *metav1.Condition {
+func GetCompletedCondition(ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) *metav1.Condition {
 	conditionType := GetCompletedConditionType(stage)
 	if conditionType != "" {
 		return meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
@@ -267,35 +267,35 @@ func GetCompletedCondition(ibu *lcav1alpha1.ImageBasedUpgrade, stage lcav1alpha1
 }
 
 // GetCompletedConditionType returns the completed condition type based on the stage
-func GetCompletedConditionType(stage lcav1alpha1.ImageBasedUpgradeStage) (conditionType ConditionType) {
+func GetCompletedConditionType(stage lcav1.ImageBasedUpgradeStage) (conditionType ConditionType) {
 	switch stage {
-	case lcav1alpha1.Stages.Idle:
+	case lcav1.Stages.Idle:
 		conditionType = ConditionTypes.Idle
-	case lcav1alpha1.Stages.Prep:
+	case lcav1.Stages.Prep:
 		conditionType = ConditionTypes.PrepCompleted
-	case lcav1alpha1.Stages.Upgrade:
+	case lcav1.Stages.Upgrade:
 		conditionType = ConditionTypes.UpgradeCompleted
-	case lcav1alpha1.Stages.Rollback:
+	case lcav1.Stages.Rollback:
 		conditionType = ConditionTypes.RollbackCompleted
 	}
 	return
 }
 
 // GetPreviousStage returns the previous stage for the one passed in
-func GetPreviousStage(stage lcav1alpha1.ImageBasedUpgradeStage) lcav1alpha1.ImageBasedUpgradeStage {
+func GetPreviousStage(stage lcav1.ImageBasedUpgradeStage) lcav1.ImageBasedUpgradeStage {
 	switch stage {
-	case lcav1alpha1.Stages.Prep:
-		return lcav1alpha1.Stages.Idle
-	case lcav1alpha1.Stages.Upgrade:
-		return lcav1alpha1.Stages.Prep
-	case lcav1alpha1.Stages.Rollback:
-		return lcav1alpha1.Stages.Upgrade
+	case lcav1.Stages.Prep:
+		return lcav1.Stages.Idle
+	case lcav1.Stages.Upgrade:
+		return lcav1.Stages.Prep
+	case lcav1.Stages.Rollback:
+		return lcav1.Stages.Upgrade
 	}
 	return ""
 }
 
 // SetStatusInvalidTransition updates the given stage status to invalid transition with message
-func SetStatusInvalidTransition(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetStatusInvalidTransition(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
 		GetInProgressConditionType(ibu.Spec.Stage),
 		ConditionReasons.InvalidTransition,
@@ -306,15 +306,15 @@ func SetStatusInvalidTransition(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) 
 }
 
 // SetUpgradeStatusFailed updates the upgrade status to failed with message
-func SetUpgradeStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetUpgradeStatusFailed(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		GetCompletedConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		UpgradeFailed,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		GetInProgressConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		msg,
@@ -322,9 +322,9 @@ func SetUpgradeStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 }
 
 // SetUpgradeStatusInProgress updates the upgrade status to in progress with message
-func SetUpgradeStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetUpgradeStatusInProgress(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		GetInProgressConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.InProgress,
 		metav1.ConditionTrue,
 		msg,
@@ -332,15 +332,15 @@ func SetUpgradeStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) 
 }
 
 // SetUpgradeStatusCompleted updates the upgrade status to completed
-func SetUpgradeStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func SetUpgradeStatusCompleted(ibu *lcav1.ImageBasedUpgrade) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		GetInProgressConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		UpgradeCompleted,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		GetCompletedConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Completed,
 		metav1.ConditionTrue,
 		UpgradeCompleted,
@@ -348,15 +348,15 @@ func SetUpgradeStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
 }
 
 // SetUpgradeStatusRollbackRequested updates the upgrade status to failed with rollback requested message
-func SetUpgradeStatusRollbackRequested(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func SetUpgradeStatusRollbackRequested(ibu *lcav1.ImageBasedUpgrade) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Upgrade),
+		GetCompletedConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		RollbackRequested,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Upgrade),
+		GetInProgressConditionType(lcav1.Stages.Upgrade),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		RollbackRequested,
@@ -364,9 +364,9 @@ func SetUpgradeStatusRollbackRequested(ibu *lcav1alpha1.ImageBasedUpgrade) {
 }
 
 // SetPrepStatusInProgress updates the prep status to in progress with message
-func SetPrepStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetPrepStatusInProgress(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		GetInProgressConditionType(lcav1.Stages.Prep),
 		ConditionReasons.InProgress,
 		metav1.ConditionTrue,
 		msg,
@@ -374,15 +374,15 @@ func SetPrepStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 }
 
 // SetPrepStatusFailed updates the prep status to failed with message
-func SetPrepStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetPrepStatusFailed(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
+		GetCompletedConditionType(lcav1.Stages.Prep),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		PrepFailed,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		GetInProgressConditionType(lcav1.Stages.Prep),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		msg,
@@ -390,15 +390,15 @@ func SetPrepStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 }
 
 // SetPrepStatusCompleted updates the prep status to completed
-func SetPrepStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetPrepStatusCompleted(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Prep),
+		GetInProgressConditionType(lcav1.Stages.Prep),
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		PrepCompleted,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Prep),
+		GetCompletedConditionType(lcav1.Stages.Prep),
 		ConditionReasons.Completed,
 		metav1.ConditionTrue,
 		msg,
@@ -406,15 +406,15 @@ func SetPrepStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 }
 
 // SetRollbackStatusFailed updates the Rollback status to failed with message
-func SetRollbackStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetRollbackStatusFailed(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
+		GetCompletedConditionType(lcav1.Stages.Rollback),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		RollbackFailed,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		GetInProgressConditionType(lcav1.Stages.Rollback),
 		ConditionReasons.Failed,
 		metav1.ConditionFalse,
 		msg,
@@ -422,9 +422,9 @@ func SetRollbackStatusFailed(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
 }
 
 // SetRollbackStatusInProgress updates the Rollback status to in progress with message
-func SetRollbackStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func SetRollbackStatusInProgress(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		GetInProgressConditionType(lcav1.Stages.Rollback),
 		ConditionReasons.InProgress,
 		metav1.ConditionTrue,
 		msg,
@@ -432,15 +432,15 @@ func SetRollbackStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, msg string)
 }
 
 // SetUpgradeStatusCompleted updates the Rollback status to completed
-func SetRollbackStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func SetRollbackStatusCompleted(ibu *lcav1.ImageBasedUpgrade) {
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetInProgressConditionType(lcav1alpha1.Stages.Rollback),
+		GetInProgressConditionType(lcav1.Stages.Rollback),
 		ConditionReasons.Completed,
 		metav1.ConditionFalse,
 		RollbackCompleted,
 		ibu.Generation)
 	SetStatusCondition(&ibu.Status.Conditions,
-		GetCompletedConditionType(lcav1alpha1.Stages.Rollback),
+		GetCompletedConditionType(lcav1.Stages.Rollback),
 		ConditionReasons.Completed,
 		metav1.ConditionTrue,
 		RollbackCompleted,
@@ -448,7 +448,7 @@ func SetRollbackStatusCompleted(ibu *lcav1alpha1.ImageBasedUpgrade) {
 }
 
 // SetIdleStatusInProgress updates the Idle status to in progress with message
-func SetIdleStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, reason ConditionReason, msg string) {
+func SetIdleStatusInProgress(ibu *lcav1.ImageBasedUpgrade, reason ConditionReason, msg string) {
 	SetStatusCondition(&ibu.Status.Conditions,
 		ConditionTypes.Idle,
 		reason,
@@ -458,7 +458,7 @@ func SetIdleStatusInProgress(ibu *lcav1alpha1.ImageBasedUpgrade, reason Conditio
 	)
 }
 
-func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *lcav1.ImageBasedUpgrade) error {
 	if c == nil {
 		// In UT code
 		return nil

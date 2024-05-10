@@ -24,7 +24,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
@@ -44,10 +44,10 @@ import (
 
 type (
 	UpgradeHandler interface {
-		HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
+		HandleBackup(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error)
 		HandleRestore(ctx context.Context) (ctrl.Result, error)
-		PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
-		PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error)
+		PostPivot(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error)
+		PrePivot(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error)
 	}
 
 	UpgHandler struct {
@@ -67,7 +67,7 @@ type (
 )
 
 // handleUpgrade orchestrate main upgrade steps and update status as needed
-func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
 	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
@@ -105,7 +105,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *lc
 	}
 }
 
-func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) {
+func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) {
 	// Clear any error status that may have been set
 	utils.SetUpgradeStatusInProgress(ibu, utils.InProgress)
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
@@ -117,8 +117,8 @@ func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *lcav1alpha1.
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
-func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
-	if prog := utils.GetInProgressCondition(ibu, lcav1alpha1.Stages.Upgrade); prog == nil {
+func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
+	if prog := utils.GetInProgressCondition(ibu, lcav1.Stages.Upgrade); prog == nil {
 		// Set in-progress status
 		u.resetProgressMessage(ctx, ibu)
 	}
@@ -234,7 +234,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUp
 }
 
 // exportOadpConfigurationAndRestore exports OADP configuration and restore CRs to the new stateroot
-func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *lcav1.ImageBasedUpgrade, ostreeVarDir string) error {
 	if len(ibu.Spec.OADPContent) == 0 {
 		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
 	}
@@ -253,7 +253,7 @@ func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu 
 }
 
 // extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
-func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, ostreeVarDir string) error {
+func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *lcav1.ImageBasedUpgrade, ostreeVarDir string) error {
 	var validationAnns = map[string]string{}
 	if count, exists := ibu.GetAnnotations()[extramanifest.TargetOcpVersionManifestCountAnnotation]; exists {
 		validationAnns[extramanifest.TargetOcpVersionManifestCountAnnotation] = count
@@ -292,7 +292,7 @@ func (u *UpgHandler) setDefaultDeploymentToNewStateroot(stateroot string) error 
 	return nil
 }
 
-func exportIBUToNewStateroot(ibu *lcav1alpha1.ImageBasedUpgrade, staterootPath string) error {
+func exportIBUToNewStateroot(ibu *lcav1.ImageBasedUpgrade, staterootPath string) error {
 	lcaConfigDir := filepath.Join(staterootPath, common.LCAConfigDir)
 	if err := os.MkdirAll(lcaConfigDir, 0o700); err != nil {
 		return fmt.Errorf("failed to mkdir: %w", err)
@@ -308,7 +308,7 @@ func exportIBUToNewStateroot(ibu *lcav1alpha1.ImageBasedUpgrade, staterootPath s
 // exportForUncontrolledRollback Save a copy of the IBU in the current stateroot in case of uncontrolled rollback, with Upgrade set to failed
 var ibuPreStaterootPath = common.PathOutsideChroot(utils.IBUFilePath)
 
-func exportForUncontrolledRollback(ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func exportForUncontrolledRollback(ibu *lcav1.ImageBasedUpgrade) error {
 	ibuCopy := ibu.DeepCopy()
 	utils.SetUpgradeStatusFailed(ibuCopy, "Uncontrolled rollback")
 	if err := lcautils.MarshalToFile(ibuCopy, ibuPreStaterootPath); err != nil {
@@ -328,7 +328,7 @@ var getStaterootVarPath = func(stateroot string) string {
 // CheckHealth helper func to call HealthChecks
 var CheckHealth = healthcheck.HealthChecks
 
-func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, msg string) {
+func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1.ImageBasedUpgrade, msg string) {
 	// Check whether auto-rollback is disabled using annotation
 	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailureUpgradeCompletionAnnotation]; exists {
 		if val == common.AutoRollbackDisableValue {
@@ -352,7 +352,7 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *lcav1alpha1.ImageBasedUpgrade, m
 //
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
-func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Starting health check for different components")
 	if err := CheckHealth(ctx, u.NoncachedClient, u.Log); err != nil {
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
@@ -437,7 +437,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *lcav1alpha1.ImageBasedU
 }
 
 // HandleBackup manages backup flow and returns with possible requeue
-func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	sortedBackupGroups, err := u.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while getting sorted backups from configmap: %w", err))
