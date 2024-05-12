@@ -25,6 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/stretchr/testify/assert"
+	storagev1 "k8s.io/api/storage/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,30 +35,46 @@ import (
 
 var (
 	lv1 = &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "local.storage.openshift.io/v1",
 			"kind":       "LocalVolume",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "lv1",
 				"namespace": "openshift-local-storage",
 			},
-			"spec": map[string]interface{}{
-				"storageClassName": "local-sc1",
+			"spec": map[string]any{
+				"storageClassDevices": []any{
+					map[string]interface{}{"storageClassName": "local-sc1"},
+				},
 			},
 		},
 	}
 
 	lv2 = &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "local.storage.openshift.io/v1",
 			"kind":       "LocalVolume",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "lv2",
 				"namespace": "openshift-local-storage",
 			},
-			"spec": map[string]interface{}{
-				"storageClassName": "local-sc2",
+			"spec": map[string]any{
+				"storageClassDevices": []any{
+					map[string]interface{}{"storageClassName": "local-sc2"},
+				},
 			},
+		},
+	}
+
+	sc1 = &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "local-sc1",
+		},
+	}
+
+	sc2 = &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "local-sc2",
 		},
 	}
 
@@ -87,7 +104,7 @@ func TestFetchLvmConfig(t *testing.T) {
 	}{
 		{
 			name:           "success path",
-			objs:           []client.Object{lvCRD, lv1, lv2},
+			objs:           []client.Object{lvCRD, lv1, lv2, sc1, sc2},
 			lvmFilesToCopy: []string{common.LvmDevicesPath},
 			validateFunc: func(t *testing.T, lvmConfigDir, manifestsDir string) {
 				// validate lvm devices file
@@ -100,19 +117,19 @@ func TestFetchLvmConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected err: %v", err)
 				}
-				assert.Equal(t, 2, len(manifests))
+				assert.Equal(t, 4, len(manifests))
 			},
 		},
 		{
 			name:           "lvm devices file does not exist",
-			objs:           []client.Object{lvCRD, lv1},
+			objs:           []client.Object{lvCRD, lv1, sc1},
 			lvmFilesToCopy: []string{},
 			validateFunc: func(t *testing.T, lvmConfigDir, manifestsDir string) {
 				manifests, err := os.ReadDir(manifestsDir)
 				if err != nil {
 					t.Errorf("Unexpected err: %v", err)
 				}
-				assert.Equal(t, 1, len(manifests))
+				assert.Equal(t, 2, len(manifests))
 			},
 		},
 		{
