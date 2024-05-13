@@ -30,7 +30,7 @@ import (
 	k8syaml "sigs.k8s.io/yaml"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	cp "github.com/otiai10/copy"
@@ -280,16 +280,16 @@ func RemoveListOfFolders(log *logrus.Logger, folders []string) error {
 }
 
 func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
-	ibu := &lcav1alpha1.ImageBasedUpgrade{}
+	ibu := &lcav1.ImageBasedUpgrade{}
 	filePath := common.PathOutsideChroot(utils.IBUFilePath)
 	if err := ReadYamlOrJSONFile(filePath, ibu); err != nil {
 		if os.IsNotExist(err) {
-			ibu = &lcav1alpha1.ImageBasedUpgrade{
+			ibu = &lcav1.ImageBasedUpgrade{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: utils.IBUName,
 				},
-				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-					Stage: lcav1alpha1.Stages.Idle,
+				Spec: lcav1.ImageBasedUpgradeSpec{
+					Stage: lcav1.Stages.Idle,
 				},
 			}
 			if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {

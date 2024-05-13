@@ -19,6 +19,7 @@ package cmd
 import (
 	"os"
 
+	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -26,7 +27,7 @@ import (
 	ibipreparation "github.com/openshift-kni/lifecycle-agent/lca-cli/ibi-preparation"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
-	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 // ibi represents the ibi preparation command
@@ -39,46 +40,25 @@ var ibi = &cobra.Command{
 }
 
 var (
-	seedImage            string
-	seedVersion          string
-	pullSecretFile       string
-	precacheBestEffort   bool
-	precacheDisabled     bool
-	shutdown             bool
-	extraPartitionNumber int
-	extraPartitionStart  string
-	extraPartitionLabel  string
-	createExtraPartition bool
-	installationDisk     string
-	skipDiskCleanup      bool
+	configurationFile string
 )
 
 func init() {
 
 	// Add create command
 	rootCmd.AddCommand(ibi)
+	ibi.Flags().StringVarP(&configurationFile, "configuration-file", "f", "", "The path to the configuration file.")
 
-	ibi.Flags().StringVarP(&seedImage, "seed-image", "s", "", "Seed image.")
-	ibi.Flags().StringVarP(&seedVersion, "seed-version", "", "", "Seed version.")
-	ibi.Flags().StringVarP(&authFile, "authfile", "a", "", "The path to the authentication file of the container registry of seed image.")
-	ibi.Flags().StringVarP(&pullSecretFile, "pullSecretFile", "p", "", "The path to the pull secret file for precache process.")
-	ibi.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "", false, "Set image precache to best effort mode")
-	ibi.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
-	ibi.Flags().BoolVarP(&shutdown, "shutdown", "", false, "Shutdown of the host after the preparation process is done.")
-	ibi.Flags().StringVarP(&installationDisk, "installation-disk", "", "", "The disk to install the image on.")
-	ibi.Flags().IntVarP(&extraPartitionNumber, "extra-partition-number", "", 5, "The number of the extra partition to create.")
-	ibi.Flags().StringVarP(&extraPartitionStart, "extra-partition-start", "", "40G", "The start of the extra partition to create.")
-	ibi.Flags().StringVarP(&extraPartitionLabel, "extra-partition-label", "", "varlibcontainers", "The label of the extra partition to create.")
-	ibi.Flags().BoolVarP(&createExtraPartition, "create-extra-partition", "", true, "Create an extra partition on the installation disk.")
-	ibi.Flags().BoolVarP(&skipDiskCleanup, "skip-disk-cleanup", "", false, "Skip installation disk cleanup.")
-
-	ibi.MarkFlagRequired("seed-image")
-	ibi.MarkFlagRequired("seed-version")
-	ibi.MarkFlagRequired("authfile")
-	ibi.MarkFlagRequired("pullSecretFile")
+	rootCmd.MarkFlagRequired("configuration-file")
 }
 
 func runIBI() {
+
+	config, err := utils.ReadIBIConfigFile(configurationFile)
+	if err != nil {
+		log.Fatalf("Error reading configuration file: %v", err)
+	}
+
 	log.Info("IBI preparation process has started")
 	var hostCommandsExecutor ops.Execute
 	// if we run in container we will get /host as a host path and should use chroot executor
@@ -93,11 +73,7 @@ func runIBI() {
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
 	ibiRunner := ibipreparation.NewIBIPrepare(log, ops.NewOps(log, hostCommandsExecutor),
-		rpmOstreeClient, ostreeClient, cleanupDevice,
-		seedImage, authFile, pullSecretFile, seedVersion,
-		installationDisk, extraPartitionLabel, extraPartitionStart,
-		precacheBestEffort, precacheDisabled, shutdown, createExtraPartition, skipDiskCleanup,
-		extraPartitionNumber)
+		rpmOstreeClient, ostreeClient, cleanupDevice, config)
 	if err := ibiRunner.Run(); err != nil {
 		log.Fatal(err)
 	}

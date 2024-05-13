@@ -143,6 +143,14 @@ rules:
 - apiGroups:
   - config.openshift.io
   resources:
+  - networks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - config.openshift.io
+  resources:
   - proxies
   verbs:
   - get
@@ -325,6 +333,14 @@ rules:
   - sriovnetwork.openshift.io
   resources:
   - sriovnetworknodestates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
   verbs:
   - get
   - list

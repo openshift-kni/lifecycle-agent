@@ -23,7 +23,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -184,7 +185,7 @@ func TestExportExtraManifests(t *testing.T) {
 
 	// Export the manifests to the temporary directory
 	err = handler.ExportExtraManifestToDir(context.Background(),
-		[]lcav1alpha1.ConfigMapRef{
+		[]lcav1.ConfigMapRef{
 			{Name: "extra-manifest-cm1", Namespace: "default"},
 			{Name: "extra-manifest-cm2", Namespace: "default"},
 			{Name: "extra-manifest-cm3", Namespace: "default"},
@@ -211,33 +212,33 @@ func TestExportExtraManifests(t *testing.T) {
 func TestValidateExtraManifestConfigmaps(t *testing.T) {
 	testcases := []struct {
 		name        string
-		configmaps  []lcav1alpha1.ConfigMapRef
+		configmaps  []lcav1.ConfigMapRef
 		expectedErr error
 	}{
 		{
 			name: "configmap is not found",
-			configmaps: []lcav1alpha1.ConfigMapRef{
+			configmaps: []lcav1.ConfigMapRef{
 				{Name: "cm1", Namespace: "default"},
 			},
 			expectedErr: fmt.Errorf("the extraManifests configMap is not found"),
 		},
 		{
 			name: "extra manifest contains invalid format in metadata",
-			configmaps: []lcav1alpha1.ConfigMapRef{
+			configmaps: []lcav1.ConfigMapRef{
 				{Name: "extra-manifest-cm1", Namespace: "default"},
 			},
 			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
 		},
 		{
 			name: "extra manifest contains invalid format in spec",
-			configmaps: []lcav1alpha1.ConfigMapRef{
+			configmaps: []lcav1.ConfigMapRef{
 				{Name: "extra-manifest-cm2", Namespace: "default"},
 			},
 			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
 		},
 		{
 			name: "extra manifest containts MachineConfig",
-			configmaps: []lcav1alpha1.ConfigMapRef{
+			configmaps: []lcav1.ConfigMapRef{
 				{Name: "extra-manifest-cm-mc", Namespace: "default"},
 			},
 			expectedErr: fmt.Errorf("Using MachingConfigs in extramanifests is not allowed"),
@@ -291,7 +292,7 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 				}
 			}
 
-			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps, &lcav1alpha1.ImageBasedUpgrade{})
+			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps, &lcav1.ImageBasedUpgrade{})
 			assert.ErrorContains(t, err, tc.expectedErr.Error())
 		})
 	}
@@ -327,7 +328,7 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
+                apiVersion: operators.coreos.com/v1
                 kind: CatalogSource
                 metadata:
                   name: redhat-operators-new
@@ -378,7 +379,7 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
+                apiVersion: operators.coreos.com/v1
                 kind: CatalogSource
                 metadata:
                   name: redhat-operators-new
@@ -431,7 +432,7 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
+                apiVersion: operators.coreos.com/v1
                 kind: CatalogSource
                 metadata:
                   name: redhat-operators-non-match
@@ -482,7 +483,7 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
+                apiVersion: operators.coreos.com/v1
                 kind: CatalogSource
                 metadata:
                   name: redhat-operators
@@ -537,11 +538,12 @@ func TestExportPolicyManifests(t *testing.T) {
 			expectedObjects: []unstructured.Unstructured{
 				{
 					Object: map[string]interface{}{
-						"apiVersion": "operators.coreos.com/v1alpha1",
+						"apiVersion": "operators.coreos.com/v1",
 						"kind":       "CatalogSource",
 						"metadata": map[string]interface{}{
 							"annotations": map[string]interface{}{
 								"target.workload.openshift.io/management": "{\"effect\": \"PreferredDuringScheduling\"}",
+								common.ApplyTypeAnnotation:                common.ApplyTypeMerge,
 							},
 							"labels": map[string]interface{}{
 								"lca.openshift.io/target-ocp-version": "4.15.2",
@@ -580,7 +582,7 @@ func TestExportPolicyManifests(t *testing.T) {
 			expectedObjects: []unstructured.Unstructured{
 				{
 					Object: map[string]interface{}{
-						"apiVersion": "operators.coreos.com/v1alpha1",
+						"apiVersion": "operators.coreos.com/v1",
 						"kind":       "CatalogSource",
 						"metadata": map[string]interface{}{
 							"annotations": map[string]interface{}{

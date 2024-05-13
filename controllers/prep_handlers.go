@@ -32,7 +32,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/coreos/go-semver/semver"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -47,7 +47,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func GetSeedImage(c client.Client, ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade, log logr.Logger, ops ops.Execute) error {
+func GetSeedImage(c client.Client, ctx context.Context, ibu *lcav1.ImageBasedUpgrade, log logr.Logger, ops ops.Execute) error {
 	// Use cluster wide pull-secret by default
 	pullSecretFilename := common.ImageRegistryAuthFile
 
@@ -247,7 +247,7 @@ func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVar
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *lcav1.ImageBasedUpgrade) error {
 	clusterRegistry, err := lcautils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster registry: %w", err)
@@ -287,7 +287,7 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 }
 
 // validateIBUSpec validates the fields in the IBU spec
-func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) error {
 	// Check spec against this cluster's version and possibly exit early
 	if err := r.validateSeedOcpVersion(ibu.Spec.SeedImageRef.Version); err != nil {
 		return fmt.Errorf("failed to validate seed image OCP version: %w", err)
@@ -349,7 +349,7 @@ func initIBUWorkspaceDir() error {
 }
 
 // handlePrep the main func to run prep stage
-func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Fetching stateroot setup job")
 	staterootSetupJob, err := prep.GetStaterootSetupJob(ctx, r.Client, r.Log)
 	if err != nil {
@@ -437,14 +437,14 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *lcav1
 }
 
 // prepInProgressRequeue helper function to stop everything when fail detected
-func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	log.Error(fmt.Errorf("prep stage failed"), msg)
 	utils.SetPrepStatusFailed(ibu, msg)
 	return doNotRequeue(), nil
 }
 
 // prepInProgressRequeue helper function when everything is a success at the end
-func prepSuccessDoNotRequeue(log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func prepSuccessDoNotRequeue(log logr.Logger, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	msg := "Prep stage completed successfully"
 	log.Info(msg)
 	utils.SetPrepStatusCompleted(ibu, msg)
@@ -453,7 +453,7 @@ func prepSuccessDoNotRequeue(log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade
 
 // prepInProgressRequeue helper function when we are waiting prep work to complete.
 // Though requeue is event based, we are still requeue-ing with an interval to watch out for any unknown/random activities in the system and also log anything important
-func prepInProgressRequeue(log logr.Logger, msg string, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func prepInProgressRequeue(log logr.Logger, msg string, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	log.Info("Prep stage in progress", "msg", msg)
 	utils.SetPrepStatusInProgress(ibu, msg)
 	return requeueWithShortInterval(), nil

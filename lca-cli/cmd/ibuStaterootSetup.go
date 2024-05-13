@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -39,13 +39,6 @@ var (
 			}
 		},
 	}
-	// internals
-	hostCommandsExecutor = ops.NewChrootExecutor(log, true, common.Host)
-	opsClient            = ops.NewOps(log, hostCommandsExecutor)
-	rpmOstreeClient      = ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
-	ostreeClient         = ostreeclient.NewClient(hostCommandsExecutor, false)
-	ctx                  = context.Background()
-	loggerOpt            = zap.Options{Development: true}
 )
 
 func init() {
@@ -60,12 +53,19 @@ func ibuStaterootSetupRun() error {
 		return err
 	}
 
+	// internals
+	hostCommandsExecutor := ops.NewChrootExecutor(log, true, common.Host)
+	opsClient := ops.NewOps(log, hostCommandsExecutor)
+	rpmOstreeClient := ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
+	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
+	ctx := context.Background()
+	loggerOpt := zap.Options{Development: true}
 	// logger init...we have two loggers
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&loggerOpt)))
 	logger := ctrl.Log.WithName("prep-stateroot-job")
 
 	logger.Info("Fetching the latest IBU cr")
-	ibu := &lcav1alpha1.ImageBasedUpgrade{}
+	ibu := &lcav1.ImageBasedUpgrade{}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: common.LcaNamespace, Name: utils.IBUName}, ibu); err != nil {
 		return fmt.Errorf("failed get IBU cr: %w", err)
 	}

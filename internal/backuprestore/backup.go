@@ -28,7 +28,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -53,7 +53,7 @@ const (
 )
 
 // GetSortedBackupsFromConfigmap returns a list of sorted backup CRs extracted from configmap
-func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error) {
+func (h *BRHandler) GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1.ConfigMapRef) ([][]*velerov1.Backup, error) {
 	// no CM listed
 	if len(content) == 0 {
 		h.Log.Info("no configMap CR provided")

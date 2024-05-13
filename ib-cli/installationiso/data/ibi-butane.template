@@ -9,16 +9,21 @@ passwd:
 {{end}}
 storage:
   files:
-    - path: /var/tmp/backup-secret.json
+    - path: {{.AuthFilePath}}
       mode: 0400
       overwrite: true
       contents:
         local: {{.BackupSecret}}
-    - path: /var/tmp/pull-secret.json
+    - path: {{.PullSecretPath}}
       mode: 0400
       overwrite: true
       contents:
         local: {{.PullSecret}}
+    - path: {{.IBIConfigurationPath}}
+      mode: 0400
+      overwrite: true
+      contents:
+        local: {{.IBIConfiguration}}
     - path: /usr/local/bin/install-rhcos-and-restore-seed.sh
       mode: 0755
       overwrite: true
@@ -33,21 +38,7 @@ systemd:
         Description=SNO Image Based Installation
         [Service]
         Environment=SEED_IMAGE={{.SeedImage}}
-        Environment=SEED_VERSION={{.SeedVersion}}
-        Environment=LCA_IMAGE={{.LCAImage}}
-        Environment=INSTALLATION_DISK={{.InstallationDisk}}
-        Environment=EXTRA_PARTITION_START={{.ExtraPartitionStart}}
-        {{if .PrecacheDisabled}}
-        Environment=PRECACHE_DISABLED=true
-        {{else if .PrecacheBestEffort}}
-        Environment=PRECACHE_BEST_EFFORT=true
-        {{end}}
-        {{if .Shutdown}}
-        Environment=SHUTDOWN=true
-        {{end}}
-        {{if .SkipDiskCleanup}}
-        Environment=SKIP_DISK_CLEANUP=true
-        {{end}}
+        Environment=IBI_CONFIGURATION_FILE={{.IBIConfigurationPath}}
         Type=oneshot
         RemainAfterExit=yes
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh

@@ -3,11 +3,12 @@ package installationiso
 import (
 	"errors"
 	"fmt"
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path"
-	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -199,7 +200,6 @@ func TestInstallationIso(t *testing.T) {
 		mockOps             = ops.NewMockOps(mockController)
 		seedImage           = "seedImage"
 		seedVersion         = "seedVersion"
-		lcaImage            = "lcaImage"
 		installationDisk    = "/dev/sda"
 		extraPartitionStart = "-40G"
 	)
@@ -217,17 +217,17 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, err, nil)
 				sshPublicKeyPath = sshPublicKey.Name()
 			}
-			authFilePath := "authFile"
+			testAuthFilePath := "authFile"
 			if tc.authFileExists {
-				authFile, err := os.Create(path.Join(tmpDir, authFilePath))
+				authFile, err := os.Create(path.Join(tmpDir, testAuthFilePath))
 				assert.Equal(t, err, nil)
-				authFilePath = authFile.Name()
+				testAuthFilePath = authFile.Name()
 			}
-			psFilePath := "psFile"
+			testPSFilePath := "psFile"
 			if tc.pullSecretExists {
-				psFile, err := os.Create(path.Join(tmpDir, psFilePath))
+				psFile, err := os.Create(path.Join(tmpDir, testPSFilePath))
 				assert.Equal(t, err, nil)
-				psFilePath = psFile.Name()
+				testPSFilePath = psFile.Name()
 			}
 			if tc.pullSecretExists && tc.authFileExists && tc.sshPublicKeyExists {
 				mockOps.EXPECT().RunInHostNamespace("podman", "run",
@@ -256,36 +256,34 @@ func TestInstallationIso(t *testing.T) {
 				rhcosLiveIsoUrl = server.URL
 				defer server.Close()
 			}
+			ibiConfig := &ibiconfig.IBIPrepareConfig{
+				PrecacheDisabled:    tc.precacheDisabled,
+				PrecacheBestEffort:  tc.precacheBestEffort,
+				Shutdown:            tc.shutdown,
+				SkipDiskCleanup:     tc.skipDiskCleanup,
+				SeedImage:           seedImage,
+				SeedVersion:         seedVersion,
+				AuthFile:            testAuthFilePath,
+				PullSecretFile:      testPSFilePath,
+				SSHPublicKeyFile:    sshPublicKeyPath,
+				RHCOSLiveISO:        rhcosLiveIsoUrl,
+				InstallationDisk:    installationDisk,
+				ExtraPartitionStart: extraPartitionStart,
+			}
+
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
-			err := installationIso.Create(seedImage, seedVersion, authFilePath, psFilePath, sshPublicKeyPath, lcaImage,
-				rhcosLiveIsoUrl, installationDisk, extraPartitionStart,
-				tc.precacheBestEffort, tc.precacheDisabled, tc.shutdown, tc.skipDiskCleanup)
+			err := installationIso.Create(ibiConfig)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
-				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
+				var ibiConfig ibiconfig.IBIPrepareConfig
+				errReading := utils.ReadYamlOrJSONFile(path.Join(tmpDir, butaneFiles, ibiConfigFileName), &ibiConfig)
 				assert.Equal(t, errReading, nil)
-				if tc.precacheDisabled {
-					assert.Equal(t, strings.Contains(string(data), "PRECACHE_DISABLED"), true)
-				} else {
-					assert.Equal(t, strings.Contains(string(data), "PRECACHE_DISABLED"), false)
-				}
-				if tc.precacheBestEffort {
-					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), true)
-				} else {
-					assert.Equal(t, strings.Contains(string(data), "PRECACHE_BEST_EFFORT"), false)
-				}
-				if tc.shutdown {
-					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), true)
-				} else {
-					assert.Equal(t, strings.Contains(string(data), "SHUTDOWN"), false)
-				}
-				if tc.skipDiskCleanup {
-					fmt.Println("AAAAAAAAAAAA", string(data))
-					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), true)
-				} else {
-					assert.Equal(t, strings.Contains(string(data), "SKIP_DISK_CLEANUP"), false)
-				}
-
+				assert.Equal(t, ibiConfig.PrecacheDisabled, tc.precacheDisabled)
+				assert.Equal(t, ibiConfig.PrecacheBestEffort, tc.precacheBestEffort)
+				assert.Equal(t, ibiConfig.Shutdown, tc.shutdown)
+				assert.Equal(t, ibiConfig.SkipDiskCleanup, tc.skipDiskCleanup)
+				assert.Equal(t, ibiConfig.AuthFile, authIgnitionFilePath)
+				assert.Equal(t, ibiConfig.PullSecretFile, psIgnitioFilePath)
 			} else {
 				assert.Contains(t, err.Error(), tc.expectedError)
 			}

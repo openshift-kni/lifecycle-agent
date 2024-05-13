@@ -25,6 +25,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	cp "github.com/otiai10/copy"
+	storagev1 "k8s.io/api/storage/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,6 +35,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups=local.storage.openshift.io,resources=localvolumes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 
 func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeDir string) error {
 	r.Log.Info("Fetching node lvm configuration")
@@ -72,7 +74,7 @@ func (r *UpgradeClusterConfigGather) fetchLvmDevices(lvmConfigPath string) error
 }
 
 func (r *UpgradeClusterConfigGather) fetchLocalVolumes(ctx context.Context, manifestsDir string) error {
-	r.Log.Info("Fetching local volumes")
+	r.Log.Info("Fetching local volumes and associated storage classes")
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: "localvolumes.local.storage.openshift.io"}, crd); err != nil {
@@ -94,16 +96,47 @@ func (r *UpgradeClusterConfigGather) fetchLocalVolumes(ctx context.Context, mani
 		return fmt.Errorf("failed to list localvolumes: %w", err)
 	}
 
+	var scNameSet = make(map[string]bool)
 	for _, lv := range lvsList.Items {
 		// Unset uid and resource version
 		lv.SetUID("")
 		lv.SetResourceVersion("")
 
-		filePath := filepath.Join(manifestsDir, lv.GetName()+"_"+lv.GetNamespace()+".json")
+		lvFileName := fmt.Sprintf("%s_%s_%s.json", lv.GetKind(), lv.GetName(), lv.GetNamespace())
+		filePath := filepath.Join(manifestsDir, lvFileName)
 		r.Log.Info("Writing LocalVolume to file", "path", filePath)
 		err := utils.MarshalToFile(lv.Object, filePath)
 		if err != nil {
 			return fmt.Errorf("failed to write localvolume to %s: %w", filePath, err)
+		}
+
+		// Get the associated storage classes names
+		lvSpec := lv.Object["spec"].(map[string]any)
+		if scDevices, exists := lvSpec["storageClassDevices"].([]any); exists {
+			for _, sc := range scDevices {
+				if scName, exists := sc.(map[string]any)["storageClassName"].(string); exists {
+					scNameSet[scName] = true
+				}
+			}
+		}
+	}
+
+	// Export the associated storage classes
+	for scName := range scNameSet {
+		sc := &storagev1.StorageClass{}
+		if err := r.Get(ctx, types.NamespacedName{Name: scName}, sc); err != nil {
+			return fmt.Errorf("failed to get storageclass %s: %w", scName, err)
+		}
+		// Unset uid and resource version
+		sc.SetUID("")
+		sc.SetResourceVersion("")
+
+		scFileName := fmt.Sprintf("%s_%s_%s.json", sc.GetObjectKind().GroupVersionKind().Kind, sc.GetName(), sc.GetNamespace())
+		filePath := filepath.Join(manifestsDir, scFileName)
+		r.Log.Info("Writing StorageClass to file", "path", filePath)
+		err := utils.MarshalToFile(sc, filePath)
+		if err != nil {
+			return fmt.Errorf("failed to write storageclass to %s: %w", filePath, err)
 		}
 	}
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	mock_backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore/mocks"
@@ -152,7 +152,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 				Log:             logr.Logger{},
 				BackupRestore:   mockBackuprestore,
 			}
-			got, err := uph.HandleBackup(context.Background(), &lcav1alpha1.ImageBasedUpgrade{})
+			got, err := uph.HandleBackup(context.Background(), &lcav1.ImageBasedUpgrade{})
 			if !tt.wantErr(t, err, fmt.Sprintf("handleBackup")) {
 				return
 			}
@@ -307,7 +307,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 				BackupRestore:   mockBackuprestore,
 			}
 			got, err := uph.HandleRestore(context.Background())
-			if !tt.wantErr(t, err, fmt.Sprintf("handleRestore(%v, %v)", context.Background(), &lcav1alpha1.ImageBasedUpgrade{})) {
+			if !tt.wantErr(t, err, fmt.Sprintf("handleRestore(%v, %v)", context.Background(), &lcav1.ImageBasedUpgrade{})) {
 				return
 			}
 			assert.Equalf(t, tt.wantCtlRes.RequeueAfter, got.RequeueAfter, "ctl interval: handleRestore")
@@ -336,7 +336,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 
 	type args struct {
 		ctx context.Context
-		ibu lcav1alpha1.ImageBasedUpgrade
+		ibu lcav1.ImageBasedUpgrade
 	}
 	tests := []struct {
 		name                                            string
@@ -364,7 +364,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "Pre-pivot upgrade requests requeue because of healthcheck fail",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			healthCheckError: fmt.Errorf("test error from HC package"),
 			want:             requeueWithHealthCheckInterval(),
@@ -381,7 +381,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "backup failed request no requeue",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, backuprestore.NewBRFailedError("Backup", "this is a test - error")
@@ -406,7 +406,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "backup failed validation request no requeue",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{},
@@ -432,7 +432,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "backup not found in configmap request no requeue",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil,
@@ -458,7 +458,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "backup requested a medium interval requeue",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return [][]*velerov1.Backup{{&velerov1.Backup{}}}, nil
@@ -488,7 +488,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportOadpConfigurationToDir with failed validation error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -519,7 +519,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportOadpConfigurationToDir with unknown error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -544,7 +544,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportRestoresToDir with failed validation error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -579,7 +579,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportRestoresToDir with unknown error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{},
+				ibu: lcav1.ImageBasedUpgrade{},
 			},
 			getSortedBackupsFromConfigmapReturn: func() ([][]*velerov1.Backup, error) {
 				return nil, nil
@@ -608,9 +608,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "ExportExtraManifestToDir with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{
-					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+				ibu: lcav1.ImageBasedUpgrade{
+					Spec: lcav1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1.SeedImageRef{Version: "4.15.2"},
 					},
 				},
 			},
@@ -646,9 +646,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "FetchClusterConfig with any error",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{
-					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+				ibu: lcav1.ImageBasedUpgrade{
+					Spec: lcav1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1.SeedImageRef{Version: "4.15.2"},
 					},
 				},
 			},
@@ -687,9 +687,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		{
 			name: "Export IBU Crs successfully and reboot fail",
 			args: args{
-				ibu: lcav1alpha1.ImageBasedUpgrade{
-					Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-						SeedImageRef: lcav1alpha1.SeedImageRef{Version: "4.15.2"},
+				ibu: lcav1.ImageBasedUpgrade{
+					Spec: lcav1.ImageBasedUpgradeSpec{
+						SeedImageRef: lcav1.SeedImageRef{Version: "4.15.2"},
 					},
 				},
 			},
@@ -757,14 +757,14 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.exportOadpConfigurationToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportOadpConfigurationToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportOadpConfigurationToDirReturn()).Times(1)
-				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-oadp-to-proceed-with-export"}}
+				tt.args.ibu.Spec.OADPContent = []lcav1.ConfigMapRef{{Name: "atleast-one-oadp-to-proceed-with-export"}}
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
 			}
 			if tt.exportRestoresToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
-				tt.args.ibu.Spec.OADPContent = []lcav1alpha1.ConfigMapRef{{Name: "atleast-one-restore-to-proceed-with-export"}}
+				tt.args.ibu.Spec.OADPContent = []lcav1.ConfigMapRef{{Name: "atleast-one-restore-to-proceed-with-export"}}
 			}
 			if tt.extractAndExportManifestFromPoliciesToDirReturn != nil {
 				mockExtramanifest.EXPECT().ExtractAndExportManifestFromPoliciesToDir(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.extractAndExportManifestFromPoliciesToDirReturn()).Times(1)
@@ -862,7 +862,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.exportIBUCRNew {
 				if _, err := os.Stat(filepath.Join(ibuTempDirNew, utils.IBUFilePath)); !errors.Is(err, os.ErrNotExist) {
 					dat, _ := os.ReadFile(filepath.Join(ibuTempDirNew, utils.IBUFilePath))
-					savedIbu := lcav1alpha1.ImageBasedUpgrade{}
+					savedIbu := lcav1.ImageBasedUpgrade{}
 					err = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, err, nil, "")
 				}
@@ -871,7 +871,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.exportIBUCROrig {
 				if _, err := os.Stat(filepath.Join(ibuTempDirOrig, utils.IBUFilePath)); !errors.Is(err, os.ErrNotExist) {
 					dat, _ := os.ReadFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath))
-					savedIbu := lcav1alpha1.ImageBasedUpgrade{}
+					savedIbu := lcav1.ImageBasedUpgrade{}
 					err = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, len(savedIbu.Status.Conditions), 2, "")
 					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, utils.UpgradeFailed, "")
@@ -900,7 +900,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 	}
 	type args struct {
 		ctx context.Context
-		ibu *lcav1alpha1.ImageBasedUpgrade
+		ibu *lcav1.ImageBasedUpgrade
 	}
 	tests := []struct {
 		name                              string
@@ -921,7 +921,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 	}{
 		{
 			name: "healthchecks return error",
-			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
+			args: args{ibu: &lcav1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return fmt.Errorf("any error from hc")
 			},
@@ -938,7 +938,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		},
 		{
 			name: "extraManifests return error",
-			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
+			args: args{ibu: &lcav1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
@@ -972,7 +972,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		},
 		{
 			name: "RestoreOadpConfigurations return error",
-			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
+			args: args{ibu: &lcav1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
@@ -1000,7 +1000,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		},
 		{
 			name: "handleRestore with restore error",
-			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
+			args: args{ibu: &lcav1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},
@@ -1040,7 +1040,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		},
 		{
 			name: "upgrade completed",
-			args: args{ibu: &lcav1alpha1.ImageBasedUpgrade{}},
+			args: args{ibu: &lcav1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
 				return nil
 			},

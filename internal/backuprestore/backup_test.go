@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
@@ -604,7 +604,7 @@ func TestTriggerBackup(t *testing.T) {
 }
 
 func TestExportRestoresToDir(t *testing.T) {
-	configMaps := []lcav1alpha1.ConfigMapRef{
+	configMaps := []lcav1.ConfigMapRef{
 		{
 			Name:      "configmap1",
 			Namespace: oadpNs,

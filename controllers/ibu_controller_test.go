@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +43,7 @@ var (
 )
 
 func init() {
-	testscheme.AddKnownTypes(lcav1alpha1.GroupVersion, &lcav1alpha1.ImageBasedUpgrade{})
+	testscheme.AddKnownTypes(lcav1.GroupVersion, &lcav1.ImageBasedUpgrade{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -60,13 +60,13 @@ type Condition struct {
 func TestIsTransitionRequested(t *testing.T) {
 	testcases := []struct {
 		name         string
-		desiredStage lcav1alpha1.ImageBasedUpgradeStage
+		desiredStage lcav1.ImageBasedUpgradeStage
 		expected     bool
 		conditions   []Condition
 	}{
 		{
 			name:         "idle while idle is true",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""},
@@ -74,7 +74,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle while aborting",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Aborting},
@@ -82,7 +82,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle while finalizing",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Finalizing},
@@ -90,7 +90,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle while abort failed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.AbortFailed},
@@ -98,7 +98,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle while finalize failed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.FinalizeFailed},
@@ -106,7 +106,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when prep in progress",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -115,7 +115,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when prep completed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -124,7 +124,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when prep failed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
@@ -134,7 +134,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when upgrade completed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -143,7 +143,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when rollback completed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -152,7 +152,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when upgrade faild",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -161,7 +161,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "idle when rollback failed",
-			desiredStage: lcav1alpha1.Stages.Idle,
+			desiredStage: lcav1.Stages.Idle,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -170,7 +170,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "prep when prep completed",
-			desiredStage: lcav1alpha1.Stages.Prep,
+			desiredStage: lcav1.Stages.Prep,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
@@ -180,13 +180,13 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "prep with idle true",
-			desiredStage: lcav1alpha1.Stages.Prep,
+			desiredStage: lcav1.Stages.Prep,
 			conditions:   []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
 			expected:     true,
 		},
 		{
 			name:         "prep when prep failed",
-			desiredStage: lcav1alpha1.Stages.Prep,
+			desiredStage: lcav1.Stages.Prep,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
@@ -196,7 +196,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "prep when prep in progress",
-			desiredStage: lcav1alpha1.Stages.Prep,
+			desiredStage: lcav1.Stages.Prep,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""},
@@ -205,7 +205,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "upgrade with prep completed",
-			desiredStage: lcav1alpha1.Stages.Upgrade,
+			desiredStage: lcav1.Stages.Upgrade,
 			conditions: []Condition{
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -214,7 +214,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "upgrade when upgrade completed",
-			desiredStage: lcav1alpha1.Stages.Upgrade,
+			desiredStage: lcav1.Stages.Upgrade,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
@@ -224,7 +224,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "upgrade when upgrade failed",
-			desiredStage: lcav1alpha1.Stages.Upgrade,
+			desiredStage: lcav1.Stages.Upgrade,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
@@ -234,7 +234,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "upgrade when upgrade in progress",
-			desiredStage: lcav1alpha1.Stages.Upgrade,
+			desiredStage: lcav1.Stages.Upgrade,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
@@ -243,7 +243,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when rollback completed",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""},
@@ -253,7 +253,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when rollback failed",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
@@ -263,7 +263,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when rollback in progress",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			expected:     false,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, ""},
@@ -272,7 +272,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when upgrade failed",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
@@ -282,7 +282,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when upgrade completed",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
@@ -292,7 +292,7 @@ func TestIsTransitionRequested(t *testing.T) {
 		},
 		{
 			name:         "rollback when upgrade in progress",
-			desiredStage: lcav1alpha1.Stages.Rollback,
+			desiredStage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
@@ -302,7 +302,7 @@ func TestIsTransitionRequested(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			var ibu = &lcav1alpha1.ImageBasedUpgrade{
+			var ibu = &lcav1.ImageBasedUpgrade{
 				ObjectMeta: v1.ObjectMeta{
 					Name: utils.IBUName,
 				},
@@ -327,7 +327,7 @@ func TestValidateStageTransisions(t *testing.T) {
 	}
 	testcases := []struct {
 		name                     string
-		stage                    lcav1alpha1.ImageBasedUpgradeStage
+		stage                    lcav1.ImageBasedUpgradeStage
 		conditions               []Condition
 		expectedConditions       []ExpectedCondition
 		unexpectedConditionTypes []utils.ConditionType
@@ -336,26 +336,26 @@ func TestValidateStageTransisions(t *testing.T) {
 	}{
 		{
 			name:       "idle when prep in progress",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
 			expected:   true,
 		},
 		{
 			name:       "idle when prep completed",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
 			expected:   true,
 		},
 		{
 			name:  "idle when prep failed",
-			stage: lcav1alpha1.Stages.Idle,
+			stage: lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""}},
 			expected: true,
 		},
 		{
 			name:  "idle when prep failed with invalid upgrade transition",
-			stage: lcav1alpha1.Stages.Idle,
+			stage: lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition}},
@@ -364,7 +364,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "idle when prep failed with invalid rollback transition",
-			stage: lcav1alpha1.Stages.Idle,
+			stage: lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition}},
@@ -373,7 +373,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade completed",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""}},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -384,7 +384,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade failed before pivot or after uncontrolled rollback",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
@@ -400,7 +400,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade failed with invalid rollback transition",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
@@ -417,7 +417,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade failed after pivot",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
@@ -433,7 +433,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade in progress before pivot",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
@@ -448,7 +448,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when upgrade in progress after pivot",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
@@ -464,7 +464,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when rollback in progress",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: true,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
@@ -481,7 +481,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when rollback in progress after pivoting back",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			afterPivot: false,
 			conditions: []Condition{
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
@@ -498,7 +498,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "idle when rollback failed",
-			stage: lcav1alpha1.Stages.Idle,
+			stage: lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress}},
@@ -512,7 +512,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "idle when rollback failed after pivoting back",
-			stage: lcav1alpha1.Stages.Idle,
+			stage: lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress}},
@@ -525,7 +525,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "idle when rollback completed",
-			stage:      lcav1alpha1.Stages.Idle,
+			stage:      lcav1.Stages.Idle,
 			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""}},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.Idle,
@@ -536,7 +536,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "prep without idle completed",
-			stage:      lcav1alpha1.Stages.Prep,
+			stage:      lcav1.Stages.Prep,
 			conditions: []Condition{},
 			expected:   false,
 			expectedConditions: []ExpectedCondition{{
@@ -548,7 +548,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "prep with idle completed",
-			stage:      lcav1alpha1.Stages.Prep,
+			stage:      lcav1.Stages.Prep,
 			conditions: []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
 			expected:   true,
 			expectedConditions: []ExpectedCondition{{
@@ -565,7 +565,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "prep when idle completed with invalid upgrade transition",
-			stage: lcav1alpha1.Stages.Prep,
+			stage: lcav1.Stages.Prep,
 			conditions: []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition}},
 			expected: true,
@@ -584,7 +584,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "prep when idle completed with invalid rollback transition",
-			stage: lcav1alpha1.Stages.Prep,
+			stage: lcav1.Stages.Prep,
 			conditions: []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition}},
 			expected: true,
@@ -603,7 +603,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "upgrade without prep completed",
-			stage:      lcav1alpha1.Stages.Upgrade,
+			stage:      lcav1.Stages.Upgrade,
 			conditions: []Condition{},
 			expected:   false,
 			expectedConditions: []ExpectedCondition{{
@@ -615,7 +615,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "upgrade with prep completed",
-			stage:      lcav1alpha1.Stages.Upgrade,
+			stage:      lcav1.Stages.Upgrade,
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
 			expected:   true,
 			expectedConditions: []ExpectedCondition{{
@@ -627,7 +627,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "upgrade when prep completed with invalid rollback transition",
-			stage: lcav1alpha1.Stages.Upgrade,
+			stage: lcav1.Stages.Upgrade,
 			conditions: []Condition{{utils.ConditionTypes.Idle, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.RollbackInProgress, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition}},
@@ -642,7 +642,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "rollback when upgrade failed",
-			stage: lcav1alpha1.Stages.Rollback,
+			stage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
@@ -672,7 +672,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "rollback when upgrade completed",
-			stage: lcav1alpha1.Stages.Rollback,
+			stage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionFalse, ""},
@@ -702,7 +702,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:  "rollback when upgrade completed with invalid Idle transition",
-			stage: lcav1alpha1.Stages.Rollback,
+			stage: lcav1.Stages.Rollback,
 			conditions: []Condition{
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InvalidTransition},
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""},
@@ -739,7 +739,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "rollback when upgrade in progress",
-			stage:      lcav1alpha1.Stages.Rollback,
+			stage:      lcav1.Stages.Rollback,
 			conditions: []Condition{{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, ""}},
 			expected:   true,
 			expectedConditions: []ExpectedCondition{
@@ -766,7 +766,7 @@ func TestValidateStageTransisions(t *testing.T) {
 		},
 		{
 			name:       "rollback without upgrade in progress",
-			stage:      lcav1alpha1.Stages.Rollback,
+			stage:      lcav1.Stages.Rollback,
 			conditions: []Condition{},
 			expectedConditions: []ExpectedCondition{{
 				utils.ConditionTypes.RollbackInProgress,
@@ -779,11 +779,11 @@ func TestValidateStageTransisions(t *testing.T) {
 	}
 	for _, tc := range testcases {
 
-		var ibu = &lcav1alpha1.ImageBasedUpgrade{
+		var ibu = &lcav1.ImageBasedUpgrade{
 			ObjectMeta: v1.ObjectMeta{
 				Name: utils.IBUName,
 			},
-			Spec: lcav1alpha1.ImageBasedUpgradeSpec{
+			Spec: lcav1.ImageBasedUpgradeSpec{
 				Stage: tc.stage,
 			},
 		}
@@ -821,16 +821,16 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 		name         string
 		ibu          client.Object
 		request      reconcile.Request
-		validateFunc func(t *testing.T, result ctrl.Result, ibu *lcav1alpha1.ImageBasedUpgrade)
+		validateFunc func(t *testing.T, result ctrl.Result, ibu *lcav1.ImageBasedUpgrade)
 	}{
 		{
 			name: "idle IBU",
-			ibu: &lcav1alpha1.ImageBasedUpgrade{
+			ibu: &lcav1.ImageBasedUpgrade{
 				ObjectMeta: v1.ObjectMeta{
 					Name: utils.IBUName,
 				},
-				Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-					Stage: lcav1alpha1.Stages.Idle,
+				Spec: lcav1.ImageBasedUpgradeSpec{
+					Stage: lcav1.Stages.Idle,
 				},
 			},
 			request: reconcile.Request{
@@ -838,7 +838,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 					Name: utils.IBUName,
 				},
 			},
-			validateFunc: func(t *testing.T, result ctrl.Result, ibu *lcav1alpha1.ImageBasedUpgrade) {
+			validateFunc: func(t *testing.T, result ctrl.Result, ibu *lcav1.ImageBasedUpgrade) {
 				idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 				assert.Equal(t, idleCondition.Status, metav1.ConditionTrue)
 				if result != doNotRequeue() {
@@ -871,7 +871,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			ibu := &lcav1alpha1.ImageBasedUpgrade{}
+			ibu := &lcav1.ImageBasedUpgrade{}
 			if err := fakeClient.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu); err != nil {
 				t.Errorf("unexcepted error: %v", err.Error())
 			}
@@ -885,28 +885,28 @@ func Test_getValidNextStageList(t *testing.T) {
 		name          string
 		isAfterPivot  bool
 		conditions    []Condition
-		wantStageList []lcav1alpha1.ImageBasedUpgradeStage
+		wantStageList []lcav1.ImageBasedUpgradeStage
 	}{
 		{
 			name:          "prep in progress",
 			conditions:    []Condition{{utils.ConditionTypes.PrepInProgress, metav1.ConditionTrue, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 		{
 			name:          "prep completed",
 			conditions:    []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionTrue, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Upgrade},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle, lcav1.Stages.Upgrade},
 		},
 		{
 			name: "prep failed",
 			conditions: []Condition{{utils.ConditionTypes.PrepCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.PrepInProgress, metav1.ConditionFalse, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 		{
 			name:          "upgrade completed",
 			conditions:    []Condition{{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle, lcav1alpha1.Stages.Rollback},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle, lcav1.Stages.Rollback},
 		},
 		{
 			name:         "upgrade failed before pivot",
@@ -915,7 +915,7 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 		{
 			name:         "upgrade failed after pivot",
@@ -924,7 +924,7 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Rollback},
 		},
 		{
 			name:         "upgrade in progress before pivot",
@@ -933,7 +933,7 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 		{
 			name:         "upgrade in progress after pivot",
@@ -942,7 +942,7 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.UpgradeInProgress, metav1.ConditionTrue, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Rollback},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Rollback},
 		},
 		{
 			name:         "rollback in progress",
@@ -952,7 +952,7 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:         "rollback in progress after pivoting back",
@@ -962,60 +962,60 @@ func Test_getValidNextStageList(t *testing.T) {
 				{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.InProgress},
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed},
 			},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			// TODO consider allowing finalize the successful upgrade after a rollback failure
 			name: "rollback failed after successful upgrade",
 			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionTrue, utils.ConditionReasons.Completed}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name: "rollback failed after upgrade failure",
 			conditions: []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionFalse, ""},
 				{utils.ConditionTypes.UpgradeCompleted, metav1.ConditionFalse, utils.ConditionReasons.Failed}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "rollback completed",
 			conditions:    []Condition{{utils.ConditionTypes.RollbackCompleted, metav1.ConditionTrue, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 		{
 			name:          "finalizing",
 			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Finalizing}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "finalize failed",
 			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.FinalizeFailed}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "aborting",
 			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.Aborting}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "abort failed",
 			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionFalse, utils.ConditionReasons.AbortFailed}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{},
 		},
 		{
 			name:          "idle",
 			conditions:    []Condition{{utils.ConditionTypes.Idle, metav1.ConditionTrue, ""}},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Prep},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Prep},
 		},
 		{
 			name:          "initial IBU creation - no status conditions",
 			conditions:    []Condition{},
-			wantStageList: []lcav1alpha1.ImageBasedUpgradeStage{lcav1alpha1.Stages.Idle},
+			wantStageList: []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ibu := &lcav1alpha1.ImageBasedUpgrade{}
+			ibu := &lcav1.ImageBasedUpgrade{}
 			for _, condition := range tt.conditions {
 				utils.SetStatusCondition(&ibu.Status.Conditions, condition.Type, condition.Reason, condition.Status, "", 1)
 			}

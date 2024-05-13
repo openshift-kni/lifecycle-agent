@@ -29,7 +29,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/samber/lo"
@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -54,10 +55,10 @@ const (
 
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
-	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error
+	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, toDir string) error
 	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
 	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
-	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error
+	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, ibu *lcav1.ImageBasedUpgrade) error
 }
 
 // EMHandler handles the extra manifests
@@ -135,6 +136,17 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 			return fmt.Errorf("failed to create manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
 		}
 	} else {
+		applyType := common.ApplyTypeReplace
+		if metadata, exists := manifest.Object["metadata"].(map[string]interface{}); exists {
+			if annotations, exists := metadata["annotations"].(map[string]interface{}); exists {
+				if at, exists := annotations[common.ApplyTypeAnnotation]; exists {
+					applyType = at.(string)
+					// Remove the annotation as it serves no purpose at runtime
+					delete(annotations, common.ApplyTypeAnnotation)
+				}
+			}
+		}
+
 		opts := metav1.UpdateOptions{}
 		if isDryRun {
 			opts = metav1.UpdateOptions{
@@ -142,15 +154,32 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 			}
 		}
 
-		manifest.SetResourceVersion(existingManifest.GetResourceVersion())
-		if _, err := resource.Update(ctx, manifest, opts); err != nil {
-			return fmt.Errorf("failed to update manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+		switch applyType {
+		case common.ApplyTypeReplace:
+			manifest.SetResourceVersion(existingManifest.GetResourceVersion())
+			if _, err := resource.Update(ctx, manifest, opts); err != nil {
+				return fmt.Errorf("failed to replace manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
+		case common.ApplyTypeMerge:
+			mergedObj, err := mergeSpecs(manifest.Object, existingManifest.Object, string(policyv1.MustHave), false)
+			if err != nil {
+				return fmt.Errorf("failed to merge manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
+			merged := &unstructured.Unstructured{Object: mergedObj.(map[string]interface{})}
+			merged.SetResourceVersion(existingManifest.GetResourceVersion())
+			if _, err := resource.Update(ctx, merged, opts); err != nil {
+				return fmt.Errorf("failed to update manifest %s called %s: %w", manifest.GetKind(), manifest.GetName(), err)
+			}
+
 		}
+
 	}
 	return nil
 }
 
-func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1.ConfigMapRef, ibu *lcav1.ImageBasedUpgrade) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -249,7 +278,7 @@ func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap)
 
 // ExportExtraManifestToDir extracts the extra manifests from configmaps
 // and writes them to the given directory
-func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1alpha1.ConfigMapRef, toDir string) error {
+func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, toDir string) error {
 	if extraManifestCMs == nil {
 		h.Log.Info("No extra manifests configmap is provided")
 		return nil
@@ -436,7 +465,7 @@ func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, erro
 }
 
 // AddAnnotationWarnUnknownCRD add warning in annotation for when CRD is unknown
-func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1alpha1.ImageBasedUpgrade, annotationValue string) error {
+func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1.ImageBasedUpgrade, annotationValue string) error {
 	patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 
 	ann := ibu.GetAnnotations()
@@ -455,7 +484,7 @@ func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1alp
 }
 
 // RemoveAnnotationWarnUnknownCRD remove the warning if present
-func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *lcav1alpha1.ImageBasedUpgrade, log logr.Logger) error {
+func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *lcav1.ImageBasedUpgrade, log logr.Logger) error {
 	if _, exists := ibu.GetAnnotations()[WarnAnnotationUnknownCRDKey]; exists {
 		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 

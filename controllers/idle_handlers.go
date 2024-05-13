@@ -33,7 +33,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -42,13 +42,13 @@ var osStat = os.Stat
 var osReadDir = os.ReadDir
 var osRemoveAll = os.RemoveAll
 
-func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *lcav1alpha1.ImageBasedUpgrade) {
+func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *lcav1.ImageBasedUpgrade) {
 	ibu.Status.RollbackAvailabilityExpiration.Reset()
 	utils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleAbort")
 
 	if successful, errMsg := r.cleanup(ctx, ibu); successful {
@@ -68,7 +68,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbort(ctx context.Context, ibu *lcav
 	return requeueWithLongInterval(), nil
 }
 
-func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	if done, err := r.checkManualCleanup(ctx, ibu); err != nil {
 		return requeueWithShortInterval(), err
 	} else if done {
@@ -79,7 +79,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalizeFailure(ctx context.Context,
 	return requeueWithLongInterval(), nil
 }
 
-func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	if done, err := r.checkManualCleanup(ctx, ibu); err != nil {
 		return requeueWithShortInterval(), err
 	} else if done {
@@ -92,7 +92,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 
 // checkManualCleanup looks for ManualCleanupAnnotation in the ibu CR, if it is present removes the annotation and returns true
 // if it is not present returns false
-func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, error) {
+func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (bool, error) {
 	if _, ok := ibu.Annotations[utils.ManualCleanupAnnotation]; ok {
 		delete(ibu.Annotations, utils.ManualCleanupAnnotation)
 		if err := r.Client.Update(ctx, ibu); err != nil {
@@ -103,7 +103,7 @@ func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ib
 	return false, nil
 }
 
-func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleFinalize")
 
 	r.Log.Info("Running health check for finalize (Idle) stage")
@@ -139,7 +139,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *l
 
 // cleanup cleans stateroots, precache, backup, ibu files
 // returns true if all cleanup tasks were successful
-func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (bool, string) {
+func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (bool, string) {
 	// try to clean up as much as possible and avoid returning when one of the cleanup tasks fails
 	// successful means that all the cleanup tasks completed without any error
 	successful := true
