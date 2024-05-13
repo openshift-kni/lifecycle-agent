@@ -283,7 +283,7 @@ Example:
 
 ```yaml
 ---
-apiVersion: lca.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1
 kind: SeedGenerator
 metadata:
   name: seedimage

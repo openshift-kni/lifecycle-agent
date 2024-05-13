@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -107,7 +107,7 @@ func NewConfig(imageList []string, envVars []corev1.EnvVar, args ...any) *Config
 }
 
 // CreateJobAndConfigMap creates a new precache job.
-func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ibu *lcav1alpha1.ImageBasedUpgrade) error {
+func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ibu *lcav1.ImageBasedUpgrade) error {
 	if len(config.ImageList) == 0 {
 		return fmt.Errorf("no images specified for precaching")
 	}

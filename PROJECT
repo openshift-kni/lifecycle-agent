@@ -18,8 +18,8 @@ resources:
   domain: openshift.io
   group: lca
   kind: ImageBasedUpgrade
-  path: github.com/openshift-kni/lifecycle-agent/api/v1alpha1
-  version: v1alpha1
+  path: github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -27,6 +27,6 @@ resources:
   domain: openshift.io
   group: lca
   kind: SeedGenerator
-  path: github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1
-  version: v1alpha1
+  path: github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1
+  version: v1
 version: "3"

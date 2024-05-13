@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
@@ -26,7 +26,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	}()
 
 	type args struct {
-		ibu          *v1alpha1.ImageBasedUpgrade
+		ibu          *v1.ImageBasedUpgrade
 		r            rpmostreeclient.IClient
 		ostreeClient ostreeclient.IClient
 		ops          *ops.MockOps
@@ -43,7 +43,7 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 		{
 			name: "in post pivot when desired stateroot is the same",
 			args: args{
-				ibu: &v1alpha1.ImageBasedUpgrade{Spec: v1alpha1.ImageBasedUpgradeSpec{SeedImageRef: v1alpha1.SeedImageRef{
+				ibu: &v1.ImageBasedUpgrade{Spec: v1.ImageBasedUpgradeSpec{SeedImageRef: v1.SeedImageRef{
 					Version: "4.14",
 				}}},
 				r:            mockRpmostreeclient,

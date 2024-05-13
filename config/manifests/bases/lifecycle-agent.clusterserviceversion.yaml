@@ -120,7 +120,7 @@ spec:
         - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Valid Next Stage
         path: validNextStages
-      version: v1alpha1
+      version: v1
     - description: SeedGenerator is the Schema for the seedgenerators API
       displayName: Seed Generator
       kind: SeedGenerator
@@ -149,7 +149,7 @@ spec:
         - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Status
         path: observedGeneration
-      version: v1alpha1
+      version: v1
   description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
     provides local lifecycle management services \nfor Single Node Openshift (SNO)
     clusters.\n\n## Where to find more information\nYou can find additional guidance

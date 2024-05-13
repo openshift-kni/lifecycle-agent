@@ -28,12 +28,12 @@ upgrade   110s   Upgrade   Failed   Rollback due to service-unit failure: compon
 
 ```console
 $ oc get ibu upgrade -o yaml
-apiVersion: lca.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1
 kind: ImageBasedUpgrade
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1alpha1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
   creationTimestamp: "2024-02-01T19:20:40Z"
   generation: 1
   name: upgrade
@@ -99,12 +99,12 @@ upgrade   75s   Upgrade   Failed   Rollback due to postpivot failure: failed to 
 $ oc get ibu -o yaml
 apiVersion: v1
 items:
-- apiVersion: lca.openshift.io/v1alpha1
+- apiVersion: lca.openshift.io/v1
   kind: ImageBasedUpgrade
   metadata:
     annotations:
       kubectl.kubernetes.io/last-applied-configuration: |
-        {"apiVersion":"lca.openshift.io/v1alpha1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+        {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
     creationTimestamp: "2024-02-01T20:00:48Z"
     generation: 1
     name: upgrade
@@ -179,12 +179,12 @@ upgrade   3m33s   Upgrade   Failed   Rollback due to LCA Init Monitor timeout, a
 
 ```console
 $ oc get ibu upgrade -o yaml
-apiVersion: lca.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1
 kind: ImageBasedUpgrade
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1alpha1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
   creationTimestamp: "2024-02-01T21:22:36Z"
   generation: 1
   name: upgrade

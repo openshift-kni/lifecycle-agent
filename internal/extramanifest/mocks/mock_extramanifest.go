@@ -12,7 +12,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	v1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	gomock "go.uber.org/mock/gomock"
 	unstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -57,7 +57,7 @@ func (mr *MockEManifestHandlerMockRecorder) ApplyExtraManifests(ctx, fromDir any
 }
 
 // ExportExtraManifestToDir mocks base method.
-func (m *MockEManifestHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []v1alpha1.ConfigMapRef, toDir string) error {
+func (m *MockEManifestHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []v1.ConfigMapRef, toDir string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ExportExtraManifestToDir", ctx, extraManifestCMs, toDir)
 	ret0, _ := ret[0].(error)
@@ -100,7 +100,7 @@ func (mr *MockEManifestHandlerMockRecorder) ValidateAndExtractManifestFromPolici
 }
 
 // ValidateExtraManifestConfigmaps mocks base method.
-func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1alpha1.ConfigMapRef, ibu *v1alpha1.ImageBasedUpgrade) error {
+func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1.ConfigMapRef, ibu *v1.ImageBasedUpgrade) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ValidateExtraManifestConfigmaps", ctx, extraManifestCMs, ibu)
 	ret0, _ := ret[0].(error)

@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -36,7 +36,7 @@ import (
 )
 
 func init() {
-	testscheme.AddKnownTypes(lcav1alpha1.GroupVersion, &lcav1alpha1.ImageBasedUpgrade{})
+	testscheme.AddKnownTypes(lcav1.GroupVersion, &lcav1.ImageBasedUpgrade{})
 }
 
 func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
@@ -163,12 +163,12 @@ func TestCheckManualCleanup(t *testing.T) {
 		},
 	}
 
-	ibu := &lcav1alpha1.ImageBasedUpgrade{
+	ibu := &lcav1.ImageBasedUpgrade{
 		ObjectMeta: corev1.ObjectMeta{
 			Name: utils.IBUName,
 		},
-		Spec: lcav1alpha1.ImageBasedUpgradeSpec{
-			Stage: lcav1alpha1.Stages.Idle,
+		Spec: lcav1.ImageBasedUpgradeSpec{
+			Stage: lcav1.Stages.Idle,
 		},
 	}
 	for _, tt := range tests {
@@ -189,7 +189,7 @@ func TestCheckManualCleanup(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expect, got)
-			gotIbu := &lcav1alpha1.ImageBasedUpgrade{}
+			gotIbu := &lcav1.ImageBasedUpgrade{}
 			if err := client.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, gotIbu); err != nil {
 				t.Errorf("unexcepted error: %v", err.Error())
 			}
