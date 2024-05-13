@@ -39,13 +39,6 @@ var (
 			}
 		},
 	}
-	// internals
-	hostCommandsExecutor = ops.NewChrootExecutor(log, true, common.Host)
-	opsClient            = ops.NewOps(log, hostCommandsExecutor)
-	rpmOstreeClient      = ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
-	ostreeClient         = ostreeclient.NewClient(hostCommandsExecutor, false)
-	ctx                  = context.Background()
-	loggerOpt            = zap.Options{Development: true}
 )
 
 func init() {
@@ -60,6 +53,13 @@ func ibuStaterootSetupRun() error {
 		return err
 	}
 
+	// internals
+	hostCommandsExecutor := ops.NewChrootExecutor(log, true, common.Host)
+	opsClient := ops.NewOps(log, hostCommandsExecutor)
+	rpmOstreeClient := ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
+	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
+	ctx := context.Background()
+	loggerOpt := zap.Options{Development: true}
 	// logger init...we have two loggers
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&loggerOpt)))
 	logger := ctrl.Log.WithName("prep-stateroot-job")
