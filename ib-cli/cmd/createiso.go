@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/openshift-kni/lifecycle-agent/ib-cli/installationiso"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/ib-cli/installationiso"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
@@ -50,6 +51,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&authFile, "auth-file", "a", "", "The path to the authentication file of the container registry of seed image.")
 	cmd.Flags().StringVarP(&pullSecretFile, "pullsecret-file", "p", "", "The path to the pull secret file for precache process.")
 	cmd.Flags().StringVarP(&sshPublicKeyFile, "ssh-public-key-file", "k", "", "The path to ssh public key to be added to the installed host.")
+	// remove after refactoring the code in ibi-orchestrate-vm
 	cmd.Flags().StringVarP(&lcaImage, "lca-image", "l", "quay.io/openshift-kni/lifecycle-agent-operator:4.16.0", "The lifecycle-agent image to use for generating the ISO.")
 	cmd.Flags().StringVarP(&rhcosLiveIso, "rhcos-live-iso", "r", "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso", "The URL to the rhcos-live-iso for generating the ISO.")
 	cmd.Flags().StringVarP(&installationDisk, "installation-disk", "i", "", "The disk that will be used for the installation.")
@@ -100,9 +102,29 @@ func createIso() error {
 		log.Errorf(err.Error())
 		return err
 	}
+
+	ibiConfig := &ibiconfig.IBIPrepareConfig{
+		SeedImage:           seedImage,
+		SeedVersion:         seedVersion,
+		AuthFile:            authFile,
+		PullSecretFile:      pullSecretFile,
+		SSHPublicKeyFile:    sshPublicKeyFile,
+		RHCOSLiveISO:        rhcosLiveIso,
+		InstallationDisk:    installationDisk,
+		ExtraPartitionStart: extraPartitionStart,
+		PrecacheDisabled:    precacheDisabled,
+		PrecacheBestEffort:  precacheBestEffort,
+		Shutdown:            shutdown,
+		SkipDiskCleanup:     skipDiskCleanup,
+	}
+
+	if err := ibiConfig.Validate(); err != nil {
+		log.Fatalf("Error validating the configuration: %v", err)
+	}
+	ibiConfig.SetDefaultValues()
+
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
-	if err = isoCreator.Create(seedImage, seedVersion, authFile, pullSecretFile, sshPublicKeyFile, lcaImage, rhcosLiveIso,
-		installationDisk, extraPartitionStart, precacheBestEffort, precacheDisabled, shutdown, skipDiskCleanup); err != nil {
+	if err = isoCreator.Create(ibiConfig); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
 		log.Errorf(err.Error())
 		return err

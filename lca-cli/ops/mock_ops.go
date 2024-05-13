@@ -53,7 +53,7 @@ func (mr *MockOpsMockRecorder) Chroot(chrootPath any) *gomock.Call {
 }
 
 // CreateExtraPartition mocks base method.
-func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error {
+func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateExtraPartition", installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
 	ret0, _ := ret[0].(error)
