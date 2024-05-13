@@ -35,6 +35,8 @@ systemd:
       enabled: true
       contents: |
         [Unit]
+        Wants=network-online.target
+        After=network-online.target
         Description=SNO Image Based Installation
         [Service]
         Environment=SEED_IMAGE={{.SeedImage}}
