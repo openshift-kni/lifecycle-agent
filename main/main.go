@@ -64,7 +64,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
-	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -93,7 +93,7 @@ const (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(lcav1.AddToScheme(scheme))
+	utilruntime.Must(ibuv1.AddToScheme(scheme))
 	utilruntime.Must(seedgenv1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
 	utilruntime.Must(mcv1.AddToScheme(scheme))
