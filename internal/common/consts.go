@@ -99,7 +99,7 @@ const (
 	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
-	SeedFormatVersion  = 3
+	SeedFormatVersion  = 4
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 
 	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
