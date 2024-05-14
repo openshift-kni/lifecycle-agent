@@ -22,7 +22,6 @@ COPY utils utils
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ib-cli main/ib-cli/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go
 
 #####################################################################################################
 # Build the operator image
@@ -41,7 +40,6 @@ COPY --from=builder \
     /opt/app-root/src/build/manager \
     /opt/app-root/src/build/lca-cli \
     /opt/app-root/src/build/ib-cli \
-    /opt/app-root/src/build/precache \
     /usr/local/bin/
 
 COPY lca-cli/installation_configuration_files/ /usr/local/installation_configuration_files/

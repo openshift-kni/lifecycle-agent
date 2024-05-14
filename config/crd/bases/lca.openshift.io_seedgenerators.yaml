@@ -26,7 +26,7 @@ spec:
     - jsonPath: .status.conditions[-1:].message
       name: Details
       type: string
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: SeedGenerator is the Schema for the seedgenerators API

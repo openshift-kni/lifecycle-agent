@@ -43,8 +43,7 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	configv1 "github.com/openshift/api/config/v1"
 	ocpV1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -65,6 +64,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
@@ -93,8 +93,8 @@ const (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(lcav1alpha1.AddToScheme(scheme))
-	utilruntime.Must(seedgenv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(ibuv1.AddToScheme(scheme))
+	utilruntime.Must(seedgenv1.AddToScheme(scheme))
 	utilruntime.Must(ocpV1.AddToScheme(scheme))
 	utilruntime.Must(mcv1.AddToScheme(scheme))
 	utilruntime.Must(velerov1.AddToScheme(scheme))
@@ -335,7 +335,7 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	// Strip the ResourceVersion, otherwise the restore fails
 	secret.SetResourceVersion("")
 
-	seedgen := &seedgenv1alpha1.SeedGenerator{}
+	seedgen := &seedgenv1.SeedGenerator{}
 	if err := lcautils.ReadYamlOrJSONFile(seedgenFilePath, seedgen); err != nil {
 		if os.IsNotExist(err) {
 			return nil

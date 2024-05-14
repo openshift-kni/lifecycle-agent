@@ -41,7 +41,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 )
 
 // TODO: Need a better way to change this but will require relatively big refactoring
@@ -55,7 +55,7 @@ var RetryBackoffTwoMinutes = wait.Backoff{
 }
 
 // GetConfigMap retrieves the configmap from cluster
-func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.ConfigMapRef) (*corev1.ConfigMap, error) {
+func GetConfigMap(ctx context.Context, c client.Client, configMap ibuv1.ConfigMapRef) (*corev1.ConfigMap, error) {
 
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(ctx, types.NamespacedName{
@@ -69,10 +69,10 @@ func GetConfigMap(ctx context.Context, c client.Client, configMap v1alpha1.Confi
 }
 
 // GetConfigMaps retrieves a collection of configmaps from cluster
-func GetConfigMaps(ctx context.Context, c client.Client, configMaps []v1alpha1.ConfigMapRef) ([]corev1.ConfigMap, error) {
+func GetConfigMaps(ctx context.Context, c client.Client, configMaps []ibuv1.ConfigMapRef) ([]corev1.ConfigMap, error) {
 	var cms []corev1.ConfigMap
-	var cmSet = map[v1alpha1.ConfigMapRef]bool{}
-	var uniqueCms []v1alpha1.ConfigMapRef
+	var cmSet = map[ibuv1.ConfigMapRef]bool{}
+	var uniqueCms []ibuv1.ConfigMapRef
 
 	// Remove duplicate configmaps
 	for _, cm := range configMaps {
@@ -151,11 +151,11 @@ func RetryOnRetriable(backoff wait.Backoff, fn func() error) error {
 	return retry.OnError(backoff, IsRetriable, fn) //nolint:wrapcheck
 }
 
-func GetDesiredStaterootName(ibu *v1alpha1.ImageBasedUpgrade) string {
+func GetDesiredStaterootName(ibu *ibuv1.ImageBasedUpgrade) string {
 	return GetStaterootName(ibu.Spec.SeedImageRef.Version)
 }
 
-func GetStaterootCertsDir(ibu *v1alpha1.ImageBasedUpgrade) string {
+func GetStaterootCertsDir(ibu *ibuv1.ImageBasedUpgrade) string {
 	return PathOutsideChroot(filepath.Join(GetStaterootOptOpenshift(GetStaterootPath(GetDesiredStaterootName(ibu))), KubeconfigCryptoDir))
 }
 

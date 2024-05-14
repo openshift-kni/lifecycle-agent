@@ -127,7 +127,7 @@ For example,
   For example,
 
   ```yaml
-  apiVersion: lca.openshift.io/v1alpha1
+  apiVersion: lca.openshift.io/v1
   kind: ImageBasedUpgrade
   metadata:
     annotations:
@@ -185,7 +185,7 @@ The IBU CR status includes a list of conditions that indicates the progress of e
 When LCA is installed, the IBU CR is auto-created:
 
 ```console
-apiVersion: lca.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1
 kind: ImageBasedUpgrade
 metadata:
   creationTimestamp: "2024-04-19T19:20:04Z"

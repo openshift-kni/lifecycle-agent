@@ -51,8 +51,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	seedgenv1alpha1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1alpha1"
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -120,7 +120,7 @@ var phases = struct {
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
-func getPhase(seedgen *seedgenv1alpha1.SeedGenerator) seedgenReconcilerPhase {
+func getPhase(seedgen *seedgenv1.SeedGenerator) seedgenReconcilerPhase {
 	seedgenCompletedCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenCompleted))
 	seedgenInProgressCondition := meta.FindStatusCondition(seedgen.Status.Conditions, string(utils.SeedGenConditionTypes.SeedGenInProgress))
 
@@ -422,7 +422,7 @@ func (r *SeedGeneratorReconciler) rmPreviousImagerContainer() error {
 //   - Use recertImage from seedgen spec, if specified
 //   - If not, get the value from the recert image environment variable
 //   - If environment variable is not set, use the default value
-func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) (recertImage string) {
+func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1.SeedGenerator) (recertImage string) {
 	if seedgen.Spec.RecertImage == "" {
 		recertImage = os.Getenv(common.RecertImageEnvKey)
 		if recertImage == "" {
@@ -435,7 +435,7 @@ func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1alpha
 	return
 }
 
-func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1.SeedGenerator) error {
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
 	_, err := r.Executor.Execute("podman", "pull", "--authfile", common.ImageRegistryAuthFile, recertImage)
@@ -447,7 +447,7 @@ func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1alph
 }
 
 // Launch a container to run the imager
-func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator) error {
 	r.Log.Info("Launching imager")
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
@@ -587,7 +587,7 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 	return
 }
 
-func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
 	r.Log.Info("Restoring seedgen CR in DB")
 
 	// Clear the ResourceVersion
@@ -655,7 +655,7 @@ func (r *SeedGeneratorReconciler) setupWorkspace() error {
 }
 
 // Generate the seed image
-func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) (nextReconcile ctrl.Result, rc error) {
+func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1.SeedGenerator) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
 	r.Log.Info("Checking system health")
 	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log); err != nil {
@@ -824,7 +824,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	defer r.restoreSeedgenCRIfNeeded(ctx, seedgen)
 
 	// Delete the IBU CR prior to launching the imager, so it's not in the seed image
-	ibu := &lcav1alpha1.ImageBasedUpgrade{
+	ibu := &ibuv1.ImageBasedUpgrade{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: utils.IBUName,
 		}}
@@ -894,7 +894,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Use a non-cached query to Get the SeedGen CR, to ensure we aren't running against a stale cached CR
-	seedgen := &seedgenv1alpha1.SeedGenerator{}
+	seedgen := &seedgenv1.SeedGenerator{}
 	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
 		return r.NoncachedClient.Get(ctx, req.NamespacedName, seedgen) //nolint:wrapcheck
 	})
@@ -965,7 +965,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // Utility functions for conditions/status
-func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
+func setSeedGenStatusFailed(seedgen *seedgenv1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenCompleted,
 		utils.SeedGenConditionReasons.Failed,
@@ -980,7 +980,7 @@ func setSeedGenStatusFailed(seedgen *seedgenv1alpha1.SeedGenerator, msg string) 
 		seedgen.Generation)
 }
 
-func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator, msg string) {
+func setSeedGenStatusInProgress(seedgen *seedgenv1.SeedGenerator, msg string) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
 		utils.SeedGenConditionReasons.InProgress,
@@ -989,7 +989,7 @@ func setSeedGenStatusInProgress(seedgen *seedgenv1alpha1.SeedGenerator, msg stri
 		seedgen.Generation)
 }
 
-func setSeedGenStatusCompleted(seedgen *seedgenv1alpha1.SeedGenerator) {
+func setSeedGenStatusCompleted(seedgen *seedgenv1.SeedGenerator) {
 	utils.SetStatusCondition(&seedgen.Status.Conditions,
 		utils.SeedGenConditionTypes.SeedGenInProgress,
 		utils.SeedGenConditionReasons.Completed,
@@ -1004,7 +1004,7 @@ func setSeedGenStatusCompleted(seedgen *seedgenv1alpha1.SeedGenerator) {
 		seedgen.Generation)
 }
 
-func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1alpha1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
 	seedgen.Status.ObservedGeneration = seedgen.ObjectMeta.Generation
 	err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
 		return r.Status().Update(ctx, seedgen) //nolint:wrapcheck
@@ -1023,7 +1023,7 @@ func (r *SeedGeneratorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&seedgenv1alpha1.SeedGenerator{}, builder.WithPredicates(predicate.Funcs{
+		For(&seedgenv1.SeedGenerator{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
 			GenericFunc: func(ge event.GenericEvent) bool { return false },

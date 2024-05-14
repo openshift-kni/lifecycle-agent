@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -171,7 +171,7 @@ func (h *BRHandler) EnsureOadpConfiguration(ctx context.Context) error {
 
 // ExportRestoresToDir extracts all restore CRs from oadp configmaps and write them to a given location
 // returns: error
-func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error {
+func (h *BRHandler) ExportRestoresToDir(ctx context.Context, configMaps []ibuv1.ConfigMapRef, toDir string) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, configMaps)
 	if err != nil {
 		return fmt.Errorf("failed to get configMaps: %w", err)
