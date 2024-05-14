@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"testing"
 
-	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -248,9 +248,9 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ibu := v1.ImageBasedUpgrade{}
+			ibu := ibuv1.ImageBasedUpgrade{}
 			sc := runtime.NewScheme()
-			_ = v1.AddToScheme(sc)
+			_ = ibuv1.AddToScheme(sc)
 
 			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"), &ibu, sc)
 			if tc.expectedError != nil {

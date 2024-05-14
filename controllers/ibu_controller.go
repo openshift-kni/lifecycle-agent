@@ -53,7 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -149,7 +149,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Use a non-cached query to Get the IBU CR, to ensure we aren't running against a stale cached CR
-	ibu := &lcav1.ImageBasedUpgrade{}
+	ibu := &ibuv1.ImageBasedUpgrade{}
 	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
 		return r.NoncachedClient.Get(ctx, req.NamespacedName, ibu) //nolint:wrapcheck
 	})
@@ -211,71 +211,71 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
-func getValidNextStageList(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) []lcav1.ImageBasedUpgradeStage {
+func getValidNextStageList(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) []ibuv1.ImageBasedUpgradeStage {
 	inProgressStage := utils.GetInProgressStage(ibu)
-	if inProgressStage == lcav1.Stages.Idle || inProgressStage == lcav1.Stages.Rollback || utils.IsStageFailed(ibu, lcav1.Stages.Rollback) {
+	if inProgressStage == ibuv1.Stages.Idle || inProgressStage == ibuv1.Stages.Rollback || utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
 		// no valid transition if aborting/abort failed/finalizing/finalize failed/rollback in progress/rollback failed
-		return []lcav1.ImageBasedUpgradeStage{}
+		return []ibuv1.ImageBasedUpgradeStage{}
 	}
 
-	if inProgressStage == lcav1.Stages.Prep || utils.IsStageFailed(ibu, lcav1.Stages.Prep) {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle}
+	if inProgressStage == ibuv1.Stages.Prep || utils.IsStageFailed(ibu, ibuv1.Stages.Prep) {
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle}
 	}
 
-	if inProgressStage == lcav1.Stages.Upgrade || utils.IsStageFailed(ibu, lcav1.Stages.Upgrade) {
+	if inProgressStage == ibuv1.Stages.Upgrade || utils.IsStageFailed(ibu, ibuv1.Stages.Upgrade) {
 		if isAfterPivot {
-			return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Rollback}
+			return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Rollback}
 		} else {
-			return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle}
+			return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle}
 		}
 	}
 
 	// no in progress stage, check completed stages in reverse order
-	if utils.IsStageCompleted(ibu, lcav1.Stages.Rollback) {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle}
+	if utils.IsStageCompleted(ibu, ibuv1.Stages.Rollback) {
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle}
 	}
-	if utils.IsStageCompleted(ibu, lcav1.Stages.Upgrade) {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle, lcav1.Stages.Rollback}
+	if utils.IsStageCompleted(ibu, ibuv1.Stages.Upgrade) {
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle, ibuv1.Stages.Rollback}
 	}
-	if utils.IsStageCompleted(ibu, lcav1.Stages.Prep) {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle, lcav1.Stages.Upgrade}
+	if utils.IsStageCompleted(ibu, ibuv1.Stages.Prep) {
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle, ibuv1.Stages.Upgrade}
 	}
-	if utils.IsStageCompleted(ibu, lcav1.Stages.Idle) {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Prep}
+	if utils.IsStageCompleted(ibu, ibuv1.Stages.Idle) {
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Prep}
 	}
 
 	// initial IBU creation - no idle condition
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	if idleCondition == nil {
-		return []lcav1.ImageBasedUpgradeStage{lcav1.Stages.Idle}
+		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle}
 	}
 
-	return []lcav1.ImageBasedUpgradeStage{}
+	return []ibuv1.ImageBasedUpgradeStage{}
 }
 
-func isTransitionRequested(ibu *lcav1.ImageBasedUpgrade) bool {
+func isTransitionRequested(ibu *ibuv1.ImageBasedUpgrade) bool {
 	desiredStage := ibu.Spec.Stage
-	if desiredStage == lcav1.Stages.Idle {
+	if desiredStage == ibuv1.Stages.Idle {
 		return !(utils.IsStageCompleted(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
 	}
 	return !(utils.IsStageCompletedOrFailed(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
 }
 
-func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *lcav1.ImageBasedUpgrade, stage lcav1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
 	switch stage {
-	case lcav1.Stages.Idle:
+	case ibuv1.Stages.Idle:
 		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
-	case lcav1.Stages.Prep:
+	case ibuv1.Stages.Prep:
 		nextReconcile, err = r.handlePrep(ctx, ibu)
-	case lcav1.Stages.Upgrade:
+	case ibuv1.Stages.Upgrade:
 		nextReconcile, err = r.handleUpgrade(ctx, ibu)
-	case lcav1.Stages.Rollback:
+	case ibuv1.Stages.Rollback:
 		nextReconcile, err = r.handleRollback(ctx, ibu)
 	}
 	return
 }
 
-func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *lcav1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
+func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (nextReconcile ctrl.Result, err error) {
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	if idleCondition == nil || idleCondition.Status == metav1.ConditionTrue {
 		return
@@ -295,7 +295,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortOrFinalize(ctx context.Context,
 
 // isFinalizeOrAbort determines whether the idle transition is for finalize or abort
 // It returns the condition reason
-func isFinalizeOrAbort(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) utils.ConditionReason {
+func isFinalizeOrAbort(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) utils.ConditionReason {
 	for _, conditionType := range utils.FinalConditionTypes {
 		condition := meta.FindStatusCondition(ibu.Status.Conditions, string(conditionType))
 		if condition != nil && condition.Status == metav1.ConditionTrue {
@@ -317,7 +317,7 @@ func isFinalizeOrAbort(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) utils.Co
 // validateStageTransition verifies if the stage transition is permitted and sets the appropriate status condition.
 // Any invalid stage transition should be rejected by the xvalidation rule. If an issue arises where the xvalidation
 // rule fails to block the transition, this serves as the secondary safeguard.
-func validateStageTransition(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) bool {
+func validateStageTransition(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) bool {
 	validStages := getValidNextStageList(ibu, isAfterPivot)
 
 	// Check if the stage is in the valid next stage list
@@ -328,15 +328,15 @@ func validateStageTransition(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) bo
 		utils.ClearInvalidTransitionStatusConditions(ibu)
 
 		switch ibu.Spec.Stage {
-		case lcav1.Stages.Prep:
+		case ibuv1.Stages.Prep:
 			utils.SetIdleStatusInProgress(ibu, utils.ConditionReasons.InProgress, utils.InProgress)
 			utils.SetPrepStatusInProgress(ibu, utils.InProgress)
-		case lcav1.Stages.Upgrade:
+		case ibuv1.Stages.Upgrade:
 			utils.SetUpgradeStatusInProgress(ibu, utils.InProgress)
-		case lcav1.Stages.Rollback:
+		case ibuv1.Stages.Rollback:
 			utils.SetUpgradeStatusRollbackRequested(ibu)
 			utils.SetRollbackStatusInProgress(ibu, utils.InProgress)
-		case lcav1.Stages.Idle:
+		case ibuv1.Stages.Idle:
 			idleReason := isFinalizeOrAbort(ibu, isAfterPivot)
 			switch idleReason {
 			case utils.ConditionReasons.Finalizing:
@@ -354,17 +354,17 @@ func validateStageTransition(ibu *lcav1.ImageBasedUpgrade, isAfterPivot bool) bo
 	} else {
 		// The transition is invalid, set invalid transition condition
 		switch ibu.Spec.Stage {
-		case lcav1.Stages.Prep,
-			lcav1.Stages.Upgrade:
+		case ibuv1.Stages.Prep,
+			ibuv1.Stages.Upgrade:
 			utils.SetStatusInvalidTransition(ibu, "Previous stage not succeeded")
-		case lcav1.Stages.Rollback:
+		case ibuv1.Stages.Rollback:
 			utils.SetStatusInvalidTransition(ibu, "Upgrade not started or already finalized")
-		case lcav1.Stages.Idle:
+		case ibuv1.Stages.Idle:
 			msg := "Abort or finalize not allowed"
-			if utils.IsStageFailed(ibu, lcav1.Stages.Rollback) {
+			if utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
 				msg = "Transition to Idle not allowed - Rollback failed"
 			} else if isAfterPivot {
-				if utils.IsStageInProgress(ibu, lcav1.Stages.Rollback) {
+				if utils.IsStageInProgress(ibu, ibuv1.Stages.Rollback) {
 					msg = "Transition to Idle not allowed - Rollback is in progress"
 				} else {
 					msg = "Transition to Idle not allowed - Rollback first"
@@ -384,7 +384,7 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&lcav1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
+		For(&ibuv1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				// Generation is only updated on spec changes (also on deletion),
 				// not metadata or status
@@ -414,10 +414,10 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			GenericFunc: func(ge event.GenericEvent) bool { return false },
 			DeleteFunc: func(de event.DeleteEvent) bool {
 				if de.Object.GetName() == utils.IBUName {
-					ibu := de.Object.(*lcav1.ImageBasedUpgrade)
+					ibu := de.Object.(*ibuv1.ImageBasedUpgrade)
 					filePath := common.PathOutsideChroot(utils.IBUFilePath)
 					// Re-create initial IBU instead of save/restore when it's idle or rollback failed
-					if utils.IsStageCompleted(ibu, lcav1.Stages.Idle) || utils.IsStageFailed(ibu, lcav1.Stages.Rollback) {
+					if utils.IsStageCompleted(ibu, ibuv1.Stages.Idle) || utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
 						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
 							err := os.Remove(filePath)
 							if os.IsNotExist(err) {

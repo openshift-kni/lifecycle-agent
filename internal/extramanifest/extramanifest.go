@@ -29,7 +29,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
-	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/samber/lo"
@@ -55,10 +55,10 @@ const (
 
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
-	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, toDir string) error
+	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef, toDir string) error
 	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
 	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
-	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, ibu *lcav1.ImageBasedUpgrade) error
+	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef, ibu *ibuv1.ImageBasedUpgrade) error
 }
 
 // EMHandler handles the extra manifests
@@ -179,7 +179,7 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 	return nil
 }
 
-func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []lcav1.ConfigMapRef, ibu *lcav1.ImageBasedUpgrade) error {
+func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef, ibu *ibuv1.ImageBasedUpgrade) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -278,7 +278,7 @@ func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap)
 
 // ExportExtraManifestToDir extracts the extra manifests from configmaps
 // and writes them to the given directory
-func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []lcav1.ConfigMapRef, toDir string) error {
+func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef, toDir string) error {
 	if extraManifestCMs == nil {
 		h.Log.Info("No extra manifests configmap is provided")
 		return nil
@@ -465,7 +465,7 @@ func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, erro
 }
 
 // AddAnnotationWarnUnknownCRD add warning in annotation for when CRD is unknown
-func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1.ImageBasedUpgrade, annotationValue string) error {
+func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, annotationValue string) error {
 	patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 
 	ann := ibu.GetAnnotations()
@@ -484,7 +484,7 @@ func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *lcav1.Im
 }
 
 // RemoveAnnotationWarnUnknownCRD remove the warning if present
-func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *lcav1.ImageBasedUpgrade, log logr.Logger) error {
+func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *ibuv1.ImageBasedUpgrade, log logr.Logger) error {
 	if _, exists := ibu.GetAnnotations()[WarnAnnotationUnknownCRDKey]; exists {
 		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 
