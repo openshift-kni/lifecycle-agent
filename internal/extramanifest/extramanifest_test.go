@@ -237,7 +237,7 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
 		},
 		{
-			name: "extra manifest containts MachineConfig",
+			name: "extra manifest contains MachineConfig",
 			configmaps: []ibuv1.ConfigMapRef{
 				{Name: "extra-manifest-cm-mc", Namespace: "default"},
 			},
