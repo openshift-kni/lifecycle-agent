@@ -51,7 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	lcav1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -824,7 +824,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	defer r.restoreSeedgenCRIfNeeded(ctx, seedgen)
 
 	// Delete the IBU CR prior to launching the imager, so it's not in the seed image
-	ibu := &lcav1.ImageBasedUpgrade{
+	ibu := &ibuv1.ImageBasedUpgrade{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: utils.IBUName,
 		}}

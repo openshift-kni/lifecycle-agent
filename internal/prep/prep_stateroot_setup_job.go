@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
-	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -35,7 +35,7 @@ func GetStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logger)
 	return job, nil
 }
 
-func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *v1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
+func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
 	job, err := constructJobForStaterootSetup(ctx, c, ibu, scheme, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render job: %w", err)
@@ -49,7 +49,7 @@ func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *v1.Image
 	return job, nil
 }
 
-func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *v1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
+func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
 	log.Info("Getting lca deployment to configure stateroot setup job")
 	lcaDeployment := appsv1.Deployment{}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: common.LcaNamespace, Name: "lifecycle-agent-controller-manager"}, &lcaDeployment); err != nil {
