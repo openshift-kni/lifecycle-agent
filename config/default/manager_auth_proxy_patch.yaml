@@ -14,7 +14,7 @@ spec:
         - "--health-probe-bind-address=:8081"
         - "--metrics-bind-address=127.0.0.1:8080"
       - name: kube-rbac-proxy
-        image: quay.io/openshift/origin-kube-rbac-proxy:4.14
+        image: quay.io/openshift/origin-kube-rbac-proxy:4.16
         args:
         - "--secure-listen-address=0.0.0.0:8443"
         - "--upstream=http://127.0.0.1:8080/"
