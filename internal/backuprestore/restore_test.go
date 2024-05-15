@@ -366,7 +366,7 @@ func TestEnsureOadpConfigurations(t *testing.T) {
 	}
 
 	errorChan := make(chan error)
-	// Verify DPA is reconciled and storage backends are availiable
+	// Verify DPA is reconciled and storage backends are available
 	go func() {
 		// Override the default host path
 		hostPath = fromDir
