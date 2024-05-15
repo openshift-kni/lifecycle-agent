@@ -22,11 +22,10 @@ COPY utils utils
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ib-cli main/ib-cli/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/precache main/precache-workload/main.go
 
 #####################################################################################################
 # Build the operator image
-# note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.16`
+# note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.17`
 FROM quay.io/openshift/origin-cli-artifacts:latest AS origincli
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
@@ -42,7 +41,6 @@ COPY --from=builder \
     /opt/app-root/src/build/manager \
     /opt/app-root/src/build/lca-cli \
     /opt/app-root/src/build/ib-cli \
-    /opt/app-root/src/build/precache \
     /usr/local/bin/
 
 COPY lca-cli/installation_configuration_files/ /usr/local/installation_configuration_files/

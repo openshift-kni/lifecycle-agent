@@ -11,7 +11,7 @@ package reboot
 import (
 	reflect "reflect"
 
-	v1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -79,7 +79,7 @@ func (mr *MockRebootIntfMockRecorder) InitiateRollback(msg any) *gomock.Call {
 }
 
 // IsOrigStaterootBooted mocks base method.
-func (m *MockRebootIntf) IsOrigStaterootBooted(ibu *v1alpha1.ImageBasedUpgrade) (bool, error) {
+func (m *MockRebootIntf) IsOrigStaterootBooted(ibu *v1.ImageBasedUpgrade) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IsOrigStaterootBooted", ibu)
 	ret0, _ := ret[0].(bool)

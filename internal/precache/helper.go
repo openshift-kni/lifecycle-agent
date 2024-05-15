@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -71,7 +71,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 	return configMap
 }
 
-func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade, scheme *runtime.Scheme) (*batchv1.Job, error) {
+func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme) (*batchv1.Job, error) {
 
 	var ValidIoNiceClasses = []int{IoNiceClassNone, IoNiceClassRealTime, IoNiceClassBestEffort, IoNiceClassIdle}
 
@@ -128,7 +128,7 @@ func renderJob(config *Config, log logr.Logger, ibu *v1alpha1.ImageBasedUpgrade,
 		ioNicePriority = DefaultIoNicePriority
 	}
 
-	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d precache",
+	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d lca-cli ibu-precache-workload",
 		nicePriority, ioNiceClass, ioNicePriority)
 
 	precacheEnvVars := append(config.EnvVars, []corev1.EnvVar{

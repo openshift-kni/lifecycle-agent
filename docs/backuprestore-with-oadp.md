@@ -622,7 +622,7 @@ requirements.
 To enable backup and restore during the upgrade stage, you should update the IBU CR with the generated OADP configmap specified in the `spec.oadpContent` field.
 
 ```yaml
-apiVersion: lca.openshift.io/v1alpha1
+apiVersion: lca.openshift.io/v1
 kind: ImageBasedUpgrade
 metadata:
   name: upgrade

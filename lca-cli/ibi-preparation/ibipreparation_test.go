@@ -2,6 +2,7 @@ package ibi_preparation
 
 import (
 	"fmt"
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"testing"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
@@ -16,55 +17,55 @@ func TestDiskPreparation(t *testing.T) {
 	installationDisk := "/dev/sda"
 	extraPartitionLabel := "label"
 	extraPartitionStart := "-40"
-	extraPartitionNumber := 5
+	extraPartitionNumber := uint(5)
 
 	testcases := []struct {
-		name                          string
-		partitionError                bool
-		setupFolderError              bool
-		shouldCreateExternalPartition bool
-		skipDiskCleanup               bool
-		failCleanupDisk               bool
+		name                string
+		partitionError      bool
+		setupFolderError    bool
+		UseContainersFolder bool
+		skipDiskCleanup     bool
+		failCleanupDisk     bool
 	}{
 		{
-			name:                          "PrepareDisk with external partition - happy flow",
-			partitionError:                false,
-			setupFolderError:              false,
-			shouldCreateExternalPartition: true,
-			skipDiskCleanup:               false,
-			failCleanupDisk:               false,
+			name:                "PrepareDisk with external partition - happy flow",
+			partitionError:      false,
+			setupFolderError:    false,
+			UseContainersFolder: false,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     false,
 		},
 		{
-			name:                          "cleanup disk fails though installation continues",
-			partitionError:                false,
-			setupFolderError:              false,
-			shouldCreateExternalPartition: true,
-			skipDiskCleanup:               false,
-			failCleanupDisk:               true,
+			name:                "cleanup disk fails though installation continues",
+			partitionError:      false,
+			setupFolderError:    false,
+			UseContainersFolder: false,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     true,
 		},
 		{
-			name:                          "fail to create external partition",
-			partitionError:                true,
-			setupFolderError:              false,
-			shouldCreateExternalPartition: true,
-			skipDiskCleanup:               false,
-			failCleanupDisk:               false,
+			name:                "fail to create external partition",
+			partitionError:      true,
+			setupFolderError:    false,
+			UseContainersFolder: false,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     false,
 		},
 		{
-			name:                          "PrepareDisk without external partition - happy flow",
-			partitionError:                false,
-			setupFolderError:              false,
-			shouldCreateExternalPartition: false,
-			skipDiskCleanup:               false,
-			failCleanupDisk:               false,
+			name:                "PrepareDisk without external partition - happy flow",
+			partitionError:      false,
+			setupFolderError:    false,
+			UseContainersFolder: true,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     false,
 		},
 		{
-			name:                          "PrepareDisk setup folder - fail",
-			partitionError:                false,
-			setupFolderError:              true,
-			shouldCreateExternalPartition: false,
-			skipDiskCleanup:               false,
-			failCleanupDisk:               false,
+			name:                "PrepareDisk setup folder - fail",
+			partitionError:      false,
+			setupFolderError:    true,
+			UseContainersFolder: true,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     false,
 		},
 	}
 
@@ -74,11 +75,16 @@ func TestDiskPreparation(t *testing.T) {
 		cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
+			ibiCobfig := &ibiconfig.IBIPrepareConfig{
+				InstallationDisk:     installationDisk,
+				ExtraPartitionLabel:  extraPartitionLabel,
+				ExtraPartitionStart:  extraPartitionStart,
+				ExtraPartitionNumber: extraPartitionNumber,
+				UseContainersFolder:  tc.UseContainersFolder,
+				SkipDiskCleanup:      tc.skipDiskCleanup,
+			}
 			ibi := NewIBIPrepare(log, mockOps, nil, nil, cleanupMock,
-				"seedImage", "authFile", "pullSecretFile",
-				"seedExpectedVersion", installationDisk, extraPartitionLabel,
-				extraPartitionStart, false, false, false,
-				tc.shouldCreateExternalPartition, tc.skipDiskCleanup, 5)
+				ibiCobfig)
 
 			if !tc.skipDiskCleanup {
 				if tc.failCleanupDisk {
@@ -90,7 +96,7 @@ func TestDiskPreparation(t *testing.T) {
 
 			mockOps.EXPECT().RunInHostNamespace("coreos-installer", "install", "/dev/sda").Return("", nil).Times(1)
 
-			if tc.shouldCreateExternalPartition {
+			if !tc.UseContainersFolder {
 				if !tc.partitionError {
 					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
 						extraPartitionStart, extraPartitionNumber).Return(nil).Times(1)
@@ -100,8 +106,7 @@ func TestDiskPreparation(t *testing.T) {
 				}
 
 				mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(0)
-			}
-			if !tc.shouldCreateExternalPartition {
+			} else {
 				mockOps.EXPECT().CreateExtraPartition(gomock.Any(), gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil).Times(0)
 				if !tc.setupFolderError {

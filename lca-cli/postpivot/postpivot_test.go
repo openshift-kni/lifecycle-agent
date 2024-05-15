@@ -24,6 +24,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -651,6 +652,100 @@ func TestSetNodeIPHint(t *testing.T) {
 					t.Errorf("expected no node ip hint file to be created")
 				}
 			}
+		})
+	}
+}
+
+func TestProxyAndProxyStatus(t *testing.T) {
+	testcases := []struct {
+		name           string
+		proxy          *clusterconfig_api.Proxy
+		seedHasProxy   bool
+		setMachineCIDR bool
+		expectedError  bool
+	}{
+		{
+			name: "Happy flow, no statusProxy",
+			proxy: &clusterconfig_api.Proxy{
+				HTTPProxy:  "http://proxy.com:8080",
+				HTTPSProxy: "https://proxy.com:8080",
+				NoProxy:    "user_data"},
+			seedHasProxy:   true,
+			setMachineCIDR: true,
+			expectedError:  false,
+		},
+		{
+			name: "seed doesn't have proxy, cluster has proxy",
+			proxy: &clusterconfig_api.Proxy{
+				HTTPProxy:  "http://proxy.com:8080",
+				HTTPSProxy: "https://proxy.com:8080",
+				NoProxy:    "user_data"},
+			seedHasProxy:   false,
+			setMachineCIDR: true,
+			expectedError:  true,
+		},
+		{
+			name:           "seed have proxy, cluster doesn't have proxy",
+			proxy:          nil,
+			seedHasProxy:   true,
+			setMachineCIDR: true,
+			expectedError:  true,
+		},
+		{
+			name: "Machine cidr not set",
+			proxy: &clusterconfig_api.Proxy{
+				HTTPProxy:  "http://proxy.com:8080",
+				HTTPSProxy: "https://proxy.com:8080",
+				NoProxy:    "user_data"},
+			seedHasProxy:   true,
+			setMachineCIDR: false,
+			expectedError:  true,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, nil, "", "", "")
+			seedReconfiguration := &clusterconfig_api.SeedReconfiguration{
+				BaseDomain:  "new.com",
+				ClusterName: "new_name",
+			}
+
+			seedInfo := &seedclusterinfo.SeedClusterInfo{
+				ClusterNetworks: []string{"1.1.1.1/24", "2.2.2.2/24"},
+				ServiceNetworks: []string{"3.3.3.3/24", "4.4.4.4/24"},
+				HasProxy:        tc.seedHasProxy,
+			}
+			if tc.setMachineCIDR {
+				seedReconfiguration.MachineNetwork = "8.8.8.8/24"
+			}
+
+			if tc.proxy != nil {
+				seedReconfiguration.Proxy = &clusterconfig_api.Proxy{}
+				*seedReconfiguration.Proxy = *tc.proxy
+			}
+
+			err := pp.setProxyAndProxyStatus(seedReconfiguration, seedInfo)
+			assert.Equal(t, tc.expectedError, err != nil, err)
+			if !tc.expectedError {
+				assert.Equal(t, tc.proxy.HTTPProxy, seedReconfiguration.Proxy.HTTPProxy)
+				assert.Equal(t, tc.proxy.HTTPSProxy, seedReconfiguration.Proxy.HTTPSProxy)
+				assert.Contains(t, seedReconfiguration.Proxy.NoProxy, fmt.Sprintf("api-int.%s.%s", seedReconfiguration.ClusterName,
+					seedReconfiguration.BaseDomain))
+				for _, clusterNetwork := range seedInfo.ClusterNetworks {
+					assert.Contains(t, seedReconfiguration.Proxy.NoProxy, clusterNetwork)
+				}
+
+				for _, serviceNetwork := range seedInfo.ServiceNetworks {
+					assert.Contains(t, seedReconfiguration.Proxy.NoProxy, serviceNetwork)
+
+				}
+				assert.Contains(t, seedReconfiguration.Proxy.NoProxy, seedReconfiguration.MachineNetwork)
+				assert.Contains(t, seedReconfiguration.Proxy.NoProxy, tc.proxy.NoProxy)
+
+				assert.Equal(t, seedReconfiguration.Proxy, seedReconfiguration.StatusProxy)
+			}
+
 		})
 	}
 }

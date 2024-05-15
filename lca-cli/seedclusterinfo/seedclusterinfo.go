@@ -68,6 +68,12 @@ type SeedClusterInfo struct {
 	// with a proxy from seeds that don't have one. Similarly, installing a
 	// cluster without a proxy from a seed with a proxy is also not supported.
 	HasProxy bool `json:"has_proxy"`
+
+	// The cluster network CIDR of the seed cluster that was used to create this seed
+	ClusterNetworks []string `json:"cluster_network_cidr,omitempty"`
+
+	// The service network CIDR of the seed cluster that was used to create this seed
+	ServiceNetworks []string `json:"service_network_cidr,omitempty"`
 }
 
 func NewFromClusterInfo(clusterInfo *utils.ClusterInfo, seedImagePullSpec string, hasProxy bool) *SeedClusterInfo {

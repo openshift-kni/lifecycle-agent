@@ -99,7 +99,7 @@ const (
 	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
 
 	// Bump this every time the seed format changes in a backwards incompatible way
-	SeedFormatVersion  = 3
+	SeedFormatVersion  = 4
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 
 	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
@@ -110,8 +110,15 @@ const (
 
 	NMConnectionFolder = "/etc/NetworkManager/system-connections"
 	NetworkDir         = "network-configuration"
-	ApplyWaveAnn       = "lca.openshift.io/apply-wave"
-	defaultApplyWave   = math.MaxInt32 // 2147483647, an enough large number
+)
+
+// Annotation names and values related to extra manifest
+const (
+	ApplyWaveAnn        = "lca.openshift.io/apply-wave"
+	defaultApplyWave    = math.MaxInt32 // 2147483647, an enough large number
+	ApplyTypeAnnotation = "lca.openshift.io/apply-type"
+	ApplyTypeReplace    = "replace" // default if annotation doesn't exist
+	ApplyTypeMerge      = "merge"
 )
 
 var (

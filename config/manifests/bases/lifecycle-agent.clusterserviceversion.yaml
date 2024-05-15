@@ -11,13 +11,13 @@ metadata:
     features.operators.openshift.io/cni: "false"
     features.operators.openshift.io/csi: "false"
     features.operators.openshift.io/disconnected: "true"
-    features.operators.openshift.io/fips-compliant: "false"
-    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/fips-compliant: "true"
+    features.operators.openshift.io/proxy-aware: "true"
     features.operators.openshift.io/tls-profiles: "false"
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.16.0'
+    olm.skipRange: '>=4.14.0 <4.17.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
     operatorframework.io/suggested-namespace-template: |-
       {
@@ -36,7 +36,7 @@ metadata:
     support: Red Hat
   labels:
     operatorframework.io/arch.amd64: supported
-  name: lifecycle-agent.v4.16.0
+  name: lifecycle-agent.v4.17.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
@@ -120,7 +120,7 @@ spec:
         - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Valid Next Stage
         path: validNextStages
-      version: v1alpha1
+      version: v1
     - description: SeedGenerator is the Schema for the seedgenerators API
       displayName: Seed Generator
       kind: SeedGenerator
@@ -149,7 +149,7 @@ spec:
         - urn:alm:descriptor:io.kubernetes.conditions
       - displayName: Status
         path: observedGeneration
-      version: v1alpha1
+      version: v1
   description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
     provides local lifecycle management services \nfor Single Node Openshift (SNO)
     clusters.\n\n## Where to find more information\nYou can find additional guidance

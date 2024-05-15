@@ -74,6 +74,8 @@ type ClusterInfo struct {
 	ReleaseRegistry          string
 	Hostname                 string
 	MirrorRegistryConfigured bool
+	ClusterNetworks          []string
+	ServiceNetworks          []string
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
@@ -115,6 +117,10 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		return nil, err
 	}
 
+	clusterNetworks, serviceNetworks, err := getClusterNetworks(ctx, client)
+	if err != nil {
+		return nil, err
+	}
 	return &ClusterInfo{
 		ClusterName:              clusterName,
 		BaseDomain:               clusterBaseDomain,
@@ -124,6 +130,8 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		ReleaseRegistry:          releaseRegistry,
 		Hostname:                 hostname,
 		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
+		ClusterNetworks:          clusterNetworks,
+		ServiceNetworks:          serviceNetworks,
 	}, nil
 }
 
@@ -269,4 +277,22 @@ func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client
 	}
 
 	return !lo.Contains(mirroredRegistries, releaseRegistry), nil
+}
+
+func getClusterNetworks(ctx context.Context, client runtimeclient.Client) ([]string, []string, error) {
+	// oc get network cluster -o yaml
+	network := &ocp_config_v1.Network{}
+	if err := client.Get(ctx,
+		types.NamespacedName{
+			Name: common.OpenshiftInfraCRName},
+		network); err != nil {
+		return nil, nil, fmt.Errorf("failed to get network CR: %w", err)
+	}
+
+	var clusterNetworks []string
+	for _, cNet := range network.Status.ClusterNetwork {
+		clusterNetworks = append(clusterNetworks, cNet.CIDR)
+	}
+
+	return clusterNetworks, network.Status.ServiceNetwork, nil
 }

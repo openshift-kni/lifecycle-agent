@@ -30,7 +30,7 @@ import (
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -94,7 +94,7 @@ func (r *ImageBasedUpgradeReconciler) getRollbackAvailabilityExpiration() (time.
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	utils.SetRollbackStatusInProgress(ibu, "Initiating rollback")
 
 	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
@@ -167,14 +167,14 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *lc
 	return doNotRequeue(), nil
 }
 
-func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	utils.SetRollbackStatusCompleted(ibu)
 
 	return doNotRequeue(), nil
 }
 
 //nolint:unparam
-func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *lcav1alpha1.ImageBasedUpgrade) (ctrl.Result, error) {
+func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 	if err != nil {
 		//todo: abort handler? e.g delete desired stateroot

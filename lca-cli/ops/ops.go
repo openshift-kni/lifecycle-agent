@@ -50,7 +50,7 @@ type Ops interface {
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
 	Chroot(chrootPath string) (func() error, error)
-	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error
+	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
 }
 
@@ -469,7 +469,7 @@ func (o *ops) RunListOfCommands(cmds []*CMD) error {
 	return nil
 }
 
-func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber int) error {
+func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	o.log.Info("Creating extra partition")
 	if _, err := o.RunBashInHostNamespace(
 		"echo", "write", "|", "sfdisk", installationDisk); err != nil {

@@ -29,7 +29,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 
-	lcav1alpha1 "github.com/openshift-kni/lifecycle-agent/api/v1alpha1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -91,12 +91,12 @@ type BackuperRestorer interface {
 	RestorePVsReclaimPolicy(ctx context.Context) error
 	EnsureOadpConfiguration(ctx context.Context) error
 	ExportOadpConfigurationToDir(ctx context.Context, toDir, oadpNamespace string) error
-	ExportRestoresToDir(ctx context.Context, configMaps []lcav1alpha1.ConfigMapRef, toDir string) error
-	GetSortedBackupsFromConfigmap(ctx context.Context, content []lcav1alpha1.ConfigMapRef) ([][]*velerov1.Backup, error)
+	ExportRestoresToDir(ctx context.Context, configMaps []ibuv1.ConfigMapRef, toDir string) error
+	GetSortedBackupsFromConfigmap(ctx context.Context, content []ibuv1.ConfigMapRef) ([][]*velerov1.Backup, error)
 	LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, error)
 	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
-	ValidateOadpConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error
+	ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
 }
 
 // BRHandler handles the backup and restore
@@ -388,7 +388,7 @@ func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, i
 	return nil
 }
 
-func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []lcav1alpha1.ConfigMapRef) error {
+func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
