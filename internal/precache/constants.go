@@ -24,8 +24,7 @@ import (
 // LCA Resources
 const (
 	LcaPrecacheServiceAccount string = "lifecycle-agent-controller-manager"
-	LcaPrecacheJobName        string = "lca-precache-job"
-	LcaPrecacheConfigMapName  string = "lca-precache-cm"
+	LcaPrecacheResourceName   string = "lca-prep-precache"
 	LcaPrecacheFinalizer             = "lca.openshift.io/precache-finalizer"
 )
 
