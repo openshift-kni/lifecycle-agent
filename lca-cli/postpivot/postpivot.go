@@ -62,7 +62,6 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authF
 
 var (
 	dnsmasqOverrides   = "/etc/default/sno_dnsmasq_configuration_overrides"
-	hostnameFile       = "/etc/hostname"
 	nmConnectionFolder = common.NMConnectionFolder
 	nodeIpFile         = "/run/nodeip-configuration/primary-ip"
 	nodeIPHintFile     = "/etc/default/nodeip-configuration"
@@ -79,6 +78,8 @@ const (
 
 	nmService      = "NetworkManager.service"
 	dnsmasqService = "dnsmasq.service"
+
+	localhost = "localhost"
 )
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
@@ -790,13 +791,29 @@ func (p *PostPivot) setupConfigurationFolder(deviceName, mountFolder, configFold
 	return nil
 }
 
-// setHostname writes provided hostname to hostnameFile
-func (p *PostPivot) setHostname(hostname, hostnameFile string) error {
-	p.log.Infof("Writing new hostname %s into %s", hostname, hostnameFile)
-	if err := os.WriteFile(hostnameFile, []byte(hostname), 0o600); err != nil {
-		return fmt.Errorf("failed to configure hostname, err %w", err)
+// setHostname set provided hostname in case it was provided, in case it was not provided we will get hostname from kernel
+// retuning error in case hostname is localhost
+func (p *PostPivot) setHostname(hostname string) (string, error) {
+	if hostname != "" && hostname != localhost {
+		p.log.Infof("Setting new hostname %s", hostname)
+		if _, err := p.ops.RunInHostNamespace("hostnamectl", "set-hostname", hostname); err != nil {
+			return "", fmt.Errorf("failed to set hostname %s, err %w", hostname, err)
+		}
+		return hostname, nil
 	}
-	return nil
+	if hostname == localhost {
+		return "", fmt.Errorf("provided hostname is %s and it is invalid, please provide a valid hostname", localhost)
+	}
+
+	osHostname, err := p.ops.GetHostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname from os, err %w", err)
+	}
+	if osHostname == localhost {
+		return "", fmt.Errorf("os hostname is %s and it is invalid, please provide a valid hostname", localhost)
+	}
+	p.log.Infof("No hostname was provided, taking %s as hostname from os", osHostname)
+	return osHostname, nil
 }
 
 // copyNMConnectionFiles as part of the process nmconnection files can be provided and we should copy them into etc folder
@@ -837,6 +854,7 @@ func (p *PostPivot) setNodeIpHint(machineNetwork string) error {
 // 4. Override seed dnsmasq params
 // 5. Restart NM and dnsmasq in order to apply provided configurations
 func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	var err error
 	if err := p.copyNMConnectionFiles(
 		path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder); err != nil {
 		return err
@@ -858,7 +876,8 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := p.setHostname(seedReconfiguration.Hostname, hostnameFile); err != nil {
+	seedReconfiguration.Hostname, err = p.setHostname(seedReconfiguration.Hostname)
+	if err != nil {
 		return err
 	}
 

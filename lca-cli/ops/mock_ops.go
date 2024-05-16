@@ -94,6 +94,21 @@ func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authF
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
 }
 
+// GetHostname mocks base method.
+func (m *MockOps) GetHostname() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetHostname")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetHostname indicates an expected call of GetHostname.
+func (mr *MockOpsMockRecorder) GetHostname() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHostname", reflect.TypeOf((*MockOps)(nil).GetHostname))
+}
+
 // ImageExists mocks base method.
 func (m *MockOps) ImageExists(img string) (bool, error) {
 	m.ctrl.T.Helper()

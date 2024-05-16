@@ -52,6 +52,7 @@ type Ops interface {
 	Chroot(chrootPath string) (func() error, error)
 	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
+	GetHostname() (string, error)
 }
 
 type CMD struct {
@@ -523,4 +524,12 @@ func (o *ops) growRootPartitionCommands(installationDisk string) []*CMD {
 		NewCMD("xfs_growfs", "/dev/disk/by-partlabel/root"))
 
 	return cmds
+}
+
+func (o *ops) GetHostname() (string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname: %w", err)
+	}
+	return hostname, nil
 }
