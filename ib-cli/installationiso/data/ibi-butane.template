@@ -43,6 +43,7 @@ systemd:
         Environment=IBI_CONFIGURATION_FILE={{.IBIConfigurationPath}}
         Type=oneshot
         RemainAfterExit=yes
+        ExecStartPre=/usr/bin/chcon -t install_exec_t /usr/local/bin/install-rhcos-and-restore-seed.sh
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh
         [Install]
         WantedBy=multi-user.target
