@@ -2,6 +2,7 @@
 
 - [Image Based Upgrade](#image-based-upgrade)
   - [Overview](#overview)
+  - [System Health Checks](#system-health-checks)
   - [Handling Site Specific Artifacts](#handling-site-specific-artifacts)
     - [Backup and Restore](#backup-and-restore)
     - [Extra Manifests](#extra-manifests)
@@ -57,6 +58,28 @@ target OCP version.
   - This is an optional stage. It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress. The LCA performs the rollback by setting the original state root as default and rebooting the node.
 
 TODO Insert the state transition diagram
+
+## System Health Checks
+
+The LCA runs a set of system health checks at various stages of the IBU to ensure the cluster is healthy and stable before proceeding. Examples of the health checks run include:
+
+- Cluster operators are running and are not in a degraded state
+- The Node CR is ready and has the expected roles for an SNO
+- There are no Pending CSRs
+- All subscriptions are healthy, with no conditions reported (ie. Healthy catalogs, no pending installplans)
+
+The Subscription health check requires that any pending updates have been approved and installed, meaning such operators are running the latest available version (depending on the subscription configuration) before starting an IBU.
+However, should you wish to proceed without completing such updates, assuming they are not critical to the upgrade, you can disable the Subscription health check by annotating the IBU CR with `healthchecks.lca.openshift.io/subscriptions: Disabled`, which can be done with a patch command such as:
+
+```console
+oc -n openshift-lifecycle-agent annotate ibu upgrade healthchecks.lca.openshift.io/subscriptions='Disabled'
+```
+
+Similarly, the annotation can be removed to re-enable the Subscription health check:
+
+```console
+oc -n openshift-lifecycle-agent annotate ibu upgrade healthchecks.lca.openshift.io/subscriptions-
+```
 
 ## Handling Site Specific Artifacts
 

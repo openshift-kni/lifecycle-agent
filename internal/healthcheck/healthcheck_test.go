@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	k8sv1 "k8s.io/api/certificates/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,8 @@ func init() {
 	s.AddKnownTypes(mcv1.GroupVersion, &mcv1.MachineConfigPool{})
 	s.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterOperatorList{})
 	s.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterOperator{})
+	s.AddKnownTypes(operatorsv1alpha1.SchemeGroupVersion, &operatorsv1alpha1.SubscriptionList{})
+	s.AddKnownTypes(operatorsv1alpha1.SchemeGroupVersion, &operatorsv1alpha1.Subscription{})
 	s.AddKnownTypes(operatorsv1alpha1.SchemeGroupVersion, &operatorsv1alpha1.ClusterServiceVersionList{})
 	s.AddKnownTypes(operatorsv1alpha1.SchemeGroupVersion, &operatorsv1alpha1.ClusterServiceVersion{})
 	s.AddKnownTypes(configv1.GroupVersion, &configv1.Infrastructure{})
@@ -242,6 +245,91 @@ func Test_nodesReady(t *testing.T) {
 	}
 }
 
+func Test_subscriptionReady(t *testing.T) {
+	type args struct {
+		c client.Reader
+		l logr.Logger
+	}
+	tests := []struct {
+		name    string
+		args    args
+		objects []runtime.Object
+		wantErr bool
+	}{
+		{
+			name: "happy path",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						Conditions: []operatorsv1alpha1.SubscriptionCondition{
+							{
+								Status: corev1.ConditionFalse,
+								Type:   operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy,
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "fail with catalogsources unhealthy",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						Conditions: []operatorsv1alpha1.SubscriptionCondition{
+							{
+								Status: corev1.ConditionTrue,
+								Type:   operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy,
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "fail with resolution failed",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						Conditions: []operatorsv1alpha1.SubscriptionCondition{
+							{
+								Status: corev1.ConditionFalse,
+								Type:   operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy,
+							},
+							{
+								Status: corev1.ConditionTrue,
+								Type:   operatorsv1alpha1.SubscriptionResolutionFailed,
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "fail with no conditions set",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						Conditions: []operatorsv1alpha1.SubscriptionCondition{},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			if err := AreSubscriptionsReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
+				t.Errorf("AreSubscriptionReady() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func Test_clusterServiceVersionReady(t *testing.T) {
 	type args struct {
 		c client.Reader
@@ -304,7 +392,7 @@ func Test_clusterServiceVersionReady(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
 			if err := AreClusterServiceVersionsReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("IsClusterServiceVersionReady() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("AreClusterServiceVersionReady() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -956,7 +1044,7 @@ func TestHealthChecks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l)
+			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l, HealthCheckOptions{})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HealthChecks() error = %v, wantErr %v", err, tt.wantErr)
 			}

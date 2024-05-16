@@ -41,6 +41,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	corev1 "k8s.io/api/core/v1"
@@ -365,7 +366,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			}
 
 			r.Log.Info("Running health check for Prep")
-			if err := CheckHealth(ctx, r.NoncachedClient, r.Log); err != nil {
+			if err := CheckHealth(ctx, r.NoncachedClient, r.Log, healthcheck.HealthCheckOptionsFromAnnotations(ibu.GetAnnotations())); err != nil {
 				msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
 				r.Log.Info(msg)
 				utils.SetPrepStatusInProgress(ibu, msg)

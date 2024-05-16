@@ -17,6 +17,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	mock_extramanifest "github.com/openshift-kni/lifecycle-agent/internal/extramanifest/mocks"
+	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -783,7 +784,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			defer func() {
 				CheckHealth = oldHC
 			}()
-			CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return tt.healthCheckError
 			}
 
@@ -908,7 +909,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		args                              args
 		want                              controllerruntime.Result
 		wantErr                           assert.ErrorAssertionFunc
-		checkHealthReturn                 func(ctx context.Context, c client.Reader, l logr.Logger) error
+		checkHealthReturn                 func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error
 		applyExtraManifestsReturn         func() error
 		applyPolicyManifestsReturn        func() error
 		ensureOadpConfigurationReturn     func() error
@@ -922,7 +923,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "healthchecks return error",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return fmt.Errorf("any error from hc")
 			},
 			wantConditions: []metav1.Condition{
@@ -939,7 +940,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "extraManifests return error",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return nil
 			},
 			ensureOadpConfigurationReturn: func() error {
@@ -973,7 +974,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "RestoreOadpConfigurations return error",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return nil
 			},
 			ensureOadpConfigurationReturn: func() error {
@@ -1001,7 +1002,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "handleRestore with restore error",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
@@ -1041,7 +1042,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		{
 			name: "upgrade completed",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
-			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger, opts healthcheck.HealthCheckOptions) error {
 				return nil
 			},
 			applyPolicyManifestsReturn: func() error {
