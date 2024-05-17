@@ -658,7 +658,7 @@ func (r *SeedGeneratorReconciler) setupWorkspace() error {
 func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen *seedgenv1.SeedGenerator) (nextReconcile ctrl.Result, rc error) {
 	// Wait for system stability before starting seed generation
 	r.Log.Info("Checking system health")
-	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log, healthcheck.HealthCheckOptionsFromAnnotations(seedgen.GetAnnotations())); err != nil {
+	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log, nil); err != nil {
 		r.Log.Info(fmt.Sprintf("health check failed: %s", err.Error()))
 		setSeedGenStatusInProgress(seedgen, fmt.Sprintf("%s: %s", msgWaitingForStable, err.Error()))
 		nextReconcile = requeueWithHealthCheckInterval()

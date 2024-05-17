@@ -124,7 +124,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	}
 
 	u.Log.Info("Running health check for Upgrade (pre-pivot)")
-	if err := CheckHealth(ctx, u.NoncachedClient, u.Log, healthcheck.HealthCheckOptionsFromAnnotations(ibu.GetAnnotations())); err != nil {
+	if err := CheckHealth(ctx, u.NoncachedClient, u.Log, nil); err != nil {
 		msg := fmt.Sprintf("Waiting for system to stabilize before Upgrade (pre-pivot) stage can continue: %s", err.Error())
 		u.Log.Info(msg)
 		utils.SetUpgradeStatusInProgress(ibu, msg)
@@ -355,9 +355,7 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg str
 func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Starting health check for different components")
 	// Skip the subscription health check in PostPivot stage, as the catalogs will not yet be ready
-	healthcheckOpts := healthcheck.HealthCheckOptionsFromAnnotations(ibu.GetAnnotations())
-	healthcheckOpts.SkipSubscriptionCheck = true
-	if err := CheckHealth(ctx, u.NoncachedClient, u.Log, healthcheckOpts); err != nil {
+	if err := CheckHealth(ctx, u.NoncachedClient, u.Log, &healthcheck.HealthCheckOptions{SkipSubscriptionCheck: true}); err != nil {
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
 		return requeueWithHealthCheckInterval(), nil
 	}

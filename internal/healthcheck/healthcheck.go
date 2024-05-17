@@ -42,27 +42,13 @@ const (
 	NodeRoleWorker       = "node-role.kubernetes.io/worker"
 
 	SriovNetworkNodeStateNotPresentMsg = "no SriovNetworkNodeStates present"
-
-	// HealthCheckAnnotationX annotations allow the user to skip certain health checks by marking them as Disabled. Currently only available for the subscription check.
-	// HealthCheckAnnotationSubscriptions allows the user to skip the subscription check, for example if they explicitly want to ignore an available update.
-	// Only acceptable value is HealthCheckDisableValue. Any other value is treated as "Enabled".
-	HealthCheckAnnotationSubscriptions = "healthchecks.lca.openshift.io/subscriptions"
-	// HealthCheckDisableValue value that decides if a give healthcheck is disabled
-	HealthCheckDisableValue = "Disabled"
 )
 
 type HealthCheckOptions struct {
 	SkipSubscriptionCheck bool
 }
 
-func HealthCheckOptionsFromAnnotations(annotations map[string]string) (opts HealthCheckOptions) {
-	if val, exists := annotations[HealthCheckAnnotationSubscriptions]; exists {
-		opts.SkipSubscriptionCheck = (val == HealthCheckDisableValue)
-	}
-
-	return
-}
-func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger, opts HealthCheckOptions) error {
+func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger, opts *HealthCheckOptions) error {
 	var failures []string
 
 	clusterOperatorsReady := false
@@ -85,7 +71,7 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger, opts Heal
 		failures = append(failures, err.Error())
 	}
 
-	if !opts.SkipSubscriptionCheck {
+	if opts == nil || !opts.SkipSubscriptionCheck {
 		if err := AreSubscriptionsReady(ctx, c, l); err != nil {
 			l.Info("subscription health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
@@ -202,6 +188,13 @@ func AreSubscriptionsReady(ctx context.Context, c client.Reader, l logr.Logger) 
 		return fmt.Errorf("failed to get subscription list: %w", err)
 	}
 
+	checkConditions := []operatorsv1alpha1.SubscriptionConditionType{
+		operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy,
+		operatorsv1alpha1.SubscriptionBundleUnpackFailed,
+		operatorsv1alpha1.SubscriptionInstallPlanFailed,
+		operatorsv1alpha1.SubscriptionResolutionFailed,
+	}
+
 	var notready []string
 	for _, subscription := range subscriptionList.Items {
 		if len(subscription.Status.Conditions) == 0 {
@@ -209,7 +202,7 @@ func AreSubscriptionsReady(ctx context.Context, c client.Reader, l logr.Logger) 
 			l.Info(fmt.Sprintf("subscription not ready: %s", subscription.Name))
 		} else {
 			for _, condition := range subscription.Status.Conditions {
-				if condition.Status != corev1.ConditionFalse {
+				if lo.Contains(checkConditions, condition.Type) && condition.Status != corev1.ConditionFalse {
 					l.Info(fmt.Sprintf("subscription not ready: %s, condition %s has reason %s", subscription.Name, condition.Type, condition.Reason))
 					if !lo.Contains(notready, subscription.Name) {
 						notready = append(notready, subscription.Name)

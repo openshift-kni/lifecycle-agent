@@ -309,6 +309,30 @@ func Test_subscriptionReady(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "pass with update available",
+			objects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						Conditions: []operatorsv1alpha1.SubscriptionCondition{
+							{
+								Status: corev1.ConditionFalse,
+								Type:   operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy,
+							},
+							{
+								Status: corev1.ConditionTrue,
+								Type:   operatorsv1alpha1.SubscriptionInstallPlanPending,
+							},
+							{
+								Status: corev1.ConditionTrue,
+								Type:   operatorsv1alpha1.SubscriptionBundleUnpacking,
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "fail with no conditions set",
 			objects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
@@ -1044,7 +1068,7 @@ func TestHealthChecks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l, HealthCheckOptions{})
+			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HealthChecks() error = %v, wantErr %v", err, tt.wantErr)
 			}

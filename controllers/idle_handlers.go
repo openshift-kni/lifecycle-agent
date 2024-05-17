@@ -108,7 +108,7 @@ func (r *ImageBasedUpgradeReconciler) handleFinalize(ctx context.Context, ibu *i
 	r.Log.Info("Starting handleFinalize")
 
 	r.Log.Info("Running health check for finalize (Idle) stage")
-	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log, healthcheck.HealthCheckOptionsFromAnnotations(ibu.GetAnnotations())); err != nil {
+	if err := healthcheck.HealthChecks(ctx, r.NoncachedClient, r.Log, nil); err != nil {
 		msg := fmt.Sprintf("Waiting for system to stabilize before finalize (idle) stage can continue: %s", err.Error())
 		r.Log.Info(msg)
 		utils.SetStatusCondition(&ibu.Status.Conditions,

@@ -3,7 +3,6 @@
 - [IBU Seed Image Generation](#ibu-seed-image-generation)
   - [Overview](#overview)
   - [Seed SNO Pre-Requisites](#seed-sno-pre-requisites)
-  - [System Health Checks](#system-health-checks)
     - [Shared Container Storage](#shared-container-storage)
     - [Required dnsmasq Configuration](#required-dnsmasq-configuration)
   - [SeedGenerator CR](#seedgenerator-cr)
@@ -37,28 +36,6 @@ The seed SNO configuration has some pre-requisites:
 - Container storage must be setup as shared between stateroots, such as with a separate partition.
 - Required dnsmasq configuration to support updating cluster name, domain, and IP from the seed image as part of IBU.
 - If seed SNO was deployed via ACM, the cluster must be detached prior to generating the seed image. If deployed with ZTP Gitops, it is highly recommended to drop the site-config and prune via argocd.
-
-## System Health Checks
-
-The LCA runs a set of system health checks prior to starting seed image generation, to ensure the cluster is healthy and stable before proceeding. Examples of the health checks run include:
-
-- Cluster operators are running and are not in a degraded state
-- The Node CR is ready and has the expected roles for an SNO
-- There are no Pending CSRs
-- All subscriptions are healthy, with no conditions reported (ie. Healthy catalogs, no pending installplans)
-
-The Subscription health check requires that any pending updates have been approved and installed, meaning such operators are running the latest available version (depending on the subscription configuration) before generating a seed image.
-However, should you wish to proceed without completing such updates, assuming they are not critical to the seed image, you can disable the Subscription health check by annotating the SeedGen CR with `healthchecks.lca.openshift.io/subscriptions: Disabled`, which can be done with a patch command such as:
-
-```console
-oc -n openshift-lifecycle-agent annotate seedgenerator seedimage healthchecks.lca.openshift.io/subscriptions='Disabled'
-```
-
-Similarly, the annotation can be removed to re-enable the Subscription health check:
-
-```console
-oc -n openshift-lifecycle-agent annotate seedgenerator seedimage healthchecks.lca.openshift.io/subscriptions-
-```
 
 ### Shared Container Storage
 
