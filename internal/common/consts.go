@@ -46,7 +46,8 @@ const (
 	OvnIcEtcFolder = "/var/lib/ovn-ic/etc"
 	OvnNodeCerts   = OvnIcEtcFolder + "/ovnkube-node-certs"
 
-	MultusCerts = "/etc/cni/multus/certs"
+	MultusCerts  = "/etc/cni/multus/certs"
+	ChronyConfig = "/etc/chrony.conf"
 
 	MCDCurrentConfig = "/etc/machine-config-daemon/currentconfig"
 
