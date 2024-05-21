@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"strings"
+
+	"github.com/samber/lo"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	ocp_config_v1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	"github.com/samber/lo"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -77,6 +81,7 @@ type ClusterInfo struct {
 	MirrorRegistryConfigured bool
 	ClusterNetworks          []string
 	ServiceNetworks          []string
+	MachineNetwork           string
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
@@ -103,6 +108,11 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 	if err != nil {
 		return nil, err
 	}
+	machineNetwork, err := getMachineNetwork(ctx, client, ip)
+	if err != nil {
+		return nil, err
+	}
+
 	hostname, err := getNodeHostname(*node)
 	if err != nil {
 		return nil, err
@@ -133,6 +143,7 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
 		ClusterNetworks:          clusterNetworks,
 		ServiceNetworks:          serviceNetworks,
+		MachineNetwork:           machineNetwork,
 	}, nil
 }
 
@@ -144,6 +155,31 @@ func getNodeInternalIP(node corev1.Node) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("failed to find node internal ip address")
+}
+
+func getMachineNetwork(ctx context.Context, client runtimeclient.Client, nodeIp string) (string, error) {
+	installConfig, err := getInstallConfig(ctx, client)
+	if err != nil {
+		return "", fmt.Errorf("failed to get install config: %w", err)
+	}
+
+	for _, mn := range installConfig.Networking.MachineNetwork {
+		if _, _, err := net.ParseCIDR(mn.CIDR); err != nil {
+			return "", fmt.Errorf("machineNetwork has an invalid CIDR: %s", mn.CIDR)
+		}
+		if _, ipnet, err := net.ParseCIDR(mn.CIDR); err == nil && ipnet.Contains(net.ParseIP(nodeIp)) {
+			return mn.CIDR, nil
+		}
+	}
+
+	log.Warnf("failed to find machine network in <%s> for node ip: %s. Returning empty string",
+		installConfig.Networking.MachineNetwork, nodeIp)
+
+	// retuning empty string if no match found in order to be backward compatible as there is a possibility that
+	// that we upgrade cluster that was previously upgraded with lca-agent version that didn't set new machineNetwork
+	// in install config (or full install config)
+	// in all other cases we should find the match
+	return "", nil
 }
 
 func getNodeHostname(node corev1.Node) (string, error) {
@@ -159,9 +195,18 @@ type installConfigMetadata struct {
 	Name string `json:"name"`
 }
 
+type machineNetworkEntry struct {
+	// CIDR is the IP block address pool for machines within the cluster.
+	CIDR string `json:"cidr"`
+}
+
 type basicInstallConfig struct {
 	BaseDomain string                `json:"baseDomain"`
 	Metadata   installConfigMetadata `json:"metadata"`
+	Networking struct {
+		MachineCIDR    string                `json:"machineCIDR"`
+		MachineNetwork []machineNetworkEntry `json:"machineNetwork,omitempty"`
+	} `json:"networking"`
 }
 
 func getInstallConfig(ctx context.Context, client runtimeclient.Client) (*basicInstallConfig, error) {
