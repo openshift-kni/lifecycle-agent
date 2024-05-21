@@ -96,6 +96,14 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		seedHasProxy = seedInfo.HasProxy
 	}
 
+	seedHasFIPS := false
+	if seedInfo != nil {
+		// Older images may not have the seed cluster info label, in which case
+		// we assume no FIPS so that if the current cluster has FIPS, it will
+		// fail the compatibility check.
+		seedHasFIPS = seedInfo.HasFIPS
+	}
+
 	clusterHasProxy, err := lcautils.HasProxy(ctx, c)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has proxy: %w", err)
@@ -103,6 +111,16 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 
 	log.Info("Checking seed image proxy compatibility")
 	if err := checkSeedImageProxyCompatibility(seedHasProxy, clusterHasProxy); err != nil {
+		return fmt.Errorf("checking seed image compatibility: %w", err)
+	}
+
+	clusterHasFIPS, err := lcautils.HasFIPS(ctx, c)
+	if err != nil {
+		return fmt.Errorf("failed to check if cluster has fips: %w", err)
+	}
+
+	log.Info("Checking seed image FIPS compatibility")
+	if err := checkSeedImageFIPSCompatibility(seedHasFIPS, clusterHasFIPS); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
@@ -191,6 +209,23 @@ func checkSeedImageProxyCompatibility(seedHasProxy, hasProxy bool) error {
 
 	if !seedHasProxy && hasProxy {
 		return fmt.Errorf("seed image does not have a proxy but the cluster being upgraded does, this combination is not supported")
+	}
+
+	return nil
+}
+
+// checkSeedImageFIPSCompatibility checks for FIPS configuration compatibility
+// of the seed image vs the current cluster. If the seed image has FIPS enabled
+// and the cluster being upgraded doesn't, we cannot proceed as recert does not
+// support FIPS rename under those conditions. Similarly, we cannot proceed if
+// the cluster being upgraded has FIPS but the seed image doesn't.
+func checkSeedImageFIPSCompatibility(seedHasFIPS, hasFIPS bool) error {
+	if seedHasFIPS && !hasFIPS {
+		return fmt.Errorf("seed image has FIPS enabled but the cluster being upgraded does not, this combination is not supported")
+	}
+
+	if !seedHasFIPS && hasFIPS {
+		return fmt.Errorf("seed image does not have FIPS enabled but the cluster being upgraded does, this combination is not supported")
 	}
 
 	return nil
