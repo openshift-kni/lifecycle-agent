@@ -321,6 +321,13 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	return nil
 }
 
+func getSeedManifestPath(osname string) string {
+	return filepath.Join(
+		common.GetStaterootPath(osname),
+		filepath.Join(common.SeedDataDir, common.SeedClusterInfoFileName),
+	)
+}
+
 // validateIBUSpec validates the fields in the IBU spec
 func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
 	// Check spec against this cluster's version and possibly exit early
@@ -411,16 +418,16 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed launch stateroot job: %s", err.Error()), ibu)
 			}
-			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job `%s` in namespace `%s`", prep.StaterootSetupJobName, common.LcaNamespace), ibu)
+			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job for stateroot setup. %s", getJobMetadataString(staterootSetupJob)), ibu)
 		}
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get stateroot setup job: %s", err.Error()), ibu)
 	}
 
 	r.Log.Info("Verifying stateroot setup job status")
 
-	// job deletion not allowed
+	// job deletion is not allowed
 	if staterootSetupJob.GetDeletionTimestamp() != nil {
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot job is marked to be deleted, this is not allowed. job: %s, ns: %s", staterootSetupJob.GetName(), staterootSetupJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot job is marked to be deleted, this is not allowed. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	}
 
 	// check .status
@@ -428,9 +435,9 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	switch staterootSetupFinishedType {
 	case "":
 		common.LogPodLogs(staterootSetupJob, r.Log, r.Clientset)
-		return prepInProgressRequeue(r.Log, "Stateroot setup in progress", ibu)
+		return prepInProgressRequeue(r.Log, fmt.Sprintf("Stateroot setup job in progress. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	case kbatch.JobFailed:
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot setup job could not complete. please check job logs for more, job_name: %s, job_ns: %s", staterootSetupJob.GetName(), staterootSetupJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot setup job failed to complete. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	case kbatch.JobComplete:
 		r.Log.Info("Stateroot job completed successfully", "completion time", staterootSetupJob.Status.CompletionTime, "total time", staterootSetupJob.Status.CompletionTime.Sub(staterootSetupJob.Status.StartTime.Time))
 	}
@@ -443,16 +450,16 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to launch precaching job: %s", err.Error()), ibu)
 			}
-			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job `%s` in namespace `%s`", precache.LcaPrecacheJobName, common.LcaNamespace), ibu)
+			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job precache. %s", getJobMetadataString(precacheJob)), ibu)
 		}
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get precache job: %s", err.Error()), ibu)
 	}
 
 	r.Log.Info("Verifying precache job status")
 
-	// job deletion not allowed
+	// job deletion is not allowed
 	if precacheJob.GetDeletionTimestamp() != nil {
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job is marked to be deleted, this not allowed. job: %s, ns: %s", precacheJob.GetName(), precacheJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job is marked to be deleted, this not allowed. %s", getJobMetadataString(precacheJob)), ibu)
 	}
 
 	// check .status
@@ -460,9 +467,9 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	switch precacheFinishedType {
 	case "":
 		common.LogPodLogs(precacheJob, r.Log, r.Clientset) // pod logs
-		return prepInProgressRequeue(r.Log, fmt.Sprintf("Precache job in progress: %s", precache.GetPrecacheStatusFileContent()), ibu)
+		return prepInProgressRequeue(r.Log, fmt.Sprintf("Precache job in progress. %s. %s", getJobMetadataString(precacheJob), precache.GetPrecacheStatusFileContent()), ibu)
 	case kbatch.JobFailed:
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job could not complete. please check job logs for more, job_name: %s, job_ns: %s", precacheJob.GetName(), precacheJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job failed to complete. %s", getJobMetadataString(precacheJob)), ibu)
 	case kbatch.JobComplete:
 		r.Log.Info("Precache job completed successfully", "completion time", precacheJob.Status.CompletionTime, "total time", precacheJob.Status.CompletionTime.Sub(precacheJob.Status.StartTime.Time))
 	}
@@ -494,9 +501,10 @@ func prepInProgressRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpg
 	return requeueWithShortInterval(), nil
 }
 
-func getSeedManifestPath(osname string) string {
-	return filepath.Join(
-		common.GetStaterootPath(osname),
-		filepath.Join(common.SeedDataDir, common.SeedClusterInfoFileName),
-	)
+// getJobMetadataString a helper to append job metadata for helpful logs
+func getJobMetadataString(job *kbatch.Job) string {
+	if job == nil {
+		return "job is nil"
+	}
+	return fmt.Sprintf("job-name: %s, job-namespace: %s", job.GetName(), job.GetNamespace())
 }

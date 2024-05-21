@@ -39,9 +39,9 @@ The Lifecycle Agent provides orchestration of an IBU on the target SNO via the `
 
 - Prep
   - This stage can only be set when the IBU is idle.
-  - During this stage, LCA does as much preparation as possible for the upgrade without impacting the current running version. This includes downloading the seed image, unpacking it as a new ostree stateroot and pulling all images specified by the image list built into the seed image,
-  refer to [precache-plugin](precache-plugin.md). If for whatever reason prep stage is interrupted (e.g pod restarts or system reboot), the stage will marked as fail and only to way to recover is to move back Idle stage (see above). But before moving to Idle,
-  please consider using [must-gather](must-gather.md) to allow for easier debugging later.
+  - During this stage,
+    LCA does as much preparation as possible for the upgrade without impacting the current running version. This includes downloading the seed image, unpacking it as a new ostree stateroot and pulling all images specified by the image list built into the seed image. If for whatever reason prep stage
+     is interrupted (e.g pod restarts or system reboot), the stage will be marked as fail, and the only way to recover is to move back `Idle` stage (see above). But before moving to Idle, please consider using [must-gather](must-gather.md) to allow for easier debugging later.
 
 - Upgrade
   - This stage can only be set if the prep stage completed successfully.
@@ -260,7 +260,7 @@ The success path upgrade will progress through the following stages:
 
 Idle -> Prep -> Upgrade -> Idle
 
-#### Starting the Prep stage
+### Starting the Prep stage
 
 The administrator patches the imagebasedupgrade CR:
 
@@ -290,23 +290,44 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
 
 The "Prep" stage will:
 
-- Perform the following validations:
-  - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
-  - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
-    - If a required CRD is missing from the current stateroot, a warning message will be included in the IBU CRs with annotation `lca.openshift.io/warn-extramanifest-cm-unknown-crd`.
-  - Validate that the desired upgrade version matches the version of the seed image
-  - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
-- Pull the seed image
-- Unpack the seed image and create a new ostree stateroot
+1. Perform various validation steps on IBU CR. This includes (but not limited to) the following:
+   - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
+   - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
+     - If a required CRD is missing from the current cluster, a warning message will be included in the IBU CR with annotation along with useful info as value.
 
-> [!CAUTION]
-> At this point of `Prep` stage, it is VERY important to let it run to completion.
-> To help avoid unintended consequences of accidental deletion (e.g moving to `Idle` stage while `Prep` in progress), there are blocks in place to allow it to run its normal course before continuing with the deletion request.
-> During this wait (could be up to several minutes), please refer to the pod logs for more information.
+       ```yaml
+       metadata:
+        annotations:
+          lca.openshift.io/warn-extramanifest-cm-unknown-crd: '...'
+       ```
 
-- Pull all images specified by the image list built into the seed image. Refer to [precache-plugin](precache-plugin.md)
+       > 📝 Warnings are not enforced, and it is up to the user to decide if it's safe to proceed with  `Upgrade` stage.
+   - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
+2. Setup new stateroot
+   - Pull the seed image
+   - Unpack the seed image and perform various validations such as assert that the desired upgrade version matches the version of the seed image
+   - Create a new ostree stateroot
+    > ⚠️ Caution
+    >
+    > At this point of `Prep` stage (Step 2), it is VERY important to let it run to completion. To help avoid unintended consequences of accidental deletion (e.g moving to `Idle` stage while `Prep` in progress), there are blocks in place to allow it to run its normal course before continuing with
+     the deletion request. During this wait (could be up to several minutes), please refer to the pod logs for more information.
+3. Pull all images specified by the image list built into the seed image to streamline the
+  upgrade process. This step is also referred to as `Precache`.
 
 Upon completion, the condition will be updated to "Prep Completed"
+
+> [!TIP]
+> Stateroot setup (Step 2) is done using a kubernetes job called `lca-prep-stateroot-setup`.
+>
+> ```shell
+> oc -n openshift-lifecycle-agent logs -f job/lca-prep-stateroot-setup
+> ```
+>
+> Precache (Step 3) is done using a kubernetes job called `lca-prep-precache`.
+>
+> ```shell
+> oc -n openshift-lifecycle-agent logs -f job/lca-prep-precache
+> ```
 
 Condition samples:
 
@@ -314,36 +335,38 @@ Prep in progress:
 
 ```console
   conditions:
-  - lastTransitionTime: "2024-04-19T19:25:29Z"
+  - lastTransitionTime: "2024-05-15T17:12:29Z"
     message: In progress
-    observedGeneration: 5
+    observedGeneration: 21
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-04-19T19:25:29Z"
-    message: Setting up stateroot
-    observedGeneration: 5
+  - lastTransitionTime: "2024-05-15T17:12:29Z"
+    message: 'Stateroot setup job in progress. job-name: lca-prep-stateroot-setup,
+      job-namespace: openshift-lifecycle-agent'
+    observedGeneration: 21
     reason: InProgress
     status: "True"
     type: PrepInProgress
-  observedGeneration: 5
+  observedGeneration: 21
   validNextStages:
   - Idle
 
   conditions:
-  - lastTransitionTime: "2024-04-19T19:25:29Z"
+  - lastTransitionTime: "2024-05-15T18:14:40Z"
     message: In progress
-    observedGeneration: 5
+    observedGeneration: 29
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-04-19T19:25:29Z"
-    message: 'Precaching progress: total: 115 (pulled: 10, failed: 0)'
-    observedGeneration: 5
+  - lastTransitionTime: "2024-05-15T18:14:40Z"
+    message: 'Precache job in progress. job-name: lca-prep-precache, job-namespace:
+      openshift-lifecycle-agent. total: 136 (pulled: 2, failed: 0)'
+    observedGeneration: 29
     reason: InProgress
     status: "True"
     type: PrepInProgress
-  observedGeneration: 5
+  observedGeneration: 29
   validNextStages:
   - Idle
 ```
@@ -352,31 +375,31 @@ Prep completed:
 
 ```console
   conditions:
-  - lastTransitionTime: "2024-04-19T19:25:29Z"
+  - lastTransitionTime: "2024-05-15T14:40:31Z"
     message: In progress
-    observedGeneration: 5
+    observedGeneration: 13
     reason: InProgress
     status: "False"
     type: Idle
-  - lastTransitionTime: "2024-04-19T19:26:52Z"
+  - lastTransitionTime: "2024-05-15T14:45:11Z"
     message: Prep completed
-    observedGeneration: 5
+    observedGeneration: 13
     reason: Completed
     status: "False"
     type: PrepInProgress
-  - lastTransitionTime: "2024-04-19T19:26:52Z"
-    message: Prep completed successfully
-    observedGeneration: 5
+  - lastTransitionTime: "2024-05-15T14:45:11Z"
+    message: Prep stage completed successfully
+    observedGeneration: 13
     reason: Completed
     status: "True"
     type: PrepCompleted
-  observedGeneration: 5
+  observedGeneration: 13
   validNextStages:
   - Idle
   - Upgrade
 ```
 
-#### Starting the Upgrade stage
+### Starting the Upgrade stage
 
 This is where the actual upgrade happens. It consists of three main steps: pre-pivot, pivot and post-pivot.
 This stage can only be applied if the prep stage completed successfully.
@@ -534,7 +557,7 @@ troubleshooting.
 
 See [Automatic Rollback Examples](examples.md#automatic-rollback-examples) for examples of IBU CR after an automatic rollback.
 
-#### Configuring Automatic Rollback
+### Configuring Automatic Rollback
 
 There is an `lca-init-monitor.service` that runs post-reboot with a configurable timeout. When LCA marks
 the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the

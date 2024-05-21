@@ -64,11 +64,11 @@ func TestRenderConfigMap(t *testing.T) {
 	}{
 		{
 			name:               "Empty data list",
-			inputConfigMapName: LcaPrecacheConfigMapName,
+			inputConfigMapName: LcaPrecacheResourceName,
 			inputImageList:     []string{},
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      LcaPrecacheConfigMapName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
@@ -78,11 +78,11 @@ func TestRenderConfigMap(t *testing.T) {
 		},
 		{
 			name:               "Image data list",
-			inputConfigMapName: LcaPrecacheConfigMapName,
+			inputConfigMapName: LcaPrecacheResourceName,
 			inputImageList:     imageList,
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      LcaPrecacheConfigMapName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
@@ -123,7 +123,7 @@ func getExpectedBaseJob() *batchv1.Job {
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      LcaPrecacheJobName,
+			Name:      LcaPrecacheResourceName,
 			Namespace: common.LcaNamespace,
 		},
 		Spec: batchv1.JobSpec{
@@ -186,7 +186,7 @@ func getExpectedBaseJob() *batchv1.Job {
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: LcaPrecacheConfigMapName,
+										Name: LcaPrecacheResourceName,
 									},
 									DefaultMode: &defaultMode,
 								},
