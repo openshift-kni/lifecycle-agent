@@ -163,7 +163,7 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	}
 
 	r.Log.Info("Removing annotation with warning")
-	if err := extramanifest.RemoveAnnotationWarnUnknownCRD(r.Client, ibu, r.Log); err != nil {
+	if err := extramanifest.RemoveAnnotationEMWarningValidation(r.Client, r.Log, ibu); err != nil {
 		handleError(err, "failed to remove extra manifest warning annotation from IBU")
 	}
 

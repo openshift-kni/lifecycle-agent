@@ -293,15 +293,17 @@ The "Prep" stage will:
 1. Perform various validation steps on IBU CR. This includes (but not limited to) the following:
    - If the oadpContent is populated, validate that the specified configmap has been applied and is valid
    - If the extraManifests is populated, validate that the specified configmap has been applied and is valid
-     - If a required CRD is missing from the current cluster, a warning message will be included in the IBU CR with annotation along with useful info as value.
+     - Validation errors from Dry-run such as Invalid and webhook BadRequest types are treated as warnings. This also includes cases where CRDs are missing from the current stateroot and dependent namespace does not exist on the current stateroot but is also not found in the configmaps.
+    LCA doesn't block the upgrade due to validation warnings. Instead, it updates the Prep status condition with a warning message and annotates IBU with the annotation `extra-manifest.lca.openshift.io/validation-warning`, providing detailed information about the failures
 
        ```yaml
        metadata:
         annotations:
-          lca.openshift.io/warn-extramanifest-cm-unknown-crd: '...'
+          extra-manifest.lca.openshift.io/validation-warning: '...'
        ```
 
        > 📝 Warnings are not enforced, and it is up to the user to decide if it's safe to proceed with  `Upgrade` stage.
+     - Other validation errors, such as random chars, missing resource Kind, resource ApiVersion, resource name or the presence of disallowed resource types (such as MachineConfig and operator manifests), will cause the Prep stage to fail and block the upgrade
    - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
 2. Setup new stateroot
    - Pull the seed image

@@ -351,8 +351,15 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 
 	// Validate the extraManifests configmap if it's provided
 	if len(ibu.Spec.ExtraManifests) != 0 {
-		if err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests, ibu); err != nil {
+		warn, err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests)
+		if err != nil {
 			return fmt.Errorf("failed to validate extramanifest cms: %w", err)
+		}
+		if warn != "" {
+			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the extramanifest validation warning", extramanifest.ValidationWarningAnnotation))
+			if err := extramanifest.AddAnnotationEMWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
+				return fmt.Errorf("failed to add extramanifest warning validation annotation: %w", err)
+			}
 		}
 	}
 
@@ -488,6 +495,10 @@ func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpgr
 // prepInProgressRequeue helper function when everything is a success at the end
 func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	msg := "Prep stage completed successfully"
+	if _, exists := ibu.GetAnnotations()[extramanifest.ValidationWarningAnnotation]; exists {
+		msg = fmt.Sprintf("Prep stage completed with extramanifests validation warning. Please check the annotation '%s' for details.", extramanifest.ValidationWarningAnnotation)
+	}
+
 	log.Info(msg)
 	utils.SetPrepStatusCompleted(ibu, msg)
 	return doNotRequeue(), nil

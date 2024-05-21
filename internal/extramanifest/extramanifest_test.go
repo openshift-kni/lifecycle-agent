@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -30,13 +31,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -48,6 +53,7 @@ func init() {
 	testscheme.AddKnownTypes(policiesv1.GroupVersion, &policiesv1.Policy{})
 	testscheme.AddKnownTypes(policiesv1.GroupVersion, &policiesv1.PolicyList{})
 	testscheme.AddKnownTypes(apiextensionsv1.SchemeGroupVersion, &apiextensionsv1.CustomResourceDefinition{})
+	testscheme.AddKnownTypes(ibuv1.SchemeGroupVersion, &ibuv1.ImageBasedUpgrade{})
 }
 
 const sriovnodepolicies = `
@@ -82,8 +88,8 @@ metadata:
   namespace: openshift-sriov-network-operator
   annotations:
     lca.openshift.io/apply-wave: "1"
-  spec:
-    resourceName: mh
+spec:
+  resourceName: mh
 `
 
 const sriovnetwork2 = `
@@ -91,29 +97,44 @@ apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata:
   name: sriov-nw-fh
-  namespace: openshift-sriov-network-operator
-  spec:
-    resourceName: fh
+  namespace: openshift-sriov-network-operator-test
+  annotations:
+    lca.openshift.io/apply-wave: "10"
+spec:
+  resourceName: fh
 `
 
-const sriovnetwork1_invalid = `
+const srvn_random_chars = `
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
 metadata: adsafsd
   name: sriov-nw-mh
   namespace: openshift-sriov-network-operator
-  spec:
-    resourceName: mh
+spec:
+  resourceName: mh
 `
 
-const sriovnetwork2_invalid = `
+const srvn_missing_name = `
 apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetwork
+spec:
+  resourceName: fh
+`
+
+const srvn_missing_kind_apiversion = `
+apiVersion: sriovnetwork.openshift.io/v1
 metadata:
-  name: sriov-nw-fh
+  name: sriov-nw-mh
   namespace: openshift-sriov-network-operator
-  spec: sdfasdfa
-    resourceName: mh
+spec:
+  resourceName: fh
+---
+kind: SriovNetwork
+metadata: adsafsd
+  name: sriov-nw-mh
+  namespace: openshift-sriov-network-operator
+spec:
+  resourceName: fh
 `
 
 const machineConfig = `
@@ -127,6 +148,25 @@ spec:
   config:
     ignition:
       version: 3.2.0
+`
+
+const subscription = `
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: local-storage-operator
+  namespace: openshift-local-storage
+spec:
+  channel: "stable"
+`
+
+const test_ns = `
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-sriov-network-operator-test
+  annotations:
+    lca.openshift.io/apply-wave: "1"
 `
 
 func TestExportExtraManifests(t *testing.T) {
@@ -196,10 +236,10 @@ func TestExportExtraManifests(t *testing.T) {
 
 	// Check that the manifests were exported to the correct files
 	expectedFilePaths := []string{
-		filepath.Join(toDir, ExtraManifestPath, "group2", "1_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "group1", "1_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "group3", "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator.yaml"),
-		filepath.Join(toDir, ExtraManifestPath, "group1", "2_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, CmManifestPath, "group2", "1_SriovNetworkNodePolicy_sriov-nnp-fh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, CmManifestPath, "group1", "1_SriovNetworkNodePolicy_sriov-nnp-mh_openshift-sriov-network-operator.yaml"),
+		filepath.Join(toDir, CmManifestPath, "group3", "1_SriovNetwork_sriov-nw-fh_openshift-sriov-network-operator-test.yaml"),
+		filepath.Join(toDir, CmManifestPath, "group1", "2_SriovNetwork_sriov-nw-mh_openshift-sriov-network-operator.yaml"),
 	}
 
 	for _, expectedFile := range expectedFilePaths {
@@ -210,10 +250,63 @@ func TestExportExtraManifests(t *testing.T) {
 }
 
 func TestValidateExtraManifestConfigmaps(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "openshift-sriov-network-operator",
+		},
+	}
+
+	cms := []client.Object{
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extra-manifest-cm1-err",
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"sriovnetwork1.yaml":     sriovnetwork1,
+				"srvn_random_chars.yaml": srvn_random_chars,
+				"srvn_missing_name.yaml": srvn_missing_name,
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extra-manifest-cm2-err",
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"srvn_missing_kind_apiversion.yaml": srvn_missing_kind_apiversion,
+				"generic_mc.yaml":                   machineConfig,
+				"subscription.yaml":                 subscription,
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extra-manifest-cm-warning",
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"sriovnetwork1.yaml":     sriovnetwork1,
+				"sriovnetwork2.yaml":     sriovnetwork2,
+				"sriovnodepolicies.yaml": sriovnodepolicies,
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extra-manifest-cm-happy",
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"ns.yaml":            test_ns,
+				"sriovnetwork1.yaml": sriovnetwork1,
+				"sriovnetwork2.yaml": sriovnetwork2,
+			},
+		}}
+
 	testcases := []struct {
-		name        string
-		configmaps  []ibuv1.ConfigMapRef
-		expectedErr error
+		name         string
+		configmaps   []ibuv1.ConfigMapRef
+		expectedErr  error
+		expectedWarn string
 	}{
 		{
 			name: "configmap is not found",
@@ -223,77 +316,72 @@ func TestValidateExtraManifestConfigmaps(t *testing.T) {
 			expectedErr: fmt.Errorf("the extraManifests configMap is not found"),
 		},
 		{
-			name: "extra manifest contains invalid format in metadata",
+			name: "validation error with random chars/missing name",
 			configmaps: []ibuv1.ConfigMapRef{
-				{Name: "extra-manifest-cm1", Namespace: "default"},
+				{Name: "extra-manifest-cm1-err", Namespace: "default"},
 			},
-			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
+			expectedErr: fmt.Errorf("failed to decode srvn_random_chars.yaml in the configMap extra-manifest-cm1-err: error converting YAML to JSON: yaml: line 5: mapping values are not allowed in this context; " +
+				"SriovNetwork resource name is empty",
+			),
+			expectedWarn: "",
 		},
 		{
-			name: "extra manifest contains invalid format in spec",
+			name: "validation error with missing Kind/ApiVersion and unsupported resource type",
 			configmaps: []ibuv1.ConfigMapRef{
-				{Name: "extra-manifest-cm2", Namespace: "default"},
+				{Name: "extra-manifest-cm2-err", Namespace: "default"},
 			},
-			expectedErr: fmt.Errorf("failed to decode yaml in the configMap"),
+			expectedErr: fmt.Errorf("failed to decode srvn_missing_kind_apiversion.yaml in the configMap extra-manifest-cm2-err: error unmarshaling JSON: while decoding JSON: Object 'Kind' is missing in '{\"apiVersion\":\"sriovnetwork.openshift.io/v1\",\"metadata\":{\"name\":\"sriov-nw-mh\",\"namespace\":\"openshift-sriov-network-operator\"},\"spec\":{\"resourceName\":\"fh\"}}'; " +
+				"failed to decode srvn_missing_kind_apiversion.yaml in the configMap extra-manifest-cm2-err: error converting YAML to JSON: yaml: line 3: mapping values are not allowed in this context; " +
+				"MachineConfig[generic] in extramanifests is not allowed; " +
+				"Subscription[local-storage-operator] in extramanifests is not allowed"),
+			expectedWarn: "",
 		},
 		{
-			name: "extra manifest contains MachineConfig",
+			name: "validation warning with unknown namespace and CRD",
 			configmaps: []ibuv1.ConfigMapRef{
-				{Name: "extra-manifest-cm-mc", Namespace: "default"},
+				{Name: "extra-manifest-cm-warning", Namespace: "default"},
 			},
-			expectedErr: fmt.Errorf("Using MachingConfigs in extramanifests is not allowed"),
+			expectedErr: nil,
+			expectedWarn: "SriovNetworkNodePolicy[sriov-nnp-mh] - CRD not deployed on cluster; " +
+				"SriovNetworkNodePolicy[sriov-nnp-fh] - CRD not deployed on cluster; " +
+				"SriovNetwork[sriov-nw-fh] - namespace openshift-sriov-network-operator-test not found on cluster or not added in configmap in right order",
+		},
+		{
+			name: "validation pass with ns added in configmap",
+			configmaps: []ibuv1.ConfigMapRef{
+				{Name: "extra-manifest-cm-happy", Namespace: "default"},
+			},
+			expectedErr:  nil,
+			expectedWarn: "",
 		},
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeClient := fake.NewClientBuilder().Build()
+			objs := []client.Object{ns}
+			objs = append(objs, cms...)
+
+			mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{sriovv1.GroupVersion})
+			mapper.Add(schema.GroupVersionKind{Group: "sriovnetwork.openshift.io", Version: "v1", Kind: "SriovNetwork"}, meta.RESTScopeNamespace)
+			fakeClient := fake.NewClientBuilder().WithScheme(testscheme).WithRESTMapper(mapper).WithObjects(objs...).Build()
+
+			dynamicFakeClient := dynamicfake.NewSimpleDynamicClient(scheme.Scheme)
 
 			handler := &EMHandler{
 				Client:        fakeClient,
-				DynamicClient: nil,
+				DynamicClient: dynamicFakeClient,
 				Log:           ctrl.Log.WithName("ExtraManifest"),
 			}
 
-			cms := []*corev1.ConfigMap{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "extra-manifest-cm1",
-						Namespace: "default",
-					},
-					Data: map[string]string{
-						"sriovnetwork1_invalid.yaml": sriovnetwork1_invalid,
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "extra-manifest-cm2",
-						Namespace: "default",
-					},
-					Data: map[string]string{
-						"sriovnetwork2_invalid.yaml": sriovnetwork2_invalid,
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "extra-manifest-cm-mc",
-						Namespace: "default",
-					},
-					Data: map[string]string{
-						"sriovnetwork2_invalid.yaml": machineConfig,
-					},
-				},
+			warn, err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps)
+			if err != nil && tc.expectedErr == nil {
+				t.Errorf("Unexpected error: %v", err)
+			} else if err == nil && tc.expectedErr != nil {
+				t.Errorf("Expected error not found: %s", tc.expectedErr)
+			} else if err != nil && tc.expectedErr != nil {
+				assert.ErrorContains(t, err, tc.expectedErr.Error())
 			}
-
-			for _, cm := range cms {
-				err := fakeClient.Create(context.Background(), cm)
-				if err != nil {
-					t.Errorf("Unexpected error: %v", err)
-				}
-			}
-
-			err := handler.ValidateExtraManifestConfigmaps(context.Background(), tc.configmaps, &ibuv1.ImageBasedUpgrade{})
-			assert.ErrorContains(t, err, tc.expectedErr.Error())
+			assert.Equal(t, tc.expectedWarn, warn)
 		})
 	}
 }
