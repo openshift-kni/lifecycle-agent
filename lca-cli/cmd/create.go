@@ -21,6 +21,7 @@ import (
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	v1 "github.com/openshift/api/config/v1"
+	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/spf13/cobra"
@@ -56,6 +57,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
+	utilruntime.Must(mcv1.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(ibuv1.AddToScheme(scheme))

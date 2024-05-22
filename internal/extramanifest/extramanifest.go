@@ -19,13 +19,13 @@ package extramanifest
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-logr/logr"
@@ -47,18 +47,26 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;watch;create;
+
 const (
-	ExtraManifestPath           = "/opt/extra-manifests"
-	PolicyManifestPath          = "/opt/policy-manifests"
-	WarnAnnotationUnknownCRDKey = "lca.openshift.io/warn-extramanifest-cm-unknown-crd"
+	CmManifestPath              = "/opt/extra-manifests"  // manifests extracted from configmaps
+	PolicyManifestPath          = "/opt/policy-manifests" // manifests extracted from policies
+	ValidationWarningAnnotation = "extra-manifest.lca.openshift.io/validation-warning"
 )
+
+// unSupported resource type in extramanifests configmaps
+var unSupportedResources = map[string][]string{
+	"machineconfiguration.openshift.io/v1": {"MachineConfig"},
+	"operators.coreos.com/v1alpha1":        {"ClusterServiceVersion", "InstallPlan", "Subscription"},
+}
 
 type EManifestHandler interface {
 	ApplyExtraManifests(ctx context.Context, fromDir string) error
 	ExportExtraManifestToDir(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef, toDir string) error
 	ExtractAndExportManifestFromPoliciesToDir(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string, toDir string) error
 	ValidateAndExtractManifestFromPolicies(ctx context.Context, policyLabels, objectLabels, validationAnns map[string]string) ([][]*unstructured.Unstructured, error)
-	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef, ibu *ibuv1.ImageBasedUpgrade) error
+	ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []ibuv1.ConfigMapRef) (string, error)
 }
 
 // EMHandler handles the extra manifests
@@ -92,13 +100,6 @@ func NewEMFailedValidationError(msg string) *EMStatusError {
 	}
 }
 
-func NewEMUnknownCRDError(msg string) *EMStatusError {
-	return &EMStatusError{
-		Reason:     "UnknownCRD",
-		ErrMessage: msg,
-	}
-}
-
 func IsEMFailedError(err error) bool {
 	var emErr *EMStatusError
 	if errors.As(err, &emErr) {
@@ -114,10 +115,22 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 		return fmt.Errorf("failed to get RESTMapping: %w", err)
 	}
 
+	var resource dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameRoot {
+		// cluster-scoped resource
+		resource = dc.Resource(mapping.Resource)
+	} else {
+		// namespaced-scoped resource
+		manifestNs := manifest.GetNamespace()
+		if manifestNs == "" {
+			manifestNs = "default"
+		}
+		resource = dc.Resource(mapping.Resource).Namespace(manifestNs)
+	}
+
 	// Check if the resource exists
 	existingManifest := &unstructured.Unstructured{}
 	existingManifest.SetGroupVersionKind(manifest.GroupVersionKind())
-	resource := dc.Resource(mapping.Resource).Namespace(manifest.GetNamespace())
 	existingManifest, err = resource.Get(ctx, manifest.GetName(), metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
@@ -179,79 +192,163 @@ func ApplyExtraManifest(ctx context.Context, dc dynamic.Interface, restMapper me
 	return nil
 }
 
-func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef, ibu *ibuv1.ImageBasedUpgrade) error {
+func fakeNamespaceForDryrun(ctx context.Context, c client.Client, log logr.Logger, nsName string) (bool, error) {
+	ns := &corev1.Namespace{}
+	ns.SetName(nsName)
+	if err := c.Create(ctx, ns); err != nil {
+		if !k8serrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("failed to create namespace %s: %w", ns, err)
+		}
+		// Already exists
+		return false, nil
+	} else {
+		log.Info(fmt.Sprintf("Created namespace %s for dryrun", ns.Name))
+		return true, nil
+	}
+}
+
+func deleteFakedNamespacesForDryrun(ctx context.Context, c client.Client, log logr.Logger, nsSet map[string]bool) error {
+	// Cleanup any faked namespaces at the end of validation
+	for name := range nsSet {
+		ns := &corev1.Namespace{}
+		ns.SetName(name)
+		if err := c.Delete(ctx, ns); err != nil {
+			if !k8serrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete namespace %s: %w", ns.Name, err)
+			}
+		}
+		log.Info(fmt.Sprintf("Deleted faked namespace %s for dryrun", ns.Name))
+	}
+	return nil
+}
+
+// ValidateExtraManifestConfigmaps validates IBU extramanifest configmaps and returns validation warning and error.
+// It iterates over all manifests included in the configmaps and perform Kubernetes Dry-run.
+// Errors such as Invalid or webhook BadRequest types from Dry-run apply are considered warnings. This also includes
+// cases where CRDs are missing from the current stateroot and dependent namespace does not exist on the current
+// stateroot but is also not found in the configmaps. Other validation failures are treated as errors, such as random
+// chars, missing resource Kind, resource ApiVersion, resource name or the presence of disallowed resource types
+func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) (string, error) {
+	var errs []string         // validation errors
+	var warnings []string     // validation warnings
+	var validationErr error   // returned validation err
+	var validationWarn string // returned warning string
+
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			h.Log.Error(err, "The extraManifests configMap is not found")
 			errMsg := fmt.Sprintf("the extraManifests configMap is not found, error: %v. Please create the configMap.", err)
-			return NewEMFailedValidationError(errMsg)
+			return validationWarn, NewEMFailedValidationError(errMsg)
 		}
-		return fmt.Errorf("failed to get configMaps to export extraManifest to dir: %w", err)
+		return validationWarn, fmt.Errorf("failed to get configMaps to export extraManifest to dir: %w", err)
 	}
 
-	manifests, err := h.extractManifestFromConfigmaps(configmaps)
+	manifests, extractErrs := h.extractManifestFromConfigmaps(configmaps)
+	if len(extractErrs) != 0 {
+		errs = append(errs, extractErrs...)
+	}
+
+	sortedManifests, err := common.SortAndGroupByApplyWave[*unstructured.Unstructured](manifests)
 	if err != nil {
-		return fmt.Errorf("failed to extract manifests from configMap: %w", err)
+		return validationWarn, fmt.Errorf("failed to sort and group manifests: %w", err)
 	}
 
-	// MachineConfig can trigger reboot and this will result in not meeting KPI downtime requirement
-	// so raise validation error if there is a MachineConfig in extramanifests
-	for _, manifest := range manifests {
-		if manifest.GetKind() == "MachineConfig" && manifest.GetAPIVersion() == "machineconfiguration.openshift.io/v1" {
-			return NewEMFailedValidationError("Using MachingConfigs in extramanifests is not allowed")
-		}
-	}
+	// A namespace set saves all created namespaces for dryrun
+	fakedNamespacesForDryrun := make(map[string]bool)
+	// Cleanup any faked namespaces at the end of validation
+	defer deleteFakedNamespacesForDryrun(ctx, h.Client, h.Log, fakedNamespacesForDryrun)
 
-	// a map to track all the unknown CRDs in one shot
-	unknownCRDs := make(map[string]string)
+	nsManifestsSet := make(map[string]bool) // A namespace set collects appeared namespaces in configmaps
+	for _, manifestGroup := range sortedManifests {
+		for _, manifest := range manifestGroup {
+			mKind := manifest.GetKind()
+			mApiVersion := manifest.GetAPIVersion()
+			mName := manifest.GetName()
+			mNamespace := manifest.GetNamespace()
 
-	// Apply manifest with dryRun
-	dryRun := true
+			// Verify resource
+			if mName == "" {
+				errs = append(errs, fmt.Sprintf("%s resource name is empty", mKind))
+				continue
+			}
 
-	// Collect unknownCRDs errors and continue to treat them as part of warning.
-	// Any other error should be treated as real error and return early (which should be priority over warnings)
-	for _, manifest := range manifests {
-		if err := ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, dryRun); err != nil {
-			defaultErrMsg := fmt.Sprintf("failed to apply manifest with dryrun: %v", err.Error())
-			var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-			switch {
-			case errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err): // Capture unknown CRD issue
-				key := manifest.GroupVersionKind().String()
-				if _, exists := unknownCRDs[key]; !exists {
-					unknownCRDs[key] = manifest.GetName()
-					h.Log.Info("unknown CRD", "CRD", key)
+			// Verify disallowed resource
+			if kinds, exists := unSupportedResources[mApiVersion]; exists {
+				if lo.Contains(kinds, mKind) {
+					errs = append(errs, fmt.Sprintf("%s[%s] in extramanifests is not allowed", mKind, mName))
+					continue
 				}
-			case k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err): // Capture both invalid syntax and webhook validation errors
-				return NewEMFailedValidationError(defaultErrMsg)
-			default: // Capture unknown runtime error
-				return fmt.Errorf(defaultErrMsg)
+			}
+
+			// Add to namespace set when manifest is Namespace
+			if mKind == "Namespace" {
+				nsManifestsSet[mName] = true
+				continue
+			}
+
+			// Check if manifest's namespace exists on cluster before running dryrun
+			if mNamespace != "" && mNamespace != "default" {
+				ns := &corev1.Namespace{}
+				if err := h.Client.Get(ctx, types.NamespacedName{Name: mNamespace}, ns); err != nil {
+					if !k8serrors.IsNotFound(err) {
+						return validationWarn, fmt.Errorf("failed to query namespace %s: %w", ns, err)
+					}
+
+					// Manifest's namespace not found on cluster and not in configmap
+					if _, exists := nsManifestsSet[mNamespace]; !exists {
+						warnings = append(warnings, fmt.Sprintf("%s[%s] - namespace %s not found on cluster or not added in configmap in right order", mKind, mName, mNamespace))
+						continue
+					}
+
+					// Manifest's namespace not found on cluster but in configmap, fake the namespace
+					faked, err := fakeNamespaceForDryrun(ctx, h.Client, h.Log, mNamespace)
+					if err != nil {
+						return validationWarn, fmt.Errorf("failed to create namespace %s for dryrun: %w", ns, err)
+					} else if faked {
+						fakedNamespacesForDryrun[mNamespace] = true
+					}
+				}
+			}
+
+			// Apply manifest with dryRun
+			if err := ApplyExtraManifest(ctx, h.DynamicClient, h.Client.RESTMapper(), manifest, true); err != nil {
+				var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
+				switch {
+				case errors.As(err, &groupDiscoveryErr), meta.IsNoMatchError(err): // Capture unknown CRD
+					warnings = append(warnings, fmt.Sprintf("%s[%s] - CRD not deployed on cluster", mKind, mName))
+				case k8serrors.IsInvalid(err), k8serrors.IsBadRequest(err): // Capture both invalid syntax and webhook validation errors
+					warnings = append(warnings, fmt.Sprintf("%s[%s] - dryrun failed in namespace %s: %s", mKind, mName, mNamespace, err.Error()))
+				default: // Capture unknown runtime error
+					return validationWarn, fmt.Errorf(fmt.Sprintf("failed to validate manifest with dryrun: %v", err.Error()))
+				}
 			}
 		}
 	}
 
-	// annotate with the unknown CRDs
-	if len(unknownCRDs) > 0 {
-		b, err := json.Marshal(unknownCRDs)
-		if err != nil {
-			return fmt.Errorf("failed to marshal unknownCRDs map: %w", err)
-		}
-		annotationValue := string(b)
-		h.Log.Info(fmt.Sprintf("Unknown CRDs detected, will annotate with: %s", annotationValue))
-		if err := AddAnnotationWarnUnknownCRD(h.Client, h.Log, ibu, annotationValue); err != nil {
-			return fmt.Errorf("could not add new annotations to IBU: %w", err)
-		}
+	if len(warnings) == 0 && len(errs) == 0 {
+		h.Log.Info("ExtraManifests configmaps are validated", "configmaps", content)
+		return "", nil
 	}
 
-	h.Log.Info("ExtraManifests configmaps are validated", "configmaps", content)
-	return nil
+	if len(warnings) > 0 {
+		validationWarn = strings.Join(warnings, "; ")
+		h.Log.Info(fmt.Sprintf("[WARNING] ExtraManifests configmaps validation: %s", validationWarn))
+	}
+
+	if len(errs) > 0 {
+		validationErr = NewEMFailedValidationError(strings.Join(errs, "; "))
+		h.Log.Error(validationErr, "[ERROR] ExtraManifests configmaps validation")
+	}
+
+	return validationWarn, validationErr
 }
 
-func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap) ([]*unstructured.Unstructured, error) {
+func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap) ([]*unstructured.Unstructured, []string) {
 	var manifests []*unstructured.Unstructured
+	var errs []string
 
 	for _, cm := range configmaps {
-		for _, value := range cm.Data {
+		for key, value := range cm.Data {
 			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
 			for {
 				resource := unstructured.Unstructured{}
@@ -261,9 +358,8 @@ func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap)
 						// Reach the end of the data, exit the loop
 						break
 					}
-					h.Log.Error(err, "Failed to decode yaml in the configMap", "configmap", cm.Name)
-					errMsg := fmt.Sprintf("failed to decode yaml in the configMap %s: %v", cm.Name, err.Error())
-					return nil, NewEMFailedValidationError(errMsg)
+					errs = append(errs, fmt.Sprintf("failed to decode %s in the configMap %s: %v", key, cm.Name, err.Error()))
+					continue
 				}
 				// In case it contains the UID and ResourceVersion, remove them
 				resource.SetUID("")
@@ -273,7 +369,7 @@ func (h *EMHandler) extractManifestFromConfigmaps(configmaps []corev1.ConfigMap)
 			}
 		}
 	}
-	return manifests, nil
+	return manifests, errs
 }
 
 // ExportExtraManifestToDir extracts the extra manifests from configmaps
@@ -295,8 +391,9 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 		return fmt.Errorf("failed to get configMaps to export extraManifest to dir: %w", err)
 	}
 
-	manifests, err := h.extractManifestFromConfigmaps(configmaps)
-	if err != nil {
+	manifests, errs := h.extractManifestFromConfigmaps(configmaps)
+	if errs != nil {
+		err := NewEMFailedError(strings.Join(errs, "; "))
 		return fmt.Errorf("failed to extract manifests from configMap: %w", err)
 	}
 
@@ -306,12 +403,12 @@ func (h *EMHandler) ExportExtraManifestToDir(ctx context.Context, extraManifestC
 	}
 
 	// Create the directory for the extra manifests
-	exMDirPath := filepath.Join(toDir, ExtraManifestPath)
+	exMDirPath := filepath.Join(toDir, CmManifestPath)
 	if err := os.MkdirAll(exMDirPath, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory for extra manifests in %s: %w", exMDirPath, err)
 	}
 	for i, manifestGroup := range sortedManifests {
-		group := filepath.Join(toDir, ExtraManifestPath, "group"+strconv.Itoa(i+1))
+		group := filepath.Join(toDir, CmManifestPath, "group"+strconv.Itoa(i+1))
 		if err := os.MkdirAll(group, 0o700); err != nil {
 			return fmt.Errorf("failed make dir in %s: %w", group, err)
 		}
@@ -464,38 +561,38 @@ func GetMatchingTargetOcpVersionLabelVersions(ocpVersion string) ([]string, erro
 	return validVersions, nil
 }
 
-// AddAnnotationWarnUnknownCRD add warning in annotation for when CRD is unknown
-func AddAnnotationWarnUnknownCRD(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, annotationValue string) error {
+// AddAnnotationEMWarningValidation add warning in annotation for when CRD is unknown
+func AddAnnotationEMWarningValidation(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, annotationValue string) error {
 	patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 
 	ann := ibu.GetAnnotations()
 	if ann == nil {
 		ann = make(map[string]string)
 	}
-	ann[WarnAnnotationUnknownCRDKey] = annotationValue
+	ann[ValidationWarningAnnotation] = annotationValue
 	ibu.SetAnnotations(ann)
 
 	if err := c.Patch(context.Background(), ibu, patch); err != nil {
 		return fmt.Errorf("failed to update annotations: %w", err)
 	}
 
-	log.Info("Successfully added annotation", "annotation", WarnAnnotationUnknownCRDKey)
+	log.Info("Successfully added annotation", "annotation", ValidationWarningAnnotation)
 	return nil
 }
 
-// RemoveAnnotationWarnUnknownCRD remove the warning if present
-func RemoveAnnotationWarnUnknownCRD(c client.Client, ibu *ibuv1.ImageBasedUpgrade, log logr.Logger) error {
-	if _, exists := ibu.GetAnnotations()[WarnAnnotationUnknownCRDKey]; exists {
+// RemoveAnnotationEMWarningValidation remove the warning if present
+func RemoveAnnotationEMWarningValidation(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) error {
+	if _, exists := ibu.GetAnnotations()[ValidationWarningAnnotation]; exists {
 		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
 
 		ann := ibu.GetAnnotations()
-		delete(ann, WarnAnnotationUnknownCRDKey)
+		delete(ann, ValidationWarningAnnotation)
 		ibu.SetAnnotations(ann)
 
 		if err := c.Patch(context.Background(), ibu, patch); err != nil {
 			return fmt.Errorf("failed to update annotations: %w", err)
 		}
-		log.Info("Successfully removed annotation", "annotations", WarnAnnotationUnknownCRDKey)
+		log.Info("Successfully removed annotation", "annotations", ValidationWarningAnnotation)
 	}
 
 	return nil

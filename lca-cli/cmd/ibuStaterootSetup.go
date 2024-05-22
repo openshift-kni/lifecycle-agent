@@ -4,19 +4,26 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
+
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"k8s.io/apimachinery/pkg/types"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
-	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
-	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -25,50 +32,56 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	// ibuStaterootSetupCmd represents the ibuStaterootSetup command
-	ibuStaterootSetupCmd = &cobra.Command{
-		Use:     "ibuStaterootSetup",
-		Aliases: []string{"ibu-stateroot-setup"},
-		Short:   "Setup a new stateroot during IBU",
-		Long:    `Setup stateroot during IBU. This is meant to be used as k8s job!`,
-		Run: func(cmd *cobra.Command, args []string) {
-			if err := ibuStaterootSetupRun(); err != nil {
-				log.Error(err, "something went wrong!")
-				os.Exit(1)
-			}
-		},
-	}
-)
+// ibuStaterootSetupCmd represents the ibuStaterootSetup command
+var ibuStaterootSetupCmd = &cobra.Command{
+	Use:     "ibuStaterootSetup",
+	Aliases: []string{"ibu-stateroot-setup"},
+	Short:   "Setup a new stateroot during IBU",
+	Long:    `Setup stateroot during IBU. This is meant to be used as k8s job!`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := ibuStaterootSetupRun(); err != nil {
+			log.Error(err)
+			os.Exit(1)
+		}
+	},
+}
 
 func init() {
 	rootCmd.AddCommand(ibuStaterootSetupCmd)
 }
 
-// ibuStaterootSetupRun main function for do stateroot setup
+// ibuStaterootSetupRun main function to do stateroot setup
 func ibuStaterootSetupRun() error {
-	// k8s client
-	c, err := getClient()
-	if err != nil {
-		return err
-	}
+	var (
+		hostCommandsExecutor = ops.NewChrootExecutor(log, true, common.Host)
+		opsClient            = ops.NewOps(log, hostCommandsExecutor)
+		rpmOstreeClient      = ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
+		ostreeClient         = ostreeclient.NewClient(hostCommandsExecutor, false)
+		ctx, cancelCtx       = context.WithCancel(context.Background())
+	)
 
-	// internals
-	hostCommandsExecutor := ops.NewChrootExecutor(log, true, common.Host)
-	opsClient := ops.NewOps(log, hostCommandsExecutor)
-	rpmOstreeClient := ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
-	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
-	ctx := context.Background()
+	// additional logger setup
 	loggerOpt := zap.Options{Development: true}
-	// logger init...we have two loggers
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&loggerOpt)))
 	logger := ctrl.Log.WithName("prep-stateroot-job")
 
+	// defer cleanup
+	defer cancelCtx()
+
+	logger.Info("Starting a new client")
+	c, err := getClient()
+	if err != nil {
+		return fmt.Errorf("failed to create client for stateroot setup job: %w", err)
+	}
+
 	logger.Info("Fetching the latest IBU cr")
 	ibu := &ibuv1.ImageBasedUpgrade{}
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: common.LcaNamespace, Name: utils.IBUName}, ibu); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: common.LcaNamespace, Name: utils.IBUName}, ibu); err != nil {
 		return fmt.Errorf("failed get IBU cr: %w", err)
 	}
+
+	logger.Info("Starting signal handler")
+	initStaterootSetupSigHandler(logger, opsClient, ibu.Spec.SeedImageRef.Image)
 
 	logger.Info("Pulling seed image")
 	if err := controllers.GetSeedImage(c, ctx, ibu, logger, hostCommandsExecutor); err != nil {
@@ -92,6 +105,33 @@ func ibuStaterootSetupRun() error {
 
 	logger.Info("Setup stateroot job done successfully")
 	return nil
+}
+
+// initStaterootSetupSigHandler handling signals here
+func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedImage string) {
+	signalChannel := make(chan os.Signal, 1)
+	signal.Notify(signalChannel, syscall.SIGTERM) // to handle any additional signals add a new param here and also handle it specifically in the switch below
+
+	go func() {
+		logger.Info("Listening for signal")
+		s := <-signalChannel
+		switch s {
+		case syscall.SIGTERM:
+			logger.Error(fmt.Errorf("unexpected SIGTERM received to stop stateroot setup"), "")
+
+			// we consider all the steps after image pull as critical and must be allowed to proceed until SIGKILL arrives. The time between SIGTERM and SIGKILL is controlled with StaterootSetupTerminationGracePeriodSeconds
+			if seedImageExists, _ := opsClient.ImageExists(seedImage); seedImageExists {
+				sigkillArrivesIn := time.Duration(prep.StaterootSetupTerminationGracePeriodSeconds) * time.Second
+				logger.Error(fmt.Errorf("seed image exists. prepare to shut down in at most %s", sigkillArrivesIn), "")
+				time.Sleep(sigkillArrivesIn) // likely anything beyond this point won't be executed since job should be done before this wakes up
+			}
+
+			logger.Error(fmt.Errorf("proceeding to shutdown stateroot setup job"), "")
+			os.Exit(1)
+		default:
+			logger.Error(fmt.Errorf(s.String()), "Unknown signal") // this is not expected to be hit
+		}
+	}()
 }
 
 // getClient returns a client for this job

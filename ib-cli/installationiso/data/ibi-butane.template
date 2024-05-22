@@ -35,12 +35,15 @@ systemd:
       enabled: true
       contents: |
         [Unit]
+        Wants=network-online.target
+        After=network-online.target
         Description=SNO Image Based Installation
         [Service]
         Environment=SEED_IMAGE={{.SeedImage}}
         Environment=IBI_CONFIGURATION_FILE={{.IBIConfigurationPath}}
         Type=oneshot
         RemainAfterExit=yes
+        ExecStartPre=/usr/bin/chcon -t install_exec_t /usr/local/bin/install-rhcos-and-restore-seed.sh
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh
         [Install]
         WantedBy=multi-user.target
