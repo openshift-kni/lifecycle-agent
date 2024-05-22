@@ -56,10 +56,10 @@ func TestGetParentPolicyNameAndNamespace(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(res), 2)
 
-	res, err = getParentPolicyNameAndNamespace("upgrade")
+	_, err = getParentPolicyNameAndNamespace("upgrade")
 	assert.Error(t, err)
 
-	res, err = getParentPolicyNameAndNamespace("default.upgrade.cluster")
+	res, _ = getParentPolicyNameAndNamespace("default.upgrade.cluster")
 	assert.Equal(t, res[0], "default")
 	assert.Equal(t, res[1], "upgrade.cluster")
 }

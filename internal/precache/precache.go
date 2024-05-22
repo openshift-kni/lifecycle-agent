@@ -135,12 +135,12 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 func (h *PHandler) Cleanup(ctx context.Context) error {
 	// Delete precache job
 	if err := deleteJob(ctx, h.Client); err != nil {
-		h.Log.Info("Failed to delete precaching job", "name", LcaPrecacheJobName)
+		h.Log.Info("Failed to delete precaching job", "name", LcaPrecacheResourceName)
 		return err
 	}
 	// Delete precache ConfigMap
 	if err := deleteConfigMap(ctx, h.Client); err != nil {
-		h.Log.Info("Failed to delete precaching configmap", "name", LcaPrecacheConfigMapName)
+		h.Log.Info("Failed to delete precaching configmap", "name", LcaPrecacheResourceName)
 		return err
 	}
 

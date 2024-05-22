@@ -872,7 +872,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(ibuTempDirOrig, utils.IBUFilePath)); !errors.Is(err, os.ErrNotExist) {
 					dat, _ := os.ReadFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath))
 					savedIbu := ibuv1.ImageBasedUpgrade{}
-					err = yaml.Unmarshal(dat, &savedIbu)
+					_ = yaml.Unmarshal(dat, &savedIbu)
 					assert.Equalf(t, len(savedIbu.Status.Conditions), 2, "")
 					assert.Equalf(t, savedIbu.Status.Conditions[0].Message, utils.UpgradeFailed, "")
 					assert.Equalf(t, savedIbu.Status.Conditions[1].Message, "Uncontrolled rollback", "")
@@ -1099,7 +1099,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.PolicyManifestPath)).Return(tt.applyPolicyManifestsReturn()).Times(1)
 			}
 			if tt.applyExtraManifestsReturn != nil {
-				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.ExtraManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
+				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.CmManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
 			if tt.ensureOadpConfigurationReturn != nil {
 				mockBackuprestore.EXPECT().EnsureOadpConfiguration(gomock.Any()).Return(tt.ensureOadpConfigurationReturn()).Times(1)

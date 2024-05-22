@@ -3,6 +3,9 @@ package prep
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -20,13 +23,16 @@ import (
 )
 
 const (
-	JobName      = "lca-prep-stateroot-setup"
-	jobFinalizer = "lca.openshift.io/stateroot-setup-finalizer"
+	StaterootSetupJobName      = "lca-prep-stateroot-setup"
+	staterootSetupJobFinalizer = "lca.openshift.io/stateroot-setup-finalizer"
 )
+
+// StaterootSetupTerminationGracePeriodSeconds max time wait before the stateroot job pod gets SIGKILL from k8s. Assuming the seed image is already in the system, the stateroot job should complete within this time.
+var StaterootSetupTerminationGracePeriodSeconds int64 = 1800
 
 func GetStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logger) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
-	if err := c.Get(ctx, types.NamespacedName{Name: JobName, Namespace: common.LcaNamespace}, job); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: StaterootSetupJobName, Namespace: common.LcaNamespace}, job); err != nil {
 		return job, err //nolint:wrapcheck
 	}
 
@@ -65,10 +71,10 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 	var backoffLimit int32 = 0
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      JobName,
+			Name:      StaterootSetupJobName,
 			Namespace: common.LcaNamespace,
 			Annotations: map[string]string{
-				"app.kubernetes.io/name": JobName,
+				"app.kubernetes.io/name": StaterootSetupJobName,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -82,7 +88,7 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:            JobName,
+							Name:            StaterootSetupJobName,
 							Image:           manager.Image,
 							ImagePullPolicy: manager.ImagePullPolicy,
 							Command:         []string{"lca-cli", "ibu-stateroot-setup"},
@@ -93,10 +99,11 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 							Resources:       manager.Resources,
 						},
 					},
-					HostPID:            lcaDeployment.Spec.Template.Spec.HostPID, // this is needed for rpmostree
-					ServiceAccountName: lcaDeployment.Spec.Template.Spec.ServiceAccountName,
-					RestartPolicy:      corev1.RestartPolicyNever,
-					Volumes:            lcaDeployment.Spec.Template.Spec.Volumes,
+					HostPID:                       lcaDeployment.Spec.Template.Spec.HostPID, // this is needed for rpmostree
+					ServiceAccountName:            lcaDeployment.Spec.Template.Spec.ServiceAccountName,
+					RestartPolicy:                 corev1.RestartPolicyNever,
+					Volumes:                       lcaDeployment.Spec.Template.Spec.Volumes,
+					TerminationGracePeriodSeconds: &StaterootSetupTerminationGracePeriodSeconds,
 				},
 			},
 		},
@@ -108,7 +115,7 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 	}
 
 	// set finalizer
-	controllerutil.AddFinalizer(job, jobFinalizer)
+	controllerutil.AddFinalizer(job, staterootSetupJobFinalizer)
 
 	log.Info("Done rendering a new job", "job", job.Name)
 	return job, nil
@@ -130,7 +137,7 @@ func DeleteStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logg
 	}
 	stateroot := batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      JobName,
+			Name:      StaterootSetupJobName,
 			Namespace: common.LcaNamespace,
 		},
 	}
@@ -140,7 +147,32 @@ func DeleteStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logg
 		}
 	}
 
+	log.Info(fmt.Sprintf("Waiting up to additional %s to verify that job's pod no longer exists", time.Duration(StaterootSetupTerminationGracePeriodSeconds)*time.Second), "job", stateroot.GetName())
+	// todo: in most cases we expect this to just go through very quickly...but this is blocking call and can block up to StaterootSetupTerminationGracePeriodSeconds. Should look into using reconcile instead (this may affect other funcs called from Cleanup)
+	if err := waitUntilStaterootSetupPodIsRemoved(ctx, c); err != nil {
+		return fmt.Errorf("failed to wait until stateroot setup job pod is removed: %w", err)
+	}
+
 	return nil
+}
+
+// waitUntilStaterootSetupPodIsRemoved the delete client call is async, so we need to wait until the pod is completely removed make sure stateroot is cleaned up properly
+func waitUntilStaterootSetupPodIsRemoved(ctx context.Context, c client.Client) error {
+	return wait.PollUntilContextTimeout(ctx, time.Second, time.Duration(StaterootSetupTerminationGracePeriodSeconds)*time.Second, true, func(context.Context) (bool, error) { //nolint:wrapcheck
+		opts := []client.ListOption{
+			client.InNamespace(common.LcaNamespace),
+			client.MatchingLabels{"job-name": StaterootSetupJobName},
+		}
+		podList := &corev1.PodList{}
+		if err := c.List(ctx, podList, opts...); err != nil {
+			return false, fmt.Errorf("failed to list pods: %w", err)
+		}
+
+		if len(podList.Items) == 0 {
+			return true, nil
+		}
+		return false, nil
+	})
 }
 
 // removePrecacheFinalizer remove the finalizer if present
@@ -153,8 +185,8 @@ func removeStaterootSetupJobFinalizer(ctx context.Context, c client.Client, log 
 		return fmt.Errorf("failed get precache job to remove finalizer: %w", err)
 	}
 
-	if controllerutil.ContainsFinalizer(staterootjob, jobFinalizer) {
-		finalizerRemoved := controllerutil.RemoveFinalizer(staterootjob, jobFinalizer)
+	if controllerutil.ContainsFinalizer(staterootjob, staterootSetupJobFinalizer) {
+		finalizerRemoved := controllerutil.RemoveFinalizer(staterootjob, staterootSetupJobFinalizer)
 		if finalizerRemoved {
 			if err := c.Update(ctx, staterootjob); err != nil {
 				return fmt.Errorf("failed to remove finalizer during update: %w", err)
@@ -162,6 +194,6 @@ func removeStaterootSetupJobFinalizer(ctx context.Context, c client.Client, log 
 		}
 	}
 
-	log.Info("Removed stateroot setup finalizer", "finalizer", jobFinalizer)
+	log.Info("Removed stateroot setup finalizer", "finalizer", staterootSetupJobFinalizer)
 	return nil
 }

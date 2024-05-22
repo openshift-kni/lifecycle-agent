@@ -100,15 +100,16 @@ func (mr *MockEManifestHandlerMockRecorder) ValidateAndExtractManifestFromPolici
 }
 
 // ValidateExtraManifestConfigmaps mocks base method.
-func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1.ConfigMapRef, ibu *v1.ImageBasedUpgrade) error {
+func (m *MockEManifestHandler) ValidateExtraManifestConfigmaps(ctx context.Context, extraManifestCMs []v1.ConfigMapRef) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ValidateExtraManifestConfigmaps", ctx, extraManifestCMs, ibu)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "ValidateExtraManifestConfigmaps", ctx, extraManifestCMs)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // ValidateExtraManifestConfigmaps indicates an expected call of ValidateExtraManifestConfigmaps.
-func (mr *MockEManifestHandlerMockRecorder) ValidateExtraManifestConfigmaps(ctx, extraManifestCMs, ibu any) *gomock.Call {
+func (mr *MockEManifestHandlerMockRecorder) ValidateExtraManifestConfigmaps(ctx, extraManifestCMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateExtraManifestConfigmaps", reflect.TypeOf((*MockEManifestHandler)(nil).ValidateExtraManifestConfigmaps), ctx, extraManifestCMs, ibu)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateExtraManifestConfigmaps", reflect.TypeOf((*MockEManifestHandler)(nil).ValidateExtraManifestConfigmaps), ctx, extraManifestCMs)
 }
