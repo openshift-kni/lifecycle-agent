@@ -26,10 +26,10 @@ require (
 	k8s.io/apimachinery v0.29.4
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/code-generator v0.29.4
-	open-cluster-management.io/api v0.12.0
+	open-cluster-management.io/api v0.13.0
 	open-cluster-management.io/config-policy-controller v0.12.0
 	open-cluster-management.io/governance-policy-propagator v0.12.0
-	sigs.k8s.io/controller-runtime v0.16.1
+	sigs.k8s.io/controller-runtime v0.16.2
 	sigs.k8s.io/yaml v1.4.0
 )
 
