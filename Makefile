@@ -3,10 +3,13 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 4.15.0
+VERSION ?= 4.17.0
 
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
+
+# Path to go binary in local
+GOBIN ?= $$(go env GOPATH)/bin
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -124,6 +127,15 @@ else
 	@echo "Running scorecard"
 	$(OPERATOR_SDK) scorecard bundle
 endif
+
+.PHONY: install-go-test-coverage
+install-go-test-coverage:
+	go install github.com/vladopajic/go-test-coverage/v2@latest
+
+.PHONY: check-coverage
+check-coverage: install-go-test-coverage
+	go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 .PHONY: ci-job
 ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check

@@ -1,6 +1,6 @@
 #####################################################################################################
 # Build the binaries
-FROM registry.access.redhat.com/ubi9/go-toolset:1.20 as builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.21 as builder
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
@@ -25,7 +25,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 
 #####################################################################################################
 # Build the operator image
-FROM quay.io/openshift/origin-cli-artifacts:4.15 AS origincli
+# note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.17`
+FROM quay.io/openshift/origin-cli-artifacts:latest AS origincli
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 RUN if [[ ! -f /bin/nsenter ]]; then \

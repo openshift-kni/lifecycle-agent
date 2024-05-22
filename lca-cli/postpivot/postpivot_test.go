@@ -302,35 +302,61 @@ func TestCreatePullSecretFile(t *testing.T) {
 func TestSetHostname(t *testing.T) {
 	var (
 		mockController = gomock.NewController(t)
-		mockOps        = ops.NewMockOps(mockController)
 	)
 	defer func() {
 		mockController.Finish()
 	}()
 
 	testcases := []struct {
-		name     string
-		hostname string
+		name          string
+		hostname      string
+		osHostname    string
+		expectedError bool
 	}{
 		{
-			name:     "Happy flow",
-			hostname: "test",
+			name:          "Happy flow - hostname set",
+			hostname:      "test",
+			expectedError: false,
+			osHostname:    "",
+		},
+		{
+			name:          "Happy flow - hostname empty but GetHostname returns a valid hostname",
+			hostname:      "",
+			expectedError: false,
+			osHostname:    "goodOne",
+		},
+		{
+			name:          "Hostname is localhost, should fail",
+			hostname:      "localhost",
+			expectedError: true,
+			osHostname:    "",
+		},
+		{
+			name:          "Hostname is empty, os hostname is localhost should fail",
+			hostname:      "localhost",
+			expectedError: true,
+			osHostname:    "",
 		},
 	}
 	for _, tc := range testcases {
-		tmpDir := t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
+			mockOps := ops.NewMockOps(mockController)
 			pp := NewPostPivot(nil, log, mockOps, "", "", "")
-			err := pp.setHostname(tc.hostname, path.Join(tmpDir+"hostname"))
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+			if tc.hostname != "" && tc.hostname != localhost {
+				mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(1)
+			} else if tc.hostname == "" {
+				mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(0)
+				mockOps.EXPECT().GetHostname().Return(tc.osHostname, nil).Times(1)
 			}
-			data, err := os.ReadFile(path.Join(tmpDir + "hostname"))
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+
+			hostname, err := pp.setHostname(tc.hostname)
+			assert.Equal(t, tc.expectedError, err != nil, err)
+			if tc.hostname == "" {
+				assert.Equal(t, tc.osHostname, hostname)
+			} else if !tc.expectedError {
+				assert.Equal(t, tc.hostname, hostname)
 			}
-			assert.Equal(t, "test", string(data))
 		})
 	}
 }
@@ -409,6 +435,7 @@ func TestNetworkConfiguration(t *testing.T) {
 		BaseDomain:  "new.com",
 		ClusterName: "new_name",
 		NodeIP:      "192.167.127.10",
+		Hostname:    "test",
 	}
 
 	testcases := []struct {
@@ -444,8 +471,8 @@ func TestNetworkConfiguration(t *testing.T) {
 			log := &logrus.Logger{}
 			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
 			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
-			hostnameFile = path.Join(tmpDir, "hostname")
 			dnsmasqOverrides = path.Join(tmpDir, "dnsmasqoverrides")
+			mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
 
 			if tc.restartNMSuccess {
 				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(1)
