@@ -205,6 +205,7 @@ func SeedReconfigurationFromClusterInfo(
 		Proxy:                     proxy,
 		StatusProxy:               statusProxy,
 		InstallConfig:             installConfig,
+		MachineNetwork:            clusterInfo.MachineNetwork,
 	}
 }
 

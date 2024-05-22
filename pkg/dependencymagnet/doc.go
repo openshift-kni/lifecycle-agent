@@ -7,5 +7,5 @@
 package dependencymagnet
 
 import (
-	_ "k8s.io/code-generator"                       // used for generating clientset code
+	_ "k8s.io/code-generator" // used for generating clientset code
 )

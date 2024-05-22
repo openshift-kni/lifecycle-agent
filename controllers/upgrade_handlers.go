@@ -73,7 +73,6 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ib
 	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 
 	if err != nil {
-		//todo: abort handler? e.g delete desired stateroot
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
@@ -142,6 +141,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		if backuprestore.IsBRFailedValidationError(err) ||
 			backuprestore.IsBRFailedError(err) {
 
+			u.Log.Error(err, "Failed to handle backups")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
@@ -169,6 +169,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 
 	if err := u.exportOadpConfigurationAndRestore(ctx, ibu, staterootVarPath); err != nil {
 		if backuprestore.IsBRFailedError(err) || backuprestore.IsBRFailedValidationError(err) {
+			u.Log.Error(err, "Failed to export OADP configuration and restores")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
@@ -183,6 +184,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	u.Log.Info("Writing extra-manifests into new stateroot")
 	if err := u.extractAndExportExtraManifests(ctx, ibu, staterootVarPath); err != nil {
 		if extramanifest.IsEMFailedError(err) {
+			u.Log.Error(err, "Failed to export manifests")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
@@ -225,8 +227,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	u.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
 	err = u.RebootClient.RebootToNewStateRoot("upgrade")
 	if err != nil {
-		//todo: abort handler? e.g delete desired stateroot
-		u.Log.Error(err, "")
+		u.Log.Error(err, "Failed to reboot to new stateroot")
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
@@ -362,6 +363,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 	err := u.BackupRestore.EnsureOadpConfiguration(ctx)
 	if err != nil {
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
+			u.Log.Error(err, "Failed to ensure OADP configuration")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to missing DataProtectionApplication: %s", err))
 			return doNotRequeue(), nil
@@ -379,6 +381,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
+			u.Log.Error(err, "Failed to apply policy manifests")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying policy manifests: %s", err))
 			return doNotRequeue(), nil
@@ -392,9 +395,10 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.ExtraManifestPath))
+	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.CmManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
+			u.Log.Error(err, "Failed to apply config manifests")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying config manifests: %s", err))
 			return doNotRequeue(), nil
@@ -413,6 +417,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 	if err != nil {
 		// Restore failed
 		if backuprestore.IsBRFailedError(err) {
+			u.Log.Error(err, "Failed to handle restore")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
 			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
 			return doNotRequeue(), nil
@@ -428,7 +433,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 
 	if err := u.RebootClient.DisableInitMonitor(); err != nil {
 		// Don't fail the upgrade on failure here, just log it
-		u.Log.Error(err, "unable to disable LCA init monitor")
+		u.Log.Error(err, "Unable to disable LCA init monitor")
 	}
 
 	u.Log.Info("Done handleUpgrade")

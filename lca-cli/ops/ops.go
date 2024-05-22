@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	etcdClient "go.etcd.io/etcd/client/v3"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/utils"
-	"github.com/sirupsen/logrus"
 )
 
 var podmanRecertArgs = []string{
@@ -52,6 +55,7 @@ type Ops interface {
 	Chroot(chrootPath string) (func() error, error)
 	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
+	GetHostname() (string, error)
 }
 
 type CMD struct {
@@ -114,7 +118,29 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKu
 	if err := recert.CreateRecertConfigFileForSeedCreation(recertConfigFile, hasKubeAdminPassword); err != nil {
 		return fmt.Errorf("failed to create %s file: %w", recertConfigFile, err)
 	}
-	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, nil); err != nil {
+
+	// Run post recert operation to defragment etcd after recert tool is run
+	// this should allow for a more efficient etcd work after installation
+	// should not fail seed creation for now
+	postRecertOp := func() error {
+		o.log.Info("Running etcd defrag")
+		cli, err := etcdClient.New(etcdClient.Config{
+			Endpoints:   []string{common.EtcdDefaultEndpoint},
+			DialTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			o.log.WithError(err).Errorf("failed to start new etcd client, will skip defragment")
+			return nil
+		}
+		defer cli.Close()
+		_, err = cli.Defragment(context.TODO(), common.EtcdDefaultEndpoint)
+		if err != nil {
+			o.log.WithError(err).Errorf("failed to defragment etcd")
+		}
+		return nil
+	}
+
+	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, postRecertOp); err != nil {
 		return err
 	}
 
@@ -523,4 +549,12 @@ func (o *ops) growRootPartitionCommands(installationDisk string) []*CMD {
 		NewCMD("xfs_growfs", "/dev/disk/by-partlabel/root"))
 
 	return cmds
+}
+
+func (o *ops) GetHostname() (string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname: %w", err)
+	}
+	return hostname, nil
 }
