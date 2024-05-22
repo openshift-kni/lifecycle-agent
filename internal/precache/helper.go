@@ -47,10 +47,10 @@ import (
 func GetJob(ctx context.Context, c client.Client) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
 	if err := c.Get(ctx, types.NamespacedName{
-		Name:      LcaPrecacheJobName,
+		Name:      LcaPrecacheResourceName,
 		Namespace: common.LcaNamespace,
 	}, job); err != nil {
-		return nil, err //nolint:wrapcheck
+		return job, err //nolint:wrapcheck
 	}
 
 	return job, nil
@@ -62,7 +62,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      LcaPrecacheConfigMapName,
+			Name:      LcaPrecacheResourceName,
 			Namespace: common.LcaNamespace,
 		},
 		Data: data,
@@ -144,7 +144,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      LcaPrecacheJobName,
+			Name:      LcaPrecacheResourceName,
 			Namespace: common.LcaNamespace,
 			Annotations: map[string]string{
 				"app.kubernetes.io/name": "lifecycle-agent-precache",
@@ -206,7 +206,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: LcaPrecacheConfigMapName,
+										Name: LcaPrecacheResourceName,
 									},
 									DefaultMode: &defaultMode,
 								},
@@ -233,7 +233,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 func deleteConfigMap(ctx context.Context, c client.Client) error {
 	cm := corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      LcaPrecacheConfigMapName,
+			Name:      LcaPrecacheResourceName,
 			Namespace: common.LcaNamespace,
 		},
 	}
@@ -255,7 +255,7 @@ func deleteJob(ctx context.Context, c client.Client) error {
 
 	precache := batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      LcaPrecacheJobName,
+			Name:      LcaPrecacheResourceName,
 			Namespace: common.LcaNamespace,
 		},
 	}

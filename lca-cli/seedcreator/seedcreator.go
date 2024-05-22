@@ -205,7 +205,12 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		return fmt.Errorf("failed to get proxy information: %w", err)
 	}
 
-	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage, hasProxy)
+	hasFIPS, err := utils.HasFIPS(ctx, s.client)
+	if err != nil {
+		return fmt.Errorf("failed to get proxy information: %w", err)
+	}
+
+	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage, hasProxy, hasFIPS)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)

@@ -232,7 +232,7 @@ func IsJobFinished(job *kbatch.Job) (bool, kbatch.JobConditionType) {
 }
 
 func GenerateDeleteOptions() *client.DeleteOptions {
-	propagationPolicy := metav1.DeletePropagationBackground
+	propagationPolicy := metav1.DeletePropagationForeground // delete only when dependents are deleted
 
 	delOpt := client.DeleteOptions{
 		PropagationPolicy: &propagationPolicy,

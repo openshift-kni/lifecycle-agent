@@ -81,7 +81,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			config: &Config{
 				ImageList: imageList,
 			},
-			inputConfigMapName: LcaPrecacheConfigMapName,
+			inputConfigMapName: LcaPrecacheResourceName,
 			inputJobName:       "",
 			expectedError:      assert.AnError,
 			expectedConfigMap:  nil,
@@ -93,7 +93,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 				ImageList: imageList,
 			},
 			inputConfigMapName: "",
-			inputJobName:       LcaPrecacheJobName,
+			inputJobName:       LcaPrecacheResourceName,
 			expectedError:      assert.AnError,
 			expectedConfigMap:  nil,
 			expectedJob:        nil,
@@ -110,7 +110,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			expectedError:      nil,
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      LcaPrecacheConfigMapName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				},
 				Data: map[string]string{
@@ -119,7 +119,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			},
 			expectedJob: &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      LcaPrecacheJobName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				},
 				Spec: batchv1.JobSpec{
@@ -181,7 +181,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 				assert.NoError(t, err)
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, ibuv1.ConfigMapRef{
-					Name:      LcaPrecacheConfigMapName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				})
 				assert.NoError(t, err)
@@ -221,19 +221,19 @@ func TestCleanup(t *testing.T) {
 		{
 			name:               "Missing ConfigMap",
 			inputConfigMapName: "",
-			inputJobName:       LcaPrecacheJobName,
+			inputJobName:       LcaPrecacheResourceName,
 			expectedError:      nil,
 		},
 		{
 			name:               "Missing Job",
-			inputConfigMapName: LcaPrecacheConfigMapName,
+			inputConfigMapName: LcaPrecacheResourceName,
 			inputJobName:       "",
 			expectedError:      nil,
 		},
 		{
 			name:               "Success case",
-			inputConfigMapName: LcaPrecacheConfigMapName,
-			inputJobName:       LcaPrecacheJobName,
+			inputConfigMapName: LcaPrecacheResourceName,
+			inputJobName:       LcaPrecacheResourceName,
 			expectedError:      nil,
 		},
 	}
@@ -275,15 +275,14 @@ func TestCleanup(t *testing.T) {
 				assert.NoError(t, err)
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, ibuv1.ConfigMapRef{
-					Name:      LcaPrecacheConfigMapName,
+					Name:      LcaPrecacheResourceName,
 					Namespace: common.LcaNamespace,
 				})
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)
 
-				actualJob, err := GetJob(context.TODO(), fakeClient)
+				_, err = GetJob(context.TODO(), fakeClient)
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
-				assert.Nil(t, actualJob)
 			}
 		})
 	}
