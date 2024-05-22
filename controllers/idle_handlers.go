@@ -21,10 +21,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/prep"
+
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 
@@ -152,13 +153,8 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	}
 
 	r.Log.Info("Cleaning up stateroot")
-	if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); err != nil {
-		handleError(err, "failed to cleanup stateroots.")
-	}
-	r.Log.Info("Cleaning up stateroot setup job")
-	err := prep.DeleteStaterootSetupJob(ctx, r.Client, r.Log)
-	if err != nil {
-		handleError(err, "failed to cleanup stateroots setup job.")
+	if err := r.cleanupStateroot(ctx); err != nil {
+		handleError(err, "failed to cleanup stateroot")
 	}
 
 	r.Log.Info("Cleaning up precache")
@@ -166,7 +162,8 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 		handleError(err, "failed to cleanup precaching resources.")
 	}
 
-	if err := extramanifest.RemoveAnnotationWarnUnknownCRD(r.Client, ibu, r.Log); err != nil {
+	r.Log.Info("Removing annotation with warning")
+	if err := extramanifest.RemoveAnnotationEMWarningValidation(r.Client, r.Log, ibu); err != nil {
 		handleError(err, "failed to remove extra manifest warning annotation from IBU")
 	}
 
@@ -187,6 +184,21 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	}
 
 	return successful, errorMessage
+}
+
+func (r *ImageBasedUpgradeReconciler) cleanupStateroot(ctx context.Context) error {
+	r.Log.Info("Cleaning up cluster stateroot resources")
+	if err := prep.DeleteStaterootSetupJob(ctx, r.Client, r.Log); err != nil {
+		return fmt.Errorf("failed to cleanup cluster stateroot resources: %w", err)
+	}
+
+	r.Log.Info("Cleaning up unbooted stateroot resources")
+	if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); err != nil {
+		return fmt.Errorf("failed to clean up host stateroot resources: %w", err)
+	}
+
+	r.Log.Info("Successfully cleaned all resources related to stateroot setup")
+	return nil
 }
 
 func cleanupIBUFiles() error {
@@ -247,7 +259,7 @@ func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostree
 	}
 
 	if failures == 0 {
-		log.Info("Stateroot cleanup successfully")
+		log.Info("Unbooted stateroot cleanup completed successfully")
 		return nil
 	}
 	return fmt.Errorf("failed to remove %d stateroots", failures)

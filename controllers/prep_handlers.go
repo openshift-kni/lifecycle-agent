@@ -96,6 +96,14 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		seedHasProxy = seedInfo.HasProxy
 	}
 
+	seedHasFIPS := false
+	if seedInfo != nil {
+		// Older images may not have the seed cluster info label, in which case
+		// we assume no FIPS so that if the current cluster has FIPS, it will
+		// fail the compatibility check.
+		seedHasFIPS = seedInfo.HasFIPS
+	}
+
 	clusterHasProxy, err := lcautils.HasProxy(ctx, c)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has proxy: %w", err)
@@ -103,6 +111,16 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 
 	log.Info("Checking seed image proxy compatibility")
 	if err := checkSeedImageProxyCompatibility(seedHasProxy, clusterHasProxy); err != nil {
+		return fmt.Errorf("checking seed image compatibility: %w", err)
+	}
+
+	clusterHasFIPS, err := lcautils.HasFIPS(ctx, c)
+	if err != nil {
+		return fmt.Errorf("failed to check if cluster has fips: %w", err)
+	}
+
+	log.Info("Checking seed image FIPS compatibility")
+	if err := checkSeedImageFIPSCompatibility(seedHasFIPS, clusterHasFIPS); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
@@ -191,6 +209,23 @@ func checkSeedImageProxyCompatibility(seedHasProxy, hasProxy bool) error {
 
 	if !seedHasProxy && hasProxy {
 		return fmt.Errorf("seed image does not have a proxy but the cluster being upgraded does, this combination is not supported")
+	}
+
+	return nil
+}
+
+// checkSeedImageFIPSCompatibility checks for FIPS configuration compatibility
+// of the seed image vs the current cluster. If the seed image has FIPS enabled
+// and the cluster being upgraded doesn't, we cannot proceed as recert does not
+// support FIPS rename under those conditions. Similarly, we cannot proceed if
+// the cluster being upgraded has FIPS but the seed image doesn't.
+func checkSeedImageFIPSCompatibility(seedHasFIPS, hasFIPS bool) error {
+	if seedHasFIPS && !hasFIPS {
+		return fmt.Errorf("seed image has FIPS enabled but the cluster being upgraded does not, this combination is not supported")
+	}
+
+	if !seedHasFIPS && hasFIPS {
+		return fmt.Errorf("seed image does not have FIPS enabled but the cluster being upgraded does, this combination is not supported")
 	}
 
 	return nil
@@ -286,6 +321,13 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	return nil
 }
 
+func getSeedManifestPath(osname string) string {
+	return filepath.Join(
+		common.GetStaterootPath(osname),
+		filepath.Join(common.SeedDataDir, common.SeedClusterInfoFileName),
+	)
+}
+
 // validateIBUSpec validates the fields in the IBU spec
 func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
 	// Check spec against this cluster's version and possibly exit early
@@ -309,8 +351,15 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 
 	// Validate the extraManifests configmap if it's provided
 	if len(ibu.Spec.ExtraManifests) != 0 {
-		if err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests, ibu); err != nil {
+		warn, err := r.ExtraManifest.ValidateExtraManifestConfigmaps(ctx, ibu.Spec.ExtraManifests)
+		if err != nil {
 			return fmt.Errorf("failed to validate extramanifest cms: %w", err)
+		}
+		if warn != "" {
+			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the extramanifest validation warning", extramanifest.ValidationWarningAnnotation))
+			if err := extramanifest.AddAnnotationEMWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
+				return fmt.Errorf("failed to add extramanifest warning validation annotation: %w", err)
+			}
 		}
 	}
 
@@ -376,16 +425,16 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed launch stateroot job: %s", err.Error()), ibu)
 			}
-			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job `%s` in namespace `%s`", prep.JobName, common.LcaNamespace), ibu)
+			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job for stateroot setup. %s", getJobMetadataString(staterootSetupJob)), ibu)
 		}
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get stateroot setup job: %s", err.Error()), ibu)
 	}
 
 	r.Log.Info("Verifying stateroot setup job status")
 
-	// job deletion not allowed
+	// job deletion is not allowed
 	if staterootSetupJob.GetDeletionTimestamp() != nil {
-		return prepFailDoNotRequeue(r.Log, "stateroot job is marked to be deleted, this is not allowed", ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot job is marked to be deleted, this is not allowed. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	}
 
 	// check .status
@@ -393,9 +442,9 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	switch staterootSetupFinishedType {
 	case "":
 		common.LogPodLogs(staterootSetupJob, r.Log, r.Clientset)
-		return prepInProgressRequeue(r.Log, "Stateroot setup in progress", ibu)
+		return prepInProgressRequeue(r.Log, fmt.Sprintf("Stateroot setup job in progress. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	case kbatch.JobFailed:
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot setup job could not complete. Please check job logs for more, job_name: %s, job_ns: %s", staterootSetupJob.GetName(), staterootSetupJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot setup job failed to complete. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	case kbatch.JobComplete:
 		r.Log.Info("Stateroot job completed successfully", "completion time", staterootSetupJob.Status.CompletionTime, "total time", staterootSetupJob.Status.CompletionTime.Sub(staterootSetupJob.Status.StartTime.Time))
 	}
@@ -408,16 +457,16 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to launch precaching job: %s", err.Error()), ibu)
 			}
-			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job `%s` in namespace `%s`", precache.LcaPrecacheJobName, common.LcaNamespace), ibu)
+			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job precache. %s", getJobMetadataString(precacheJob)), ibu)
 		}
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get precache job: %s", err.Error()), ibu)
 	}
 
 	r.Log.Info("Verifying precache job status")
 
-	// job deletion not allowed
+	// job deletion is not allowed
 	if precacheJob.GetDeletionTimestamp() != nil {
-		return prepFailDoNotRequeue(r.Log, "precache job is marked to be deleted, this not allowed", ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job is marked to be deleted, this not allowed. %s", getJobMetadataString(precacheJob)), ibu)
 	}
 
 	// check .status
@@ -425,9 +474,9 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	switch precacheFinishedType {
 	case "":
 		common.LogPodLogs(precacheJob, r.Log, r.Clientset) // pod logs
-		return prepInProgressRequeue(r.Log, fmt.Sprintf("Precache job in progress: %s", precache.GetPrecacheStatusFileContent()), ibu)
+		return prepInProgressRequeue(r.Log, fmt.Sprintf("Precache job in progress. %s. %s", getJobMetadataString(precacheJob), precache.GetPrecacheStatusFileContent()), ibu)
 	case kbatch.JobFailed:
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job could not complete. Please check job logs for more, job_name: %s, job_ns: %s", precacheJob.GetName(), precacheJob.GetNamespace()), ibu)
+		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job failed to complete. %s", getJobMetadataString(precacheJob)), ibu)
 	case kbatch.JobComplete:
 		r.Log.Info("Precache job completed successfully", "completion time", precacheJob.Status.CompletionTime, "total time", precacheJob.Status.CompletionTime.Sub(precacheJob.Status.StartTime.Time))
 	}
@@ -446,6 +495,10 @@ func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpgr
 // prepInProgressRequeue helper function when everything is a success at the end
 func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	msg := "Prep stage completed successfully"
+	if _, exists := ibu.GetAnnotations()[extramanifest.ValidationWarningAnnotation]; exists {
+		msg = fmt.Sprintf("Prep stage completed with extramanifests validation warning. Please check the annotation '%s' for details.", extramanifest.ValidationWarningAnnotation)
+	}
+
 	log.Info(msg)
 	utils.SetPrepStatusCompleted(ibu, msg)
 	return doNotRequeue(), nil
@@ -459,9 +512,10 @@ func prepInProgressRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpg
 	return requeueWithShortInterval(), nil
 }
 
-func getSeedManifestPath(osname string) string {
-	return filepath.Join(
-		common.GetStaterootPath(osname),
-		filepath.Join(common.SeedDataDir, common.SeedClusterInfoFileName),
-	)
+// getJobMetadataString a helper to append job metadata for helpful logs
+func getJobMetadataString(job *kbatch.Job) string {
+	if job == nil {
+		return "job is nil"
+	}
+	return fmt.Sprintf("job-name: %s, job-namespace: %s", job.GetName(), job.GetNamespace())
 }
