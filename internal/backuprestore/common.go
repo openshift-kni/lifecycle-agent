@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -97,6 +99,7 @@ type BackuperRestorer interface {
 	StartOrTrackBackup(ctx context.Context, backups []*velerov1.Backup) (*BackupTracker, error)
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
 	ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
+	IsOadpInstalled(ctx context.Context) bool
 }
 
 // BRHandler handles the backup and restore
@@ -528,4 +531,29 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 
 	h.Log.Info("OADP operator is installed and DataProtectionApplication is validated")
 	return nil
+}
+
+// IsOadpInstalled a simple function to determine if OADP is present by checking the presence of at least one OADP defined CRD
+func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
+	crds := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := h.Client.List(ctx, crds); err != nil {
+		h.Log.Error(err, "could not list CRDs to verify if OADP is installed")
+		return false
+	}
+
+	/*
+		oadp installs more than one CRD (listed below from a dev cluster)...we are looking for at least one match
+		cloudstorages.oadp.openshift.io
+		dataprotectionapplications.oadp.openshift.io
+		volumesnapshotbackups.datamover.oadp.openshift.io
+		volumesnapshotrestores.datamover.oadp.openshift.io
+	*/
+	var oadpCrds []string
+	for _, crd := range crds.Items {
+		if strings.HasSuffix(crd.GetName(), "oadp.openshift.io") {
+			oadpCrds = append(oadpCrds, crd.ObjectMeta.Name)
+		}
+	}
+
+	return len(oadpCrds) > 0
 }
