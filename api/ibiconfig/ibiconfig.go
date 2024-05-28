@@ -16,8 +16,11 @@ const (
 // IBIPrepareConfig or aka ImageBasedInstallConfig is the API for specifying configuration
 // for the image-based installer.
 type IBIPrepareConfig struct {
-	SSHPublicKeyFile string `json:"sshPublicKeyFile,omitempty"`
-	RHCOSLiveISO     string `json:"rhcosLiveIso,omitempty"`
+	// Special installation iso params
+	SSHPublicKeyFile          string             `json:"sshPublicKeyFile,omitempty"`
+	RHCOSLiveISO              string             `json:"rhcosLiveIso,omitempty"`
+	AdditionalTrustBundlePath string             `json:"additionalTrustBundle,omitempty"`
+	Proxy                     seedreconfig.Proxy `json:"proxy,omitempty"`
 
 	SeedImage            string `json:"seedImage"`
 	SeedVersion          string `json:"seedVersion"`
@@ -32,8 +35,6 @@ type IBIPrepareConfig struct {
 	ExtraPartitionLabel  string `json:"extraPartitionLabel,omitempty"`
 	ExtraPartitionNumber uint   `json:"extraPartitionNumber,omitempty"`
 	SkipDiskCleanup      bool   `json:"skipDiskCleanup,omitempty"`
-
-	Proxy seedreconfig.Proxy `json:"proxy,omitempty"`
 }
 
 func (c *IBIPrepareConfig) Validate() error {
