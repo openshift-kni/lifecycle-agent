@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -33,6 +35,7 @@ func TestInstallationIso(t *testing.T) {
 		precacheDisabled    bool
 		shutdown            bool
 		skipDiskCleanup     bool
+		proxy               seedreconfig.Proxy
 		renderCommandReturn error
 		embedCommandReturn  error
 		expectedError       string
@@ -49,6 +52,20 @@ func TestInstallationIso(t *testing.T) {
 			shutdown:           false,
 			skipDiskCleanup:    false,
 			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with proxy",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+			proxy:              seedreconfig.Proxy{NoProxy: "noProxy", HTTPSProxy: "httpsProxy", HTTPProxy: "httpProxy"},
 		},
 		{
 			name:               "Happy flow - precache best-effort set",
@@ -269,6 +286,7 @@ func TestInstallationIso(t *testing.T) {
 				RHCOSLiveISO:        rhcosLiveIsoUrl,
 				InstallationDisk:    installationDisk,
 				ExtraPartitionStart: extraPartitionStart,
+				Proxy:               tc.proxy,
 			}
 
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
@@ -284,6 +302,13 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, ibiConfig.SkipDiskCleanup, tc.skipDiskCleanup)
 				assert.Equal(t, ibiConfig.AuthFile, authIgnitionFilePath)
 				assert.Equal(t, ibiConfig.PullSecretFile, psIgnitioFilePath)
+
+				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
+				assert.Equal(t, errReading, nil)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTP_PROXY=%s", tc.proxy.HTTPProxy)), true)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTPS_PROXY=%s", tc.proxy.HTTPSProxy)), true)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("NO_PROXY=%s", tc.proxy.NoProxy)), true)
+
 			} else {
 				assert.Contains(t, err.Error(), tc.expectedError)
 			}

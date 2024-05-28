@@ -40,6 +40,12 @@ systemd:
         Description=SNO Image Based Installation
         [Service]
         Environment=SEED_IMAGE={{.SeedImage}}
+        Environment=HTTP_PROXY={{.HTTPProxy}}
+        Environment=http_proxy={{.HTTPProxy}}
+        Environment=HTTPS_PROXY={{.HTTPSProxy}}
+        Environment=https_proxy={{.HTTPSProxy}}
+        Environment=NO_PROXY={{.NoProxy}}
+        Environment=no_proxy={{.NoProxy}}
         Environment=IBI_CONFIGURATION_FILE={{.IBIConfigurationPath}}
         Type=oneshot
         RemainAfterExit=yes

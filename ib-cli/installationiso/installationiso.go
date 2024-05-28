@@ -32,6 +32,9 @@ type IgnitionData struct {
 	InstallSeedScript    string
 	SeedImage            string
 	IBIConfiguration     string
+	HTTPProxy            string
+	HTTPSProxy           string
+	NoProxy              string
 }
 
 //go:embed data/*
@@ -199,6 +202,9 @@ func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConf
 		InstallSeedScript:    seedInstallScriptInButane,
 		IBIConfiguration:     ibiConfigurationInButane,
 		SeedImage:            ibiConfig.SeedImage,
+		HTTPProxy:            ibiConfig.Proxy.HTTPProxy,
+		HTTPSProxy:           ibiConfig.Proxy.HTTPSProxy,
+		NoProxy:              ibiConfig.Proxy.NoProxy,
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)

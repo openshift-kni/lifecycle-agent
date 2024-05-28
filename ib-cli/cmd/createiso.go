@@ -43,6 +43,10 @@ var (
 	precacheDisabled    bool
 	shutdown            bool
 	skipDiskCleanup     bool
+
+	httpProxy  string
+	httpsProxy string
+	noProxy    string
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -61,6 +65,10 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
 	cmd.Flags().BoolVarP(&shutdown, "shutdown", "", false, "Shutdown of the host after the preparation process is done.")
 	cmd.Flags().BoolVarP(&skipDiskCleanup, "skip-disk-cleanup", "", false, "Skip installation disk cleanup.")
+
+	cmd.Flags().StringVarP(&httpProxy, "http-proxy", "", "", "Http proxy to be configured.")
+	cmd.Flags().StringVarP(&httpsProxy, "https-proxy", "", "", "Https proxy to be configured.")
+	cmd.Flags().StringVarP(&noProxy, "no-proxy", "", "", "No proxy to be configured.")
 
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("extra-partition-start")

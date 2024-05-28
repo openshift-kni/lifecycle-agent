@@ -2,6 +2,8 @@ package ibiconfig
 
 import (
 	"fmt"
+
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 )
 
 // ImageBasedInstallConfigVersion is the version supported by this package.
@@ -30,6 +32,8 @@ type IBIPrepareConfig struct {
 	ExtraPartitionLabel  string `json:"extraPartitionLabel,omitempty"`
 	ExtraPartitionNumber uint   `json:"extraPartitionNumber,omitempty"`
 	SkipDiskCleanup      bool   `json:"skipDiskCleanup,omitempty"`
+
+	Proxy seedreconfig.Proxy `json:"proxy,omitempty"`
 }
 
 func (c *IBIPrepareConfig) Validate() error {
