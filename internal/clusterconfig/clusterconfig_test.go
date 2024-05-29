@@ -254,6 +254,7 @@ func TestClusterConfig(t *testing.T) {
 		icsps           []client.Object
 		node            client.Object
 		proxy           client.Object
+		chronyConfig    string
 		deleteKubeadmin bool
 		expectedErr     bool
 		validateFunc    func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather)
@@ -267,6 +268,7 @@ func TestClusterConfig(t *testing.T) {
 			proxy:          defaultProxy,
 			icsps:          nil,
 			caBundleCM:     nil,
+			chronyConfig:   "chrony config",
 			expectedErr:    false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
 				clusterConfigPath, err := ucc.configDir(tempDir)
@@ -300,8 +302,56 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
+				assert.Equal(t, "chrony config", seedReconfig.ChronyConfig)
 			},
 		},
+		{
+			testCaseName:   "Validate success flow without chrony",
+			pullSecret:     defaultPullSecret,
+			clusterVersion: defaultClusterVersion,
+			idms:           defaultIDMS,
+			node:           validMasterNode,
+			proxy:          defaultProxy,
+			icsps:          nil,
+			caBundleCM:     nil,
+			chronyConfig:   "",
+			expectedErr:    false,
+			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
+				clusterConfigPath, err := ucc.configDir(tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+
+				// validate pull idms
+				idms := &ocpV1.ImageDigestMirrorSetList{}
+				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, idmsFileName), idms); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if assert.Equal(t, 1, len(idms.Items)) {
+					assert.Equal(t, "any", idms.Items[0].Name)
+					assert.Equal(t, "data", idms.Items[0].Spec.ImageDigestMirrors[0].Source)
+				}
+
+				seedReconfig, err := getSeedReconfigFromUcc(ucc, tempDir)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+
+				assert.Equal(t, "$2a$10$20Q4iRLy7cWZkjn/D07bF.RZQZonKwstyRGH0qiYbYRkx5Pe4Ztyi", seedReconfig.KubeadminPasswordHash)
+				assert.Equal(t, "mysno-xsb4m", seedReconfig.InfraID)
+				assert.Equal(t, "pull-secret", seedReconfig.PullSecret)
+				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
+				assert.Equal(t, "test-infra-cluster", seedReconfig.ClusterName)
+				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
+				assert.Equal(t, "192.168.121.10", seedReconfig.NodeIP)
+				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
+				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
+				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
+				assert.Equal(t, "", seedReconfig.ChronyConfig)
+			},
+		},
+
 		{
 			testCaseName:   "no pull secret found",
 			pullSecret:     noPullSecret,
@@ -469,6 +519,15 @@ func TestClusterConfig(t *testing.T) {
 					t.Errorf("unexpected error: %v", err)
 				}
 				_ = f.Close()
+			}
+			if testCase.chronyConfig != "" {
+				dir := filepath.Join(clusterConfigDir, filepath.Dir(common.ChronyConfig))
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(clusterConfigDir, common.ChronyConfig), []byte(testCase.chronyConfig), 0o644); err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
 			}
 
 			sshKeyDir := filepath.Join(clusterConfigDir, filepath.Dir(sshKeyFile))

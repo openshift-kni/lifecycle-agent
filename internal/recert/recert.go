@@ -46,6 +46,7 @@ type RecertConfig struct {
 	UseKeyRules       []string `json:"use_key_rules,omitempty"`
 	UseCertRules      []string `json:"use_cert_rules,omitempty"`
 	PullSecret        string   `json:"pull_secret,omitempty"`
+	ChronyConfig      string   `json:"chrony_config,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -96,6 +97,9 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	}
 	config.KubeadminPasswordHash = seedReconfig.KubeadminPasswordHash
 	config.PullSecret = seedReconfig.PullSecret
+	if seedReconfig.ChronyConfig != "" {
+		config.ChronyConfig = seedReconfig.ChronyConfig
+	}
 
 	if _, err := os.Stat(cryptoDir); err == nil {
 		ingressFile, ingressCN, err := getIngressCNAndFile(cryptoDir)
@@ -185,6 +189,7 @@ func createBasicEmptyRecertConfig() RecertConfig {
 		StaticFiles: []string{
 			"/host-etc/mcs-machine-config-content.json",
 			"/host-etc/mco/proxy.env",
+			"/host-etc/chrony.conf",
 		},
 	}
 }

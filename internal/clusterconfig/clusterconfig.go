@@ -116,6 +116,23 @@ func (r *UpgradeClusterConfigGather) getSSHPublicKey() (string, error) {
 	return string(sshKey), err
 }
 
+// getChronyConfig reads the chrony configuration from the node
+// in case for some reason chrony configuration is not present on the node, it will return an empty string
+// possible reasons for missing chrony configuration:
+// cluster is not installed with assisted-service or user removed the configuration
+func (r *UpgradeClusterConfigGather) getChronyConfig() (string, error) {
+	chronyConfig, err := os.ReadFile(filepath.Join(hostPath, common.ChronyConfig))
+	if os.IsNotExist(err) {
+		r.Log.Info(fmt.Sprintf("chrony configuration %s doesn't exist, "+
+			"skipping copy of it", common.ChronyConfig))
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to chrony config from node: %w", err)
+	}
+	return string(chronyConfig), err
+}
+
 func (r *UpgradeClusterConfigGather) getInfraID(ctx context.Context) (string, error) {
 	infra, err := utils.GetInfrastructure(ctx, r.Client)
 	if err != nil {
@@ -188,6 +205,7 @@ func SeedReconfigurationFromClusterInfo(
 	proxy,
 	statusProxy *seedreconfig.Proxy,
 	installConfig string,
+	chronyConfig string,
 ) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
@@ -206,6 +224,7 @@ func SeedReconfigurationFromClusterInfo(
 		StatusProxy:               statusProxy,
 		InstallConfig:             installConfig,
 		MachineNetwork:            clusterInfo.MachineNetwork,
+		ChronyConfig:              chronyConfig,
 	}
 }
 
@@ -252,6 +271,11 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
+	chronyConfig, err := r.getChronyConfig()
+	if err != nil {
+		return err
+	}
+
 	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention,
 		sshKey,
 		infraID,
@@ -260,6 +284,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		proxy,
 		statusProxy,
 		installConfig,
+		chronyConfig,
 	)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
