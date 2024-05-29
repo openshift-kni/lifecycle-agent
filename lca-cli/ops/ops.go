@@ -245,13 +245,15 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
 	o.log.Info("Start running recert")
 	command := "podman"
+
 	args := append(podmanRecertArgs, "--name", "recert",
-		"-v", "/etc:/host-etc",
-		"-v", "/etc/kubernetes:/kubernetes",
-		"-v", "/var/lib/kubelet:/kubelet",
+		"-v", fmt.Sprintf("/etc:%s", recert.EtcMount),
+		"-v", fmt.Sprintf("/etc/ssh:%s", recert.EtcSSHMount),
+		"-v", fmt.Sprintf("/etc/kubernetes:%s", recert.EtcKubernetesMount),
+		"-v", fmt.Sprintf("/var/lib/kubelet:%s", recert.VarLibKubeletMount),
 		"-v", "/var/tmp:/var/tmp",
-		"-v", "/etc/machine-config-daemon:/machine-config-daemon",
-		"-v", "/etc/pki:/pki",
+		"-v", fmt.Sprintf("/etc/machine-config-daemon:%s", recert.EtcMachineConfigDaemonMount),
+		"-v", fmt.Sprintf("/etc/pki:%s", recert.EtcPKIMount),
 		"-e", fmt.Sprintf("RECERT_CONFIG=%s", recertConfigFile),
 	)
 	if authFile != "" {

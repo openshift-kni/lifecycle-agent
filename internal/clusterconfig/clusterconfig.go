@@ -9,6 +9,7 @@ import (
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -153,6 +154,34 @@ func (r *UpgradeClusterConfigGather) GetKubeadminPasswordHash(ctx context.Contex
 	return kubeadminPasswordHash, nil
 }
 
+type ServerSSHKey struct {
+	FileName    string
+	FileContent string
+}
+
+func (r *UpgradeClusterConfigGather) GetServerSSHKeys(ctx context.Context) ([]ServerSSHKey, error) {
+	sshKeys := []ServerSSHKey{}
+
+	matches, err := filepath.Glob(filepath.Join(hostPath, common.SSHServerKeysDirectory, "ssh_host_*_key*"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob server SSH keys: %w", err)
+	}
+
+	for _, match := range matches {
+		fileContent, err := os.ReadFile(match)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read server SSH key file %s: %w", match, err)
+		}
+
+		sshKeys = append(sshKeys, ServerSSHKey{
+			FileName:    filepath.Base(match),
+			FileContent: string(fileContent),
+		})
+	}
+
+	return sshKeys, nil
+}
+
 type AdditionalTrustBundle struct {
 	// The contents of the "user-ca-bundle" configmap in the "openshift-config" namespace
 	UserCaBundle string `json:"userCaBundle"`
@@ -250,6 +279,15 @@ func (r *UpgradeClusterConfigGather) GetInstallConfig(ctx context.Context) (stri
 
 }
 
+func serverSSHKeysToReconfigServerSSHKeys(serverSSHKeys []ServerSSHKey) []seedreconfig.ServerSSHKey {
+	return lo.Map(serverSSHKeys, func(serverSSHKey ServerSSHKey, _ int) seedreconfig.ServerSSHKey {
+		return seedreconfig.ServerSSHKey{
+			FileName:    serverSSHKey.FileName,
+			FileContent: serverSSHKey.FileContent,
+		}
+	})
+}
+
 func SeedReconfigurationFromClusterInfo(
 	clusterInfo *utils.ClusterInfo,
 	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention,
@@ -262,6 +300,7 @@ func SeedReconfigurationFromClusterInfo(
 	installConfig string,
 	chronyConfig string,
 	additionalTrustBundle *AdditionalTrustBundle,
+	serverSSHKeys []ServerSSHKey,
 ) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
@@ -274,6 +313,7 @@ func SeedReconfigurationFromClusterInfo(
 		Hostname:                  clusterInfo.Hostname,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
 		SSHKey:                    sshKey,
+		ServerSSHKeys:             serverSSHKeysToReconfigServerSSHKeys(serverSSHKeys),
 		PullSecret:                pullSecret,
 		KubeadminPasswordHash:     kubeadminPasswordHash,
 		Proxy:                     proxy,
@@ -304,7 +344,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	sshKey, err := r.getSSHPublicKey()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get ssh key: %w", err)
 	}
 
 	infraID, err := r.getInfraID(ctx)
@@ -318,6 +358,11 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 	}
 
 	kubeadminPasswordHash, err := r.GetKubeadminPasswordHash(ctx)
+	if err != nil {
+		return err
+	}
+
+	serverSSHKeys, err := r.GetServerSSHKeys(ctx)
 	if err != nil {
 		return err
 	}
@@ -352,6 +397,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		installConfig,
 		chronyConfig,
 		additionalTrustBundle,
+		serverSSHKeys,
 	)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)

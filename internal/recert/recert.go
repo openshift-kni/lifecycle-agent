@@ -19,13 +19,22 @@ const (
 	SummaryFile      = "/var/tmp/recert-summary.yaml"
 )
 
+const (
+	EtcMount                    = "/host-etc"
+	EtcSSHMount                 = "/ssh"
+	EtcKubernetesMount          = "/kubernetes"
+	VarLibKubeletMount          = "/kubelet"
+	EtcMachineConfigDaemonMount = "/machine-config-daemon"
+	EtcPKIMount                 = "/pki"
+)
+
 var (
 	// we don't want pki to go through recertification, only cluster customization (additional trust bundle appears in /pki)
-	cryptoDirs               = []string{"/kubelet", "/kubernetes", "/machine-config-daemon"}
-	clusterCustomizationDirs = []string{"/kubelet", "/kubernetes", "/machine-config-daemon", "/pki"}
+	cryptoDirs               = []string{VarLibKubeletMount, EtcKubernetesMount, EtcMachineConfigDaemonMount}
+	clusterCustomizationDirs = []string{VarLibKubeletMount, EtcKubernetesMount, EtcMachineConfigDaemonMount}
 
-	cryptoFiles               = []string{"/host-etc/mcs-machine-config-content.json"}
-	clusterCustomizationFiles = []string{"/host-etc/mcs-machine-config-content.json", "/host-etc/mco/proxy.env", "/host-etc/chrony.conf"}
+	cryptoFiles               = []string{fmt.Sprintf("%s/mcs-machine-config-content.json", EtcMount)}
+	clusterCustomizationFiles = []string{fmt.Sprintf("%s/mcs-machine-config-content.json", EtcMount), fmt.Sprintf("%s/mco/proxy.env", EtcMount), fmt.Sprintf("%s/chrony.conf", EtcMount)}
 )
 
 type RecertConfig struct {
@@ -59,6 +68,7 @@ type RecertConfig struct {
 	UseCertRules              []string `json:"use_cert_rules,omitempty"`
 	PullSecret                string   `json:"pull_secret,omitempty"`
 	ChronyConfig              string   `json:"chrony_config,omitempty"`
+	RegenerateServerSSHKeys   string   `json:"regenerate_server_ssh_keys,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -98,7 +108,7 @@ func SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(recertConfig *
 // those params will be provided to an installation script after reboot
 // that will run recert command with them
 func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder string) error {
-	config := createBasicEmptyRecertConfig()
+	config := createBaseRecertConfig()
 
 	config.ClusterRename = fmt.Sprintf("%s:%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
 	if seedReconfig.InfraID != "" {
@@ -139,6 +149,14 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 		config.ChronyConfig = seedReconfig.ChronyConfig
 	}
 
+	if len(seedReconfig.ServerSSHKeys) == 0 {
+		// IBI case, simply ask recert to regenerate fresh SSH server keys. In
+		// IBU ServerSSHKeys is non-empty and LCA will later write those keys
+		// (from the original cluster) to the SSH directory on its own without
+		// recert's help.
+		config.RegenerateServerSSHKeys = EtcSSHMount
+	}
+
 	if _, err := os.Stat(cryptoDir); err == nil {
 		ingressFile, ingressCN, err := getIngressCNAndFile(cryptoDir)
 		if err != nil {
@@ -162,7 +180,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 }
 
 func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error {
-	config := createBasicEmptyRecertConfig()
+	config := createBaseRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-creation-summary.yaml"
 	config.ForceExpire = true
 
@@ -201,7 +219,7 @@ func generateDisposablePasswordHash() ([]byte, error) {
 }
 
 func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string) error {
-	config := createBasicEmptyRecertConfig()
+	config := createBaseRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-restoration-summary.yaml"
 	config.ExtendExpiration = true
 	config.UseKeyRules = []string{
@@ -219,7 +237,7 @@ func CreateRecertConfigFileForSeedRestoration(path, originalPasswordHash string)
 	return nil
 }
 
-func createBasicEmptyRecertConfig() RecertConfig {
+func createBaseRecertConfig() RecertConfig {
 	return RecertConfig{
 		DryRun:                    false,
 		EtcdEndpoint:              common.EtcdDefaultEndpoint,
