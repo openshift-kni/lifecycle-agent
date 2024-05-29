@@ -49,6 +49,7 @@ var (
 	httpsProxy            string
 	noProxy               string
 	additionalTrustBundle string
+	mirrorRegistry        string
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -72,6 +73,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&httpsProxy, "https-proxy", "", "", "Https proxy to be configured.")
 	cmd.Flags().StringVarP(&noProxy, "no-proxy", "", "", "No proxy to be configured.")
 	cmd.Flags().StringVarP(&additionalTrustBundle, "additional-trust-bundle", "", "", "The path to the additional trust bundle.")
+	cmd.Flags().StringVarP(&mirrorRegistry, "mirror-registry", "", "", "The path to mirror registry config file.")
 
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("extra-partition-start")
@@ -133,6 +135,7 @@ func createIso() error {
 			HTTPSProxy: httpsProxy,
 			NoProxy:    noProxy,
 		},
+		MirrorRegistryPath: mirrorRegistry,
 	}
 
 	if err := ibiConfig.Validate(); err != nil {

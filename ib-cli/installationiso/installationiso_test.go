@@ -36,6 +36,7 @@ func TestInstallationIso(t *testing.T) {
 		shutdown            bool
 		skipDiskCleanup     bool
 		addTrustedBundle    bool
+		mirrorRegistry      bool
 		proxy               seedreconfig.Proxy
 		renderCommandReturn error
 		embedCommandReturn  error
@@ -132,6 +133,20 @@ func TestInstallationIso(t *testing.T) {
 			shutdown:           false,
 			skipDiskCleanup:    true,
 			addTrustedBundle:   true,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with mirror registry",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
+			mirrorRegistry:     true,
 			expectedError:      "",
 		},
 		{
@@ -310,6 +325,12 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, err, nil)
 				isoConfig.AdditionalTrustBundlePath = trustedBundle.Name()
 			}
+			if tc.mirrorRegistry {
+				mirrorRegistryPath := "mirrorRegistry"
+				mirrorRegistry, err := os.Create(path.Join(tmpDir, mirrorRegistryPath))
+				assert.Equal(t, err, nil)
+				isoConfig.MirrorRegistryPath = mirrorRegistry.Name()
+			}
 
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
 			err := installationIso.Create(isoConfig)
@@ -330,12 +351,17 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTP_PROXY=%s", tc.proxy.HTTPProxy)), true)
 				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTPS_PROXY=%s", tc.proxy.HTTPSProxy)), true)
 				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("NO_PROXY=%s", tc.proxy.NoProxy)), true)
-
 				if tc.addTrustedBundle {
 					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "additionalTrustBundle")), true)
 					assert.Equal(t, strings.Contains(string(data), "additional-trust-bundle"), true)
 				} else {
 					assert.Equal(t, strings.Contains(string(data), "additional-trust-bundle"), false)
+				}
+				if tc.mirrorRegistry {
+					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "mirrorRegistry")), true)
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), false)
 				}
 
 			} else {

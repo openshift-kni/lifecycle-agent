@@ -23,7 +23,12 @@ storage:
       mode: 0400
       overwrite: true
       contents:
-        local: {{.IBIConfiguration}}
+        local: {{.IBIConfiguration}}{{if .MirrorRegistryPath}}
+    - path: /etc/containers/registries.conf
+      mode: 0400
+      overwrite: true
+      contents:
+        local: {{.MirrorRegistryPath}}{{end}}
     - path: /usr/local/bin/install-rhcos-and-restore-seed.sh
       mode: 0755
       overwrite: true
