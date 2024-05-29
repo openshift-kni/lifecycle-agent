@@ -28,7 +28,14 @@ storage:
       mode: 0755
       overwrite: true
       contents:
-        local: {{.InstallSeedScript}}
+        local: {{.InstallSeedScript}}{{if .AdditionalTrustBundlePath}}
+    - path: /etc/pki/ca-trust/source/anchors/additional-trust-bundle.pem
+      mode: 0400
+      overwrite: true
+      user:
+        name: root
+      contents:
+        local: {{.AdditionalTrustBundlePath}}{{end}}
 systemd:
   units:
     - name: install-rhcos-and-restore-seed.service

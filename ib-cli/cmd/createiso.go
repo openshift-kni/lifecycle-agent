@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/ib-cli/installationiso"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
@@ -44,9 +45,10 @@ var (
 	shutdown            bool
 	skipDiskCleanup     bool
 
-	httpProxy  string
-	httpsProxy string
-	noProxy    string
+	httpProxy             string
+	httpsProxy            string
+	noProxy               string
+	additionalTrustBundle string
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -69,6 +71,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&httpProxy, "http-proxy", "", "", "Http proxy to be configured.")
 	cmd.Flags().StringVarP(&httpsProxy, "https-proxy", "", "", "Https proxy to be configured.")
 	cmd.Flags().StringVarP(&noProxy, "no-proxy", "", "", "No proxy to be configured.")
+	cmd.Flags().StringVarP(&additionalTrustBundle, "additional-trust-bundle", "", "", "The path to the additional trust bundle.")
 
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("extra-partition-start")
@@ -112,18 +115,24 @@ func createIso() error {
 	}
 
 	ibiConfig := &ibiconfig.IBIPrepareConfig{
-		SeedImage:           seedImage,
-		SeedVersion:         seedVersion,
-		AuthFile:            authFile,
-		PullSecretFile:      pullSecretFile,
-		SSHPublicKeyFile:    sshPublicKeyFile,
-		RHCOSLiveISO:        rhcosLiveIso,
-		InstallationDisk:    installationDisk,
-		ExtraPartitionStart: extraPartitionStart,
-		PrecacheDisabled:    precacheDisabled,
-		PrecacheBestEffort:  precacheBestEffort,
-		Shutdown:            shutdown,
-		SkipDiskCleanup:     skipDiskCleanup,
+		SeedImage:                 seedImage,
+		SeedVersion:               seedVersion,
+		AuthFile:                  authFile,
+		PullSecretFile:            pullSecretFile,
+		SSHPublicKeyFile:          sshPublicKeyFile,
+		RHCOSLiveISO:              rhcosLiveIso,
+		InstallationDisk:          installationDisk,
+		ExtraPartitionStart:       extraPartitionStart,
+		PrecacheDisabled:          precacheDisabled,
+		PrecacheBestEffort:        precacheBestEffort,
+		Shutdown:                  shutdown,
+		SkipDiskCleanup:           skipDiskCleanup,
+		AdditionalTrustBundlePath: additionalTrustBundle,
+		Proxy: seedreconfig.Proxy{
+			HTTPProxy:  httpProxy,
+			HTTPSProxy: httpsProxy,
+			NoProxy:    noProxy,
+		},
 	}
 
 	if err := ibiConfig.Validate(); err != nil {
