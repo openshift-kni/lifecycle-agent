@@ -156,6 +156,20 @@ func (mr *MockBackuperRestorerMockRecorder) GetSortedBackupsFromConfigmap(ctx, c
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSortedBackupsFromConfigmap", reflect.TypeOf((*MockBackuperRestorer)(nil).GetSortedBackupsFromConfigmap), ctx, content)
 }
 
+// IsOadpInstalled mocks base method.
+func (m *MockBackuperRestorer) IsOadpInstalled(ctx context.Context) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsOadpInstalled", ctx)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsOadpInstalled indicates an expected call of IsOadpInstalled.
+func (mr *MockBackuperRestorerMockRecorder) IsOadpInstalled(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOadpInstalled", reflect.TypeOf((*MockBackuperRestorer)(nil).IsOadpInstalled), ctx)
+}
+
 // LoadRestoresFromOadpRestorePath mocks base method.
 func (m *MockBackuperRestorer) LoadRestoresFromOadpRestorePath() ([][]*v10.Restore, error) {
 	m.ctrl.T.Helper()
