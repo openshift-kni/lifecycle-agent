@@ -36,6 +36,7 @@ type IgnitionData struct {
 	HTTPSProxy                string
 	NoProxy                   string
 	AdditionalTrustBundlePath string
+	MirrorRegistryPath        string
 }
 
 //go:embed data/*
@@ -215,6 +216,14 @@ func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConf
 			return err
 		}
 		templateData.AdditionalTrustBundlePath = additionalTrustBundleInButane
+	}
+	if ibiConfig.MirrorRegistryPath != "" {
+		mirrorRegistryInButane := path.Join(butaneFiles, "mirrorRegistry")
+		if err := r.copyFileToButaneDir(ibiConfig.MirrorRegistryPath,
+			path.Join(r.workDir, mirrorRegistryInButane)); err != nil {
+			return err
+		}
+		templateData.MirrorRegistryPath = mirrorRegistryInButane
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)

@@ -16,12 +16,14 @@ const (
 // IBIPrepareConfig or aka ImageBasedInstallConfig is the API for specifying configuration
 // for the image-based installer.
 type IBIPrepareConfig struct {
-	// Special installation iso params
+	// Params that are used to configure the installation iso and will be moved to installer
 	SSHPublicKeyFile          string             `json:"sshPublicKeyFile,omitempty"`
 	RHCOSLiveISO              string             `json:"rhcosLiveIso,omitempty"`
 	AdditionalTrustBundlePath string             `json:"additionalTrustBundle,omitempty"`
 	Proxy                     seedreconfig.Proxy `json:"proxy,omitempty"`
+	MirrorRegistryPath        string             `json:"mirrorRegistry,omitempty"`
 
+	// configuration for lca cli
 	SeedImage            string `json:"seedImage"`
 	SeedVersion          string `json:"seedVersion"`
 	AuthFile             string `json:"authFile"`
