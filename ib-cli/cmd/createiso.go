@@ -50,6 +50,7 @@ var (
 	noProxy               string
 	additionalTrustBundle string
 	mirrorRegistry        string
+	nmstateConfig         string
 )
 
 func addFlags(cmd *cobra.Command) {
@@ -74,6 +75,7 @@ func addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&noProxy, "no-proxy", "", "", "No proxy to be configured.")
 	cmd.Flags().StringVarP(&additionalTrustBundle, "additional-trust-bundle", "", "", "The path to the additional trust bundle.")
 	cmd.Flags().StringVarP(&mirrorRegistry, "mirror-registry", "", "", "The path to mirror registry config file.")
+	cmd.Flags().StringVarP(&nmstateConfig, "nmstate-config", "", "", "The path to nmstate config file.")
 
 	cmd.MarkFlagRequired("installation-disk")
 	cmd.MarkFlagRequired("extra-partition-start")
@@ -136,6 +138,7 @@ func createIso() error {
 			NoProxy:    noProxy,
 		},
 		MirrorRegistryPath: mirrorRegistry,
+		NMStateConfig:      nmstateConfig,
 	}
 
 	if err := ibiConfig.Validate(); err != nil {

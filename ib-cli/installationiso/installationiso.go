@@ -37,6 +37,7 @@ type IgnitionData struct {
 	NoProxy                   string
 	AdditionalTrustBundlePath string
 	MirrorRegistryPath        string
+	NMStateConfigPath         string
 }
 
 //go:embed data/*
@@ -224,6 +225,15 @@ func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConf
 			return err
 		}
 		templateData.MirrorRegistryPath = mirrorRegistryInButane
+	}
+	if ibiConfig.NMStateConfig != "" {
+		nmstateConfigInButane := path.Join(butaneFiles, "nmstateConfig")
+		if err := r.copyFileToButaneDir(ibiConfig.NMStateConfig,
+			path.Join(r.workDir, nmstateConfigInButane)); err != nil {
+			return err
+		}
+		templateData.NMStateConfigPath = nmstateConfigInButane
+
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)
