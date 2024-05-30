@@ -40,7 +40,13 @@ storage:
       user:
         name: root
       contents:
-        local: {{.AdditionalTrustBundlePath}}{{end}}
+        local: {{.AdditionalTrustBundlePath}}{{end}}{{if .NMStateConfigPath}}
+    - path: /var/tmp/network-config.yaml
+      mode: 0400
+      overwrite: true
+      contents:
+        local: {{.NMStateConfigPath}}{{end}}
+
 systemd:
   units:
     - name: install-rhcos-and-restore-seed.service
@@ -65,3 +71,20 @@ systemd:
         ExecStart=/usr/local/bin/install-rhcos-and-restore-seed.sh
         [Install]
         WantedBy=multi-user.target
+   {{if .NMStateConfigPath}}
+    - name: pre-network-manager-config.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Pre Network Manager Config
+        After=NetworkManager.service
+        Before=install-rhcos-and-restore-seed.service
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        TimeoutSec=60
+        ExecStart=bash -c "until /usr/bin/nmstatectl apply /var/tmp/network-config.yaml; do sleep 1; done"
+        [Install]
+        WantedBy=multi-user.target
+
+   {{end}}

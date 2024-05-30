@@ -37,6 +37,7 @@ func TestInstallationIso(t *testing.T) {
 		skipDiskCleanup     bool
 		addTrustedBundle    bool
 		mirrorRegistry      bool
+		nmstateConfig       bool
 		proxy               seedreconfig.Proxy
 		renderCommandReturn error
 		embedCommandReturn  error
@@ -147,6 +148,21 @@ func TestInstallationIso(t *testing.T) {
 			shutdown:           false,
 			skipDiskCleanup:    true,
 			mirrorRegistry:     true,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with nmstate config",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
+			nmstateConfig:      true,
+			mirrorRegistry:     false,
 			expectedError:      "",
 		},
 		{
@@ -331,6 +347,12 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, err, nil)
 				isoConfig.MirrorRegistryPath = mirrorRegistry.Name()
 			}
+			if tc.nmstateConfig {
+				nmstateConfigPath := "nmstateConfig"
+				nmstateConfig, err := os.Create(path.Join(tmpDir, nmstateConfigPath))
+				assert.Equal(t, err, nil)
+				isoConfig.NMStateConfig = nmstateConfig.Name()
+			}
 
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
 			err := installationIso.Create(isoConfig)
@@ -362,6 +384,21 @@ func TestInstallationIso(t *testing.T) {
 					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), true)
 				} else {
 					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), false)
+				}
+
+				if tc.mirrorRegistry {
+					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "mirrorRegistry")), true)
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), false)
+				}
+				if tc.nmstateConfig {
+					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "nmstateConfig")), true)
+					assert.Equal(t, strings.Contains(string(data), "pre-network-manager-config.service"), true)
+					assert.Equal(t, strings.Contains(string(data), "path: /var/tmp/network-config.yaml"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "pre-network-manager-config.service"), false)
+					assert.Equal(t, strings.Contains(string(data), "path: /var/tmp/network-config.yaml"), false)
 				}
 
 			} else {

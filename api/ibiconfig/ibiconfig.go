@@ -22,6 +22,7 @@ type IBIPrepareConfig struct {
 	AdditionalTrustBundlePath string             `json:"additionalTrustBundle,omitempty"`
 	Proxy                     seedreconfig.Proxy `json:"proxy,omitempty"`
 	MirrorRegistryPath        string             `json:"mirrorRegistry,omitempty"`
+	NMStateConfig             string             `json:"NMStateConfig,omitempty"`
 
 	// configuration for lca cli
 	SeedImage            string `json:"seedImage"`
