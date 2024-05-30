@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -115,7 +117,9 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 	// Generate ConfigMap for list of images to be pre-cached
 	cm := renderConfigMap(config.ImageList)
 	if err := h.Client.Create(ctx, cm); err != nil {
-		return fmt.Errorf("failed to create configMap for precache: %w", err)
+		if !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create configMap for precache: %w", err)
+		}
 	}
 
 	job, err := renderJob(config, h.Log, ibu, h.Scheme)
@@ -123,7 +127,9 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}
 	if err := h.Client.Create(ctx, job); err != nil {
-		return fmt.Errorf("failed to create precache job: %w", err)
+		if !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create precache job: %w", err)
+		}
 	}
 
 	// Log job details

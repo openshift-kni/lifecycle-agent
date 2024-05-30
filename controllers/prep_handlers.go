@@ -283,10 +283,14 @@ func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVar
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *ibuv1.ImageBasedUpgrade) error {
+	r.Log.Info("Getting release registry name")
 	clusterRegistry, err := lcautils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster registry: %w", err)
 	}
+	r.Log.Info("Got release registry name", "clusterRegistry", clusterRegistry)
+
+	r.Log.Info("Checking seed image info")
 	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(common.GetDesiredStaterootName(ibu))))
 	if err != nil {
@@ -295,29 +299,33 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	// TODO: if seedInfo.hasProxy we also require that the LCA deployment contain "NO_PROXY" + "HTTP_PROXY" + "HTTPS_PROXY" as env vars. Produce a warning and/or document this.
 	r.Log.Info("Collected seed info for precache", "seed info", fmt.Sprintf("%+v", seedInfo))
 
+	r.Log.Info("Checking whether to override seed registry")
 	shouldOverrideRegistry, err := lcautils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
 	if err != nil {
 		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry %w", err)
 	}
 	r.Log.Info("Override registry status", "shouldOverrideRegistry", shouldOverrideRegistry)
 
+	r.Log.Info("Reading precache list from seed image")
 	imageList, err := prep.ReadPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
 	if err != nil {
 		return fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 	}
+	r.Log.Info("Got pre-cache image list from seed image", "count", len(imageList))
 
+	r.Log.Info("Getting env variables from lca manager for precache job")
 	envVars, err := r.getPodEnvVars(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get pod env vars: %w", err)
 	}
 
-	// Create pre-cache config using default values
+	r.Log.Info("Creating pre-cache config and resources")
 	config := precache.NewConfig(imageList, envVars)
-	err = r.Precache.CreateJobAndConfigMap(ctx, config, ibu)
-	if err != nil {
+	if err := r.Precache.CreateJobAndConfigMap(ctx, config, ibu); err != nil {
 		return fmt.Errorf("failed to create precaching job: %w", err)
 	}
 
+	r.Log.Info("Successfully launched pre-caching")
 	return nil
 }
 
@@ -399,13 +407,28 @@ func initIBUWorkspaceDir() error {
 
 // handlePrep the main func to run prep stage
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
+	r.Log.Info("Running health check for Prep")
+	if err := CheckHealth(ctx, r.NoncachedClient, r.Log.WithName("HealthCheck")); err != nil {
+		msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
+		r.Log.Info(msg)
+		utils.SetPrepStatusInProgress(ibu, msg)
+		return requeueWithHealthCheckInterval(), nil
+	}
+	r.Log.Info("Cluster is healthy")
+
 	r.Log.Info("Fetching stateroot setup job")
 	staterootSetupJob, err := prep.GetStaterootSetupJob(ctx, r.Client, r.Log)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("Validating Ibu spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
+				// there a few known network errors we are allowing for a requeue with IsConflictOrRetriable
+				// but more often than not,
+				// the error bubbling up from validateIBUSpec is from user and which should stop reconcile right away
+				if !common.IsConflictOrRetriable(err) {
+					return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
+				}
+				return requeueWithError(fmt.Errorf("failed to validate Ibu spec, requeuing due a known network issue: %w", err))
 			}
 
 			r.Log.Info("Creating IBU workspace")
@@ -413,21 +436,13 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to initialize IBU workspace: %s", err.Error()), ibu)
 			}
 
-			r.Log.Info("Running health check for Prep")
-			if err := CheckHealth(ctx, r.NoncachedClient, r.Log); err != nil {
-				msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
-				r.Log.Info(msg)
-				utils.SetPrepStatusInProgress(ibu, msg)
-				return requeueWithHealthCheckInterval(), nil
-			}
-
 			r.Log.Info("Launching a new stateroot job")
 			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed launch stateroot job: %s", err.Error()), ibu)
+				return requeueWithError(fmt.Errorf("failed launch stateroot job: %w", err))
 			}
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job for stateroot setup. %s", getJobMetadataString(staterootSetupJob)), ibu)
 		}
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get stateroot setup job: %s", err.Error()), ibu)
+		return requeueWithError(fmt.Errorf("failed to get stateroot setup job: %w", err))
 	}
 
 	r.Log.Info("Verifying stateroot setup job status")
@@ -455,11 +470,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("Launching a new precache job")
 			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to launch precaching job: %s", err.Error()), ibu)
+				return requeueWithError(fmt.Errorf("failed to launch precaching job: %w", err))
 			}
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job precache. %s", getJobMetadataString(precacheJob)), ibu)
 		}
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get precache job: %s", err.Error()), ibu)
+		return requeueWithError(fmt.Errorf("failed to get precache job: %w", err))
 	}
 
 	r.Log.Info("Verifying precache job status")

@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -33,6 +35,9 @@ func TestInstallationIso(t *testing.T) {
 		precacheDisabled    bool
 		shutdown            bool
 		skipDiskCleanup     bool
+		addTrustedBundle    bool
+		mirrorRegistry      bool
+		proxy               seedreconfig.Proxy
 		renderCommandReturn error
 		embedCommandReturn  error
 		expectedError       string
@@ -49,6 +54,20 @@ func TestInstallationIso(t *testing.T) {
 			shutdown:           false,
 			skipDiskCleanup:    false,
 			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with proxy",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			expectedError:      "",
+			proxy:              seedreconfig.Proxy{NoProxy: "noProxy", HTTPSProxy: "httpsProxy", HTTPProxy: "httpProxy"},
 		},
 		{
 			name:               "Happy flow - precache best-effort set",
@@ -100,6 +119,34 @@ func TestInstallationIso(t *testing.T) {
 			precacheDisabled:   false,
 			shutdown:           false,
 			skipDiskCleanup:    true,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with additional trusted bundle",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
+			addTrustedBundle:   true,
+			expectedError:      "",
+		},
+		{
+			name:               "Happy flow with mirror registry",
+			workDirExists:      true,
+			authFileExists:     true,
+			pullSecretExists:   true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    true,
+			mirrorRegistry:     true,
 			expectedError:      "",
 		},
 		{
@@ -229,6 +276,7 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, err, nil)
 				testPSFilePath = psFile.Name()
 			}
+
 			if tc.pullSecretExists && tc.authFileExists && tc.sshPublicKeyExists {
 				mockOps.EXPECT().RunInHostNamespace("podman", "run",
 					"-v", fmt.Sprintf("%s:/data:rw,Z", tmpDir),
@@ -256,7 +304,7 @@ func TestInstallationIso(t *testing.T) {
 				rhcosLiveIsoUrl = server.URL
 				defer server.Close()
 			}
-			ibiConfig := &ibiconfig.IBIPrepareConfig{
+			isoConfig := &ibiconfig.IBIPrepareConfig{
 				PrecacheDisabled:    tc.precacheDisabled,
 				PrecacheBestEffort:  tc.precacheBestEffort,
 				Shutdown:            tc.shutdown,
@@ -269,10 +317,23 @@ func TestInstallationIso(t *testing.T) {
 				RHCOSLiveISO:        rhcosLiveIsoUrl,
 				InstallationDisk:    installationDisk,
 				ExtraPartitionStart: extraPartitionStart,
+				Proxy:               tc.proxy,
+			}
+			if tc.addTrustedBundle {
+				testTrustedBundlePath := "trustedBundle"
+				trustedBundle, err := os.Create(path.Join(tmpDir, testTrustedBundlePath))
+				assert.Equal(t, err, nil)
+				isoConfig.AdditionalTrustBundlePath = trustedBundle.Name()
+			}
+			if tc.mirrorRegistry {
+				mirrorRegistryPath := "mirrorRegistry"
+				mirrorRegistry, err := os.Create(path.Join(tmpDir, mirrorRegistryPath))
+				assert.Equal(t, err, nil)
+				isoConfig.MirrorRegistryPath = mirrorRegistry.Name()
 			}
 
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)
-			err := installationIso.Create(ibiConfig)
+			err := installationIso.Create(isoConfig)
 			if tc.expectedError == "" {
 				assert.Equal(t, err, nil)
 				var ibiConfig ibiconfig.IBIPrepareConfig
@@ -284,6 +345,25 @@ func TestInstallationIso(t *testing.T) {
 				assert.Equal(t, ibiConfig.SkipDiskCleanup, tc.skipDiskCleanup)
 				assert.Equal(t, ibiConfig.AuthFile, authIgnitionFilePath)
 				assert.Equal(t, ibiConfig.PullSecretFile, psIgnitioFilePath)
+
+				data, errReading := os.ReadFile(path.Join(tmpDir, butaneConfigFile))
+				assert.Equal(t, errReading, nil)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTP_PROXY=%s", tc.proxy.HTTPProxy)), true)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("HTTPS_PROXY=%s", tc.proxy.HTTPSProxy)), true)
+				assert.Equal(t, strings.Contains(string(data), fmt.Sprintf("NO_PROXY=%s", tc.proxy.NoProxy)), true)
+				if tc.addTrustedBundle {
+					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "additionalTrustBundle")), true)
+					assert.Equal(t, strings.Contains(string(data), "additional-trust-bundle"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "additional-trust-bundle"), false)
+				}
+				if tc.mirrorRegistry {
+					assert.Equal(t, strings.Contains(string(data), path.Join(butaneFiles, "mirrorRegistry")), true)
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), true)
+				} else {
+					assert.Equal(t, strings.Contains(string(data), "/etc/containers/registries.conf"), false)
+				}
+
 			} else {
 				assert.Contains(t, err.Error(), tc.expectedError)
 			}

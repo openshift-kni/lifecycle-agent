@@ -23,15 +23,20 @@ type InstallationIso struct {
 }
 
 type IgnitionData struct {
-	AuthFilePath         string
-	PullSecretPath       string
-	IBIConfigurationPath string
-	BackupSecret         string
-	PullSecret           string
-	SshPublicKey         string
-	InstallSeedScript    string
-	SeedImage            string
-	IBIConfiguration     string
+	AuthFilePath              string
+	PullSecretPath            string
+	IBIConfigurationPath      string
+	BackupSecret              string
+	PullSecret                string
+	SshPublicKey              string
+	InstallSeedScript         string
+	SeedImage                 string
+	IBIConfiguration          string
+	HTTPProxy                 string
+	HTTPSProxy                string
+	NoProxy                   string
+	AdditionalTrustBundlePath string
+	MirrorRegistryPath        string
 }
 
 //go:embed data/*
@@ -199,6 +204,26 @@ func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConf
 		InstallSeedScript:    seedInstallScriptInButane,
 		IBIConfiguration:     ibiConfigurationInButane,
 		SeedImage:            ibiConfig.SeedImage,
+		HTTPProxy:            ibiConfig.Proxy.HTTPProxy,
+		HTTPSProxy:           ibiConfig.Proxy.HTTPSProxy,
+		NoProxy:              ibiConfig.Proxy.NoProxy,
+	}
+
+	if ibiConfig.AdditionalTrustBundlePath != "" {
+		additionalTrustBundleInButane := path.Join(butaneFiles, "additionalTrustBundle")
+		if err := r.copyFileToButaneDir(ibiConfig.AdditionalTrustBundlePath,
+			path.Join(r.workDir, additionalTrustBundleInButane)); err != nil {
+			return err
+		}
+		templateData.AdditionalTrustBundlePath = additionalTrustBundleInButane
+	}
+	if ibiConfig.MirrorRegistryPath != "" {
+		mirrorRegistryInButane := path.Join(butaneFiles, "mirrorRegistry")
+		if err := r.copyFileToButaneDir(ibiConfig.MirrorRegistryPath,
+			path.Join(r.workDir, mirrorRegistryInButane)); err != nil {
+			return err
+		}
+		templateData.MirrorRegistryPath = mirrorRegistryInButane
 	}
 
 	template, err := folder.ReadFile(ibiButaneTemplateFilePath)

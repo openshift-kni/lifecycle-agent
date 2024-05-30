@@ -262,6 +262,13 @@ func isTransitionRequested(ibu *ibuv1.ImageBasedUpgrade) bool {
 }
 
 func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
+	// append current logger with the stage name
+	tempOrigLogger := r.Log
+	r.Log = r.Log.WithName(string(stage))
+	defer func() {
+		r.Log = tempOrigLogger
+	}()
+
 	switch stage {
 	case ibuv1.Stages.Idle:
 		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
