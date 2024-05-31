@@ -23,14 +23,13 @@ import (
 	"os"
 	"sync"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-
-	kbatchv1 "k8s.io/api/batch/v1"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	kbatchv1 "k8s.io/api/batch/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,13 +55,6 @@ import (
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift/library-go/pkg/config/leaderelection"
-	"github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/util/retry"
-
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
@@ -75,6 +67,11 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/openshift/library-go/pkg/config/leaderelection"
+	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	//+kubebuilder:scaffold:imports
@@ -126,6 +123,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	scheme.AddKnownTypes(ocpV1.GroupVersion,
 		&ocpV1.ClusterVersion{},
@@ -138,7 +136,9 @@ func main() {
 
 	mux := &sync.Mutex{}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                        scheme,
 		HealthProbeBindAddress:        probeAddr,
 		LeaderElection:                enableLeaderElection,
@@ -168,7 +168,6 @@ func main() {
 	// We want to remove logr.Logger first step to move to logrus
 	// in the future we will have only one of them
 	newLogger := logrus.New()
-	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	if err := os.MkdirAll(common.PathOutsideChroot(common.LCAConfigDir), 0o700); err != nil {
 		setupLog.Error(err, fmt.Sprintf("unable to create config dir: %s", common.LCAConfigDir))
@@ -191,7 +190,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), true, &setupLog)
+	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), true, log.WithName("ibu-dynamic-client"))
 	if err != nil {
 		setupLog.Error(err, "unable to create dynamic client")
 		os.Exit(1)
@@ -210,6 +209,7 @@ func main() {
 		setupLog.Error(err, "Failed to get InClusterConfig")
 		os.Exit(1)
 	}
+	config.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-clientset"))) // allow all client calls to be retriable
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {

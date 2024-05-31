@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/util/retry"
+
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/samber/lo"
@@ -46,7 +48,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller"

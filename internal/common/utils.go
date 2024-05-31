@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"io"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/go-logr/logr"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	cp "github.com/otiai10/copy"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,8 +42,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 )
 
 // TODO: Need a better way to change this but will require relatively big refactoring
@@ -129,12 +129,6 @@ func GetStaterootOptOpenshift(staterootPath string) string {
 	return filepath.Join(staterootPath, "var", OptOpenshift)
 }
 
-// FuncTimer check execution time
-func FuncTimer(start time.Time, name string, r logr.Logger) {
-	elapsed := time.Since(start)
-	r.Info(fmt.Sprintf("%s took %s", name, elapsed))
-}
-
 func IsConflictOrRetriable(err error) bool {
 	return apierrors.IsConflict(err) || apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
 }
@@ -216,7 +210,7 @@ func LogPodLogs(job *kbatch.Job, log logr.Logger, clientset *kubernetes.Clientse
 		}
 		if buf.Len() > 0 {
 			log.Info(fmt.Sprintf("------ start pod `%s` log  -----", pods.Items[0].Name), "job name", job.Name)
-			log.Info(buf.String())
+			log.Info(fmt.Sprintf("\n%s", buf.String()))
 			log.Info(fmt.Sprintf("------ end pod `%s` log  -----", pods.Items[0].Name), "job name", job.Name)
 		} else {
 			log.Info("No new pod logs available", "job name", job.Name, "pod name", pods.Items[0].Name)
