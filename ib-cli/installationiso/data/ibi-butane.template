@@ -23,12 +23,24 @@ storage:
       mode: 0400
       overwrite: true
       contents:
-        local: {{.IBIConfiguration}}
+        local: {{.IBIConfiguration}}{{if .MirrorRegistryPath}}
+    - path: /etc/containers/registries.conf
+      mode: 0400
+      overwrite: true
+      contents:
+        local: {{.MirrorRegistryPath}}{{end}}
     - path: /usr/local/bin/install-rhcos-and-restore-seed.sh
       mode: 0755
       overwrite: true
       contents:
-        local: {{.InstallSeedScript}}
+        local: {{.InstallSeedScript}}{{if .AdditionalTrustBundlePath}}
+    - path: /etc/pki/ca-trust/source/anchors/additional-trust-bundle.pem
+      mode: 0400
+      overwrite: true
+      user:
+        name: root
+      contents:
+        local: {{.AdditionalTrustBundlePath}}{{end}}
 systemd:
   units:
     - name: install-rhcos-and-restore-seed.service
@@ -40,6 +52,12 @@ systemd:
         Description=SNO Image Based Installation
         [Service]
         Environment=SEED_IMAGE={{.SeedImage}}
+        Environment=HTTP_PROXY={{.HTTPProxy}}
+        Environment=http_proxy={{.HTTPProxy}}
+        Environment=HTTPS_PROXY={{.HTTPSProxy}}
+        Environment=https_proxy={{.HTTPSProxy}}
+        Environment=NO_PROXY={{.NoProxy}}
+        Environment=no_proxy={{.NoProxy}}
         Environment=IBI_CONFIGURATION_FILE={{.IBIConfigurationPath}}
         Type=oneshot
         RemainAfterExit=yes
