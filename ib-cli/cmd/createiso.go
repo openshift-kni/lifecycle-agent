@@ -18,72 +18,27 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
-	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/ib-cli/installationiso"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 var (
-	seedImage           string
-	seedVersion         string
-	pullSecretFile      string
-	authFile            string
-	sshPublicKeyFile    string
-	lcaImage            string
-	rhcosLiveIso        string
-	installationDisk    string
-	extraPartitionStart string
-	workDir             string
-	precacheBestEffort  bool
-	precacheDisabled    bool
-	shutdown            bool
-	skipDiskCleanup     bool
-
-	httpProxy             string
-	httpsProxy            string
-	noProxy               string
-	additionalTrustBundle string
-	mirrorRegistry        string
-	nmstateConfig         string
+	workDir string
 )
 
 func addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVarP(&seedImage, "seed-image", "s", "", "Seed image.")
-	cmd.Flags().StringVarP(&seedVersion, "seed-version", "", "", "Seed version.")
-	cmd.Flags().StringVarP(&authFile, "auth-file", "a", "", "The path to the authentication file of the container registry of seed image.")
-	cmd.Flags().StringVarP(&pullSecretFile, "pullsecret-file", "p", "", "The path to the pull secret file for precache process.")
-	cmd.Flags().StringVarP(&sshPublicKeyFile, "ssh-public-key-file", "k", "", "The path to ssh public key to be added to the installed host.")
-	// remove after refactoring the code in ibi-orchestrate-vm
-	cmd.Flags().StringVarP(&lcaImage, "lca-image", "l", "quay.io/openshift-kni/lifecycle-agent-operator:4.16.0", "The lifecycle-agent image to use for generating the ISO.")
-	cmd.Flags().StringVarP(&rhcosLiveIso, "rhcos-live-iso", "r", "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso", "The URL to the rhcos-live-iso for generating the ISO.")
-	cmd.Flags().StringVarP(&installationDisk, "installation-disk", "i", "", "The disk that will be used for the installation.")
-	cmd.Flags().StringVarP(&extraPartitionStart, "extra-partition-start", "e", "", "Start of extra partition used for /var/lib/containers. Partition will expand until the end of the disk. Uses sgdisk notation")
 	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")
-	cmd.Flags().BoolVarP(&precacheBestEffort, "precache-best-effort", "", false, "Set image precache to best effort mode")
-	cmd.Flags().BoolVarP(&precacheDisabled, "precache-disabled", "", false, "Disable precaching, no image precaching will run")
-	cmd.Flags().BoolVarP(&shutdown, "shutdown", "", false, "Shutdown of the host after the preparation process is done.")
-	cmd.Flags().BoolVarP(&skipDiskCleanup, "skip-disk-cleanup", "", false, "Skip installation disk cleanup.")
 
-	cmd.Flags().StringVarP(&httpProxy, "http-proxy", "", "", "Http proxy to be configured.")
-	cmd.Flags().StringVarP(&httpsProxy, "https-proxy", "", "", "Https proxy to be configured.")
-	cmd.Flags().StringVarP(&noProxy, "no-proxy", "", "", "No proxy to be configured.")
-	cmd.Flags().StringVarP(&additionalTrustBundle, "additional-trust-bundle", "", "", "The path to the additional trust bundle.")
-	cmd.Flags().StringVarP(&mirrorRegistry, "mirror-registry", "", "", "The path to mirror registry config file.")
-	cmd.Flags().StringVarP(&nmstateConfig, "nmstate-config", "", "", "The path to nmstate config file.")
-
-	cmd.MarkFlagRequired("installation-disk")
-	cmd.MarkFlagRequired("extra-partition-start")
 	cmd.MarkFlagRequired("dir")
-	cmd.MarkFlagRequired("seed-image")
-	cmd.MarkFlagRequired("seed-version")
-	cmd.MarkFlagRequired("auth-file")
-	cmd.MarkFlagRequired("pullsecret-file")
 }
 
 // createCmd represents the create command
@@ -103,10 +58,35 @@ func init() {
 	addFlags(createIsoCmd)
 }
 
-func createIso() error {
+func readIBIConfigFile(configFile string) (*ibiconfig.ImageBasedInstallConfig, error) {
+	var config ibiconfig.ImageBasedInstallConfig
+	if configFile == "" {
+		return nil, fmt.Errorf("configuration file is required")
+	}
+	if _, err := os.Stat(configFile); err != nil {
+		return nil, fmt.Errorf("configuration file %s does not exist", configFile)
+	}
 
-	var err error
+	if err := utils.ReadYamlOrJSONFile(configFile, &config); err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", configFile, err)
+	}
+
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("config file validation failed: %w", err)
+	}
+
+	config.SetDefaultValues()
+
+	return &config, nil
+}
+
+func createIso() error {
 	log.Info("Installation ISO creation has started")
+	configurationFile := path.Join(workDir, "image-based-install-iso.yaml")
+	config, err := readIBIConfigFile(configurationFile)
+	if err != nil {
+		log.Fatalf("Error reading configuration file: %v", err)
+	}
 
 	hostCommandsExecutor := ops.NewRegularExecutor(log, verbose)
 	op := ops.NewOps(log, hostCommandsExecutor)
@@ -118,36 +98,8 @@ func createIso() error {
 		return err
 	}
 
-	ibiConfig := &ibiconfig.IBIPrepareConfig{
-		SeedImage:                 seedImage,
-		SeedVersion:               seedVersion,
-		AuthFile:                  authFile,
-		PullSecretFile:            pullSecretFile,
-		SSHPublicKeyFile:          sshPublicKeyFile,
-		RHCOSLiveISO:              rhcosLiveIso,
-		InstallationDisk:          installationDisk,
-		ExtraPartitionStart:       extraPartitionStart,
-		PrecacheDisabled:          precacheDisabled,
-		PrecacheBestEffort:        precacheBestEffort,
-		Shutdown:                  shutdown,
-		SkipDiskCleanup:           skipDiskCleanup,
-		AdditionalTrustBundlePath: additionalTrustBundle,
-		Proxy: seedreconfig.Proxy{
-			HTTPProxy:  httpProxy,
-			HTTPSProxy: httpsProxy,
-			NoProxy:    noProxy,
-		},
-		MirrorRegistryPath: mirrorRegistry,
-		NMStateConfig:      nmstateConfig,
-	}
-
-	if err := ibiConfig.Validate(); err != nil {
-		log.Fatalf("Error validating the configuration: %v", err)
-	}
-	ibiConfig.SetDefaultValues()
-
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
-	if err = isoCreator.Create(ibiConfig); err != nil {
+	if err = isoCreator.Create(config); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)
 		log.Errorf(err.Error())
 		return err

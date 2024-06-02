@@ -116,6 +116,8 @@ const (
 
 	CaBundleDataKey                  = "ca-bundle.crt"
 	ClusterAdditionalTrustBundleName = "user-ca-bundle"
+
+	IBIPSFile = "/var/tmp/pull-secret.json"
 )
 
 // Annotation names and values related to extra manifest
