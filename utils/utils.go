@@ -80,19 +80,16 @@ func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMe
 	}, nil
 }
 
-// RenderTemplateFile render template file
-func RenderTemplateFile(templateData string, params any, dest string, perm os.FileMode) error {
+// RenderTemplate render template
+func RenderTemplate(templateData string, params any) ([]byte, error) {
 	tmpl := template.New("template")
 	tmpl = template.Must(tmpl.Parse(templateData))
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, params); err != nil {
-		return fmt.Errorf("failed to render controller template: %w", err)
+		return nil, fmt.Errorf("failed to render template: %w", err)
 	}
 
-	if err := os.WriteFile(dest, buf.Bytes(), perm); err != nil {
-		return fmt.Errorf("error occurred while trying to write rendered data to %s: %w", dest, err)
-	}
-	return nil
+	return buf.Bytes(), nil
 }
 
 func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1.Node, error) {
