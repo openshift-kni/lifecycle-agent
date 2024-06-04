@@ -112,13 +112,13 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
 
-	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
-		return fmt.Errorf("failed to configure networking, err: %w", err)
-	}
-
 	if err := utils.RunOnce("pull-secret", p.workingDir, p.log, p.createPullSecretFile,
 		seedReconfiguration.PullSecret, common.ImageRegistryAuthFile); err != nil {
 		return fmt.Errorf("failed to run once pull-secret for post pivot: %w", err)
+	}
+
+	if err := p.networkConfiguration(ctx, seedReconfiguration); err != nil {
+		return fmt.Errorf("failed to configure networking, err: %w", err)
 	}
 
 	if seedReconfiguration.APIVersion != clusterconfig_api.SeedReconfigurationVersion {
@@ -959,20 +959,7 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
-		return err
-	}
-
-	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
-		return err
-	}
-
 	if err := p.setDnsMasqConfiguration(seedReconfiguration, dnsmasqOverrides); err != nil {
-		return err
-	}
-
-	seedReconfiguration.Hostname, err = p.setHostname(seedReconfiguration.Hostname)
-	if err != nil {
 		return err
 	}
 
@@ -982,6 +969,19 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 
 	if _, err := p.ops.SystemctlAction("restart", dnsmasqService); err != nil {
 		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
+	}
+
+	seedReconfiguration.Hostname, err = p.setHostname(seedReconfiguration.Hostname)
+	if err != nil {
+		return err
+	}
+
+	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
+		return err
+	}
+
+	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
+		return err
 	}
 
 	return nil
