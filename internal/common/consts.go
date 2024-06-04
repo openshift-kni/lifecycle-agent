@@ -63,7 +63,7 @@ const (
 	EtcdContainerName                 = "recert_etcd"
 	LvmConfigDir                      = "lvm-configuration"
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
-	CABundleFilePath                  = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+	CABundleFilePath                  = "/etc/pki/ca-trust/source/anchors/openshift-config-user-ca-bundle.crt"
 
 	LCAConfigDir                                    = "/var/lib/lca"
 	IBUAutoRollbackConfigFile                       = LCAConfigDir + "/autorollback_config.json"
@@ -111,6 +111,9 @@ const (
 
 	NMConnectionFolder = "/etc/NetworkManager/system-connections"
 	NetworkDir         = "network-configuration"
+
+	CaBundleDataKey                  = "ca-bundle.crt"
+	ClusterAdditionalTrustBundleName = "user-ca-bundle"
 )
 
 // Annotation names and values related to extra manifest

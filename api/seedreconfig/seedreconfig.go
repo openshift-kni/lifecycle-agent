@@ -139,6 +139,8 @@ type SeedReconfiguration struct {
 	// In IBU case data will be taken from the upgraded cluster /etc/chrony.conf file.
 	// In IBI case data will be taken from the user provided configuration.
 	ChronyConfig string `json:"chrony_config,omitempty"`
+
+	AdditionalTrustBundle AdditionalTrustBundle `json:"additionalTrustBundle,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {
@@ -180,4 +182,16 @@ type Proxy struct {
 	// NoProxy is a comma-separated list of domains and CIDRs for which the proxy should not be used.
 	// +optional
 	NoProxy string `json:"noProxy,omitempty"`
+}
+
+type AdditionalTrustBundle struct {
+	// The contents of the "user-ca-bundle" configmap in the "openshift-config" namepace
+	UserCaBundle string `json:"userCaBundle"`
+
+	// The Proxy CR trustedCA configmap name
+	ProxyConfigmapName string `json:"proxyConfigmapName"`
+
+	// The contents of the ProxyConfigmapName configmap. Must equal
+	// UserCaBundle if ProxyConfigmapName is "user-ca-bundle"
+	ProxyConfigmapBundle string `json:"proxyConfigmapBundle"`
 }

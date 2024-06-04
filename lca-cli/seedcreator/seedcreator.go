@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -193,6 +194,20 @@ func (s *SeedCreator) handleServices() error {
 	})
 }
 
+func GetSeedAdditionalTrustBundleState(ctx context.Context, client runtimeclient.Client) (*seedclusterinfo.AdditionalTrustBundle, error) {
+	hasUserCaBundle, proxyConfigmapName, err := utils.GetClusterAdditionalTrustBundleState(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster additional trust bundle state: %w", err)
+	}
+
+	result := seedclusterinfo.AdditionalTrustBundle{
+		HasUserCaBundle:    hasUserCaBundle,
+		ProxyConfigmapName: proxyConfigmapName,
+	}
+
+	return &result, nil
+}
+
 func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	s.log.Info("Saving seed cluster configuration")
 	clusterInfo, err := utils.GetClusterInfo(ctx, s.client)
@@ -207,10 +222,21 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 
 	hasFIPS, err := utils.HasFIPS(ctx, s.client)
 	if err != nil {
-		return fmt.Errorf("failed to get proxy information: %w", err)
+		return fmt.Errorf("failed to get FIPS information: %w", err)
 	}
 
-	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(clusterInfo, s.recertContainerImage, hasProxy, hasFIPS)
+	seedAdditionalTrustBundle, err := GetSeedAdditionalTrustBundleState(ctx, s.client)
+	if err != nil {
+		return fmt.Errorf("failed to get additional trust bundle information: %w", err)
+	}
+
+	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(
+		clusterInfo,
+		s.recertContainerImage,
+		hasProxy,
+		hasFIPS,
+		seedAdditionalTrustBundle,
+	)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)

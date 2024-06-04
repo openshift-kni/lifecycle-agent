@@ -123,12 +123,14 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to set no proxy: %w", err)
 	}
 
-	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
-		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
+	// NOTE: This must be done before we run recert, as otherwise recert could
+	// fail to pull in absence of a precached recert image
+	if err := p.establishEarlyCertificateTrust(seedReconfiguration); err != nil {
+		return fmt.Errorf("failed copy cluster config files: %w", err)
 	}
 
-	if err := p.copyClusterConfigFiles(); err != nil {
-		return fmt.Errorf("failed copy cluster config files: %w", err)
+	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
+		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
 	}
 
 	client, err := utils.CreateKubeClient(p.scheme, p.kubeconfig)
@@ -310,13 +312,19 @@ func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfiguration
 }
 
 func (p *PostPivot) postRecertCommands(ctx context.Context, clusterInfo *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	// changing seed ip to new ip in all static pod files
+	_, err := p.ops.RunBashInHostNamespace("update-ca-trust")
+	if err != nil {
+		return fmt.Errorf("failed to run update-ca-trust after recert: %w", err)
+	}
+
 	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
 	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
 		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
 	}
 
 	// changing seed ip to new ip in all static pod files
-	_, err := p.ops.RunBashInHostNamespace(fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
+	_, err = p.ops.RunBashInHostNamespace(fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
 		seedClusterInfo.NodeIP, clusterInfo.NodeIP))
 	if err != nil {
 		return fmt.Errorf("failed to change seed ip to new ip in /etc/kubernetes, err: %w", err)
@@ -464,11 +472,25 @@ func (p *PostPivot) restoreOadpDataProtectionApplication(ctx context.Context, cl
 	return nil
 }
 
-func (p *PostPivot) copyClusterConfigFiles() error {
-	if err := utils.CopyFileIfExists(path.Join(p.workingDir, common.ClusterConfigDir, path.Base(common.CABundleFilePath)),
-		common.CABundleFilePath); err != nil {
-		return fmt.Errorf("failed to copy cluster config file in %s: %w", common.ClusterConfigDir, err)
+// establishEarlyCertificateTrust writes the user ca bundle to the trust store
+// and runs update-ca-trust to trust the required certificates before we pull
+// the recert image. This is required because the recert image is not
+// necessarily cached on the host and we need to pull it from the registry
+// which might require trusting the registry's certificate. This is actually
+// somewhat redundant because recert itself already does the same thing (among
+// other things), but we need to do it before we can even run recert.
+func (p *PostPivot) establishEarlyCertificateTrust(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if seedReconfiguration.AdditionalTrustBundle.UserCaBundle != "" {
+		if err := os.WriteFile(common.CABundleFilePath, []byte(seedReconfiguration.AdditionalTrustBundle.UserCaBundle), 0o600); err != nil {
+			return fmt.Errorf("failed to write user ca bundle to %s: %w", common.CABundleFilePath, err)
+		}
 	}
+
+	_, err := p.ops.RunBashInHostNamespace("update-ca-trust")
+	if err != nil {
+		return fmt.Errorf("failed to run update-ca-trust after early certificate trust: %w", err)
+	}
+
 	return nil
 }
 
