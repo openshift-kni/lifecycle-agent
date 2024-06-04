@@ -71,6 +71,12 @@ type SeedReconfiguration struct {
 	// the SSH keys of the seed cluster.
 	SSHKey string `json:"ssh_key,omitempty"`
 
+	// ServerSSHKeys is a list of server SSH keys that are found in /etc/ssh.
+	// During an IBU, this is taken from the cluster that is being upgraded so
+	// that the cluster's SSH fingerprint remains the same. During an IBI,
+	// leave empty to regenerate (to avoid using the seed's SSH keys).
+	ServerSSHKeys []ServerSSHKey `json:"server_ssh_keys,omitempty"`
+
 	// KubeadminPasswordHash is the hash of the password for the kubeadmin
 	// user, as can be found in the kubeadmin key of the kube-system/kubeadmin
 	// secret. This will replace the kubeadmin password of the seed cluster.
@@ -194,4 +200,9 @@ type AdditionalTrustBundle struct {
 	// The contents of the ProxyConfigmapName configmap. Must equal
 	// UserCaBundle if ProxyConfigmapName is "user-ca-bundle"
 	ProxyConfigmapBundle string `json:"proxyConfigmapBundle"`
+}
+
+type ServerSSHKey struct {
+	FileName    string `json:"file_name"`
+	FileContent string `json:"file_content"`
 }

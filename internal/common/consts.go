@@ -49,6 +49,8 @@ const (
 	MultusCerts  = "/etc/cni/multus/certs"
 	ChronyConfig = "/etc/chrony.conf"
 
+	SSHServerKeysDirectory = "/etc/ssh"
+
 	MCDCurrentConfig = "/etc/machine-config-daemon/currentconfig"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
