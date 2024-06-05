@@ -97,7 +97,6 @@ func createIso() error {
 		log.Errorf(err.Error())
 		return err
 	}
-
 	isoCreator := installationiso.NewInstallationIso(log, op, workDir)
 	if err = isoCreator.Create(config); err != nil {
 		err = fmt.Errorf("failed to create installation ISO: %w", err)

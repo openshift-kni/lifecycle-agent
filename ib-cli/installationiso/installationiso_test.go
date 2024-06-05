@@ -236,16 +236,6 @@ func TestInstallationIso(t *testing.T) {
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
-
-			if tc.liveIsoUrlSuccess {
-				mockOps.EXPECT().RunInHostNamespace("podman", "run",
-					"-v", fmt.Sprintf("%s:/data:rw,Z", tmpDir),
-					coreosInstallerImage,
-					"iso", "ignition", "embed",
-					"-i", path.Join("/data", ibiIgnitionFileName),
-					"-o", path.Join("/data", ibiIsoFileName),
-					path.Join("/data", rhcosIsoFileName)).Return("", tc.embedCommandReturn).Times(1)
-			}
 			rhcosLiveIsoUrl := "notfound"
 			if tc.liveIsoUrlSuccess {
 				server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -278,6 +268,11 @@ func TestInstallationIso(t *testing.T) {
 			}
 			if len(tc.ids) > 0 {
 				isoConfig.ImageDigestSources = tc.ids
+			}
+
+			if tc.liveIsoUrlSuccess {
+				mockOps.EXPECT().CreateIsoWithEmbeddedIgnition(log, gomock.Any(),
+					path.Join(tmpDir, rhcosIsoFileName), path.Join(tmpDir, ibiIsoFileName)).Return(tc.embedCommandReturn).Times(1)
 			}
 
 			installationIso := NewInstallationIso(log, mockOps, tmpDir)

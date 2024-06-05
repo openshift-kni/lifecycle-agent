@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openshift/assisted-image-service/pkg/isoeditor"
 	"github.com/sirupsen/logrus"
 	etcdClient "go.etcd.io/etcd/client/v3"
 
@@ -56,6 +58,7 @@ type Ops interface {
 	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
 	GetHostname() (string, error)
+	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
 }
 
 type CMD struct {
@@ -560,4 +563,27 @@ func (o *ops) GetHostname() (string, error) {
 		return "", fmt.Errorf("failed to get hostname: %w", err)
 	}
 	return hostname, nil
+}
+
+func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error {
+	ignitionc := &isoeditor.IgnitionContent{}
+	ignitionc.Config = ignitionBytes
+	reader, err := isoeditor.NewRHCOSStreamReader(baseIsoPath, ignitionc, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create reader for rhcos iso: %w", err)
+	}
+	log.Info("Creating IBI ISO with embedded ignition")
+	file, err := os.Create(outputIsoPath)
+	if err != nil {
+		return fmt.Errorf("failed to create ibi iso file: %w", err)
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, reader); err != nil {
+		return fmt.Errorf("failed to copy reader to file: %w", err)
+	}
+
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+	return nil
 }

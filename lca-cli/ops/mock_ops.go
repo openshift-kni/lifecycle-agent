@@ -11,6 +11,7 @@ package ops
 import (
 	reflect "reflect"
 
+	logrus "github.com/sirupsen/logrus"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -64,6 +65,20 @@ func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, ex
 func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
+}
+
+// CreateIsoWithEmbeddedIgnition mocks base method.
+func (m *MockOps) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateIsoWithEmbeddedIgnition", log, ignitionBytes, baseIsoPath, outputIsoPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateIsoWithEmbeddedIgnition indicates an expected call of CreateIsoWithEmbeddedIgnition.
+func (mr *MockOpsMockRecorder) CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseIsoPath, outputIsoPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIsoWithEmbeddedIgnition", reflect.TypeOf((*MockOps)(nil).CreateIsoWithEmbeddedIgnition), log, ignitionBytes, baseIsoPath, outputIsoPath)
 }
 
 // ExtractTarWithSELinux mocks base method.
