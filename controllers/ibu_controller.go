@@ -23,8 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/client-go/util/retry"
-
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/samber/lo"
@@ -151,9 +149,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Use a non-cached query to Get the IBU CR, to ensure we aren't running against a stale cached CR
 	ibu := &ibuv1.ImageBasedUpgrade{}
-	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
-		return r.NoncachedClient.Get(ctx, req.NamespacedName, ibu) //nolint:wrapcheck
-	})
+	err = r.NoncachedClient.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = lcautils.InitIBU(ctx, r.Client, &r.Log)
@@ -426,20 +422,14 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					filePath := common.PathOutsideChroot(utils.IBUFilePath)
 					// Re-create initial IBU instead of save/restore when it's idle or rollback failed
 					if utils.IsStageCompleted(ibu, ibuv1.Stages.Idle) || utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
-						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-							err := os.Remove(filePath)
-							if os.IsNotExist(err) {
-								return nil
+						if err := os.Remove(filePath); err != nil {
+							if !os.IsNotExist(err) {
+								fmt.Printf("Failed to remove IBU from %s: %v", filePath, err)
 							}
-							return err //nolint:wrapcheck
-						}); err != nil {
-							fmt.Printf("Failed to save deleted IBU: %v", err)
 						}
 					} else {
-						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-							return lcautils.MarshalToFile(de.Object, filePath) //nolint:wrapcheck
-						}); err != nil {
-							fmt.Printf("Failed to save deleted IBU: %v", err)
+						if err := lcautils.MarshalToFile(de.Object, filePath); err != nil {
+							fmt.Printf("Failed to save deleted IBU to %s: %v", filePath, err)
 						}
 					}
 					return true

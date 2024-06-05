@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	kbatch "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,23 +35,12 @@ import (
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	cp "github.com/otiai10/copy"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TODO: Need a better way to change this but will require relatively big refactoring
 var OstreeDeployPathPrefix = ""
-
-var RetryBackoffTwoMinutes = wait.Backoff{
-	Steps:    120,
-	Duration: time.Second,
-	Factor:   1.0,
-	Jitter:   0.1,
-}
 
 // GetConfigMap retrieves the configmap from cluster
 func GetConfigMap(ctx context.Context, c client.Client, configMap ibuv1.ConfigMapRef) (*corev1.ConfigMap, error) {
@@ -127,22 +115,6 @@ func GetStaterootPath(osname string) string {
 // the stateroot deployment, we need to access it in this odd manner.
 func GetStaterootOptOpenshift(staterootPath string) string {
 	return filepath.Join(staterootPath, "var", OptOpenshift)
-}
-
-func IsConflictOrRetriable(err error) bool {
-	return apierrors.IsConflict(err) || apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
-}
-
-func RetryOnConflictOrRetriable(backoff wait.Backoff, fn func() error) error {
-	return retry.OnError(backoff, IsConflictOrRetriable, fn) //nolint:wrapcheck
-}
-
-func IsRetriable(err error) bool {
-	return apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || net.IsConnectionRefused(err)
-}
-
-func RetryOnRetriable(backoff wait.Backoff, fn func() error) error {
-	return retry.OnError(backoff, IsRetriable, fn) //nolint:wrapcheck
 }
 
 func GetDesiredStaterootName(ibu *ibuv1.ImageBasedUpgrade) string {
