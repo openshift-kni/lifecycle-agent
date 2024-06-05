@@ -14,6 +14,9 @@ import (
 
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -144,7 +147,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client, err: %w", err)
 	}
-	dynamicClient, err := utils.CreateDynamicClient(p.kubeconfig, false, nil)
+
+	// init new logger for CreateDynamicClient (others are using logrus)
+	opts := zap.Options{Development: true}
+	l := zap.New(zap.UseFlagOptions(&opts))
+	dynamicClient, err := utils.CreateDynamicClient(p.kubeconfig, false, l.WithName("post-pivot-dynamic-client"))
 	if err != nil {
 		return fmt.Errorf("failed to create k8s dynamic client, err: %w", err)
 	}

@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"text/template"
 
+	"k8s.io/client-go/util/retry"
+
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +26,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
@@ -61,23 +62,6 @@ func MarshalToYamlFile(data any, filePath string) error {
 		return fmt.Errorf("failed to write file in %s: %w", filePath, err)
 	}
 	return nil
-}
-
-// TypeMetaForObject returns the given object's TypeMeta or an error otherwise.
-func TypeMetaForObject(scheme *runtime.Scheme, o runtime.Object) (*metav1.TypeMeta, error) {
-	gvks, unversioned, err := scheme.ObjectKinds(o)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ObjectKinds: %w", err)
-	}
-	if unversioned || len(gvks) == 0 {
-		return nil, fmt.Errorf("unable to find API version for object")
-	}
-	// if there are multiple assume the last is the most recent
-	gvk := gvks[len(gvks)-1]
-	return &metav1.TypeMeta{
-		APIVersion: gvk.GroupVersion().String(),
-		Kind:       gvk.Kind,
-	}, nil
 }
 
 // RenderTemplate render template
@@ -346,15 +330,6 @@ func ConvertToRawExtension(config any) (runtime.RawExtension, error) {
 	}, nil
 }
 
-func MoveFileIfExists(source, dest string) error {
-	if _, err := os.Stat(source); err == nil {
-		if err := os.Rename(source, dest); err != nil {
-			return fmt.Errorf("failed to move %s to %s, err :%w", source, dest, err)
-		}
-	}
-	return nil
-}
-
 func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
 	newPullSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -383,7 +358,7 @@ func AppendToListIfNotExists(list []string, value string) []string {
 	return append(list, value)
 }
 
-func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Logger) (dynamic.Interface, error) {
+func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log logr.Logger) (dynamic.Interface, error) {
 	// Read kubeconfig
 	var config *rest.Config
 	if _, err := os.Stat(kubeconfig); err != nil {
@@ -399,6 +374,7 @@ func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Log
 			return nil, fmt.Errorf("unable to read kubeconfig: %w", err)
 		}
 	}
+	config.Wrap(RetryMiddleware(log)) // allow all client calls to be retriable
 
 	// Create dynamic client
 	dynamicClient, err := dynamic.NewForConfig(config)
@@ -406,6 +382,7 @@ func CreateDynamicClient(kubeconfig string, isTestEnvAllowed bool, log *logr.Log
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	log.Info("Successfully created dynamic client")
 	return dynamicClient, nil
 }
 
