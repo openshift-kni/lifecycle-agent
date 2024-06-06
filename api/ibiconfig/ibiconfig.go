@@ -75,6 +75,13 @@ type ImageDigestSource struct {
 	Mirrors []string `json:"mirrors,omitempty"`
 }
 
+func (c *ImageBasedInstallConfig) SetDefaultValues() {
+	if c.RHCOSLiveISO == "" {
+		c.RHCOSLiveISO = "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso"
+	}
+	c.IBIPrepareConfig.SetDefaultValues()
+}
+
 func (c *IBIPrepareConfig) Validate() error {
 	if c.SeedImage == "" {
 		return fmt.Errorf("seedImage is required")
