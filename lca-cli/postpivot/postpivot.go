@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 
@@ -20,7 +22,6 @@ import (
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
@@ -416,20 +417,6 @@ func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client)
 	})
 }
 
-func applyManifest(ctx context.Context, log *logrus.Logger, dc dynamic.Interface, rm meta.RESTMapper, m *unstructured.Unstructured) error {
-	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
-		if err := extramanifest.ApplyExtraManifest(ctx, dc, rm, m, false); err != nil {
-			if common.IsRetriable(err) {
-				log.Infof("Retrying apply of manifest %s %s", m.GetKind(), m.GetName())
-				return false, nil
-			} else {
-				return true, err //nolint:wrapcheck
-			}
-		}
-		return true, nil
-	})
-}
-
 func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper) error {
 	p.log.Infof("Applying manifests from %s", mPath)
 	mFiles, err := os.ReadDir(mPath)
@@ -451,14 +438,14 @@ func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicCli
 			for _, m := range manifests.([]interface{}) {
 				manifest := unstructured.Unstructured{}
 				manifest.Object = m.(map[string]interface{})
-				if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
+				if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
 					return fmt.Errorf("failed to apply manifest: %w", err)
 				}
 			}
 		} else {
 			manifest := unstructured.Unstructured{}
 			manifest.Object = obj
-			if err := applyManifest(ctx, p.log, dynamicClient, restMapper, &manifest); err != nil {
+			if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
 				return fmt.Errorf("failed to apply manifest: %w", err)
 			}
 		}

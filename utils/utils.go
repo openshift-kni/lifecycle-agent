@@ -14,10 +14,9 @@ import (
 	"regexp"
 	"text/template"
 
-	"k8s.io/client-go/util/retry"
-
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -273,11 +272,13 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 					Stage: ibuv1.Stages.Idle,
 				},
 			}
-			if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-				return client.IgnoreAlreadyExists(c.Create(ctx, ibu)) //nolint:wrapcheck
-			}); err != nil {
-				return fmt.Errorf("failed to create IBU during init: %w", err)
+
+			if err := c.Create(ctx, ibu); err != nil {
+				if !k8serrors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create IBU during init: %w", err)
+				}
 			}
+
 			log.Info("Initial IBU created")
 			return nil
 		}
@@ -288,27 +289,23 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 	ibu.SetResourceVersion("")
 
 	log.Info("Saved IBU CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, ibu)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed to delete IBU during restore: %w", err)
+	if err := c.Delete(ctx, ibu); err != nil {
+		if !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to delete IBU during restore: %w", err)
+		}
 	}
 
 	// Save status as the ibu structure gets over-written by the create call
 	// with the result which has no status
 	status := ibu.Status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, ibu) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Create(ctx, ibu); err != nil {
 		return fmt.Errorf("failed to create IBU to restore: %w", err)
 	}
 
 	// Put the saved status into the newly create ibu with the right resource
 	// version which is required for the update call to work
 	ibu.Status = status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, ibu) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Status().Update(ctx, ibu); err != nil {
 		return fmt.Errorf("failed to update IBU during restore: %w", err)
 	}
 
@@ -342,9 +339,7 @@ func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dock
 		Type: corev1.SecretTypeDockerConfigJson,
 	}
 
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Update(ctx, newPullSecret) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Update(ctx, newPullSecret); err != nil {
 		return nil, fmt.Errorf("failed to update pull-secret resource: %w", err)
 	}
 

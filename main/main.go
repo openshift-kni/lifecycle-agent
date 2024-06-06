@@ -23,12 +23,13 @@ import (
 	"os"
 	"sync"
 
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	kbatchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -348,42 +349,36 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 
 	// Restore Secret CR
 	log.Info("Saved SeedGenerator Secret CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, secret)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed delete SeedGenerator Secret: %w", err)
+	if err := c.Delete(ctx, secret); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed delete SeedGenerator Secret: %w", err)
+		}
 	}
 
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, secret) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Create(ctx, secret); err != nil {
 		return fmt.Errorf("failed to create SeedGenerator Secret: %w", err)
 	}
 
 	// Restore SeedGenerator CR
 
 	log.Info("Saved SeedGenerator CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, seedgen)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed to delete SeedGenerator: %w", err)
+	if err := c.Delete(ctx, seedgen); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete SeedGenerator: %w", err)
+		}
 	}
 
 	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, seedgen) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Create(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to create seedgen: %w", err)
 	}
 
 	// Put the saved status into the newly create seedgen with the right resource
 	// version which is required for the update call to work
 	seedgen.Status = status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, seedgen) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Status().Update(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}
 

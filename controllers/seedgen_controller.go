@@ -27,8 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/client-go/util/retry"
-
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
@@ -36,6 +34,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -597,18 +596,16 @@ func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, 
 	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreAlreadyExists(r.Client.Create(ctx, seedgen)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed to create seedgen during restore: %w", err)
+	if err := r.Client.Create(ctx, seedgen); err != nil {
+		if !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create seedgen during restore: %w", err)
+		}
 	}
 
 	// Put the saved status into the newly create seedgen with the right resource
 	// version which is required for the update call to work
 	seedgen.Status = status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return r.Client.Status().Update(ctx, seedgen) //nolint:wrapcheck
-	}); err != nil {
+	if err := r.Client.Status().Update(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to update seedgen status during restore: %w", err)
 	}
 
@@ -621,10 +618,10 @@ func (r *SeedGeneratorReconciler) restoreSeedgenSecretCR(ctx context.Context, se
 	// Strip the ResourceVersion, otherwise the restore fails
 	secret.SetResourceVersion("")
 
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreAlreadyExists(r.Client.Create(ctx, secret)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed to create seedgen secret: %w", err)
+	if err := r.Client.Create(ctx, secret); err != nil {
+		if !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create seedgen secret: %w", err)
+		}
 	}
 
 	return nil
@@ -896,10 +893,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Use a non-cached query to Get the SeedGen CR, to ensure we aren't running against a stale cached CR
 	seedgen := &seedgenv1.SeedGenerator{}
-	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
-		return r.NoncachedClient.Get(ctx, req.NamespacedName, seedgen) //nolint:wrapcheck
-	})
-	if err != nil {
+	if err := r.NoncachedClient.Get(ctx, req.NamespacedName, seedgen); err != nil {
 		if errors.IsNotFound(err) {
 			return
 		}
@@ -1007,11 +1001,7 @@ func setSeedGenStatusCompleted(seedgen *seedgenv1.SeedGenerator) {
 
 func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
 	seedgen.Status.ObservedGeneration = seedgen.ObjectMeta.Generation
-	err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
-		return r.Status().Update(ctx, seedgen) //nolint:wrapcheck
-	})
-
-	if err != nil {
+	if err := r.Status().Update(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}
 

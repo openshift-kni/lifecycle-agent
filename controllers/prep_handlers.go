@@ -464,13 +464,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("Validating Ibu spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
-				// there a few known network errors we are allowing for a requeue with IsConflictOrRetriable
-				// but more often than not,
-				// the error bubbling up from validateIBUSpec is from user and which should stop reconcile right away
-				if !common.IsConflictOrRetriable(err) {
-					return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
-				}
-				return requeueWithError(fmt.Errorf("failed to validate Ibu spec, requeuing due a known network issue: %w", err))
+				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
 			}
 
 			r.Log.Info("Creating IBU workspace")
