@@ -472,11 +472,11 @@ func TestNetworkConfiguration(t *testing.T) {
 			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
 			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
 			dnsmasqOverrides = path.Join(tmpDir, "dnsmasqoverrides")
-			mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
 
 			if tc.restartNMSuccess {
 				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(1)
 				if tc.restartDNSMASQSuccess {
+					mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
 					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", nil).Times(1)
 				} else {
 					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", fmt.Errorf("dummy")).Times(1)
