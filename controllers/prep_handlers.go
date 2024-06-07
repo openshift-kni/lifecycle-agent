@@ -73,12 +73,18 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 	}
 	log.Info("Successfully pulled seed image", "image", ibu.Spec.SeedImageRef.Image)
 
-	labels, err := getLabelsForSeedImage(ibu.Spec.SeedImageRef.Image, ops)
+	return nil
+}
+
+// validateSeedImageConfig retrieves the labels for the seed image without downloading the image itself, then validates
+// the config data from the labels
+func (r *ImageBasedUpgradeReconciler) validateSeedImageConfig(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
+	labels, err := r.getLabelsForSeedImage(ctx, ibu)
 	if err != nil {
 		return fmt.Errorf("failed to get seed image labels: %w", err)
 	}
 
-	log.Info("Checking seed image version compatibility")
+	r.Log.Info("Checking seed image version compatibility")
 	if err := checkSeedImageVersionCompatibility(labels); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
@@ -104,33 +110,33 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		seedHasFIPS = seedInfo.HasFIPS
 	}
 
-	clusterHasProxy, err := lcautils.HasProxy(ctx, c)
+	clusterHasProxy, err := lcautils.HasProxy(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has proxy: %w", err)
 	}
 
-	log.Info("Checking seed image proxy compatibility")
+	r.Log.Info("Checking seed image proxy compatibility")
 	if err := checkSeedImageProxyCompatibility(seedHasProxy, clusterHasProxy); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
-	clusterHasFIPS, err := lcautils.HasFIPS(ctx, c)
+	clusterHasFIPS, err := lcautils.HasFIPS(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has fips: %w", err)
 	}
 
-	log.Info("Checking seed image FIPS compatibility")
+	r.Log.Info("Checking seed image FIPS compatibility")
 	if err := checkSeedImageFIPSCompatibility(seedHasFIPS, clusterHasFIPS); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
-	hasUserCaBundle, proxyConfigmapName, err := lcautils.GetClusterAdditionalTrustBundleState(ctx, c)
+	hasUserCaBundle, proxyConfigmapName, err := lcautils.GetClusterAdditionalTrustBundleState(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster additional trust bundle state: %w", err)
 	}
 
 	//nolint:staticcheck //lint:ignore SA9003 // else branch intentionally left empty
-	if seedInfo.AdditionalTrustBundle != nil {
+	if seedInfo != nil && seedInfo.AdditionalTrustBundle != nil {
 		if err := checkSeedImageAdditionalTrustBundleCompatibility(*seedInfo.AdditionalTrustBundle, hasUserCaBundle, proxyConfigmapName); err != nil {
 			return fmt.Errorf("checking seed image additional trust bundle compatibility: %w", err)
 		}
@@ -158,19 +164,42 @@ func getSeedConfigFromLabel(labels map[string]string) (*seedclusterinfo.SeedClus
 	return &seedInfo, nil
 }
 
-func getLabelsForSeedImage(seedImageRef string, ops ops.Execute) (map[string]string, error) {
-	inspectArgs := []string{
-		"inspect",
-		"--format", "json",
-		seedImageRef,
+// getLabelsForSeedImage uses skopeo inspect to retrieve the labels for the seed image without downloading the image itself
+func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (map[string]string, error) {
+	// Use cluster wide pull-secret by default
+	pullSecretFilename := common.ImageRegistryAuthFile
+
+	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
+		var pullSecret string
+		pullSecret, err := lcautils.GetSecretData(ctx, ibu.Spec.SeedImageRef.PullSecretRef.Name,
+			common.LcaNamespace, corev1.DockerConfigJsonKey, r.Client)
+		if err != nil {
+			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
+			return nil, err
+		}
+
+		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
+		if err = os.WriteFile(common.PathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
+			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
+			return nil, err
+		}
+		defer os.Remove(common.PathOutsideChroot(pullSecretFilename))
 	}
 
-	var inspect []struct {
+	inspectArgs := []string{
+		"inspect",
+		"--retry-times", "10",
+		"--authfile", pullSecretFilename,
+		"--format", "json",
+		"docker://" + ibu.Spec.SeedImageRef.Image,
+	}
+
+	var inspect struct {
 		Labels map[string]string `json:"Labels"`
 	}
 
 	// TODO: use the context when execute supports it
-	if inspectRaw, err := ops.Execute("podman", inspectArgs...); err != nil || inspectRaw == "" {
+	if inspectRaw, err := r.Executor.Execute("skopeo", inspectArgs...); err != nil || inspectRaw == "" {
 		return nil, fmt.Errorf("failed to inspect image: %w", err)
 	} else {
 		if err := json.Unmarshal([]byte(inspectRaw), &inspect); err != nil {
@@ -178,11 +207,7 @@ func getLabelsForSeedImage(seedImageRef string, ops ops.Execute) (map[string]str
 		}
 	}
 
-	if len(inspect) != 1 {
-		return nil, fmt.Errorf("expected 1 image inspect result, got %d", len(inspect))
-	}
-
-	return inspect[0].Labels, nil
+	return inspect.Labels, nil
 }
 
 // checkSeedImageVersionCompatibility checks if the seed image is compatible with the
@@ -462,14 +487,20 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	staterootSetupJob, err := prep.GetStaterootSetupJob(ctx, r.Client, r.Log)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			r.Log.Info("Validating Ibu spec")
+			r.Log.Info("Validating IBU spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
+				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate IBU spec: %s", err.Error()), ibu)
 			}
 
 			r.Log.Info("Creating IBU workspace")
 			if err := initIBUWorkspaceDir(); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to initialize IBU workspace: %s", err.Error()), ibu)
+			}
+
+			// Validate config information from the seed image labels, prior to launching the job and downloading the image
+			r.Log.Info("Validating seed information")
+			if err := r.validateSeedImageConfig(ctx, ibu); err != nil {
+				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate seed image info: %s", err.Error()), ibu)
 			}
 
 			r.Log.Info("Launching a new stateroot job")
