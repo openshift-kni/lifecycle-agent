@@ -104,6 +104,8 @@ func (r *InstallationIso) createIgnitionFile(ibiConfig *ibiconfig.ImageBasedInst
 }
 
 func (r *InstallationIso) embedIgnitionToIso() error {
+	r.log.Info("Embedding Ignition to ISO")
+	baseIsoPath := path.Join(r.workDir, rhcosIsoFileName)
 	ibiIsoPath := path.Join(r.workDir, ibiIsoFileName)
 	if _, err := os.Stat(ibiIsoPath); err == nil {
 		r.log.Infof("ibi ISO exists (%s), deleting it", ibiIsoPath)
@@ -111,20 +113,16 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 			return fmt.Errorf("failed to delete existing ibi ISO: %w", err)
 		}
 	}
-
-	command := "podman"
-	args := []string{"run",
-		"-v", fmt.Sprintf("%s:/data:rw,Z", r.workDir),
-		coreosInstallerImage,
-		"iso", "ignition", "embed",
-		"-i", path.Join("/data", ibiIgnitionFileName),
-		"-o", path.Join("/data", ibiIsoFileName),
-		path.Join("/data", rhcosIsoFileName),
+	ignitionFilePath := path.Join(r.workDir, ibiIgnitionFileName)
+	config, err := os.ReadFile(ignitionFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read ignition file: %w", err)
 	}
 
-	if _, err := r.ops.RunInHostNamespace(command, args...); err != nil {
-		return fmt.Errorf("failed to embed ign with args %s: %w", args, err)
+	if err := r.ops.CreateIsoWithEmbeddedIgnition(r.log, config, baseIsoPath, ibiIsoPath); err != nil {
+		return fmt.Errorf("failed to create iso with embedded ignition: %w", err)
 	}
+
 	return nil
 }
 

@@ -10,6 +10,7 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.2.0
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
+	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
 	github.com/operator-framework/api v0.23.0
 	github.com/otiai10/copy v1.14.0
@@ -36,9 +37,17 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.2.0 // indirect
+	github.com/BurntSushi/toml v1.3.2 // indirect
+	github.com/cavaliercoder/go-cpio v0.0.0-20180626203310-925f9528c45e // indirect
+	github.com/diskfs/go-diskfs v1.4.0 // indirect
+	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
+	github.com/golang/mock v1.6.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20220303224323-02efb9a75ee1 // indirect
+	github.com/pierrec/lz4/v4 v4.1.17 // indirect
+	github.com/pkg/xattr v0.4.9 // indirect
+	github.com/ulikunitz/xz v0.5.11 // indirect
+	gopkg.in/djherbis/times.v1 v1.3.0 // indirect
 )
 
 require (
@@ -92,9 +101,9 @@ require (
 	github.com/openshift/machine-config-operator v0.0.1-0.20201023110058-6c8bd9b2915c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/prometheus/client_golang v1.18.0 // indirect
+	github.com/prometheus/client_golang v1.19.0 // indirect
 	github.com/prometheus/client_model v0.6.0 // indirect
-	github.com/prometheus/common v0.47.0 // indirect
+	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/rh-ecosystem-edge/preinstall-utils v0.0.0-20240501121109-c0e46154d36b
 	github.com/shopspring/decimal v1.3.1 // indirect
