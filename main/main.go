@@ -202,6 +202,12 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
+	containerStorageMountpointTarget, err := op.GetContainerStorageTarget()
+	if err != nil {
+		setupLog.Error(err, "unable to get container storage mountpoint target")
+		os.Exit(1)
+	}
+
 	// a simple in-cluster client-go based client, useful for getting pod logs
 	// as runtime-controller client currently doesn't support pod sub resources
 	// https://github.com/kubernetes-sigs/controller-runtime/issues/452#issuecomment-792266582
@@ -247,6 +253,9 @@ func main() {
 		},
 		Mux:       mux,
 		Clientset: clientset,
+
+		// Cluster data retrieved once during init
+		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -261,6 +270,9 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		Executor:        executor,
 		Mux:             mux,
+
+		// Cluster data retrieved once during init
+		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SeedGenerator")
 		os.Exit(1)

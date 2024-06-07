@@ -75,6 +75,9 @@ type ImageBasedUpgradeReconciler struct {
 	RebootClient    reboot.RebootIntf
 	Mux             *sync.Mutex
 	Clientset       *kubernetes.Clientset
+
+	// Cluster data retrieved once, during init
+	ContainerStorageMountpointTarget string
 }
 
 func doNotRequeue() ctrl.Result {
