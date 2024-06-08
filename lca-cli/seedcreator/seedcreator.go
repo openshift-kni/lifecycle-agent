@@ -258,6 +258,28 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 	return nil
 }
 
+func (s *SeedCreator) getCsvRelatedImages(ctx context.Context) (imageList []string, rc error) {
+	clusterServiceVersionList := operatorsv1alpha1.ClusterServiceVersionList{}
+	err := s.client.List(ctx, &clusterServiceVersionList)
+	if err != nil {
+		rc = fmt.Errorf("failed to get csv list: %w", err)
+		return
+	}
+
+	// Filter images from list based on a pattern, to exclude images we know aren't applicable
+	filter := regexp.MustCompile(`-for-microsoft-azure|-for-gcp|-for-csi`)
+
+	for _, csv := range clusterServiceVersionList.Items {
+		for _, img := range csv.Spec.RelatedImages {
+			if !filter.MatchString(img.Image) {
+				imageList = append(imageList, img.Image)
+			}
+		}
+	}
+
+	return
+}
+
 func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Saving list of running containers and catalogsources.")
 	containersListFileName := s.backupDir + "/containers.list"
@@ -286,6 +308,16 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 
 	s.log.Infof("Adding recert %s image to image list", s.recertContainerImage)
 	images = utils.AppendToListIfNotExists(images, s.recertContainerImage)
+
+	s.log.Infof("Adding related images from CSVs")
+	relatedImages, err := s.getCsvRelatedImages(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get related images from CSVs: %w", err)
+	}
+
+	for _, img := range relatedImages {
+		images = utils.AppendToListIfNotExists(images, img)
+	}
 
 	s.log.Infof("Creating %s file", containersListFileName)
 	if err := os.WriteFile(containersListFileName, []byte(strings.Join(images, "\n")), 0o600); err != nil {
