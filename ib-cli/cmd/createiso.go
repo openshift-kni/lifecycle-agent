@@ -36,7 +36,8 @@ var (
 )
 
 func addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO.")
+	cmd.Flags().StringVarP(&workDir, "dir", "d", "", "The working directory for creating the ISO."+
+		"Working directory should contain the configuration file 'image-based-install-iso.yaml'.")
 
 	cmd.MarkFlagRequired("dir")
 }
