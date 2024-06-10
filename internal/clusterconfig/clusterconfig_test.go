@@ -454,7 +454,7 @@ func TestClusterConfig(t *testing.T) {
 					Name: "2",
 				}, Spec: operatorv1alpha1.ImageContentSourcePolicySpec{
 					RepositoryDigestMirrors: []operatorv1alpha1.RepositoryDigestMirrors{{Source: "icspData2"}}}}},
-			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: caBundleCMName,
+			caBundleCM: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: common.ClusterAdditionalTrustBundleName,
 				Namespace: common.OpenshiftConfigNamespace}, Data: map[string]string{"test": "data"}},
 			expectedErr: false,
 			validateFunc: func(t *testing.T, tempDir string, err error, ucc UpgradeClusterConfigGather) {
@@ -488,17 +488,6 @@ func TestClusterConfig(t *testing.T) {
 					assert.Contains(t, resultSourcesAsString, "icspData")
 					assert.Contains(t, resultSourcesAsString, "icspData2")
 				}
-
-				// validate caBundle
-				caBundle := &corev1.ConfigMap{}
-				if err := utils.ReadYamlOrJSONFile(filepath.Join(manifestsDir, caBundleFileName), caBundle); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				assert.Equal(t, caBundleCMName, caBundle.Name)
-				assert.Equal(t, caBundle.Data, map[string]string{"test": "data"})
-
-				_, err = os.Stat(filepath.Join(clusterConfigPath, filepath.Base(common.CABundleFilePath)))
-				assert.Nil(t, err)
 			},
 		},
 	}
@@ -508,18 +497,6 @@ func TestClusterConfig(t *testing.T) {
 		t.Run(testCase.testCaseName, func(t *testing.T) {
 			hostPath = clusterConfigDir
 
-			if testCase.caBundleCM != nil {
-				dir := filepath.Join(clusterConfigDir, filepath.Dir(common.CABundleFilePath))
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				newPath := filepath.Join(dir, filepath.Base(common.CABundleFilePath))
-				f, err := os.Create(newPath)
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-				_ = f.Close()
-			}
 			if testCase.chronyConfig != "" {
 				dir := filepath.Join(clusterConfigDir, filepath.Dir(common.ChronyConfig))
 				if err := os.MkdirAll(dir, 0o700); err != nil {

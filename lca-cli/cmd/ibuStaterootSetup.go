@@ -24,7 +24,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -62,14 +61,13 @@ func ibuStaterootSetupRun() error {
 
 	// additional logger setup
 	loggerOpt := zap.Options{Development: true}
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&loggerOpt)))
-	logger := ctrl.Log.WithName("prep-stateroot-job")
+	logger := zap.New(zap.UseFlagOptions(&loggerOpt)).WithName("prep-stateroot-job")
 
 	// defer cleanup
 	defer cancelCtx()
 
 	logger.Info("Starting a new client")
-	c, err := getClient()
+	c, err := getClient(logger)
 	if err != nil {
 		return fmt.Errorf("failed to create client for stateroot setup job: %w", err)
 	}
@@ -135,11 +133,9 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 }
 
 // getClient returns a client for this job
-func getClient() (client.Client, error) {
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get k8s config: %w", err)
-	}
+func getClient(logger logr.Logger) (client.Client, error) {
+	cfg := config.GetConfigOrDie()
+	cfg.Wrap(lcautils.RetryMiddleware(logger)) // allow all client calls to be retriable
 
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {

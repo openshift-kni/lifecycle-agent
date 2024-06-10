@@ -18,9 +18,11 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -332,6 +334,67 @@ func HasFIPS(ctx context.Context, client runtimeclient.Client) (bool, error) {
 	}
 
 	return machineConfig.Spec.FIPS, nil
+}
+
+func GetAdditionalTrustBundleFromConfigmap(ctx context.Context, client client.Client, configmapName string) (string, error) {
+	userCaBundleConfigmap := corev1.ConfigMap{}
+	if err := client.Get(ctx, types.NamespacedName{Name: configmapName,
+		Namespace: common.OpenshiftConfigNamespace}, &userCaBundleConfigmap); err != nil {
+		if errors.IsNotFound(err) {
+			return "", nil
+		}
+
+		return "", fmt.Errorf("failed to get %s/%s configmap: %w", common.OpenshiftConfigNamespace, configmapName, err)
+	}
+
+	if userCaBundleConfigmap.Data == nil {
+		return "", nil
+	}
+
+	if userCaBundleConfigmap.Data[common.CaBundleDataKey] == "" {
+		return "", nil
+	}
+
+	return userCaBundleConfigmap.Data[common.CaBundleDataKey], nil
+}
+
+func GetClusterAdditionalTrustBundleState(ctx context.Context, client client.Client) (bool, string, error) {
+	clusterAdditionalTrustBundle, err := GetAdditionalTrustBundleFromConfigmap(ctx, client, common.ClusterAdditionalTrustBundleName)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to get additional trust bundle from configmap: %w", err)
+	}
+
+	hasUserCaBundle := clusterAdditionalTrustBundle != ""
+
+	proxy := ocp_config_v1.Proxy{}
+	if err := client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
+		return false, "", fmt.Errorf("failed to get proxy: %w", err)
+	}
+
+	proxyCaBundle := ""
+	switch proxy.Spec.TrustedCA.Name {
+	case common.ClusterAdditionalTrustBundleName:
+		proxyCaBundle = clusterAdditionalTrustBundle
+	case "":
+		// No proxy trustedCA configmap is set, do nothing
+	default:
+		proxyCaBundle, err = GetAdditionalTrustBundleFromConfigmap(ctx, client, proxy.Spec.TrustedCA.Name)
+		if err != nil {
+			return false, "", fmt.Errorf("failed to get additional trust bundle from configmap: %w", err)
+		}
+
+		if proxyCaBundle == "" {
+			// This is a very weird but probably valid OCP configuration that we prefer to not support in LCA
+			return false, "", fmt.Errorf("proxy trustedCA configmap %s/%s exists but is empty", common.OpenshiftConfigNamespace, proxy.Spec.TrustedCA.Name)
+		}
+	}
+
+	proxyConfigmapName := ""
+	if proxyCaBundle != "" {
+		proxyConfigmapName = proxy.Spec.TrustedCA.Name
+	}
+
+	return hasUserCaBundle, proxyConfigmapName, nil
 }
 
 func ShouldOverrideSeedRegistry(ctx context.Context, client runtimeclient.Client, mirrorRegistryConfigured bool, releaseRegistry string) (bool, error) {

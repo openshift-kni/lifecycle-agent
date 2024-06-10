@@ -3,7 +3,7 @@
 set -e # Halt on error
 
 seed_image=${1:-$SEED_IMAGE}
-authfile=${AUTH_FILE:-"/var/tmp/backup-secret.json"}
+authfile=${PULL_SECRET_FILE:-"/var/tmp/pull-secret.json"}
 ibi_config=${IBI_CONFIGURATION_FILE:-"/var/tmp/ibi-configuration.json"}
 
 # Copy the lca-cli binary to the host, pulling it seed image can sometimes fail
