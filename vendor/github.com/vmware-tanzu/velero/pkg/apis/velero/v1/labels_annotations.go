@@ -83,12 +83,20 @@ const (
 	// AsyncOperationIDLabel is the label key used to identify the async operation ID
 	AsyncOperationIDLabel = "velero.io/async-operation-id"
 
-	// PVCNameLabel is the label key used to identify the the PVC's namespace and name.
+	// PVCNameLabel is the label key used to identify the PVC's namespace and name.
 	// The format is <namespace>/<name>.
 	PVCNamespaceNameLabel = "velero.io/pvc-namespace-name"
 
 	// ResourceUsageLabel is the label key to explain the Velero resource usage.
 	ResourceUsageLabel = "velero.io/resource-usage"
+
+	// VolumesToBackupAnnotation is the annotation on a pod whose mounted volumes
+	// need to be backed up using pod volume backup.
+	VolumesToBackupAnnotation = "backup.velero.io/backup-volumes"
+
+	// VolumesToExcludeAnnotation is the annotation on a pod whose mounted volumes
+	// should be excluded from pod volume backup.
+	VolumesToExcludeAnnotation = "backup.velero.io/backup-volumes-excludes"
 )
 
 type AsyncOperationIDPrefix string

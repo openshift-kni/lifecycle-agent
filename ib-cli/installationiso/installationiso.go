@@ -2,13 +2,15 @@ package installationiso
 
 import (
 	"embed"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path"
 
+	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/sirupsen/logrus"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
@@ -22,16 +24,13 @@ type InstallationIso struct {
 	workDir string
 }
 
-type IgnitionData struct {
-	AuthFilePath         string
-	PullSecretPath       string
-	IBIConfigurationPath string
-	BackupSecret         string
-	PullSecret           string
-	SshPublicKey         string
-	InstallSeedScript    string
+type installServiceTemplate struct {
 	SeedImage            string
-	IBIConfiguration     string
+	IBIConfigurationPath string
+	HTTPProxy            string
+	HTTPSProxy           string
+	NoProxy              string
+	PullSecretPath       string
 }
 
 //go:embed data/*
@@ -46,21 +45,23 @@ func NewInstallationIso(log *logrus.Logger, ops ops.Ops, workDir string) *Instal
 }
 
 const (
-	ibiButaneTemplateFilePath = "data/ibi-butane.template"
 	seedInstallScriptFilePath = "data/install-rhcos-and-restore-seed.sh"
-	butaneFiles               = "butaneFiles"
-	butaneConfigFile          = "config.bu"
+	seedInstallationService   = "data/install-rhcos-and-restore-seed.service.template"
+	networkConfigServicePath  = "data/network-config.service"
 	ibiIgnitionFileName       = "ibi-ignition.json"
 	rhcosIsoFileName          = "rhcos-live.x86_64.iso"
 	ibiIsoFileName            = "rhcos-ibi.iso"
 	coreosInstallerImage      = "quay.io/coreos/coreos-installer:latest"
 	ibiConfigFileName         = "ibi-configuration.json"
-	authIgnitionFilePath      = "/var/tmp/backup-secret.json"
 	psIgnitioFilePath         = "/var/tmp/pull-secret.json"
 	ibiConfigIgnitionFilePath = "/var/tmp/" + ibiConfigFileName
+	trustedBundleFilePath     = "/etc/pki/ca-trust/source/anchors/additional-trust-bundle.pem"
+	nmstateConfigFilePath     = "/var/tmp/network-config.yaml"
+	installationScriptPath    = "/usr/local/bin/install-rhcos-and-restore-seed.sh"
+	mirrorRegistryFilePath    = "/etc/containers/registries.conf"
 )
 
-func (r *InstallationIso) Create(ibiConfig *ibiconfig.IBIPrepareConfig) error {
+func (r *InstallationIso) Create(ibiConfig *ibiconfig.ImageBasedInstallConfig) error {
 	r.log.Info("Creating IBI installation ISO")
 	err := r.validate()
 	if err != nil {
@@ -89,43 +90,22 @@ func (r *InstallationIso) validate() error {
 	return nil
 }
 
-func (r *InstallationIso) createIgnitionFile(ibiConfig *ibiconfig.IBIPrepareConfig) error {
+func (r *InstallationIso) createIgnitionFile(ibiConfig *ibiconfig.ImageBasedInstallConfig) error {
 	r.log.Info("Generating Ignition Config")
-	err := r.renderButaneConfig(ibiConfig)
+	ignition, err := r.renderIgnition(ibiConfig)
 	if err != nil {
 		return err
 	}
-	return r.renderIgnitionFile()
-}
-
-func (r *InstallationIso) renderIgnitionFile() error {
-	ibiIsoPath := path.Join(r.workDir, ibiIgnitionFileName)
-	if _, err := os.Stat(ibiIsoPath); err == nil {
-		r.log.Infof("ignition file exists (%s), deleting it", ibiIsoPath)
-		if err = os.Remove(ibiIsoPath); err != nil {
-			return fmt.Errorf("failed to delete existing ignition config: %w", err)
-		}
+	ignitionFilePath := path.Join(r.workDir, ibiIgnitionFileName)
+	if err := utils.MarshalToFile(ignition, ignitionFilePath); err != nil {
+		return fmt.Errorf("failed to write ignition file: %w", err)
 	}
-
-	command := "podman"
-	args := []string{"run",
-		"-v", fmt.Sprintf("%s:/data:rw,Z", r.workDir),
-		"--rm",
-		"quay.io/coreos/butane:release",
-		"--pretty", "--strict",
-		"-d", "/data",
-		path.Join("/data", butaneConfigFile),
-		"-o", path.Join("/data", ibiIgnitionFileName),
-	}
-	_, err := r.ops.RunInHostNamespace(command, args...)
-	if err != nil {
-		return fmt.Errorf("failed to render ignition from config: %w", err)
-	}
-
 	return nil
 }
 
 func (r *InstallationIso) embedIgnitionToIso() error {
+	r.log.Info("Embedding Ignition to ISO")
+	baseIsoPath := path.Join(r.workDir, rhcosIsoFileName)
 	ibiIsoPath := path.Join(r.workDir, ibiIsoFileName)
 	if _, err := os.Stat(ibiIsoPath); err == nil {
 		r.log.Infof("ibi ISO exists (%s), deleting it", ibiIsoPath)
@@ -133,107 +113,16 @@ func (r *InstallationIso) embedIgnitionToIso() error {
 			return fmt.Errorf("failed to delete existing ibi ISO: %w", err)
 		}
 	}
-
-	command := "podman"
-	args := []string{"run",
-		"-v", fmt.Sprintf("%s:/data:rw,Z", r.workDir),
-		coreosInstallerImage,
-		"iso", "ignition", "embed",
-		"-i", path.Join("/data", ibiIgnitionFileName),
-		"-o", path.Join("/data", ibiIsoFileName),
-		path.Join("/data", rhcosIsoFileName),
-	}
-
-	if _, err := r.ops.RunInHostNamespace(command, args...); err != nil {
-		return fmt.Errorf("failed to embed ign with args %s: %w", args, err)
-	}
-	return nil
-}
-
-func (r *InstallationIso) renderButaneConfig(ibiConfig *ibiconfig.IBIPrepareConfig) error {
-	r.log.Debug("Generating butane config")
-	var sshPublicKey []byte
-	var err error
-	if ibiConfig.SSHPublicKeyFile == "" {
-		r.log.Info("ssh key not provided skipping")
-	} else {
-		sshPublicKey, err = os.ReadFile(ibiConfig.SSHPublicKeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to read ssh public key: %w", err)
-		}
-	}
-
-	butaneDataDir := path.Join(r.workDir, butaneFiles)
-	r.log.Debugf("Create %s directory for storing butane config files", butaneDataDir)
-	os.Mkdir(butaneDataDir, 0o700)
-	// We could apply the template data using the files content (referenced in the butane config as inline)
-	// but that might result unmarshal errors while translating the config
-	// hence we are copying the files to the butaneDataDir to be referenced as local files
-	seedInstallScriptInButane := path.Join(butaneFiles, "seedInstallScript")
-	if err := r.copyFileToButaneDir(seedInstallScriptFilePath, path.Join(r.workDir, seedInstallScriptInButane)); err != nil {
-		return err
-	}
-	pullSecretInButane := path.Join(butaneFiles, "pullSecret")
-	if err := r.copyFileToButaneDir(ibiConfig.PullSecretFile, path.Join(r.workDir, pullSecretInButane)); err != nil {
-		return err
-	}
-	backupSecretInButane := path.Join(butaneFiles, "backupSecret")
-	if err := r.copyFileToButaneDir(ibiConfig.AuthFile, path.Join(r.workDir, backupSecretInButane)); err != nil {
-		return err
-	}
-	// inside ignition auth and pull secret files paths differs from the ones provided in ibi cli
-	ibiConfig.AuthFile = authIgnitionFilePath
-	ibiConfig.PullSecretFile = psIgnitioFilePath
-	ibiConfigurationInButane := path.Join(butaneFiles, ibiConfigFileName)
-	if err := utils.MarshalToFile(ibiConfig, path.Join(r.workDir, ibiConfigurationInButane)); err != nil {
-		return fmt.Errorf("failed to marshal ibi config to file: %w", err)
-	}
-
-	templateData := IgnitionData{
-		AuthFilePath:         authIgnitionFilePath,
-		PullSecretPath:       psIgnitioFilePath,
-		IBIConfigurationPath: ibiConfigIgnitionFilePath,
-		BackupSecret:         backupSecretInButane,
-		PullSecret:           pullSecretInButane,
-		SshPublicKey:         string(sshPublicKey),
-		InstallSeedScript:    seedInstallScriptInButane,
-		IBIConfiguration:     ibiConfigurationInButane,
-		SeedImage:            ibiConfig.SeedImage,
-	}
-
-	template, err := folder.ReadFile(ibiButaneTemplateFilePath)
+	ignitionFilePath := path.Join(r.workDir, ibiIgnitionFileName)
+	config, err := os.ReadFile(ignitionFilePath)
 	if err != nil {
-		return fmt.Errorf("error occurred while trying to read %s: %w", ibiButaneTemplateFilePath, err)
+		return fmt.Errorf("failed to read ignition file: %w", err)
 	}
 
-	if err := utils.RenderTemplateFile(string(template), templateData, path.Join(r.workDir, butaneConfigFile), 0o644); err != nil {
-		return fmt.Errorf("failed to render %s: %w", butaneConfigFile, err)
-	}
-	return nil
-}
-
-func (r *InstallationIso) copyFileToButaneDir(sourceFile, target string) error {
-	var source fs.File
-	var err error
-	// this file isn't provided by the user, it's part of the data folder embedded into the go binary at the top of this file
-	if sourceFile == seedInstallScriptFilePath {
-		source, err = folder.Open(sourceFile)
-	} else {
-		source, err = os.Open(sourceFile)
+	if err := r.ops.CreateIsoWithEmbeddedIgnition(r.log, config, baseIsoPath, ibiIsoPath); err != nil {
+		return fmt.Errorf("failed to create iso with embedded ignition: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer source.Close()
-	fileForButaneConfig, err := os.Create(target)
-	if err != nil {
-		return fmt.Errorf("failed to create file under workdir: %w", err)
-	}
-	defer fileForButaneConfig.Close()
-	if _, err = io.Copy(fileForButaneConfig, source); err != nil {
-		return fmt.Errorf("failed to copy file to workdir: %w", err)
-	}
 	return nil
 }
 
@@ -266,4 +155,128 @@ func (r *InstallationIso) downloadLiveIso(url string) error {
 	}
 
 	return nil
+}
+
+func (r *InstallationIso) renderIgnition(imageConfig *ibiconfig.ImageBasedInstallConfig) (*igntypes.Config, error) {
+	config := &igntypes.Config{
+		Ignition: igntypes.Ignition{
+			Version: igntypes.MaxVersion.String(),
+		},
+		Passwd: igntypes.Passwd{
+			Users: []igntypes.PasswdUser{
+				{
+					Name: "core",
+					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
+						igntypes.SSHAuthorizedKey(imageConfig.SSHKey),
+					},
+				},
+			},
+		},
+	}
+
+	setFileInIgnition(config, psIgnitioFilePath, imageConfig.PullSecret, 0o600)
+	marshaled, err := json.Marshal(imageConfig.IBIPrepareConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshall ibi config data: %w", err)
+	}
+
+	setFileInIgnition(config, ibiConfigIgnitionFilePath, string(marshaled), 0o600)
+
+	if len(imageConfig.ImageDigestSources) > 0 {
+		registryConfContent, err := GenerateRegistryConf(imageConfig.ImageDigestSources)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate registry conf: %w", err)
+		}
+		setFileInIgnition(config, mirrorRegistryFilePath, registryConfContent, 0o600)
+	}
+
+	if err := r.setInstallationService(config, imageConfig); err != nil {
+		return nil, fmt.Errorf("failed to add installation service into ignition: %w", err)
+	}
+
+	if imageConfig.AdditionalTrustBundle != "" {
+		setFileInIgnition(config, trustedBundleFilePath, imageConfig.AdditionalTrustBundle, 0o600)
+	}
+
+	if imageConfig.NMStateConfig != "" {
+		if err := r.nmstateConfig(config, imageConfig.NMStateConfig); err != nil {
+			return nil, fmt.Errorf("failed to add nmstate config into ignition: %w", err)
+		}
+	}
+
+	return config, nil
+}
+
+func (r *InstallationIso) setInstallationService(config *igntypes.Config, imageConfig *ibiconfig.ImageBasedInstallConfig) error {
+	installationScript, err := folder.ReadFile(seedInstallScriptFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read seed install script: %w", err)
+	}
+	setFileInIgnition(config, installationScriptPath, string(installationScript), 0o755)
+	templateData := installServiceTemplate{
+		SeedImage:            imageConfig.SeedImage,
+		PullSecretPath:       psIgnitioFilePath,
+		IBIConfigurationPath: ibiConfigIgnitionFilePath,
+		HTTPProxy:            "",
+		HTTPSProxy:           "",
+		NoProxy:              "",
+	}
+
+	if imageConfig.Proxy != nil {
+		templateData.HTTPProxy = imageConfig.Proxy.HTTPProxy
+		templateData.HTTPSProxy = imageConfig.Proxy.HTTPSProxy
+		templateData.NoProxy = imageConfig.Proxy.NoProxy
+	}
+
+	installationScriptService, err := folder.ReadFile(seedInstallationService)
+	if err != nil {
+		return fmt.Errorf("failed to read seed install script: %w", err)
+	}
+	installationServiceContent, err := utils.RenderTemplate(string(installationScriptService), templateData)
+	if err != nil {
+		return fmt.Errorf("failed to render installation service: %w", err)
+	}
+	setUnitInIgnition(config, "install-rhcos-and-restore-seed.service", string(installationServiceContent))
+	return nil
+}
+
+func (r *InstallationIso) nmstateConfig(config *igntypes.Config, nmstateConfigContent string) error {
+	setFileInIgnition(config, nmstateConfigFilePath, nmstateConfigContent, 0o600)
+
+	networkService, err := folder.ReadFile(networkConfigServicePath)
+	if err != nil {
+		return fmt.Errorf("failed to read network service file: %w", err)
+	}
+	setUnitInIgnition(config, path.Base(networkConfigServicePath), string(networkService))
+	return nil
+}
+
+func setFileInIgnition(config *igntypes.Config, filePath, fileContents string, mode int) {
+	override := true
+	fileContentsEncoded := "data:text/plain;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(fileContents))
+	file := igntypes.File{
+		Node: igntypes.Node{
+			Path:      filePath,
+			Overwrite: &override,
+			Group:     igntypes.NodeGroup{},
+		},
+		FileEmbedded1: igntypes.FileEmbedded1{
+			Append: []igntypes.Resource{},
+			Contents: igntypes.Resource{
+				Source: &fileContentsEncoded,
+			},
+			Mode: &mode,
+		},
+	}
+	config.Storage.Files = append(config.Storage.Files, file)
+}
+
+func setUnitInIgnition(config *igntypes.Config, name, contents string) {
+	enabled := true
+	newUnit := igntypes.Unit{
+		Contents: &contents,
+		Name:     name,
+		Enabled:  &enabled,
+	}
+	config.Systemd.Units = append(config.Systemd.Units, newUnit)
 }

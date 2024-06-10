@@ -46,7 +46,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -76,6 +75,9 @@ type ImageBasedUpgradeReconciler struct {
 	RebootClient    reboot.RebootIntf
 	Mux             *sync.Mutex
 	Clientset       *kubernetes.Clientset
+
+	// Cluster data retrieved once, during init
+	ContainerStorageMountpointTarget string
 }
 
 func doNotRequeue() ctrl.Result {
@@ -150,9 +152,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Use a non-cached query to Get the IBU CR, to ensure we aren't running against a stale cached CR
 	ibu := &ibuv1.ImageBasedUpgrade{}
-	err = common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
-		return r.NoncachedClient.Get(ctx, req.NamespacedName, ibu) //nolint:wrapcheck
-	})
+	err = r.NoncachedClient.Get(ctx, req.NamespacedName, ibu)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = lcautils.InitIBU(ctx, r.Client, &r.Log)
@@ -262,6 +262,13 @@ func isTransitionRequested(ibu *ibuv1.ImageBasedUpgrade) bool {
 }
 
 func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {
+	// append current logger with the stage name
+	tempOrigLogger := r.Log
+	r.Log = r.Log.WithName(string(stage))
+	defer func() {
+		r.Log = tempOrigLogger
+	}()
+
 	switch stage {
 	case ibuv1.Stages.Idle:
 		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
@@ -418,20 +425,14 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					filePath := common.PathOutsideChroot(utils.IBUFilePath)
 					// Re-create initial IBU instead of save/restore when it's idle or rollback failed
 					if utils.IsStageCompleted(ibu, ibuv1.Stages.Idle) || utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
-						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-							err := os.Remove(filePath)
-							if os.IsNotExist(err) {
-								return nil
+						if err := os.Remove(filePath); err != nil {
+							if !os.IsNotExist(err) {
+								fmt.Printf("Failed to remove IBU from %s: %v", filePath, err)
 							}
-							return err //nolint:wrapcheck
-						}); err != nil {
-							fmt.Printf("Failed to save deleted IBU: %v", err)
 						}
 					} else {
-						if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-							return lcautils.MarshalToFile(de.Object, filePath) //nolint:wrapcheck
-						}); err != nil {
-							fmt.Printf("Failed to save deleted IBU: %v", err)
+						if err := lcautils.MarshalToFile(de.Object, filePath); err != nil {
+							fmt.Printf("Failed to save deleted IBU to %s: %v", filePath, err)
 						}
 					}
 					return true
