@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 
@@ -439,7 +441,7 @@ func (h *BRHandler) CleanupBackups(ctx context.Context) error {
 		clusterIDLabel: clusterID,
 	}); err != nil {
 		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-		if errors.As(err, &groupDiscoveryErr) {
+		if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
 			h.Log.Info("Backup CR is not installed, nothing to cleanup")
 			return nil
 		}
@@ -568,12 +570,10 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 	}
 
 	for _, backup := range backups {
-		err := common.RetryOnRetriable(common.RetryBackoffTwoMinutes, func() error {
-			return h.Get(ctx, types.NamespacedName{ //nolint:wrapcheck
-				Name:      backup.Name,
-				Namespace: backup.Namespace,
-			}, &velerov1.Backup{})
-		})
+		err := h.Get(ctx, types.NamespacedName{
+			Name:      backup.Name,
+			Namespace: backup.Namespace,
+		}, &velerov1.Backup{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				continue
@@ -601,7 +601,7 @@ func (h *BRHandler) CleanupDeleteBackupRequests(ctx context.Context) error {
 		clusterIDLabel: clusterID,
 	}); err != nil {
 		var groupDiscoveryErr *discovery.ErrGroupDiscoveryFailed
-		if errors.As(err, &groupDiscoveryErr) {
+		if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
 			h.Log.Info("DeleteBackupRequest CR is not installed, nothing to cleanup")
 			return nil
 		}

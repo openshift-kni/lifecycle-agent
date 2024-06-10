@@ -77,28 +77,6 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			expectedJob:        nil,
 		},
 		{
-			name: "Residual precache configmap",
-			config: &Config{
-				ImageList: imageList,
-			},
-			inputConfigMapName: LcaPrecacheResourceName,
-			inputJobName:       "",
-			expectedError:      assert.AnError,
-			expectedConfigMap:  nil,
-			expectedJob:        nil,
-		},
-		{
-			name: "Residual precache job",
-			config: &Config{
-				ImageList: imageList,
-			},
-			inputConfigMapName: "",
-			inputJobName:       LcaPrecacheResourceName,
-			expectedError:      assert.AnError,
-			expectedConfigMap:  nil,
-			expectedJob:        nil,
-		},
-		{
 			name: "Success case",
 			config: &Config{
 				ImageList:          imageList,

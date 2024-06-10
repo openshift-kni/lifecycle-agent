@@ -73,12 +73,18 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 	}
 	log.Info("Successfully pulled seed image", "image", ibu.Spec.SeedImageRef.Image)
 
-	labels, err := getLabelsForSeedImage(ibu.Spec.SeedImageRef.Image, ops)
+	return nil
+}
+
+// validateSeedImageConfig retrieves the labels for the seed image without downloading the image itself, then validates
+// the config data from the labels
+func (r *ImageBasedUpgradeReconciler) validateSeedImageConfig(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
+	labels, err := r.getLabelsForSeedImage(ctx, ibu)
 	if err != nil {
 		return fmt.Errorf("failed to get seed image labels: %w", err)
 	}
 
-	log.Info("Checking seed image version compatibility")
+	r.Log.Info("Checking seed image version compatibility")
 	if err := checkSeedImageVersionCompatibility(labels); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
@@ -104,24 +110,49 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		seedHasFIPS = seedInfo.HasFIPS
 	}
 
-	clusterHasProxy, err := lcautils.HasProxy(ctx, c)
+	clusterHasProxy, err := lcautils.HasProxy(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has proxy: %w", err)
 	}
 
-	log.Info("Checking seed image proxy compatibility")
+	r.Log.Info("Checking seed image proxy compatibility")
 	if err := checkSeedImageProxyCompatibility(seedHasProxy, clusterHasProxy); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
 	}
 
-	clusterHasFIPS, err := lcautils.HasFIPS(ctx, c)
+	clusterHasFIPS, err := lcautils.HasFIPS(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster has fips: %w", err)
 	}
 
-	log.Info("Checking seed image FIPS compatibility")
+	r.Log.Info("Checking seed image FIPS compatibility")
 	if err := checkSeedImageFIPSCompatibility(seedHasFIPS, clusterHasFIPS); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
+	}
+
+	hasUserCaBundle, proxyConfigmapName, err := lcautils.GetClusterAdditionalTrustBundleState(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster additional trust bundle state: %w", err)
+	}
+
+	//nolint:staticcheck //lint:ignore SA9003 // else branch intentionally left empty
+	if seedInfo != nil && seedInfo.AdditionalTrustBundle != nil {
+		if err := checkSeedImageAdditionalTrustBundleCompatibility(*seedInfo.AdditionalTrustBundle, hasUserCaBundle, proxyConfigmapName); err != nil {
+			return fmt.Errorf("checking seed image additional trust bundle compatibility: %w", err)
+		}
+	} else {
+		// For the sake of backwards compatibility, we allow older seed images
+		// that don't have information about the additional trust bundle. This
+		// means that upgrade will fail at the recert stage if there's a
+		// mismatch between the seed and the seed reconfiguration data.
+	}
+
+	if seedInfo != nil && seedInfo.ContainerStorageMountpointTarget != "" {
+		// Seed image data includes the container storage mountpoint target, so we can compare to running cluster
+		r.Log.Info("Checking seed image container storage compatibility")
+		if err := checkSeedImageContainerStorageCompatibility(seedInfo.ContainerStorageMountpointTarget, r.ContainerStorageMountpointTarget); err != nil {
+			return fmt.Errorf("checking seed image compatibility: %w", err)
+		}
 	}
 
 	return nil
@@ -141,19 +172,42 @@ func getSeedConfigFromLabel(labels map[string]string) (*seedclusterinfo.SeedClus
 	return &seedInfo, nil
 }
 
-func getLabelsForSeedImage(seedImageRef string, ops ops.Execute) (map[string]string, error) {
-	inspectArgs := []string{
-		"inspect",
-		"--format", "json",
-		seedImageRef,
+// getLabelsForSeedImage uses skopeo inspect to retrieve the labels for the seed image without downloading the image itself
+func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (map[string]string, error) {
+	// Use cluster wide pull-secret by default
+	pullSecretFilename := common.ImageRegistryAuthFile
+
+	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
+		var pullSecret string
+		pullSecret, err := lcautils.GetSecretData(ctx, ibu.Spec.SeedImageRef.PullSecretRef.Name,
+			common.LcaNamespace, corev1.DockerConfigJsonKey, r.Client)
+		if err != nil {
+			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
+			return nil, err
+		}
+
+		pullSecretFilename = filepath.Join(utils.IBUWorkspacePath, "seed-pull-secret")
+		if err = os.WriteFile(common.PathOutsideChroot(pullSecretFilename), []byte(pullSecret), 0o600); err != nil {
+			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
+			return nil, err
+		}
+		defer os.Remove(common.PathOutsideChroot(pullSecretFilename))
 	}
 
-	var inspect []struct {
+	inspectArgs := []string{
+		"inspect",
+		"--retry-times", "10",
+		"--authfile", pullSecretFilename,
+		"--format", "json",
+		"docker://" + ibu.Spec.SeedImageRef.Image,
+	}
+
+	var inspect struct {
 		Labels map[string]string `json:"Labels"`
 	}
 
 	// TODO: use the context when execute supports it
-	if inspectRaw, err := ops.Execute("podman", inspectArgs...); err != nil || inspectRaw == "" {
+	if inspectRaw, err := r.Executor.Execute("skopeo", inspectArgs...); err != nil || inspectRaw == "" {
 		return nil, fmt.Errorf("failed to inspect image: %w", err)
 	} else {
 		if err := json.Unmarshal([]byte(inspectRaw), &inspect); err != nil {
@@ -161,11 +215,7 @@ func getLabelsForSeedImage(seedImageRef string, ops ops.Execute) (map[string]str
 		}
 	}
 
-	if len(inspect) != 1 {
-		return nil, fmt.Errorf("expected 1 image inspect result, got %d", len(inspect))
-	}
-
-	return inspect[0].Labels, nil
+	return inspect.Labels, nil
 }
 
 // checkSeedImageVersionCompatibility checks if the seed image is compatible with the
@@ -209,6 +259,40 @@ func checkSeedImageProxyCompatibility(seedHasProxy, hasProxy bool) error {
 
 	if !seedHasProxy && hasProxy {
 		return fmt.Errorf("seed image does not have a proxy but the cluster being upgraded does, this combination is not supported")
+	}
+
+	return nil
+}
+
+// checkSeedImageAdditionalTrustBundleCompatibility checks for proxy
+// configuration compatibility of the seed image vs the current cluster. If the
+// seed image has a proxy and the cluster being upgraded doesn't, we cannot
+// proceed as recert does not support proxy rename under those conditions.
+// Similarly, we cannot proceed if the cluster being upgraded has a proxy but
+// the seed image doesn't.
+func checkSeedImageAdditionalTrustBundleCompatibility(seedAdditionalTrustBundle seedclusterinfo.AdditionalTrustBundle, hasUserCaBundle bool, proxyConfigmapName string) error {
+	if seedAdditionalTrustBundle.HasUserCaBundle && !hasUserCaBundle {
+		return fmt.Errorf("seed image has an %s/%s configmap but the cluster being upgraded does not, this combination is not supported",
+			common.OpenshiftConfigNamespace, common.ClusterAdditionalTrustBundleName)
+	}
+
+	if !seedAdditionalTrustBundle.HasUserCaBundle && hasUserCaBundle {
+		return fmt.Errorf("seed image does not have an %s/%s configmap but the cluster being upgraded does, this combination is not supported",
+			common.OpenshiftConfigNamespace, common.ClusterAdditionalTrustBundleName)
+	}
+
+	if seedAdditionalTrustBundle.ProxyConfigmapName != proxyConfigmapName {
+		return fmt.Errorf("seed image's Proxy trustedCA configmap name %q (oc get proxy -oyaml) mismatches cluster's name %q, this combination is not supported",
+			seedAdditionalTrustBundle.ProxyConfigmapName, proxyConfigmapName)
+	}
+
+	return nil
+}
+
+// checkSeedImageContainerStorageCompatibility checks for .
+func checkSeedImageContainerStorageCompatibility(seedContainerStorageMountpoint, clusterContainerStorageMountpoint string) error {
+	if seedContainerStorageMountpoint != clusterContainerStorageMountpoint {
+		return fmt.Errorf("container storage mountpoint target mismatch: seed=%s, cluster=%s", seedContainerStorageMountpoint, clusterContainerStorageMountpoint)
 	}
 
 	return nil
@@ -283,10 +367,14 @@ func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVar
 }
 
 func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imageListFile string, ibu *ibuv1.ImageBasedUpgrade) error {
+	r.Log.Info("Getting release registry name")
 	clusterRegistry, err := lcautils.GetReleaseRegistry(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster registry: %w", err)
 	}
+	r.Log.Info("Got release registry name", "clusterRegistry", clusterRegistry)
+
+	r.Log.Info("Checking seed image info")
 	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(
 		common.PathOutsideChroot(getSeedManifestPath(common.GetDesiredStaterootName(ibu))))
 	if err != nil {
@@ -295,29 +383,33 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	// TODO: if seedInfo.hasProxy we also require that the LCA deployment contain "NO_PROXY" + "HTTP_PROXY" + "HTTPS_PROXY" as env vars. Produce a warning and/or document this.
 	r.Log.Info("Collected seed info for precache", "seed info", fmt.Sprintf("%+v", seedInfo))
 
+	r.Log.Info("Checking whether to override seed registry")
 	shouldOverrideRegistry, err := lcautils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
 	if err != nil {
 		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry %w", err)
 	}
 	r.Log.Info("Override registry status", "shouldOverrideRegistry", shouldOverrideRegistry)
 
+	r.Log.Info("Reading precache list from seed image")
 	imageList, err := prep.ReadPrecachingList(imageListFile, clusterRegistry, seedInfo.ReleaseRegistry, shouldOverrideRegistry)
 	if err != nil {
 		return fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 	}
+	r.Log.Info("Got pre-cache image list from seed image", "count", len(imageList))
 
+	r.Log.Info("Getting env variables from lca manager for precache job")
 	envVars, err := r.getPodEnvVars(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get pod env vars: %w", err)
 	}
 
-	// Create pre-cache config using default values
+	r.Log.Info("Creating pre-cache config and resources")
 	config := precache.NewConfig(imageList, envVars)
-	err = r.Precache.CreateJobAndConfigMap(ctx, config, ibu)
-	if err != nil {
+	if err := r.Precache.CreateJobAndConfigMap(ctx, config, ibu); err != nil {
 		return fmt.Errorf("failed to create precaching job: %w", err)
 	}
 
+	r.Log.Info("Successfully launched pre-caching")
 	return nil
 }
 
@@ -399,13 +491,27 @@ func initIBUWorkspaceDir() error {
 
 // handlePrep the main func to run prep stage
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
+	r.Log.Info("Running health check for Prep")
+	if err := CheckHealth(ctx, r.NoncachedClient, r.Log.WithName("HealthCheck")); err != nil {
+		msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
+		r.Log.Info(msg)
+		utils.SetPrepStatusInProgress(ibu, msg)
+		return requeueWithHealthCheckInterval(), nil
+	}
+	r.Log.Info("Cluster is healthy")
+
 	r.Log.Info("Fetching stateroot setup job")
 	staterootSetupJob, err := prep.GetStaterootSetupJob(ctx, r.Client, r.Log)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			r.Log.Info("Validating Ibu spec")
+			// Ensure there is a container storage mountpoint, required for shared storage between stateroots for IBU
+			if r.ContainerStorageMountpointTarget == "" {
+				return prepFailDoNotRequeue(r.Log, "container storage mountpoint target not found", ibu)
+			}
+
+			r.Log.Info("Validating IBU spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate Ibu spec: %s", err.Error()), ibu)
+				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate IBU spec: %s", err.Error()), ibu)
 			}
 
 			r.Log.Info("Creating IBU workspace")
@@ -413,21 +519,19 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to initialize IBU workspace: %s", err.Error()), ibu)
 			}
 
-			r.Log.Info("Running health check for Prep")
-			if err := CheckHealth(ctx, r.NoncachedClient, r.Log); err != nil {
-				msg := fmt.Sprintf("Waiting for system to stabilize before Prep stage can continue: %s", err.Error())
-				r.Log.Info(msg)
-				utils.SetPrepStatusInProgress(ibu, msg)
-				return requeueWithHealthCheckInterval(), nil
+			// Validate config information from the seed image labels, prior to launching the job and downloading the image
+			r.Log.Info("Validating seed information")
+			if err := r.validateSeedImageConfig(ctx, ibu); err != nil {
+				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate seed image info: %s", err.Error()), ibu)
 			}
 
 			r.Log.Info("Launching a new stateroot job")
 			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed launch stateroot job: %s", err.Error()), ibu)
+				return requeueWithError(fmt.Errorf("failed launch stateroot job: %w", err))
 			}
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job for stateroot setup. %s", getJobMetadataString(staterootSetupJob)), ibu)
 		}
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get stateroot setup job: %s", err.Error()), ibu)
+		return requeueWithError(fmt.Errorf("failed to get stateroot setup job: %w", err))
 	}
 
 	r.Log.Info("Verifying stateroot setup job status")
@@ -455,11 +559,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("Launching a new precache job")
 			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
-				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to launch precaching job: %s", err.Error()), ibu)
+				return requeueWithError(fmt.Errorf("failed to launch precaching job: %w", err))
 			}
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job precache. %s", getJobMetadataString(precacheJob)), ibu)
 		}
-		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to get precache job: %s", err.Error()), ibu)
+		return requeueWithError(fmt.Errorf("failed to get precache job: %w", err))
 	}
 
 	r.Log.Info("Verifying precache job status")
