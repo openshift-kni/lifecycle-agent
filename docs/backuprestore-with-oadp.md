@@ -1,5 +1,23 @@
 # Backup and restore with the Openshift API for Data Protection(OADP)
 
+- [Backup and restore with the Openshift API for Data Protection(OADP)](#backup-and-restore-with-the-openshift-api-for-data-protectionoadp)
+  - [Overview](#overview)
+  - [Pre-Requisites](#pre-requisites)
+  - [LCA apply wave annotation](#lca-apply-wave-annotation)
+  - [LCA apply label annotation](#lca-apply-label-annotation)
+  - [Install OADP and configure OADP on target cluster via ZTP GitOps](#install-oadp-and-configure-oadp-on-target-cluster-via-ztp-gitops)
+    - [Prepare OADP install CRs](#prepare-oadp-install-crs)
+    - [Prepare DataProtectionApplication(DPA) CR and S3 secret](#prepare-dataprotectionapplicationdpa-cr-and-s3-secret)
+    - [Rollout OADP changes via ClusterGroupUpgrade(CGU)](#rollout-oadp-changes-via-clustergroupupgradecgu)
+  - [Manually install OADP and configure OADP on target cluster](#manually-install-oadp-and-configure-oadp-on-target-cluster)
+  - [OADP Configmap generation](#oadp-configmap-generation)
+    - [Platform backup and restore CRs](#platform-backup-and-restore-crs)
+    - [Application backup and restore CRs](#application-backup-and-restore-crs)
+    - [Create OADP configmap with backup and restore CRs](#create-oadp-configmap-with-backup-and-restore-crs)
+  - [Reference OADP configmap in IBU CR](#reference-oadp-configmap-in-ibu-cr)
+  - [Monitoring backup or restore process](#monitoring-backup-or-restore-process)
+  - [Debugging on a failed backup or restore CR](#debugging-on-a-failed-backup-or-restore-cr)
+
 ## Overview
 
 The lifecycle Agent operator (LCA) provides functionality for backing up and restoring platform and application resources using OADP during image-based upgrades. During the upgrade stage, the LCA performs the following actions:
@@ -21,7 +39,7 @@ After the cluster is rebooted to the new stateroot:
 
 - A S3-compatible object storage must be set up and ensure that it's configured and accessible
 - OADP operator must be installed on both target and seed SNOs
-- OADP DataProtectionApplication CR and its secret must be installed on target SNOs
+- OADP DataProtectionApplication CR and its secret must be installed on target SNOs only
 
 ## LCA apply wave annotation
 
@@ -83,7 +101,7 @@ labelSelector:
 
 ### Prepare OADP install CRs
 
-#### 1. Create a directory called `source-crs` in the same location where the `kustomization.yaml` file is located and push the following CRs to the `source-crs` directory
+#### 1. Create a directory called `custom-crs` in the `source-crs` directory. Ensure that the `source-crs` directory is located in the same location as `kustomization.yaml` file. Push the following CRs to the `source-crs/custom-crs` directory
 
 OadpSubscriptionNS.yaml
 
@@ -105,7 +123,7 @@ OadpSubscriptionOperGroup.yaml
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
-  name: openshift-adp
+  name: redhat-oadp-operator
   namespace: openshift-adp
   annotations:
     ran.openshift.io/ztp-deploy-wave: "2"
@@ -120,7 +138,7 @@ OadpSubscription.yaml
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
-  name: openshift-adp
+  name: redhat-oadp-operator
   namespace: openshift-adp
   annotations:
     ran.openshift.io/ztp-deploy-wave: "2"
@@ -175,17 +193,18 @@ tree ./policygentemplates
 │   ├── group-du-sno-ranGen.yaml
 │   ├── group-du-sno-validator-ranGen.yaml
 │   └── ns.yaml
-├── source-crs
-│   ├── OadpOperatorStatus.yaml
-│   ├── OadpSubscriptionNS.yaml
-│   ├── OadpSubscriptionOperGroup.yaml
-│   ├── OadpSubscription.yaml
+└── source-crs
+    └── custom-crs
+        ├── OadpOperatorStatus.yaml
+        ├── OadpSubscriptionNS.yaml
+        ├── OadpSubscriptionOperGroup.yaml
+        ├── OadpSubscription.yaml
 ```
 
 > [!IMPORTANT]
 > The OADP must be installed in the `openshift-adp` namespace.
 
-#### 2. Add the CRs to your common PGT. For example
+#### 2. Add the install CRs to your common PGT. For example
 
 ```yaml
 apiVersion: ran.openshift.io/v1
@@ -199,13 +218,13 @@ spec:
     common: "true"
     du-profile: "latest"
   sourceFiles:
-    - fileName: OadpSubscriptionNS.yaml
+    - fileName: custom-crs/OadpSubscriptionNS.yaml
       policyName: "subscriptions-policy"
-    - fileName: OadpSubscriptionOperGroup.yaml
+    - fileName: custom-crs/OadpSubscriptionOperGroup.yaml
       policyName: "subscriptions-policy"
-    - fileName: OadpSubscription.yaml
+    - fileName: custom-crs/OadpSubscription.yaml
       policyName: "subscriptions-policy"
-    - fileName: OadpOperatorStatus.yaml
+    - fileName: custom-crs/OadpOperatorStatus.yaml
       policyName: "subscriptions-policy"
 ...
 ```
@@ -214,7 +233,7 @@ spec:
 
 ### Prepare DataProtectionApplication(DPA) CR and S3 secret
 
-#### 1. Create the following CRs in your `source-crs` directory
+1. Create the following config CRs in your `source-crs/custom-crs` directory
 
 DataProtectionApplication.yaml
 
@@ -289,7 +308,7 @@ status:
   phase: Available
 ```
 
-#### 2. Add the CRs to your site PGT with overrides. For example
+#### 2. Add the config CRs to your site PGT with overrides. For example
 
 ```yaml
 apiVersion: ran.openshift.io/v1
@@ -304,21 +323,23 @@ spec:
   mcp: "master"
   sourceFiles:
     ...
-    - fileName: OadpSecret.yaml
+    - fileName: custom-crs/OadpSecret.yaml
       policyName: "config-policy"
       data:
         cloud: <replace-with-your-creds>
-    - fileName: DataProtectionApplication.yaml
+    - fileName: custom-crs/DataProtectionApplication.yaml
       policyName: "config-policy"
       spec:
         backupLocations:
           - velero:
               config:
+                profile: "default"   <1>
                 region: minio
                 s3Url: <replace-with-your-s3-url>
               objectStorage:
-                bucket: <replace-with-your-bucket-name>
-    - fileName: OadpBackupStorageLocationStatus.yaml
+                bucket: <replace-with-your-bucket-name> <2>
+                prefix: <replace-with-target-name>      <3>
+    - fileName: custom-crs/OadpBackupStorageLocationStatus.yaml
       policyName: "config-policy"
 ```
 
@@ -334,256 +355,13 @@ $ base64 -w0 ./credentials-velero
 W2RlZmF1bHRdCmF3c19hY2Nlc3Nfa2V5X2lkPTxBV1NfQUNDRVNTX0tFWV9JRD4KYXdzX3NlY3JldF9hY2Nlc3Nfa2V5PTxBV1NfU0VDUkVUX0FDQ0VTU19LRVk+Cg==
 ```
 
-> [!IMPORTANT]
+> [!NOTE]
 >
 > 1. The value of `spec.backupLocations[0].velero.config.profile` should match the name of the profile specified in the credentials-velero file.
-> 2. The bucket specified in `spec.backupLocations[0].velero.objectStorage.bucket` must has been created in the S3 storage backend.
->
+> 2. The bucket specified in `spec.backupLocations[0].velero.objectStorage.bucket` must have been created in the S3 storage backend.
+> 3. The `spec.backupLocations[0].velero.objectStorage.prefix` defines the name of the sub directory that is auto-created in the bucket. The combination of bucket and prefix must be unique for each target cluster to avoid interference between them.
 
-### OADP Configmap generation
-
-#### 1. Create a local directory and store your backup and restore CRs in separate files. For example
-
-backup_acm_klusterlet.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Backup
-metadata:
-  name: acm-klusterlet
-  annotations:
-    lca.openshift.io/apply-label: "apps/v1/deployments/open-cluster-management-agent/klusterlet,v1/secrets/open-cluster-management-agent/bootstrap-hub-kubeconfig,rbac.authorization.k8s.io/v1/clusterroles/klusterlet,v1/serviceaccounts/open-cluster-management-agent/klusterlet,scheduling.k8s.io/v1/priorityclasses/klusterlet-critical,rbac.authorization.k8s.io/v1/clusterroles/open-cluster-management:klusterlet-admin-aggregate-clusterrole,rbac.authorization.k8s.io/v1/clusterrolebindings/klusterlet,operator.open-cluster-management.io/v1/klusterlets/klusterlet,apiextensions.k8s.io/v1/customresourcedefinitions/klusterlets.operator.open-cluster-management.io,v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials"
-  labels:
-    velero.io/storage-location: default
-  namespace: openshift-adp
-spec:
-  includedNamespaces:
-  - open-cluster-management-agent
-  includedClusterScopedResources:
-  - klusterlets.operator.open-cluster-management.io
-  - clusterroles.rbac.authorization.k8s.io
-  - clusterrolebindings.rbac.authorization.k8s.io
-  - priorityclasses.scheduling.k8s.io
-  includedNamespaceScopedResources:
-  - deployments
-  - serviceaccounts
-  - secrets
-```
-
-> [!IMPORTANT]
->
-> 1. Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
-> defined and the secret exists on the open-cluster-management-agent namespace in your hub cluster. If it does not exist, you can safely remove it from the `apply-label` annotation.
-> 2. If ACM is below 2.10, and MCE is below 2.5.0, the `scheduling.k8s.io/v1/priorityclasses/klusterlet-critical` must be excluded from `lca.openshift.io/apply-label`, along with `priorityclasses.scheduling.k8s.io` from `spec.includedClusterScopedResources`.
-
-backup_app.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Backup
-metadata:
-  labels:
-    velero.io/storage-location: default
-  name: small-app
-  namespace: openshift-adp
-spec:
-  includedNamespaces:
-  - test
-  includedNamespaceScopedResources:
-  - secrets
-  - persistentvolumeclaims
-  - deployments
-  - statefulsets
-  excludedClusterScopedResources:
-  - persistentVolumes
-```
-
-restore_acm_klusterlet.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: acm-klusterlet
-  namespace: openshift-adp
-  labels:
-    velero.io/storage-location: default
-  annotations:
-    lca.openshift.io/apply-wave: "1"
-spec:
-  backupName:
-    acm-klusterlet
-```
-
-restore_app.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: small-app
-  namespace: openshift-adp
-  labels:
-    velero.io/storage-location: default
-  annotations:
-    lca.openshift.io/apply-wave: "3"
-spec:
-  backupName:
-    small-app
-```
-
-> [!IMPORTANT]
->
-> 1. The examples provided are just for reference. Create your own backup and restore CRs based on your needs.
-> 2. The backup and restore CRs must be created in the same namespace where the OADP is installed which is `openshift-adp`.
-> 3. The OADP configmaps should only contain backup and restore CRs which are in YAML format or multiple document YAML format. Other type of CRs are unknown to the LCA and will be ignored.
-
-##### 1.1 Backup resource when LVMS is used
-
-When LVMS is used to provide dynamic storage in the cluster, we need to define the below Backup and Restore CRs, for
-the `LVMCluster` object, in the OADP ConfigMap. These objects will ensure the proper / expected functioning of this
-feature when using LVMS.
-
-> [!IMPORTANT]
-> Mind that on SNOs the persistent storage must be provided by either Logical Volume Manager Storage (LVMS) or Local
-> Storage Operator (LSO), not both.
-
-backup_lvmcluster.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Backup
-metadata:
-  labels:
-    velero.io/storage-location: default
-  name: lvmcluster
-  namespace: openshift-adp
-spec:
-  includedNamespaces:
-    - openshift-storage
-  includedNamespaceScopedResources:
-    - lvmclusters
-    - lvmvolumegroups
-    - lvmvolumegroupnodestatuses
-```
-
-restore_lvmcluster.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: lvmcluster
-  namespace: openshift-adp
-  labels:
-    velero.io/storage-location: default
-  annotations:
-    lca.openshift.io/apply-wave: "2"
-spec:
-  backupName:
-    lvmcluster
-```
-
-> [!IMPORTANT]
-> Mind that `apply-wave` annotation for the above object should be numerically lower than the app's one, in this way
-> when the app resources are restored, the `LVMCluster` operand will be already up and running in the cluster.
-
-Additionally, the Backup and Restore CR resources for the app should also include some extra fields in order to ensure
-that each PV content is maintained when performing an IBU.
-
-backup_app.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Backup
-metadata:
-  labels:
-    velero.io/storage-location: default
-  name: small-app
-  namespace: openshift-adp
-spec:
-  includedNamespaces:
-  - test
-  includedNamespaceScopedResources:
-  - secrets
-  - persistentvolumeclaims
-  - deployments
-  - statefulsets
-  includedClusterScopedResources:
-  - persistentVolumes              # <- required field
-  - volumesnapshotcontents         # <- required field
-  - logicalvolumes.topolvm.io      # <- required field
-```
-
-> [!NOTE]
-> Given that the above Backup CR included cluster scoped resources (i.e., persistentVolumes, logicalvolumes, etc.)
-> for the small-app, there is no need to also include those in other Backup CRs. However, redundantly specifying those
-> in other Backup CRs would not affect its normal / expected operation.
-
-restore_app.yaml
-
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: small-app
-  namespace: openshift-adp
-  labels:
-    velero.io/storage-location: default
-  annotations:
-    lca.openshift.io/apply-wave: "3"
-spec:
-  backupName:
-    small-app
-  restorePVs: true               # <- required field
-  restoreStatus:                 # <- required field
-    includedResources:           # <- required field
-      - logicalvolumes           # <- required field
-```
-
-#### 2. Build a configmap to include all CRs
-
-kustomization.yaml
-
-```yaml
-configMapGenerator:
-- name: oadp-cm
-  namespace: openshift-adp
-  files:
-  - backup_acm_klusterlet.yaml
-  - backup_app.yaml
-  - restore_acm_klusterlet.yaml
-  - restore_app.yaml
-generatorOptions:
-  disableNameSuffixHash: true
-```
-
-```console
-kustomize build ./ -o OadpCm.yaml
-```
-
-#### 3. Push the generated OadpCm.yaml to the same git directory `source-crs`
-
-#### 4. Add the CR to your site PGT
-
-```yaml
-apiVersion: ran.openshift.io/v1
-kind: PolicyGenTemplate
-metadata:
-  name: "cnfdf37"
-  namespace: "ztp-site"
-spec:
-  bindingRules:
-    sites: "cnfdf37"
-    du-profile: "latest"
-  mcp: "master"
-  sourceFiles:
-    ...
-    - fileName: OadpCm.yaml
-      policyName: "config-policy"
-```
-
-### Install OADP and its configuration via ClusterGroupUpgrade(CGU)
+### Rollout OADP changes via ClusterGroupUpgrade(CGU)
 
 If you are installing OADP on day0, a `ClusterGroupUpgrade` CR will be auto-created to apply all the cluster configurations.
 If you are installing OADP on day2, after the previous changes have been synced by ArgoCD and the policies have been updated, you will need to manually create a `ClusterGroupUpgrade`(CGU) to rollout the changes.
@@ -614,10 +392,267 @@ spec:
 
 If you prefer to install and configure OADP manually, you can copy all the necessary CRs provided in the section
 **Install OADP and configure OADP on target cluster via ZTP GitOps**, remove the `ran.openshift.io/ztp-deploy-wave`
-annotation from CRs and use them as a reference. Remove Make sure to adjust the configuration according to your specific
+annotation from CRs and use them as a reference. Make sure to adjust the configuration according to your specific
 requirements.
 
-## Update the IBU CR with OADP configmap
+## OADP Configmap generation
+
+The required backup and restore CRs over the upgrade are wrapped within configmaps. The OADP configmaps should only contain backup and restore CRs which are in YAML format or multiple document YAML format. Any other type of CRs are unrecognized to the LCA and will be disregarded.
+
+### Platform backup and restore CRs
+
+PlatformBackupRestore.yaml defines the ACM artifacts that must be backed up and restored over the upgrade. This is for RHACM environment only.
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: acm-klusterlet
+  annotations:
+    lca.openshift.io/apply-label: "apps/v1/deployments/open-cluster-management-agent/klusterlet,v1/secrets/open-cluster-management-agent/bootstrap-hub-kubeconfig,rbac.authorization.k8s.io/v1/clusterroles/klusterlet,v1/serviceaccounts/open-cluster-management-agent/klusterlet,scheduling.k8s.io/v1/priorityclasses/klusterlet-critical,rbac.authorization.k8s.io/v1/clusterroles/open-cluster-management:klusterlet-admin-aggregate-clusterrole,rbac.authorization.k8s.io/v1/clusterrolebindings/klusterlet,operator.open-cluster-management.io/v1/klusterlets/klusterlet,apiextensions.k8s.io/v1/customresourcedefinitions/klusterlets.operator.open-cluster-management.io,v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials"
+  labels:
+    velero.io/storage-location: default
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+  - open-cluster-management-agent
+  includedClusterScopedResources:
+  - klusterlets.operator.open-cluster-management.io
+  - clusterroles.rbac.authorization.k8s.io
+  - clusterrolebindings.rbac.authorization.k8s.io
+  - priorityclasses.scheduling.k8s.io
+  includedNamespaceScopedResources:
+  - deployments
+  - serviceaccounts
+  - secrets
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: acm-klusterlet
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "1"
+spec:
+  backupName:
+    acm-klusterlet
+```
+
+> [!IMPORTANT]
+>
+> 1. Depending on Red Hat's ACM configuration the `v1/secrets/open-cluster-management-agent/open-cluster-management-image-pull-credentials` object must be required to back up or not. Please, make sure if your multiclusterhub CR has `.spec.imagePullSecret`
+> defined and the secret exists on the open-cluster-management-agent namespace in your hub cluster. If it does not exist, you can safely remove it from the `apply-label` annotation.
+> 2. If ACM is below 2.10, and MCE is below 2.5.0, the `scheduling.k8s.io/v1/priorityclasses/klusterlet-critical` must be excluded from `lca.openshift.io/apply-label`, along with `priorityclasses.scheduling.k8s.io` from `spec.includedClusterScopedResources`.
+
+There are two local storage implementations for SNO. One is provided by Local Storage Operator (LSO), and the other is provided by Logical Volume Manager Storage (LVMS). The persistent volumes must be provided by either LSO or LVMS on a given target cluster for IBU, not both.
+When LSO is used to create persistent storage in the target cluster, LCA automatically backs up all the `LocalVolumes` CRs along with their associated `StorageClasses` CRs at the pre-pivot and restores them at the post-pivot upgrade. No backup and restore CRs are needed.
+
+However, when LVMS is used, the following `PlatformBackupRestoreLvms.yaml` defining the LVMS artifacts must be added in the OADP configmap. These objects will ensure the proper / expected functioning of this feature when using LVMS.
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  labels:
+    velero.io/storage-location: default
+  name: lvmcluster
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+    - openshift-storage
+  includedNamespaceScopedResources:
+    - lvmclusters
+    - lvmvolumegroups
+    - lvmvolumegroupnodestatuses
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: lvmcluster
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "2"
+spec:
+  backupName:
+    lvmcluster
+```
+
+> [!IMPORTANT]
+> Mind that `apply-wave` annotation for the above platform restore objects should be numerically lower than the app's one, in this way
+> when the app resources are restored, the platform will be ready and the `LVMCluster` operand will be already up and running in the cluster.
+
+### Application backup and restore CRs
+
+A separate backup and restore CR must be created to scope the backup to the specific cluster scoped resources created by the application. Here is an example:
+
+ApplicationClusterScopedBackupRestore.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  annotations:
+    lca.openshift.io/apply-label: "apiextensions.k8s.io/v1/customresourcedefinitions/test.example.com,security.openshift.io/v1/securitycontextconstraints/test,rbac.authorization.k8s.io/v1/clusterroles/test-role,rbac.authorization.k8s.io/v1/clusterrolebindings/system:openshift:scc:test" <1>
+  name: backup-app-cluster-resources
+  labels:
+    velero.io/storage-location: default
+  namespace: openshift-adp
+spec:
+  includedClusterScopedResources:
+  - customresourcedefinitions
+  - securitycontextconstraints
+  - clusterrolebindings
+  - clusterroles
+  excludedClusterScopedResources:
+  - Namespace
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: test-app-cluster-resources
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "3"
+spec:
+  backupName:
+    test-app-cluster-resources
+```
+
+> [!NOTE]
+>
+> 1. As mentioned in above section **LCA apply label annotation**, the annotation `lca.openshift.io/apply-label` offers a method to back up specific resources exclusively. You are required to replace the example resource names in the `lca.openshift.io/apply-label` with your actual resources.
+
+When LSO is used to create persistent volumes, the `persistentVolumes` must be excluded in the application backup CR. Here is an example:
+
+ApplicationBackupRestoreLso.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  labels:
+    velero.io/storage-location: default
+  name: test-app
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+  - test
+  includedNamespaceScopedResources:
+  - secrets
+  - persistentvolumeclaims
+  - deployments
+  - statefulsets
+  - configmaps
+  - cronjobs
+  - services
+  - job
+  - poddisruptionbudgets
+  - <application custom resources>   <1>
+  excludedClusterScopedResources:
+  - persistentVolumes
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: test-app
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "4" 
+spec:
+  backupName:
+    test-app
+```
+
+> [!NOTE]
+>
+> 1. Custom resources created by the application if any
+
+When LVMS is used to create persistent volumes, ensure that the following required fields are included to guarantee the preservation of each PV content during IBU. Here is an example:
+
+ApplicationBackupRestoreLvms.yaml
+
+```yaml
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  labels:
+    velero.io/storage-location: default
+  name: test-app
+  namespace: openshift-adp
+spec:
+  includedNamespaces:
+  - test
+  includedNamespaceScopedResources:
+  - secrets
+  - persistentvolumeclaims
+  - deployments
+  - statefulsets
+  - configmaps
+  - cronjobs
+  - services
+  - job
+  - poddisruptionbudgets
+  - <application custom resources>  <1>
+  includedClusterScopedResources:
+  - persistentVolumes              # <- required field
+  - logicalvolumes.topolvm.io      # <- required field
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: test-app
+  namespace: openshift-adp
+  labels:
+    velero.io/storage-location: default
+  annotations:
+    lca.openshift.io/apply-wave: "4"
+spec:
+  backupName:
+    test-app
+  restorePVs: true               # <- required field
+  restoreStatus:                 # <- required field
+    includedResources:           # <- required field
+    - logicalvolumes             # <- required field
+```
+
+> [!NOTE]
+>
+> 1. Custom resources created by the application if any
+> 2. If volume snapshots are used, ensure to include `volumesnapshotcontents` in the `includedClusterScopedResources` as well
+
+> [!IMPORTANT]
+>
+> 1. Adjust the examples for application backup and restore CRs based on your application.
+> 2. The backup and restore CRs must be created in the same namespace where the OADP is installed which is `openshift-adp`.
+
+### Create OADP configmap with backup and restore CRs
+
+#### Use ZTP GitOps
+
+The platform backup and restore CRs [PlatformBackupRestore.yaml](https://github.com/openshift-kni/cnf-features-deploy/blob/master/ztp/source-crs/ibu/PlatformBackupRestore.yaml) and
+[PlatformBackupRestoreLvms.yaml](https://github.com/openshift-kni/cnf-features-deploy/blob/master/ztp/source-crs/ibu/PlatformBackupRestoreLvms.yaml) are provided in the ZTP container.
+Follow the [instruction](https://github.com/openshift-kni/cnf-features-deploy/tree/master/ztp/gitops-subscriptions/argocd/example/image-based-upgrades#generating-the-oadp-configmap-and-policies) to create OADP configmap on target clusters using ACM policy.
+
+#### Non-ZTP GitOps
+
+Create OADP configmap with `oc create configmap` on the target cluster with the above necessary backup and restore yamls, for example:
+
+```console
+$ oc create configmap oadp-cm  -n openshift-adp \
+--from-file=PlatformBackupRestore.yaml=PlatformBackupRestore.yaml \
+--from-file=ApplicationClusterScopedBackupRestore.yaml \
+--from-file=ApplicationBackupRestoreLso.yaml
+```
+
+## Reference OADP configmap in IBU CR
 
 To enable backup and restore during the upgrade stage, you should update the IBU CR with the generated OADP configmap specified in the `spec.oadpContent` field.
 
@@ -629,7 +664,7 @@ metadata:
 spec:
   ...
   oadpContent:
-  - name: oadp-cm-8g2mm56c2f
+  - name: oadp-cm
     namespace: openshift-adp
 ```
 
@@ -651,17 +686,17 @@ watch -n 5 'oc get restores -n openshift-adp -o custom-columns=NAME:.metadata.na
 
 ## Debugging on a failed backup or restore CR
 
-Install velero CLI by following the [installation guide](https://velero.io/docs/main/basic-install/#install-the-cli).
+The Velero CLI is accessible in the Velero pod for further debugging. Alternatively, you can install Velero CLI locally by following the [installation guide](https://velero.io/docs/main/basic-install/#install-the-cli).
 
 Describe the backup/resource CR with errors:
 
 ```console
-velero describe backup -n openshift-adp backup-acm-klusterlet --details
-velero describe restore -n openshift-adp restore-acm-klusterlet --details
+oc exec -n openshift-adp velero-7c87d58c7b-sw6fc -c velero -- ./velero describe backup -n openshift-adp backup-acm-klusterlet --details
+oc exec -n openshift-adp velero-7c87d58c7b-sw6fc -c velero -- ./velero describe restore -n openshift-adp restore-acm-klusterlet --details
 ```
 
 Download the backed up resources to a local directory:
 
 ```console
-velero backup download -n openshift-adp backup-acm-klusterlet -o ~/backup-acm-klusterlet.tar.gz
+oc exec -n openshift-adp velero-7c87d58c7b-sw6fc -c velero -- ./velero backup download -n openshift-adp backup-acm-klusterlet -o ~/backup-acm-klusterlet.tar.gz
 ```

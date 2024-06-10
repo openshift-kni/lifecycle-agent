@@ -11,6 +11,7 @@ package ops
 import (
 	reflect "reflect"
 
+	logrus "github.com/sirupsen/logrus"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -66,6 +67,20 @@ func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraParti
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
 }
 
+// CreateIsoWithEmbeddedIgnition mocks base method.
+func (m *MockOps) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateIsoWithEmbeddedIgnition", log, ignitionBytes, baseIsoPath, outputIsoPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateIsoWithEmbeddedIgnition indicates an expected call of CreateIsoWithEmbeddedIgnition.
+func (mr *MockOpsMockRecorder) CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseIsoPath, outputIsoPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIsoWithEmbeddedIgnition", reflect.TypeOf((*MockOps)(nil).CreateIsoWithEmbeddedIgnition), log, ignitionBytes, baseIsoPath, outputIsoPath)
+}
+
 // ExtractTarWithSELinux mocks base method.
 func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
 	m.ctrl.T.Helper()
@@ -92,6 +107,21 @@ func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string, h
 func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile, hasKubeAdminPassword any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
+}
+
+// GetContainerStorageTarget mocks base method.
+func (m *MockOps) GetContainerStorageTarget() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetContainerStorageTarget")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetContainerStorageTarget indicates an expected call of GetContainerStorageTarget.
+func (mr *MockOpsMockRecorder) GetContainerStorageTarget() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContainerStorageTarget", reflect.TypeOf((*MockOps)(nil).GetContainerStorageTarget))
 }
 
 // GetHostname mocks base method.

@@ -37,7 +37,6 @@ func GetStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logger)
 	}
 
 	log.Info("Got stateroot setup job", "namespace", job.Namespace, "name", job.Name)
-
 	return job, nil
 }
 
@@ -48,7 +47,9 @@ func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.Im
 	}
 
 	if err := c.Create(ctx, job); err != nil {
-		return nil, err //nolint:wrapcheck
+		if !k8serrors.IsAlreadyExists(err) {
+			return nil, err //nolint:wrapcheck
+		}
 	}
 
 	log.Info("Successfully created job", "job", job.Name)
@@ -153,6 +154,7 @@ func DeleteStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logg
 		return fmt.Errorf("failed to wait until stateroot setup job pod is removed: %w", err)
 	}
 
+	log.Info("Successfully removed all stateroot setup job resources", "job", stateroot.GetName())
 	return nil
 }
 
@@ -168,10 +170,7 @@ func waitUntilStaterootSetupPodIsRemoved(ctx context.Context, c client.Client) e
 			return false, fmt.Errorf("failed to list pods: %w", err)
 		}
 
-		if len(podList.Items) == 0 {
-			return true, nil
-		}
-		return false, nil
+		return len(podList.Items) == 0, nil
 	})
 }
 

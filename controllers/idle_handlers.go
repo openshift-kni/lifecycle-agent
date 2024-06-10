@@ -167,15 +167,9 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 		handleError(err, "failed to remove extra manifest warning annotation from IBU")
 	}
 
-	r.Log.Info("Cleaning up DeleteBackupRequest and Backup CRs")
-	if err := r.BackupRestore.CleanupDeleteBackupRequests(ctx); err != nil {
-		handleError(err, "failed to cleanup DeleteBackupRequest CRs.")
-	}
-	if err := r.BackupRestore.CleanupBackups(ctx); err != nil {
-		handleError(err, "failed to cleanup backups")
-	}
-	if err := r.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
-		handleError(err, "failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS")
+	r.Log.Info("Cleaning up OADP resources")
+	if err := r.cleanupOADPResources(ctx); err != nil {
+		handleError(err, "failed to cleanup OADP resources")
 	}
 
 	r.Log.Info("Cleaning up IBU files")
@@ -184,6 +178,32 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	}
 
 	return successful, errorMessage
+}
+
+// cleanupOADPResources clean resources from backup/restore as long as OADP is present
+func (r *ImageBasedUpgradeReconciler) cleanupOADPResources(ctx context.Context) error {
+	if !r.BackupRestore.IsOadpInstalled(ctx) {
+		r.Log.Info("OADP not installed, nothing to cleanup")
+		return nil
+	}
+
+	r.Log.Info("Cleaning up DeleteBackupRequest")
+	if err := r.BackupRestore.CleanupDeleteBackupRequests(ctx); err != nil {
+		return fmt.Errorf("failed to cleanup DeleteBackupRequest CRs: %w", err)
+	}
+
+	r.Log.Info("Cleaning up Backup")
+	if err := r.BackupRestore.CleanupBackups(ctx); err != nil {
+		return fmt.Errorf("failed to cleanup backups: %w", err)
+	}
+
+	r.Log.Info("Restoring PV reclaim policy")
+	if err := r.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
+		return fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err)
+	}
+
+	r.Log.Info("Successfully cleaned all resources related to backup and restore (OADP)")
+	return nil
 }
 
 func (r *ImageBasedUpgradeReconciler) cleanupStateroot(ctx context.Context) error {

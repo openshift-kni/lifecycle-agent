@@ -9,8 +9,8 @@ import (
 	"github.com/go-logr/logr"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,15 +34,10 @@ import (
 const (
 	manifestDir = "manifests"
 
-	proxyName = "cluster"
-
 	pullSecretName = "pull-secret"
 
 	idmsFileName  = "image-digest-mirror-set.json"
 	icspsFileName = "image-content-source-policy-list.json"
-
-	caBundleCMName   = "user-ca-bundle"
-	caBundleFileName = caBundleCMName + ".json"
 
 	// ssh authorized keys file created by mco from ssh machine configs
 	sshKeyFile = "/home/core/.ssh/authorized_keys.d/ignition"
@@ -85,9 +80,6 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err := r.fetchClusterInfo(ctx, clusterConfigPath); err != nil {
 		return err
 	}
-	if err := r.fetchCABundle(ctx, manifestsDir, clusterConfigPath); err != nil {
-		return err
-	}
 	if err := r.fetchICSPs(ctx, manifestsDir); err != nil {
 		return err
 	}
@@ -114,6 +106,23 @@ func (r *UpgradeClusterConfigGather) getSSHPublicKey() (string, error) {
 		return "", fmt.Errorf("failed to read sshKey: %w", err)
 	}
 	return string(sshKey), err
+}
+
+// getChronyConfig reads the chrony configuration from the node
+// in case for some reason chrony configuration is not present on the node, it will return an empty string
+// possible reasons for missing chrony configuration:
+// cluster is not installed with assisted-service or user removed the configuration
+func (r *UpgradeClusterConfigGather) getChronyConfig() (string, error) {
+	chronyConfig, err := os.ReadFile(filepath.Join(hostPath, common.ChronyConfig))
+	if os.IsNotExist(err) {
+		r.Log.Info(fmt.Sprintf("chrony configuration %s doesn't exist, "+
+			"skipping copy of it", common.ChronyConfig))
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to chrony config from node: %w", err)
+	}
+	return string(chronyConfig), err
 }
 
 func (r *UpgradeClusterConfigGather) getInfraID(ctx context.Context) (string, error) {
@@ -145,9 +154,101 @@ func (r *UpgradeClusterConfigGather) GetKubeadminPasswordHash(ctx context.Contex
 	return kubeadminPasswordHash, nil
 }
 
+type ServerSSHKey struct {
+	FileName    string
+	FileContent string
+}
+
+func (r *UpgradeClusterConfigGather) GetServerSSHKeys(ctx context.Context) ([]ServerSSHKey, error) {
+	sshKeys := []ServerSSHKey{}
+
+	matches, err := filepath.Glob(filepath.Join(hostPath, common.SSHServerKeysDirectory, "ssh_host_*_key*"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob server SSH keys: %w", err)
+	}
+
+	for _, match := range matches {
+		fileContent, err := os.ReadFile(match)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read server SSH key file %s: %w", match, err)
+		}
+
+		sshKeys = append(sshKeys, ServerSSHKey{
+			FileName:    filepath.Base(match),
+			FileContent: string(fileContent),
+		})
+	}
+
+	return sshKeys, nil
+}
+
+type AdditionalTrustBundle struct {
+	// The contents of the "user-ca-bundle" configmap in the "openshift-config" namespace
+	UserCaBundle string `json:"userCaBundle"`
+
+	// The Proxy CR trustedCA configmap name
+	ProxyConfigmapName string `json:"proxyConfigmapName"`
+
+	// The contents of the ProxyConfigmapName configmap. Must equal
+	// UserCaBundle if ProxyConfigmapName is "user-ca-bundle"
+	ProxyConfigmapBundle string `json:"proxyConfigmapBundle"`
+}
+
+func newAdditionalTrustBundle(userCaBundle, proxyConfigmapName, proxyConfigmapBundle string) (*AdditionalTrustBundle, error) {
+	if proxyConfigmapName == common.ClusterAdditionalTrustBundleName && userCaBundle != proxyConfigmapBundle {
+		return nil, fmt.Errorf("proxyConfigmapName is %s, but userCaBundle and proxyConfigmapBundle differ", common.ClusterAdditionalTrustBundleName)
+	}
+
+	return &AdditionalTrustBundle{
+		UserCaBundle:         userCaBundle,
+		ProxyConfigmapName:   proxyConfigmapName,
+		ProxyConfigmapBundle: proxyConfigmapBundle,
+	}, nil
+}
+
+func (r *UpgradeClusterConfigGather) GetAdditionalTrustBundle(ctx context.Context) (*AdditionalTrustBundle, error) {
+	clusterAdditionalTrustBundle, err := utils.GetAdditionalTrustBundleFromConfigmap(ctx, r.Client, common.ClusterAdditionalTrustBundleName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get additional trust bundle from configmap: %w", err)
+	}
+
+	proxy := v1.Proxy{}
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
+		return nil, fmt.Errorf("failed to get proxy: %w", err)
+
+	}
+
+	proxyCaBundle := ""
+	switch proxy.Spec.TrustedCA.Name {
+	case "":
+		// No proxy CA bundle
+	case common.ClusterAdditionalTrustBundleName:
+		// Proxy is using the cluster's CA bundle
+		proxyCaBundle = clusterAdditionalTrustBundle
+	default:
+		// Proxy is using a different CA bundle, retrieve it from the named configmap
+		proxyCaBundle, err = utils.GetAdditionalTrustBundleFromConfigmap(ctx, r.Client, proxy.Spec.TrustedCA.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get additional trust bundle from configmap: %w", err)
+		}
+
+		if proxyCaBundle == "" {
+			// This is a very weird but probably valid OCP configuration that we prefer to not support in LCA
+			return nil, fmt.Errorf("proxy trustedCA configmap %s/%s exists but is empty", common.OpenshiftConfigNamespace, proxy.Spec.TrustedCA.Name)
+		}
+	}
+
+	additionalTrustBundle, err := newAdditionalTrustBundle(clusterAdditionalTrustBundle, proxy.Spec.TrustedCA.Name, proxyCaBundle)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create additional trust bundle: %w", err)
+	}
+
+	return additionalTrustBundle, err
+}
+
 func (r *UpgradeClusterConfigGather) GetProxy(ctx context.Context) (*seedreconfig.Proxy, *seedreconfig.Proxy, error) {
 	proxy := v1.Proxy{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: proxyName}, &proxy); err != nil {
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
 		return nil, nil, fmt.Errorf("failed to get proxy: %w", err)
 	}
 
@@ -178,6 +279,15 @@ func (r *UpgradeClusterConfigGather) GetInstallConfig(ctx context.Context) (stri
 
 }
 
+func serverSSHKeysToReconfigServerSSHKeys(serverSSHKeys []ServerSSHKey) []seedreconfig.ServerSSHKey {
+	return lo.Map(serverSSHKeys, func(serverSSHKey ServerSSHKey, _ int) seedreconfig.ServerSSHKey {
+		return seedreconfig.ServerSSHKey{
+			FileName:    serverSSHKey.FileName,
+			FileContent: serverSSHKey.FileContent,
+		}
+	})
+}
+
 func SeedReconfigurationFromClusterInfo(
 	clusterInfo *utils.ClusterInfo,
 	kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention,
@@ -188,6 +298,9 @@ func SeedReconfigurationFromClusterInfo(
 	proxy,
 	statusProxy *seedreconfig.Proxy,
 	installConfig string,
+	chronyConfig string,
+	additionalTrustBundle *AdditionalTrustBundle,
+	serverSSHKeys []ServerSSHKey,
 ) *seedreconfig.SeedReconfiguration {
 	return &seedreconfig.SeedReconfiguration{
 		APIVersion:                seedreconfig.SeedReconfigurationVersion,
@@ -200,12 +313,19 @@ func SeedReconfigurationFromClusterInfo(
 		Hostname:                  clusterInfo.Hostname,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
 		SSHKey:                    sshKey,
+		ServerSSHKeys:             serverSSHKeysToReconfigServerSSHKeys(serverSSHKeys),
 		PullSecret:                pullSecret,
 		KubeadminPasswordHash:     kubeadminPasswordHash,
 		Proxy:                     proxy,
 		StatusProxy:               statusProxy,
 		InstallConfig:             installConfig,
 		MachineNetwork:            clusterInfo.MachineNetwork,
+		ChronyConfig:              chronyConfig,
+		AdditionalTrustBundle: seedreconfig.AdditionalTrustBundle{
+			UserCaBundle:         additionalTrustBundle.UserCaBundle,
+			ProxyConfigmapName:   additionalTrustBundle.ProxyConfigmapName,
+			ProxyConfigmapBundle: additionalTrustBundle.ProxyConfigmapBundle,
+		},
 	}
 }
 
@@ -224,7 +344,7 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	sshKey, err := r.getSSHPublicKey()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get ssh key: %w", err)
 	}
 
 	infraID, err := r.getInfraID(ctx)
@@ -242,12 +362,27 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		return err
 	}
 
+	serverSSHKeys, err := r.GetServerSSHKeys(ctx)
+	if err != nil {
+		return err
+	}
+
 	proxy, statusProxy, err := r.GetProxy(ctx)
 	if err != nil {
 		return err
 	}
 
+	additionalTrustBundle, err := r.GetAdditionalTrustBundle(ctx)
+	if err != nil {
+		return err
+	}
+
 	installConfig, err := r.GetInstallConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	chronyConfig, err := r.getChronyConfig()
 	if err != nil {
 		return err
 	}
@@ -260,6 +395,9 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 		proxy,
 		statusProxy,
 		installConfig,
+		chronyConfig,
+		additionalTrustBundle,
+		serverSSHKeys,
 	)
 
 	filePath := filepath.Join(clusterConfigPath, common.SeedReconfigurationFileName)
@@ -317,14 +455,6 @@ func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav
 		APIVersion: gvk.GroupVersion().String(),
 		Kind:       gvk.Kind,
 	}, nil
-}
-
-func (r *UpgradeClusterConfigGather) cleanObjectMetadata(o client.Object) metav1.ObjectMeta {
-	return metav1.ObjectMeta{
-		Name:      o.GetName(),
-		Namespace: o.GetNamespace(),
-		Labels:    o.GetLabels(),
-	}
 }
 
 func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDigestMirrorSetList, error) {
@@ -397,41 +527,6 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	r.Log.Info("Writing ICSPs to file", "path", filePath)
 	if err := utils.MarshalToFile(iscpsList, filePath); err != nil {
 		return fmt.Errorf("failed to write icsps to %s, err: %w", filePath, err)
-	}
-
-	return nil
-}
-
-func (r *UpgradeClusterConfigGather) fetchCABundle(ctx context.Context, manifestsDir, clusterConfigPath string) error {
-	r.Log.Info("Fetching user ca bundle")
-	caBundle := &corev1.ConfigMap{}
-	err := r.Client.Get(ctx, types.NamespacedName{Name: caBundleCMName,
-		Namespace: common.OpenshiftConfigNamespace}, caBundle)
-	if err != nil && errors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get ca bundle cm, err: %w", err)
-	}
-
-	typeMeta, err := r.typeMetaForObject(caBundle)
-	if err != nil {
-		return err
-	}
-	caBundle.TypeMeta = *typeMeta
-	caBundle.ObjectMeta = r.cleanObjectMetadata(caBundle)
-
-	if err := utils.MarshalToFile(caBundle, filepath.Join(manifestsDir, caBundleFileName)); err != nil {
-		return fmt.Errorf("failed to write user ca bundle to %s, err: %w",
-			filepath.Join(manifestsDir, caBundleFileName), err)
-	}
-
-	// we should copy ca-bundle from snoa as without doing it we will fail to pull images
-	// workaround for https://issues.redhat.com/browse/OCPBUGS-24035
-	caBundleFilePath := filepath.Join(hostPath, common.CABundleFilePath)
-	r.Log.Info("Copying", "file", caBundleFilePath)
-	if err := utils.CopyFileIfExists(caBundleFilePath, filepath.Join(clusterConfigPath, filepath.Base(caBundleFilePath))); err != nil {
-		return fmt.Errorf("failed to copy ca-bundle file %s to %s, err %w", caBundleFilePath, clusterConfigPath, err)
 	}
 
 	return nil
