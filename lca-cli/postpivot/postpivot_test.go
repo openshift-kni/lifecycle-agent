@@ -479,6 +479,7 @@ func TestNetworkConfiguration(t *testing.T) {
 					mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
 					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", nil).Times(1)
 				} else {
+					mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
 					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", fmt.Errorf("dummy")).Times(1)
 				}
 			} else {

@@ -946,16 +946,8 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := p.setDnsMasqConfiguration(seedReconfiguration, dnsmasqOverrides); err != nil {
-		return err
-	}
-
 	if _, err := p.ops.SystemctlAction("restart", nmService); err != nil {
 		return fmt.Errorf("failed to restart network manager service, err %w", err)
-	}
-
-	if _, err := p.ops.SystemctlAction("restart", dnsmasqService); err != nil {
-		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
 	}
 
 	seedReconfiguration.Hostname, err = p.setHostname(seedReconfiguration.Hostname)
@@ -969,6 +961,14 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 
 	if err := p.setNodeIPIfNotProvided(ctx, seedReconfiguration, nodeIpFile); err != nil {
 		return err
+	}
+
+	if err := p.setDnsMasqConfiguration(seedReconfiguration, dnsmasqOverrides); err != nil {
+		return err
+	}
+
+	if _, err := p.ops.SystemctlAction("restart", dnsmasqService); err != nil {
+		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
 	}
 
 	return nil
