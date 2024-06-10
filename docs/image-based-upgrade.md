@@ -279,7 +279,7 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
       "extraManifests": [{"name": "test-extramanifests", "namespace": "openshift-lifecycle-agent"}],
       "stage": "Prep",
       "seedImageRef": {
-        "version": "4.15.0,
+        "version": "4.15.0",
         "image": "quay.io/user/seedimage:lca-test-seed-v1",
         "pullSecretRef": {"name": "seed-pull-secret"}
       }
