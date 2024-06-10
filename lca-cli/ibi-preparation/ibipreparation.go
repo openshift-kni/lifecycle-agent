@@ -49,7 +49,7 @@ func (i *IBIPrepare) Run() error {
 	}
 
 	i.log.Info("Pulling seed image")
-	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", i.config.AuthFile, i.config.SeedImage); err != nil {
+	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPSFile, i.config.SeedImage); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
@@ -94,7 +94,7 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, i.config.PullSecretFile, i.config.PrecacheBestEffort); err != nil {
+	if err := workload.Precache(imageList, common.IBIPSFile, i.config.PrecacheBestEffort); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 

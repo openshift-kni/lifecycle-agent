@@ -238,6 +238,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, ostreeVarDir string) error {
 	if len(ibu.Spec.OADPContent) == 0 {
 		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
+		return nil
 	}
 
 	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")

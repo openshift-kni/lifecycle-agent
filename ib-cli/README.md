@@ -70,35 +70,26 @@ podman run -it -v `pwd`:/data --entrypoint cp $(LCA_IMAGE) /usr/local/bin/ib-cli
 
 ### Create installation ISO
 
-To create an installation ISO out of your Single Node OpenShift (SNO) OCI seed image, run the following command from your workstation:
+To create an installation ISO out of your Single Node OpenShift (SNO) OCI seed image, create `image-based-install-iso.yaml` configuration file inside working directory.
+
+```yaml
+seedImage: <seed image>
+seedVersion: <seed version>
+pullSecret: |
+  <pull secret>
+installationDisk: <disk name or disk id>
+sshKey: |
+  <ssh key>
+
+# optional in order to change default base iso
+rhcosLiveIso: "https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso"
+```
+
+After creating `image-based-install-iso.yaml` run:
 
 ```shell
-export LCA_IMAGE=$(oc get deployment -n openshift-lifecycle-agent lifecycle-agent-controller-manager -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
-export SEED_IMAGE=quay.io/${MY_REPO_ID}/${MY_REPO}:${MY_TAG}
-export SEED_VERSION=4.14.6
-export WORKDIR=~/ibi-iso-workdir/
-mkdir ${WORKDIR}
-export AUTH_FILE=/path/to/seed-image-pull-secret.json
-export PS_FILE=/path/to/release-pull-secret.json
-export SSH_PUBLIC_KEY=~/.ssh/id_rsa.pub
-export IBI_INSTALLATION_DISK=/dev/sda
-# Start of the /var/lib/containers partition. Free space before it will be allocated to system partition
-# It can be one of the following:
-#     - Positive number: partition will start at position 120Gb of the disk and extend to the end of the disk. Example: 120Gb
-#     - Negative number: partition will be of that precise size. Example: -40Gb
-#     - If the flag is ommited, no new partition will be created, and a directory /sysroot/containers will be created and used instead
-export EXTRA_PARTITION_START=-40G
 
-
-ib-cli create-iso --installation-disk ${IBI_INSTALLATION_DISK} \
-  --extra-partition-start ${EXTRA_PARTITION_START} \
-  --lca-image ${LCA_IMAGE} \
-  --seed-image ${SEED_IMAGE} \
-  --seed-version ${SEED_VERSION} \
-  --auth-file ${AUTH_FILE} \
-  --pullsecret-file ${PS_FILE} \
-  --ssh-public-key-file ${SSH_PUBLIC_KEY} \
-  --dir ./${WORKDIR}
+ib-cli create-iso --dir <your working directory>
 
 ib-cli assists Image Based Install (IBI).
 
@@ -114,10 +105,80 @@ INFO[2024-02-12 15:59:24] installation ISO created at: ibi-iso-workdir/rhcos-ibi
 INFO[2024-02-12 15:59:24] Installation ISO created successfully!
 ```
 
-Notice that the `--rhcos-live-iso` and the `--lca-image` flags are optional, if not provided the tool will use the defaults.
+### Proxy Configuration
+
+```yaml
+proxy:
+  httpProxy: "http://proxy.example.com:8080"
+  httpsProxy: "http://proxy.example.com:8080"
+  noProxy: "no_proxy.example.com"
+```
+
+### Mirror Registry
+
+```yaml
+imageDigestSources:
+  - mirrors:
+      - "<mirror_host_name>:<mirror_host_port>/ocp4/openshift4"
+    source: "quay.io/openshift-release-dev/ocp-release"
+  - mirrors:
+      - "<mirror_host_name>:<mirror_host_port>/ocp4/openshift4"
+      - "<mirror_host_name>:<mirror_host_port>/ocp4/openshift5"
+    source: "quay.io/openshift-release-dev/ocp-v4.0-art-dev-5"
+```
+
+### Additional trusted bundle
+
+```yaml
+additionalTrustBundle: |
+  PEM-encoded X.509 certificate bundle.
+```
+
+### Static network configuration
+
+```yaml
+nmStateConfig: |
+  interfaces:
+    - name: enp1s0
+      type: ethernet
+      state: up
+      identifier: mac-address
+      mac-address: <your mac>
+      ipv4:
+        enabled: true
+        dhcp: false
+        auto-dns: false
+        address:
+          - ip: 192.168.126.151
+            prefix-length: 24
+      ipv6:
+        enabled: false
+  dns-resolver:
+    config:
+      server:
+        - 192.168.126.1
+  routes:
+    config:
+      - destination: 0.0.0.0/0
+        metric: 150
+        next-hop-address: 192.168.126.1
+        next-hop-interface: enp1s0
+```
+
+### Shutdown after installation
+
+In order to shutdown node after installation add the following to `image-based-install-iso.yaml`:
+
+```yaml
+shutdown: true
+```
 
 ### Image Precaching
 
 By default, ib-cli will precache images and will fail in case image precaching didn't succeed.
-In order to disable precaching add `--precache-disable` flag to `create-iso` command.
-In order to run precaching in `best-effort` mode add `--precache-best-effort` flag.
+In order to disable precaching add `precacheDisabled: true` to `image-based-install-iso.yaml`.
+In order to run precaching in `best-effort` mode add `precacheBestEffort: true` flag.
+
+### Additional flags
+
+Can be found at the `ImageBasedInstallConfig` struct definition (link to [Go code](https://github.com/openshift-kni/lifecycle-agent/blob/main/api/ibiconfig/ibiconfig.go#L17)).
