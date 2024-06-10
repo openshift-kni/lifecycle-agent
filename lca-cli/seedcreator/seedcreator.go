@@ -230,12 +230,18 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		return fmt.Errorf("failed to get additional trust bundle information: %w", err)
 	}
 
+	containerStorageMountpointTarget, err := s.ops.GetContainerStorageTarget()
+	if err != nil {
+		return fmt.Errorf("failed to get container storage mountpoint target: %w", err)
+	}
+
 	seedClusterInfo := seedclusterinfo.NewFromClusterInfo(
 		clusterInfo,
 		s.recertContainerImage,
 		hasProxy,
 		hasFIPS,
 		seedAdditionalTrustBundle,
+		containerStorageMountpointTarget,
 	)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {

@@ -147,6 +147,14 @@ func (r *ImageBasedUpgradeReconciler) validateSeedImageConfig(ctx context.Contex
 		// mismatch between the seed and the seed reconfiguration data.
 	}
 
+	if seedInfo != nil && seedInfo.ContainerStorageMountpointTarget != "" {
+		// Seed image data includes the container storage mountpoint target, so we can compare to running cluster
+		r.Log.Info("Checking seed image container storage compatibility")
+		if err := checkSeedImageContainerStorageCompatibility(seedInfo.ContainerStorageMountpointTarget, r.ContainerStorageMountpointTarget); err != nil {
+			return fmt.Errorf("checking seed image compatibility: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -276,6 +284,15 @@ func checkSeedImageAdditionalTrustBundleCompatibility(seedAdditionalTrustBundle 
 	if seedAdditionalTrustBundle.ProxyConfigmapName != proxyConfigmapName {
 		return fmt.Errorf("seed image's Proxy trustedCA configmap name %q (oc get proxy -oyaml) mismatches cluster's name %q, this combination is not supported",
 			seedAdditionalTrustBundle.ProxyConfigmapName, proxyConfigmapName)
+	}
+
+	return nil
+}
+
+// checkSeedImageContainerStorageCompatibility checks for .
+func checkSeedImageContainerStorageCompatibility(seedContainerStorageMountpoint, clusterContainerStorageMountpoint string) error {
+	if seedContainerStorageMountpoint != clusterContainerStorageMountpoint {
+		return fmt.Errorf("container storage mountpoint target mismatch: seed=%s, cluster=%s", seedContainerStorageMountpoint, clusterContainerStorageMountpoint)
 	}
 
 	return nil
@@ -487,6 +504,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	staterootSetupJob, err := prep.GetStaterootSetupJob(ctx, r.Client, r.Log)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
+			// Ensure there is a container storage mountpoint, required for shared storage between stateroots for IBU
+			if r.ContainerStorageMountpointTarget == "" {
+				return prepFailDoNotRequeue(r.Log, "container storage mountpoint target not found", ibu)
+			}
+
 			r.Log.Info("Validating IBU spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate IBU spec: %s", err.Error()), ibu)

@@ -109,6 +109,21 @@ func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authF
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
 }
 
+// GetContainerStorageTarget mocks base method.
+func (m *MockOps) GetContainerStorageTarget() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetContainerStorageTarget")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetContainerStorageTarget indicates an expected call of GetContainerStorageTarget.
+func (mr *MockOpsMockRecorder) GetContainerStorageTarget() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContainerStorageTarget", reflect.TypeOf((*MockOps)(nil).GetContainerStorageTarget))
+}
+
 // GetHostname mocks base method.
 func (m *MockOps) GetHostname() (string, error) {
 	m.ctrl.T.Helper()
