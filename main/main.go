@@ -23,14 +23,14 @@ import (
 	"os"
 	"sync"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-
-	kbatchv1 "k8s.io/api/batch/v1"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	kbatchv1 "k8s.io/api/batch/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,13 +56,6 @@ import (
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift/library-go/pkg/config/leaderelection"
-	"github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/util/retry"
-
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers"
@@ -75,6 +68,11 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/openshift/library-go/pkg/config/leaderelection"
+	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	policyv1 "open-cluster-management.io/config-policy-controller/api/v1"
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	//+kubebuilder:scaffold:imports
@@ -126,6 +124,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	scheme.AddKnownTypes(ocpV1.GroupVersion,
 		&ocpV1.ClusterVersion{},
@@ -138,7 +137,9 @@ func main() {
 
 	mux := &sync.Mutex{}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                        scheme,
 		HealthProbeBindAddress:        probeAddr,
 		LeaderElection:                enableLeaderElection,
@@ -168,7 +169,6 @@ func main() {
 	// We want to remove logr.Logger first step to move to logrus
 	// in the future we will have only one of them
 	newLogger := logrus.New()
-	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
 	if err := os.MkdirAll(common.PathOutsideChroot(common.LCAConfigDir), 0o700); err != nil {
 		setupLog.Error(err, fmt.Sprintf("unable to create config dir: %s", common.LCAConfigDir))
@@ -191,7 +191,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), true, &setupLog)
+	dynamicClient, err := lcautils.CreateDynamicClient(common.PathOutsideChroot(common.KubeconfigFile), true, log.WithName("ibu-dynamic-client"))
 	if err != nil {
 		setupLog.Error(err, "unable to create dynamic client")
 		os.Exit(1)
@@ -202,6 +202,12 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
+	containerStorageMountpointTarget, err := op.GetContainerStorageTarget()
+	if err != nil {
+		setupLog.Error(err, "unable to get container storage mountpoint target")
+		os.Exit(1)
+	}
+
 	// a simple in-cluster client-go based client, useful for getting pod logs
 	// as runtime-controller client currently doesn't support pod sub resources
 	// https://github.com/kubernetes-sigs/controller-runtime/issues/452#issuecomment-792266582
@@ -210,6 +216,7 @@ func main() {
 		setupLog.Error(err, "Failed to get InClusterConfig")
 		os.Exit(1)
 	}
+	config.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-clientset"))) // allow all client calls to be retriable
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -246,6 +253,9 @@ func main() {
 		},
 		Mux:       mux,
 		Clientset: clientset,
+
+		// Cluster data retrieved once during init
+		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -260,6 +270,9 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		Executor:        executor,
 		Mux:             mux,
+
+		// Cluster data retrieved once during init
+		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SeedGenerator")
 		os.Exit(1)
@@ -348,42 +361,36 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 
 	// Restore Secret CR
 	log.Info("Saved SeedGenerator Secret CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, secret)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed delete SeedGenerator Secret: %w", err)
+	if err := c.Delete(ctx, secret); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed delete SeedGenerator Secret: %w", err)
+		}
 	}
 
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, secret) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Create(ctx, secret); err != nil {
 		return fmt.Errorf("failed to create SeedGenerator Secret: %w", err)
 	}
 
 	// Restore SeedGenerator CR
 
 	log.Info("Saved SeedGenerator CR found, restoring ...")
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return client.IgnoreNotFound(c.Delete(ctx, seedgen)) //nolint:wrapcheck
-	}); err != nil {
-		return fmt.Errorf("failed to delete SeedGenerator: %w", err)
+	if err := c.Delete(ctx, seedgen); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete SeedGenerator: %w", err)
+		}
 	}
 
 	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Create(ctx, seedgen) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Create(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to create seedgen: %w", err)
 	}
 
 	// Put the saved status into the newly create seedgen with the right resource
 	// version which is required for the update call to work
 	seedgen.Status = status
-	if err := common.RetryOnConflictOrRetriable(retry.DefaultBackoff, func() error {
-		return c.Status().Update(ctx, seedgen) //nolint:wrapcheck
-	}); err != nil {
+	if err := c.Status().Update(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}
 
