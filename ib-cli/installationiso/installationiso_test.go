@@ -4,23 +4,24 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
-	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
-	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
-	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/utils"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
 	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
 
+	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 const mirrorRegistryTestContent = `
@@ -78,6 +79,7 @@ func TestInstallationIso(t *testing.T) {
 		ignitionOverride   string
 		proxy              *seedreconfig.Proxy
 		ids                []ibiconfig.ImageDigestSource
+		postScript         bool
 		embedCommandReturn error
 		expectedError      string
 	}{
@@ -226,6 +228,19 @@ func TestInstallationIso(t *testing.T) {
 			ignitionOverride:   `{"ignition": {"version": "3.1.0"}, "storage": {"files": [{"path": "/tmp/example", "contents": {"source": "data:text/plain;charset=utf-8;base64,aGVscGltdHJhcHBlZGluYXN3YWdnZXJzcGVj"}}]}}`,
 		},
 		{
+			name:               "Happy flow with post deployment script",
+			workDirExists:      true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			nmstateConfig:      false,
+			postScript:         true,
+			expectedError:      "",
+		},
+		{
 			name:               "missing workdir",
 			workDirExists:      false,
 			sshPublicKeyExists: false,
@@ -309,6 +324,14 @@ func TestInstallationIso(t *testing.T) {
 			}
 			if len(tc.ids) > 0 {
 				isoConfig.ImageDigestSources = tc.ids
+			}
+
+			if tc.postScript {
+				file, err := os.Create(path.Join(tmpDir, postDeploymentScript))
+				assert.Nil(t, err)
+				defer file.Close()
+				_, err = file.WriteString("echo hello")
+				assert.Nil(t, err)
 			}
 
 			if tc.liveIsoUrlSuccess {
@@ -413,6 +436,16 @@ func TestInstallationIso(t *testing.T) {
 				} else {
 					overrideFile := findFileInIgnition(t, config, "/tmp/example")
 					assert.Nil(t, overrideFile)
+				}
+				if tc.postScript {
+					postScriptFile := findFileInIgnition(t, config, common.PostDeploymentScriptPath)
+					assert.NotNil(t, postScriptFile)
+					assert.NotNil(t, postScriptFile.Contents)
+					assert.NotNil(t, postScriptFile.Contents.Source)
+					assert.Equal(t, *postScriptFile.Contents.Source, "echo hello")
+				} else {
+					postScriptFile := findFileInIgnition(t, config, common.PostDeploymentScriptPath)
+					assert.Nil(t, postScriptFile)
 				}
 
 			} else {

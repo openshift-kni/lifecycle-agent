@@ -173,6 +173,21 @@ In order to shutdown node after installation add the following to `image-based-i
 shutdown: true
 ```
 
+### Post deployment tasks
+
+If you want to run post deployment tasks, please add your bash script to working dir it's name must be `post.sh`.
+It will run after the installation is completed.
+
+### Ignition Config Override
+
+In order to override the default ignition config, add `ignitionConfigOverride` to `image-based-install-iso.yaml`.
+It should be a JSON formatted string containing the user overrides for the initial ignition config.
+
+```yaml
+ignitionConfigOverride: |
+  {"ignition": {"version": "3.2.0"}, "storage": {"files": [{"path": "/tmp/example", "contents": {"source": "data:text/plain;charset=utf-8;base64,aGVscGltdHJhcHBlZGluYXN3YWdnZXJzcGVj"}}]}}
+```
+
 ### Image Precaching
 
 By default, ib-cli will precache images and will fail in case image precaching didn't succeed.
