@@ -26,7 +26,7 @@ type ImageBasedInstallConfig struct {
 	// Params that are used to configure the installation iso and will be moved to installer
 	RHCOSLiveISO string `json:"rhcosLiveIso,omitempty"`
 
-	// RawNMStateConfig contains nmstate configuration YAML file provided as string.
+	// NMStateConfig contains nmstate configuration YAML file provided as string.
 	// String will be written to file and will be applied with "nmstatectl apply" command.
 	// Example of nmstate configurations can be found in this link https://nmstate.io/examples.html
 	// +optional
@@ -90,8 +90,10 @@ type IBIPrepareConfig struct {
 	// Default is false
 	UseContainersFolder bool `json:"useContainersFolder,omitempty"`
 
-	// ExtraPartitionStart start of extra partition used for /var/lib/containers.
-	// Partition will expand until the end of the disk. Uses sgdisk notation
+	// ExtraPartitionStart Start of the /var/lib/containers partition. Free space before it will be allocated to system partition.
+	// It can be one of the following:
+	// - Positive number: partition will start at position 120Gb of the disk and extend to the end of the disk. Example: 120Gb
+	// - Negative number: partition will be of that precise size. Example: -40Gb
 	// Default is -40G (40GB before the end of the disk)
 	// +optional
 	ExtraPartitionStart string `json:"extraPartitionStart,omitempty"`
