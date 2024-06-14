@@ -69,6 +69,9 @@ type SeedGeneratorReconciler struct {
 	Recorder        record.EventRecorder
 	Executor        ops.Execute
 	Mux             *sync.Mutex
+
+	// Cluster data retrieved once, during init
+	ContainerStorageMountpointTarget string
 }
 
 var (
@@ -550,6 +553,11 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 	// Check that the "ostree admin set-default" feature is available
 	if !ostreeclient.NewClient(r.Executor, false).IsOstreeAdminSetDefaultFeatureEnabled() {
 		msg = "Rejected: Installed release does not support \"ostree admin set-default\" feature"
+		return
+	}
+
+	if r.ContainerStorageMountpointTarget == "" {
+		msg = "Rejected: Cluster must be configured with shared container storage"
 		return
 	}
 

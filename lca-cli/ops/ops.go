@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,7 @@ type Ops interface {
 	SetupContainersFolderCommands() error
 	GetHostname() (string, error)
 	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
+	GetContainerStorageTarget() (string, error)
 }
 
 type CMD struct {
@@ -586,4 +588,28 @@ func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionByte
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
 	return nil
+}
+
+func (o *ops) GetContainerStorageTarget() (string, error) {
+	const containerStorageMountUnit = "var-lib-containers.mount"
+	if _, err := o.SystemctlAction("is-active", containerStorageMountUnit); err != nil {
+		// No active mount, return nil
+		return "", nil
+	}
+
+	output, err := o.SystemctlAction("cat", containerStorageMountUnit)
+	if err != nil {
+		return "", fmt.Errorf("unable to systemctl cat %s: %w", containerStorageMountUnit, err)
+	}
+
+	// Parse the output to find the mountpoint target
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		field, value, _ := strings.Cut(scanner.Text(), "=")
+		if field == "What" {
+			return value, nil
+		}
+
+	}
+	return "", fmt.Errorf("failed to find mountpoint target in %s", containerStorageMountUnit)
 }
