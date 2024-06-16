@@ -75,6 +75,7 @@ func TestInstallationIso(t *testing.T) {
 		skipDiskCleanup    bool
 		addTrustedBundle   bool
 		nmstateConfig      bool
+		ignitionOverride   string
 		proxy              *seedreconfig.Proxy
 		ids                []ibiconfig.ImageDigestSource
 		embedCommandReturn error
@@ -186,6 +187,45 @@ func TestInstallationIso(t *testing.T) {
 			expectedError: "",
 		},
 		{
+			name:               "Happy flow with ignition override",
+			workDirExists:      true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  true,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			addTrustedBundle:   false,
+			expectedError:      "",
+			ignitionOverride:   `{"ignition": {"version": "3.2.0"}, "storage": {"files": [{"path": "/tmp/example", "contents": {"source": "data:text/plain;charset=utf-8;base64,aGVscGltdHJhcHBlZGluYXN3YWdnZXJzcGVj"}}]}}`,
+		},
+		{
+			name:               "Fail to override ignition dues to bad string",
+			workDirExists:      true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  false,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			addTrustedBundle:   false,
+			expectedError:      "failed to parse ignition config override",
+			ignitionOverride:   `{"bad": "ignition"}`,
+		},
+		{
+			name:               "Fail to override ignition dues to bad version",
+			workDirExists:      true,
+			sshPublicKeyExists: true,
+			liveIsoUrlSuccess:  false,
+			precacheBestEffort: false,
+			precacheDisabled:   false,
+			shutdown:           false,
+			skipDiskCleanup:    false,
+			addTrustedBundle:   false,
+			expectedError:      "failed to parse ignition config override",
+			ignitionOverride:   `{"ignition": {"version": "3.1.0"}, "storage": {"files": [{"path": "/tmp/example", "contents": {"source": "data:text/plain;charset=utf-8;base64,aGVscGltdHJhcHBlZGluYXN3YWdnZXJzcGVj"}}]}}`,
+		},
+		{
 			name:               "missing workdir",
 			workDirExists:      false,
 			sshPublicKeyExists: false,
@@ -245,10 +285,11 @@ func TestInstallationIso(t *testing.T) {
 				defer server.Close()
 			}
 			isoConfig := &ibiconfig.ImageBasedInstallConfig{
-				PullSecret:   common.PullSecretEmptyData,
-				SSHKey:       "sshKey",
-				RHCOSLiveISO: rhcosLiveIsoUrl,
-				Proxy:        tc.proxy,
+				PullSecret:             common.PullSecretEmptyData,
+				SSHKey:                 "sshKey",
+				RHCOSLiveISO:           rhcosLiveIsoUrl,
+				Proxy:                  tc.proxy,
+				IgnitionConfigOverride: tc.ignitionOverride,
 				IBIPrepareConfig: ibiconfig.IBIPrepareConfig{
 					SeedImage:           seedImage,
 					PrecacheDisabled:    tc.precacheDisabled,
@@ -363,6 +404,15 @@ func TestInstallationIso(t *testing.T) {
 				} else {
 					registries := findFileInIgnition(t, config, mirrorRegistryFilePath)
 					assert.Nil(t, registries)
+				}
+				if tc.ignitionOverride != "" {
+					overrideFile := findFileInIgnition(t, config, "/tmp/example")
+					assert.NotNil(t, overrideFile)
+					assert.NotNil(t, overrideFile.Contents)
+					assert.NotNil(t, overrideFile.Contents.Source)
+				} else {
+					overrideFile := findFileInIgnition(t, config, "/tmp/example")
+					assert.Nil(t, overrideFile)
 				}
 
 			} else {

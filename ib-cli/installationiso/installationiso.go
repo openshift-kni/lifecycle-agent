@@ -5,11 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+
 	"io"
 	"net/http"
 	"os"
 	"path"
 
+	"github.com/coreos/ignition/v2/config/merge"
+	"github.com/coreos/ignition/v2/config/v3_2"
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/sirupsen/logrus"
 
@@ -96,6 +99,7 @@ func (r *InstallationIso) createIgnitionFile(ibiConfig *ibiconfig.ImageBasedInst
 	if err != nil {
 		return err
 	}
+
 	ignitionFilePath := path.Join(r.workDir, ibiIgnitionFileName)
 	if err := utils.MarshalToFile(ignition, ignitionFilePath); err != nil {
 		return fmt.Errorf("failed to write ignition file: %w", err)
@@ -201,6 +205,22 @@ func (r *InstallationIso) renderIgnition(imageConfig *ibiconfig.ImageBasedInstal
 	if imageConfig.NMStateConfig != "" {
 		if err := r.nmstateConfig(config, imageConfig.NMStateConfig); err != nil {
 			return nil, fmt.Errorf("failed to add nmstate config into ignition: %w", err)
+		}
+	}
+
+	if imageConfig.IgnitionConfigOverride != "" {
+		ignitionConfigOverride, _, err := v3_2.Parse([]byte(imageConfig.IgnitionConfigOverride))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse ignition config override: %w", err)
+		}
+
+		merged, _ := merge.MergeStructTranscribe(*config, ignitionConfigOverride)
+		marshaledMerged, err := json.Marshal(merged)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal merged ignition config: %w", err)
+		}
+		if err := json.Unmarshal(marshaledMerged, config); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal merged ignition config: %w", err)
 		}
 	}
 
