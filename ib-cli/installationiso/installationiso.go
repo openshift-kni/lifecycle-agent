@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -54,7 +54,6 @@ const (
 	ibiIgnitionFileName       = "ibi-ignition.json"
 	rhcosIsoFileName          = "rhcos-live.x86_64.iso"
 	ibiIsoFileName            = "rhcos-ibi.iso"
-	coreosInstallerImage      = "quay.io/coreos/coreos-installer:latest"
 	ibiConfigFileName         = "ibi-configuration.json"
 	psIgnitioFilePath         = "/var/tmp/pull-secret.json"
 	ibiConfigIgnitionFilePath = "/var/tmp/" + ibiConfigFileName
@@ -62,6 +61,7 @@ const (
 	nmstateConfigFilePath     = "/var/tmp/network-config.yaml"
 	installationScriptPath    = "/usr/local/bin/install-rhcos-and-restore-seed.sh"
 	mirrorRegistryFilePath    = "/etc/containers/registries.conf"
+	postDeploymentScript      = "post.sh"
 )
 
 func (r *InstallationIso) Create(ibiConfig *ibiconfig.ImageBasedInstallConfig) error {
@@ -222,6 +222,16 @@ func (r *InstallationIso) renderIgnition(imageConfig *ibiconfig.ImageBasedInstal
 		if err := json.Unmarshal(marshaledMerged, config); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal merged ignition config: %w", err)
 		}
+	}
+
+	// add post installation script if exists
+	if _, err := os.Stat(path.Join(r.workDir, postDeploymentScript)); err == nil {
+		data, err := os.ReadFile(path.Join(r.workDir, postDeploymentScript))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read post deployment script `%s`: %w",
+				path.Join(r.workDir, postDeploymentScript), err)
+		}
+		setFileInIgnition(config, common.PostDeploymentScriptPath, string(data), 0o755)
 	}
 
 	return config, nil

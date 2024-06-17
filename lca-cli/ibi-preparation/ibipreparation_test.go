@@ -3,6 +3,8 @@ package ibi_preparation
 import (
 	"fmt"
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"os"
+	"path"
 	"testing"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
@@ -120,4 +122,33 @@ func TestDiskPreparation(t *testing.T) {
 			assert.Equal(t, err != nil, tc.partitionError || tc.setupFolderError)
 		})
 	}
+}
+
+func TestPostDeployment(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	log := &logrus.Logger{}
+	ibiConfig := &ibiconfig.IBIPrepareConfig{}
+	ibi := NewIBIPrepare(log, mockOps, nil, nil, nil, ibiConfig)
+
+	// Test case when the post deployment script does not exist
+	tmpDir := t.TempDir()
+	postSH := path.Join(tmpDir, "post.sh")
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any()).Return("", nil).Times(0)
+	err := ibi.postDeployment(postSH)
+	assert.Nil(t, err)
+
+	file, err := os.Create(postSH)
+	assert.Nil(t, err)
+	defer file.Close()
+	// Test case when the post deployment script exists and executes without error
+	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", nil).Times(1)
+	err = ibi.postDeployment(postSH)
+	assert.Nil(t, err)
+
+	// Test case when the post deployment script exists but fails to execute
+	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", fmt.Errorf("dummy")).Times(1)
+	err = ibi.postDeployment(postSH)
+	assert.NotNil(t, err)
+
 }

@@ -66,6 +66,10 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to precache: %w", err)
 	}
 
+	if err := i.postDeployment(common.PostDeploymentScriptPath); err != nil {
+		return fmt.Errorf("failed to run post deployment: %w", err)
+	}
+
 	return i.shutdownNode()
 }
 
@@ -167,5 +171,15 @@ func (i *IBIPrepare) diskPreparation() error {
 
 	i.log.Info("Disk was successfully prepared")
 
+	return nil
+}
+
+func (i *IBIPrepare) postDeployment(scriptPath string) error {
+	if _, err := os.Stat(scriptPath); err == nil {
+		i.log.Info("Running post deployment script")
+		if _, err := i.ops.RunBashInHostNamespace(scriptPath); err != nil {
+			return fmt.Errorf("failed to run post deployment script: %w", err)
+		}
+	}
 	return nil
 }
