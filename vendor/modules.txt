@@ -1014,7 +1014,7 @@ k8s.io/client-go/util/homedir
 k8s.io/client-go/util/keyutil
 k8s.io/client-go/util/retry
 k8s.io/client-go/util/workqueue
-# k8s.io/code-generator v0.29.4
+# k8s.io/code-generator v0.29.5
 ## explicit; go 1.21
 k8s.io/code-generator
 k8s.io/code-generator/cmd/applyconfiguration-gen
@@ -1104,7 +1104,7 @@ k8s.io/utils/pointer
 k8s.io/utils/ptr
 k8s.io/utils/strings/slices
 k8s.io/utils/trace
-# open-cluster-management.io/api v0.13.0
+# open-cluster-management.io/api v0.14.0
 ## explicit; go 1.21
 open-cluster-management.io/api/cluster/v1
 # open-cluster-management.io/config-policy-controller v0.12.0
