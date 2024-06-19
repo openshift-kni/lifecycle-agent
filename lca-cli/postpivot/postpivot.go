@@ -390,17 +390,10 @@ func (p *PostPivot) postRecertCommands(ctx context.Context, clusterInfo *cluster
 		return fmt.Errorf("failed to run update-ca-trust after recert: %w", err)
 	}
 
-	// TODO: remove after https://issues.redhat.com/browse/ETCD-503
-	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
-		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
-	}
-
-	// changing seed ip to new ip in all static pod files
-	_, err = p.ops.RunBashInHostNamespace(fmt.Sprintf("find /etc/kubernetes/ -type f -print0 | xargs -0 sed -i \"s/%s/%s/g\"",
-		seedClusterInfo.NodeIP, clusterInfo.NodeIP))
-	if err != nil {
-		return fmt.Errorf("failed to change seed ip to new ip in /etc/kubernetes, err: %w", err)
-	}
+	//// TODO: remove after https://issues.redhat.com/browse/ETCD-503
+	//if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
+	//	return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
+	//}
 
 	return nil
 }
