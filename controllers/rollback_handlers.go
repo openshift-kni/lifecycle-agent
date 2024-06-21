@@ -158,7 +158,6 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ib
 	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot for rollback")
 	err = r.RebootClient.RebootToNewStateRoot("rollback")
 	if err != nil {
-		//todo: abort handler? e.g delete desired stateroot
 		r.Log.Error(err, "")
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
@@ -177,13 +176,13 @@ func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *ibuv1.ImageBasedUpgrad
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
 	if err != nil {
-		//todo: abort handler? e.g delete desired stateroot
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 
 	if origStaterootBooted {
 		r.Log.Info("Pivot for rollback successful, starting post pivot steps")
+		utils.StopStageHistory(r.Client, r.Log, ibu)
 		return r.finishRollback(ibu)
 	} else {
 		r.Log.Info("Starting pre pivot for rollback steps and will pivot to previous stateroot with a reboot")
