@@ -273,6 +273,11 @@ func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ibuv
 		r.Log = tempOrigLogger
 	}()
 
+	// Start stage history timer. The timer is stopped from inside the handlers when they complete successfully
+	utils.StartStageHistory(r.Client, r.Log, ibu)
+	// .status.history is reset as long as the desired stage is Idle
+	utils.ResetHistory(r.Client, r.Log, ibu)
+
 	switch stage {
 	case ibuv1.Stages.Idle:
 		nextReconcile, err = r.handleAbortOrFinalize(ctx, ibu)
