@@ -28,9 +28,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	kbatch "k8s.io/api/batch/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/coreos/go-semver/semver"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -528,6 +527,12 @@ func (r *ImageBasedUpgradeReconciler) containerStorageCleanup(ibu *ibuv1.ImageBa
 	return nil
 }
 
+// Used to start and end phases in the Prep stage. Each of them must be used in exactly two places
+var (
+	PrepPhaseStateroot = "Stateroot"
+	PrepPhasePrecache  = "Precache"
+)
+
 // handlePrep the main func to run prep stage
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Running health check for Prep")
@@ -573,6 +578,8 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
 				return requeueWithError(fmt.Errorf("failed launch stateroot job: %w", err))
 			}
+			// start prep stage stateroot phase timing
+			utils.StartPhase(r.Client, r.Log, ibu, PrepPhaseStateroot)
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job for stateroot setup. %s", getJobMetadataString(staterootSetupJob)), ibu)
 		}
 		return requeueWithError(fmt.Errorf("failed to get stateroot setup job: %w", err))
@@ -594,6 +601,8 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	case kbatch.JobFailed:
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("stateroot setup job failed to complete. %s", getJobMetadataString(staterootSetupJob)), ibu)
 	case kbatch.JobComplete:
+		// stop prep stage stateroot phase timing
+		utils.StopPhase(r.Client, r.Log, ibu, PrepPhaseStateroot)
 		r.Log.Info("Stateroot job completed successfully", "completion time", staterootSetupJob.Status.CompletionTime, "total time", staterootSetupJob.Status.CompletionTime.Sub(staterootSetupJob.Status.StartTime.Time))
 	}
 
@@ -605,6 +614,8 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
 				return requeueWithError(fmt.Errorf("failed to launch precaching job: %w", err))
 			}
+			// start prep stage precache phase timing
+			utils.StartPhase(r.Client, r.Log, ibu, PrepPhasePrecache)
 			return prepInProgressRequeue(r.Log, fmt.Sprintf("Successfully launched a new job precache. %s", getJobMetadataString(precacheJob)), ibu)
 		}
 		return requeueWithError(fmt.Errorf("failed to get precache job: %w", err))
@@ -626,10 +637,13 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	case kbatch.JobFailed:
 		return prepFailDoNotRequeue(r.Log, fmt.Sprintf("precache job failed to complete. %s", getJobMetadataString(precacheJob)), ibu)
 	case kbatch.JobComplete:
+		// stop prep stage precache phase timing
+		utils.StopPhase(r.Client, r.Log, ibu, PrepPhasePrecache)
 		r.Log.Info("Precache job completed successfully", "completion time", precacheJob.Status.CompletionTime, "total time", precacheJob.Status.CompletionTime.Sub(precacheJob.Status.StartTime.Time))
 	}
 
 	r.Log.Info("All jobs completed successfully")
+	utils.StopStageHistory(r.Client, r.Log, ibu) // stop prep history timing
 	return prepSuccessDoNotRequeue(r.Log, ibu)
 }
 
