@@ -1,6 +1,7 @@
 module github.com/openshift-kni/lifecycle-agent
 
 go 1.21
+toolchain go1.22.4
 
 require (
 	github.com/containers/image v3.0.2+incompatible
@@ -8,7 +9,7 @@ require (
 	github.com/coreos/ignition/v2 v2.19.0
 	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.6.0
-	github.com/k8snetworkplumbingwg/sriov-network-operator v1.2.0
+	github.com/k8snetworkplumbingwg/sriov-network-operator v1.3.0
 	github.com/openshift/api v0.0.0-20231123212421-7955d3da79e8
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20231027143522-b8cd45d2d2c8
@@ -43,7 +44,7 @@ require (
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.0.3-0.20220303224323-02efb9a75ee1 // indirect
+	github.com/opencontainers/image-spec v1.1.0-rc1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
@@ -89,7 +90,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.1.1-0.20201119153432-9d213757d22d // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -98,7 +98,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/selinux v1.11.0
 	github.com/openshift/client-go v0.0.0-20230926161409-848405da69e1 // indirect
-	github.com/openshift/machine-config-operator v0.0.1-0.20201023110058-6c8bd9b2915c // indirect
+	github.com/openshift/machine-config-operator v0.0.1-0.20230118083703-fc27a2bdaa85 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_golang v1.19.0 // indirect
