@@ -5,22 +5,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
+	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	render "github.com/k8snetworkplumbingwg/sriov-network-operator/pkg/render"
+	"github.com/k8snetworkplumbingwg/sriov-network-operator/pkg/consts"
+	"github.com/k8snetworkplumbingwg/sriov-network-operator/pkg/render"
+	"github.com/k8snetworkplumbingwg/sriov-network-operator/pkg/vars"
 )
 
 const (
@@ -29,6 +29,14 @@ const (
 	POOLCONFIGFINALIZERNAME = "poolconfig.finalizers.sriovnetwork.openshift.io"
 	ESwithModeLegacy        = "legacy"
 	ESwithModeSwitchDev     = "switchdev"
+
+	SriovCniStateEnable  = "enable"
+	SriovCniStateDisable = "disable"
+	SriovCniStateAuto    = "auto"
+	SriovCniStateOff     = "off"
+	SriovCniStateOn      = "on"
+	SriovCniIpam         = "\"ipam\""
+	SriovCniIpamEmpty    = SriovCniIpam + ":{}"
 )
 
 const invalidVfIndex = -1
@@ -40,6 +48,8 @@ var log = logf.Log.WithName("sriovnetwork")
 // Vendor ID, Physical Function Device ID, Virtual Function Device ID
 var NicIDMap = []string{}
 
+var InitialState SriovNetworkNodeState
+
 // NetFilterType Represents the NetFilter tags to be used
 type NetFilterType int
 
@@ -48,6 +58,13 @@ const (
 	OpenstackNetworkID NetFilterType = iota
 
 	SupportedNicIDConfigmap = "supported-nic-ids"
+)
+
+type ConfigurationModeType string
+
+const (
+	DaemonConfigurationMode  ConfigurationModeType = "daemon"
+	SystemdConfigurationMode ConfigurationModeType = "systemd"
 )
 
 func (e NetFilterType) String() string {
@@ -59,7 +76,7 @@ func (e NetFilterType) String() string {
 	}
 }
 
-func InitNicIDMap(client *kubernetes.Clientset, namespace string) error {
+func InitNicIDMapFromConfigMap(client kubernetes.Interface, namespace string) error {
 	cm, err := client.CoreV1().ConfigMaps(namespace).Get(
 		context.Background(),
 		SupportedNicIDConfigmap,
@@ -72,7 +89,12 @@ func InitNicIDMap(client *kubernetes.Clientset, namespace string) error {
 	for _, v := range cm.Data {
 		NicIDMap = append(NicIDMap, v)
 	}
+
 	return nil
+}
+
+func InitNicIDMapFromList(idList []string) {
+	NicIDMap = append(NicIDMap, idList...)
 }
 
 func IsSupportedVendor(vendorID string) bool {
@@ -102,7 +124,7 @@ func IsSupportedModel(vendorID, deviceID string) bool {
 			return true
 		}
 	}
-	log.Info("IsSupportedModel():", "Unsupported model:", "vendorId:", vendorID, "deviceId:", deviceID)
+	log.Info("IsSupportedModel(): found unsupported model", "vendorId:", vendorID, "deviceId:", deviceID)
 	return false
 }
 
@@ -113,7 +135,7 @@ func IsVfSupportedModel(vendorID, deviceID string) bool {
 			return true
 		}
 	}
-	log.Info("IsVfSupportedModel():", "Unsupported VF model:", "vendorId:", vendorID, "deviceId:", deviceID)
+	log.Info("IsVfSupportedModel(): found unsupported VF model", "vendorId:", vendorID, "deviceId:", deviceID)
 	return false
 }
 
@@ -192,6 +214,135 @@ func GetVfDeviceID(deviceID string) string {
 	return ""
 }
 
+func IsSwitchdevModeSpec(spec SriovNetworkNodeStateSpec) bool {
+	return ContainsSwitchdevInterface(spec.Interfaces)
+}
+
+// ContainsSwitchdevInterface returns true if provided interface list contains interface
+// with switchdev configuration
+func ContainsSwitchdevInterface(interfaces []Interface) bool {
+	for _, iface := range interfaces {
+		if iface.EswitchMode == ESwithModeSwitchDev {
+			return true
+		}
+	}
+	return false
+}
+
+func FindInterface(interfaces Interfaces, name string) (iface Interface, err error) {
+	for _, i := range interfaces {
+		if i.Name == name {
+			return i, nil
+		}
+	}
+	return Interface{}, fmt.Errorf("unable to find interface: %v", name)
+}
+
+// GetEswitchModeFromSpec returns ESwitchMode from the interface spec, returns legacy if not set
+func GetEswitchModeFromSpec(ifaceSpec *Interface) string {
+	if ifaceSpec.EswitchMode == "" {
+		return ESwithModeLegacy
+	}
+	return ifaceSpec.EswitchMode
+}
+
+// GetEswitchModeFromStatus returns ESwitchMode from the interface status, returns legacy if not set
+func GetEswitchModeFromStatus(ifaceStatus *InterfaceExt) string {
+	if ifaceStatus.EswitchMode == "" {
+		return ESwithModeLegacy
+	}
+	return ifaceStatus.EswitchMode
+}
+
+func NeedToUpdateSriov(ifaceSpec *Interface, ifaceStatus *InterfaceExt) bool {
+	if ifaceSpec.Mtu > 0 {
+		mtu := ifaceSpec.Mtu
+		if mtu > ifaceStatus.Mtu {
+			log.V(2).Info("NeedToUpdateSriov(): MTU needs update", "desired", mtu, "current", ifaceStatus.Mtu)
+			return true
+		}
+	}
+	currentEswitchMode := GetEswitchModeFromStatus(ifaceStatus)
+	desiredEswitchMode := GetEswitchModeFromSpec(ifaceSpec)
+	if currentEswitchMode != desiredEswitchMode {
+		log.V(2).Info("NeedToUpdateSriov(): EswitchMode needs update", "desired", desiredEswitchMode, "current", currentEswitchMode)
+		return true
+	}
+	if ifaceSpec.NumVfs != ifaceStatus.NumVfs {
+		log.V(2).Info("NeedToUpdateSriov(): NumVfs needs update", "desired", ifaceSpec.NumVfs, "current", ifaceStatus.NumVfs)
+		return true
+	}
+
+	if ifaceStatus.LinkAdminState == consts.LinkAdminStateDown {
+		log.V(2).Info("NeedToUpdateSriov(): PF link status needs update", "desired to include", "up", "current", ifaceStatus.LinkAdminState)
+		return true
+	}
+
+	if ifaceSpec.NumVfs > 0 {
+		for _, vfStatus := range ifaceStatus.VFs {
+			ingroup := false
+			for _, groupSpec := range ifaceSpec.VfGroups {
+				if IndexInRange(vfStatus.VfID, groupSpec.VfRange) {
+					ingroup = true
+					if vfStatus.Driver == "" {
+						log.V(2).Info("NeedToUpdateSriov(): Driver needs update - has no driver",
+							"desired", groupSpec.DeviceType)
+						return true
+					}
+					if groupSpec.DeviceType != "" && groupSpec.DeviceType != consts.DeviceTypeNetDevice {
+						if groupSpec.DeviceType != vfStatus.Driver {
+							log.V(2).Info("NeedToUpdateSriov(): Driver needs update",
+								"desired", groupSpec.DeviceType, "current", vfStatus.Driver)
+							return true
+						}
+					} else {
+						if StringInArray(vfStatus.Driver, vars.DpdkDrivers) {
+							log.V(2).Info("NeedToUpdateSriov(): Driver needs update",
+								"desired", groupSpec.DeviceType, "current", vfStatus.Driver)
+							return true
+						}
+						if vfStatus.Mtu != 0 && groupSpec.Mtu != 0 && vfStatus.Mtu != groupSpec.Mtu {
+							log.V(2).Info("NeedToUpdateSriov(): VF MTU needs update",
+								"vf", vfStatus.VfID, "desired", groupSpec.Mtu, "current", vfStatus.Mtu)
+							return true
+						}
+
+						if (strings.EqualFold(ifaceStatus.LinkType, consts.LinkTypeETH) && groupSpec.IsRdma) || strings.EqualFold(ifaceStatus.LinkType, consts.LinkTypeIB) {
+							// We do this check only if a Node GUID is set to ensure that we were able to read the
+							// Node GUID. We intentionally skip empty Node GUID in vfStatus because this may happen
+							// when the VF is allocated to a workload.
+							if vfStatus.GUID == consts.UninitializedNodeGUID {
+								log.V(2).Info("NeedToUpdateSriov(): VF GUID needs update",
+									"vf", vfStatus.VfID, "current", vfStatus.GUID)
+								return true
+							}
+						}
+						// this is needed to be sure the admin mac address is configured as expected
+						if ifaceSpec.ExternallyManaged {
+							log.V(2).Info("NeedToUpdateSriov(): need to update the device as it's externally manage",
+								"device", ifaceStatus.PciAddress)
+							return true
+						}
+					}
+					if groupSpec.VdpaType != vfStatus.VdpaType {
+						log.V(2).Info("NeedToUpdateSriov(): VF VdpaType mismatch",
+							"desired", groupSpec.VdpaType, "current", vfStatus.VdpaType)
+						return true
+					}
+					break
+				}
+			}
+			if !ingroup && (StringInArray(vfStatus.Driver, vars.DpdkDrivers) || vfStatus.VdpaType != "") {
+				// need to reset VF if it is not a part of a group and:
+				// a. has DPDK driver loaded
+				// b. has VDPA device
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type ByPriority []SriovNetworkNodePolicy
 
 func (a ByPriority) Len() int {
@@ -217,7 +368,6 @@ func (p *SriovNetworkNodePolicy) Selected(node *corev1.Node) bool {
 		}
 		return false
 	}
-	log.Info("Selected():", "node", node.Name)
 	return true
 }
 
@@ -264,15 +414,16 @@ func (p *SriovNetworkNodePolicy) Apply(state *SriovNetworkNodeState, equalPriori
 		if s.Selected(&iface) {
 			log.Info("Update interface", "name:", iface.Name)
 			result := Interface{
-				PciAddress:  iface.PciAddress,
-				Mtu:         p.Spec.Mtu,
-				Name:        iface.Name,
-				LinkType:    p.Spec.LinkType,
-				EswitchMode: p.Spec.EswitchMode,
-				NumVfs:      p.Spec.NumVfs,
+				PciAddress:        iface.PciAddress,
+				Mtu:               p.Spec.Mtu,
+				Name:              iface.Name,
+				LinkType:          p.Spec.LinkType,
+				EswitchMode:       p.Spec.EswitchMode,
+				NumVfs:            p.Spec.NumVfs,
+				ExternallyManaged: p.Spec.ExternallyManaged,
 			}
 			if p.Spec.NumVfs > 0 {
-				group, err := p.generateVfGroup(&iface)
+				group, err := p.generatePfNameVfGroup(&iface)
 				if err != nil {
 					return err
 				}
@@ -341,13 +492,13 @@ func (gr VfGroup) isVFRangeOverlapping(group VfGroup) bool {
 	return IndexInRange(rngSt, group.VfRange) || IndexInRange(rngEnd, group.VfRange)
 }
 
-func (p *SriovNetworkNodePolicy) generateVfGroup(iface *InterfaceExt) (*VfGroup, error) {
+func (p *SriovNetworkNodePolicy) generatePfNameVfGroup(iface *InterfaceExt) (*VfGroup, error) {
 	var err error
 	pfName := ""
 	var rngStart, rngEnd int
 	found := false
 	for _, selector := range p.Spec.NicSelector.PfNames {
-		pfName, rngStart, rngEnd, err = ParsePFName(selector)
+		pfName, rngStart, rngEnd, err = ParseVfRange(selector)
 		if err != nil {
 			log.Error(err, "Unable to parse PF Name.")
 			return nil, err
@@ -372,6 +523,7 @@ func (p *SriovNetworkNodePolicy) generateVfGroup(iface *InterfaceExt) (*VfGroup,
 		PolicyName:   p.GetName(),
 		Mtu:          p.Spec.Mtu,
 		IsRdma:       p.Spec.IsRdma,
+		VdpaType:     p.Spec.VdpaType,
 	}, nil
 }
 
@@ -399,15 +551,27 @@ func parseRange(r string) (rngSt, rngEnd int, err error) {
 	return
 }
 
-// Parse PF name with VF range
-func ParsePFName(name string) (ifName string, rngSt, rngEnd int, err error) {
+// SplitDeviceFromRange return the device name and the range.
+// the split is base on #
+func SplitDeviceFromRange(device string) (string, string) {
+	if strings.Contains(device, "#") {
+		fields := strings.Split(device, "#")
+		return fields[0], fields[1]
+	}
+
+	return device, ""
+}
+
+// ParseVfRange: parse a device with VF range
+// this can be rootDevices or PFName
+// if no range detect we just return the device name
+func ParseVfRange(device string) (rootDeviceName string, rngSt, rngEnd int, err error) {
 	rngSt, rngEnd = invalidVfIndex, invalidVfIndex
-	if strings.Contains(name, "#") {
-		fields := strings.Split(name, "#")
-		ifName = fields[0]
-		rngSt, rngEnd, err = parseRange(fields[1])
+	rootDeviceName, splitRange := SplitDeviceFromRange(device)
+	if splitRange != "" {
+		rngSt, rngEnd, err = parseRange(splitRange)
 	} else {
-		ifName = name
+		rootDeviceName = device
 	}
 	return
 }
@@ -463,8 +627,8 @@ func (s *SriovNetworkNodeState) GetDriverByPciAddress(addr string) string {
 
 // RenderNetAttDef renders a net-att-def for ib-sriov CNI
 func (cr *SriovIBNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
-	logger := log.WithName("renderNetAttDef")
-	logger.Info("Start to render IB SRIOV CNI NetworkAttachementDefinition")
+	logger := log.WithName("RenderNetAttDef")
+	logger.Info("Start to render IB SRIOV CNI NetworkAttachmentDefinition")
 
 	// render RawCNIConfig manifests
 	data := render.MakeRenderData()
@@ -479,12 +643,12 @@ func (cr *SriovIBNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 
 	data.Data["StateConfigured"] = true
 	switch cr.Spec.LinkState {
-	case "enable":
-		data.Data["SriovCniState"] = "enable"
-	case "disable":
-		data.Data["SriovCniState"] = "disable"
-	case "auto":
-		data.Data["SriovCniState"] = "auto"
+	case SriovCniStateEnable:
+		data.Data["SriovCniState"] = SriovCniStateEnable
+	case SriovCniStateDisable:
+		data.Data["SriovCniState"] = SriovCniStateDisable
+	case SriovCniStateAuto:
+		data.Data["SriovCniState"] = SriovCniStateAuto
 	default:
 		data.Data["StateConfigured"] = false
 	}
@@ -497,9 +661,9 @@ func (cr *SriovIBNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 	}
 
 	if cr.Spec.IPAM != "" {
-		data.Data["SriovCniIpam"] = "\"ipam\":" + strings.Join(strings.Fields(cr.Spec.IPAM), "")
+		data.Data["SriovCniIpam"] = SriovCniIpam + ":" + strings.Join(strings.Fields(cr.Spec.IPAM), "")
 	} else {
-		data.Data["SriovCniIpam"] = "\"ipam\":{}"
+		data.Data["SriovCniIpam"] = SriovCniIpamEmpty
 	}
 
 	// metaplugins for the infiniband cni
@@ -509,43 +673,30 @@ func (cr *SriovIBNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 		data.Data["MetaPlugins"] = cr.Spec.MetaPluginsConfig
 	}
 
-	objs, err := render.RenderDir(ManifestsPath, &data)
+	// logLevel and logFile are currently not supports by the ip-sriov-cni -> hardcode them to false.
+	data.Data["LogLevelConfigured"] = false
+	data.Data["LogFileConfigured"] = false
+
+	objs, err := render.RenderDir(filepath.Join(ManifestsPath, "sriov"), &data)
 	if err != nil {
 		return nil, err
 	}
 	for _, obj := range objs {
 		raw, _ := json.Marshal(obj)
-		logger.Info("render NetworkAttachementDefinition output", "raw", string(raw))
+		logger.Info("render NetworkAttachmentDefinition output", "raw", string(raw))
 	}
 	return objs[0], nil
 }
 
-// DeleteNetAttDef deletes the generated net-att-def CR
-func (cr *SriovIBNetwork) DeleteNetAttDef(c client.Client) error {
-	// Fetch the NetworkAttachmentDefinition instance
-	instance := &netattdefv1.NetworkAttachmentDefinition{}
-	namespace := cr.GetNamespace()
-	if cr.Spec.NetworkNamespace != "" {
-		namespace = cr.Spec.NetworkNamespace
-	}
-	err := c.Get(context.TODO(), types.NamespacedName{Namespace: namespace, Name: cr.GetName()}, instance)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	err = c.Delete(context.TODO(), instance)
-	if err != nil {
-		return err
-	}
-	return nil
+// NetworkNamespace returns target network namespace for the network
+func (cr *SriovIBNetwork) NetworkNamespace() string {
+	return cr.Spec.NetworkNamespace
 }
 
 // RenderNetAttDef renders a net-att-def for sriov CNI
 func (cr *SriovNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
-	logger := log.WithName("renderNetAttDef")
-	logger.Info("Start to render SRIOV CNI NetworkAttachementDefinition")
+	logger := log.WithName("RenderNetAttDef")
+	logger.Info("Start to render SRIOV CNI NetworkAttachmentDefinition")
 
 	// render RawCNIConfig manifests
 	data := render.MakeRenderData()
@@ -566,6 +717,12 @@ func (cr *SriovNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 		data.Data["VlanQoSConfigured"] = false
 	}
 
+	data.Data["VlanProtoConfigured"] = false
+	if cr.Spec.VlanProto != "" {
+		data.Data["VlanProtoConfigured"] = true
+		data.Data["SriovCniVlanProto"] = cr.Spec.VlanProto
+	}
+
 	if cr.Spec.Capabilities == "" {
 		data.Data["CapabilitiesConfigured"] = false
 	} else {
@@ -575,32 +732,32 @@ func (cr *SriovNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 
 	data.Data["SpoofChkConfigured"] = true
 	switch cr.Spec.SpoofChk {
-	case "off":
-		data.Data["SriovCniSpoofChk"] = "off"
-	case "on":
-		data.Data["SriovCniSpoofChk"] = "on"
+	case SriovCniStateOff:
+		data.Data["SriovCniSpoofChk"] = SriovCniStateOff
+	case SriovCniStateOn:
+		data.Data["SriovCniSpoofChk"] = SriovCniStateOn
 	default:
 		data.Data["SpoofChkConfigured"] = false
 	}
 
 	data.Data["TrustConfigured"] = true
 	switch cr.Spec.Trust {
-	case "on":
-		data.Data["SriovCniTrust"] = "on"
-	case "off":
-		data.Data["SriovCniTrust"] = "off"
+	case SriovCniStateOn:
+		data.Data["SriovCniTrust"] = SriovCniStateOn
+	case SriovCniStateOff:
+		data.Data["SriovCniTrust"] = SriovCniStateOff
 	default:
 		data.Data["TrustConfigured"] = false
 	}
 
 	data.Data["StateConfigured"] = true
 	switch cr.Spec.LinkState {
-	case "enable":
-		data.Data["SriovCniState"] = "enable"
-	case "disable":
-		data.Data["SriovCniState"] = "disable"
-	case "auto":
-		data.Data["SriovCniState"] = "auto"
+	case SriovCniStateEnable:
+		data.Data["SriovCniState"] = SriovCniStateEnable
+	case SriovCniStateDisable:
+		data.Data["SriovCniState"] = SriovCniStateDisable
+	case SriovCniStateAuto:
+		data.Data["SriovCniState"] = SriovCniStateAuto
 	default:
 		data.Data["StateConfigured"] = false
 	}
@@ -622,9 +779,9 @@ func (cr *SriovNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 	}
 
 	if cr.Spec.IPAM != "" {
-		data.Data["SriovCniIpam"] = "\"ipam\":" + strings.Join(strings.Fields(cr.Spec.IPAM), "")
+		data.Data["SriovCniIpam"] = SriovCniIpam + ":" + strings.Join(strings.Fields(cr.Spec.IPAM), "")
 	} else {
-		data.Data["SriovCniIpam"] = "\"ipam\":{}"
+		data.Data["SriovCniIpam"] = SriovCniIpamEmpty
 	}
 
 	data.Data["MetaPluginsConfigured"] = false
@@ -633,37 +790,87 @@ func (cr *SriovNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
 		data.Data["MetaPlugins"] = cr.Spec.MetaPluginsConfig
 	}
 
-	objs, err := render.RenderDir(ManifestsPath, &data)
+	data.Data["LogLevelConfigured"] = (cr.Spec.LogLevel != "")
+	data.Data["LogLevel"] = cr.Spec.LogLevel
+	data.Data["LogFileConfigured"] = (cr.Spec.LogFile != "")
+	data.Data["LogFile"] = cr.Spec.LogFile
+
+	objs, err := render.RenderDir(filepath.Join(ManifestsPath, "sriov"), &data)
 	if err != nil {
 		return nil, err
 	}
 	for _, obj := range objs {
 		raw, _ := json.Marshal(obj)
-		logger.Info("render NetworkAttachementDefinition output", "raw", string(raw))
+		logger.Info("render NetworkAttachmentDefinition output", "raw", string(raw))
 	}
 	return objs[0], nil
 }
 
-// DeleteNetAttDef deletes the generated net-att-def CR
-func (cr *SriovNetwork) DeleteNetAttDef(c client.Client) error {
-	// Fetch the NetworkAttachmentDefinition instance
-	instance := &netattdefv1.NetworkAttachmentDefinition{}
-	namespace := cr.GetNamespace()
-	if cr.Spec.NetworkNamespace != "" {
-		namespace = cr.Spec.NetworkNamespace
+// NetworkNamespace returns target network namespace for the network
+func (cr *SriovNetwork) NetworkNamespace() string {
+	return cr.Spec.NetworkNamespace
+}
+
+// RenderNetAttDef renders a net-att-def for sriov CNI
+func (cr *OVSNetwork) RenderNetAttDef() (*uns.Unstructured, error) {
+	logger := log.WithName("RenderNetAttDef")
+	logger.Info("Start to render OVS CNI NetworkAttachmentDefinition")
+
+	// render RawCNIConfig manifests
+	data := render.MakeRenderData()
+	data.Data["CniType"] = "ovs"
+	data.Data["NetworkName"] = cr.Name
+	if cr.Spec.NetworkNamespace == "" {
+		data.Data["NetworkNamespace"] = cr.Namespace
+	} else {
+		data.Data["NetworkNamespace"] = cr.Spec.NetworkNamespace
 	}
-	err := c.Get(context.TODO(), types.NamespacedName{Namespace: namespace, Name: cr.GetName()}, instance)
+	data.Data["CniResourceName"] = os.Getenv("RESOURCE_PREFIX") + "/" + cr.Spec.ResourceName
+
+	if cr.Spec.Capabilities == "" {
+		data.Data["CapabilitiesConfigured"] = false
+	} else {
+		data.Data["CapabilitiesConfigured"] = true
+		data.Data["CniCapabilities"] = cr.Spec.Capabilities
+	}
+
+	data.Data["Bridge"] = cr.Spec.Bridge
+	data.Data["VlanTag"] = cr.Spec.Vlan
+	data.Data["MTU"] = cr.Spec.MTU
+	if len(cr.Spec.Trunk) > 0 {
+		trunkConfRaw, _ := json.Marshal(cr.Spec.Trunk)
+		data.Data["Trunk"] = string(trunkConfRaw)
+	} else {
+		data.Data["Trunk"] = ""
+	}
+	data.Data["InterfaceType"] = cr.Spec.InterfaceType
+
+	if cr.Spec.IPAM != "" {
+		data.Data["CniIpam"] = SriovCniIpam + ":" + strings.Join(strings.Fields(cr.Spec.IPAM), "")
+	} else {
+		data.Data["CniIpam"] = SriovCniIpamEmpty
+	}
+
+	data.Data["MetaPluginsConfigured"] = false
+	if cr.Spec.MetaPluginsConfig != "" {
+		data.Data["MetaPluginsConfigured"] = true
+		data.Data["MetaPlugins"] = cr.Spec.MetaPluginsConfig
+	}
+
+	objs, err := render.RenderDir(filepath.Join(ManifestsPath, "ovs"), &data)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return err
+		return nil, err
 	}
-	err = c.Delete(context.TODO(), instance)
-	if err != nil {
-		return err
+	for _, obj := range objs {
+		raw, _ := json.Marshal(obj)
+		logger.Info("render NetworkAttachmentDefinition output", "raw", string(raw))
 	}
-	return nil
+	return objs[0], nil
+}
+
+// NetworkNamespace returns target network namespace for the network
+func (cr *OVSNetwork) NetworkNamespace() string {
+	return cr.Spec.NetworkNamespace
 }
 
 // NetFilterMatch -- parse netFilter and check for a match
@@ -687,4 +894,40 @@ func NetFilterMatch(netFilter string, netValue string) (isMatch bool) {
 	}
 
 	return netFilterResult[0][1] == netValueResult[0][1] && netFilterResult[0][2] == netValueResult[0][2]
+}
+
+// MaxUnavailable calculate the max number of unavailable nodes to represent the number of nodes
+// we can drain in parallel
+func (s *SriovNetworkPoolConfig) MaxUnavailable(numOfNodes int) (int, error) {
+	// this means we want to drain all the nodes in parallel
+	if s.Spec.MaxUnavailable == nil {
+		return -1, nil
+	}
+	intOrPercent := *s.Spec.MaxUnavailable
+
+	if intOrPercent.Type == intstrutil.String {
+		if strings.HasSuffix(intOrPercent.StrVal, "%") {
+			i := strings.TrimSuffix(intOrPercent.StrVal, "%")
+			v, err := strconv.Atoi(i)
+			if err != nil {
+				return 0, fmt.Errorf("invalid value %q: %v", intOrPercent.StrVal, err)
+			}
+			if v > 100 || v < 1 {
+				return 0, fmt.Errorf("invalid value: percentage needs to be between 1 and 100")
+			}
+		} else {
+			return 0, fmt.Errorf("invalid type: strings needs to be a percentage")
+		}
+	}
+
+	maxunavail, err := intstrutil.GetScaledValueFromIntOrPercent(&intOrPercent, numOfNodes, false)
+	if err != nil {
+		return 0, err
+	}
+
+	if maxunavail < 0 {
+		return 0, fmt.Errorf("negative number is not allowed")
+	}
+
+	return maxunavail, nil
 }
