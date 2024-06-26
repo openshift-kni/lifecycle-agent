@@ -66,6 +66,12 @@ type (
 	}
 )
 
+// Used to start and end phases in the Upgrade stage. Each of them must be used in exactly two places
+var (
+	UpgradePhasePrepivot  = "PrePivot"
+	UpgradePhasePostpivot = "PostPivot"
+)
+
 // handleUpgrade orchestrate main upgrade steps and update status as needed
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
@@ -77,7 +83,6 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ib
 		return doNotRequeue(), nil
 	}
 
-	// WARNING: the pod may not know if we are boot loop (for now)
 	if origStaterootBooted {
 		r.Log.Info("Running PrePivot handler")
 		prePivot, err := r.UpgradeHandler.PrePivot(ctx, ibu)
@@ -117,6 +122,9 @@ func (u *UpgHandler) resetProgressMessage(ctx context.Context, ibu *ibuv1.ImageB
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
+	// start pre-pivot phase timer
+	utils.StartPhase(u.Client, u.Log, ibu, UpgradePhasePrepivot)
+
 	if prog := utils.GetInProgressCondition(ibu, ibuv1.Stages.Upgrade); prog == nil {
 		// Set in-progress status
 		u.resetProgressMessage(ctx, ibu)
@@ -208,6 +216,9 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 
 	// Clear any error status that may have been previously set
 	u.resetProgressMessage(ctx, ibu)
+
+	// close pre-pivot phase timer
+	utils.StopPhase(u.Client, u.Log, ibu, UpgradePhasePrepivot)
 
 	u.Log.Info("Save the IBU CR to the new state root before pivot")
 	if err := exportIBUToNewStateroot(ibu, staterootPath); err != nil {
@@ -355,6 +366,9 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg str
 // Note: All decisions, including reconciles and failures, should be made within this function.
 // The caller will simply return what this function returns.
 func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
+	// start post-pivot phase timer
+	utils.StartPhase(u.Client, u.Log, ibu, UpgradePhasePostpivot)
+
 	u.Log.Info("Starting health check for different components")
 	if err := CheckHealth(ctx, u.NoncachedClient, u.Log); err != nil {
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
@@ -436,6 +450,11 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		// Don't fail the upgrade on failure here, just log it
 		u.Log.Error(err, "Unable to disable LCA init monitor")
 	}
+
+	// stop post-pivot phase timer
+	utils.StopPhase(u.Client, u.Log, ibu, UpgradePhasePostpivot)
+	// stop Upgrade stage timer
+	utils.StopStageHistory(u.Client, u.Log, ibu)
 
 	u.Log.Info("Done handleUpgrade")
 	utils.SetUpgradeStatusCompleted(ibu)
