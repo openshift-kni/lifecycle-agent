@@ -232,7 +232,7 @@ func Flatten[T any](collection [][]T) []T {
 }
 
 // Interleave round-robin alternating input slices and sequentially appending value at index into result
-// Play: https://go.dev/play/p/DDhlwrShbwe
+// Play: https://go.dev/play/p/-RJkTLQEDVt
 func Interleave[T any](collections ...[]T) []T {
 	if len(collections) == 0 {
 		return []T{}
@@ -429,6 +429,39 @@ func Reject[V any](collection []V, predicate func(item V, index int) bool) []V {
 	}
 
 	return result
+}
+
+// RejectMap is the opposite of FilterMap, this method returns a slice which obtained after both filtering and mapping using the given callback function.
+// The callback function should return two values:
+//   - the result of the mapping operation and
+//   - whether the result element should be included or not.
+func RejectMap[T any, R any](collection []T, callback func(item T, index int) (R, bool)) []R {
+	result := []R{}
+
+	for i, item := range collection {
+		if r, ok := callback(item, i); !ok {
+			result = append(result, r)
+		}
+	}
+
+	return result
+}
+
+// FilterReject mixes Filter and Reject, this method returns two slices, one for the elements of collection that
+// predicate returns truthy for and one for the elements that predicate does not return truthy for.
+func FilterReject[V any](collection []V, predicate func(V, int) bool) (kept []V, rejected []V) {
+	kept = make([]V, 0, len(collection))
+	rejected = make([]V, 0, len(collection))
+
+	for i, item := range collection {
+		if predicate(item, i) {
+			kept = append(kept, item)
+		} else {
+			rejected = append(rejected, item)
+		}
+	}
+
+	return kept, rejected
 }
 
 // Count counts the number of elements in the collection that compare equal to value.

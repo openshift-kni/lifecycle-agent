@@ -2,15 +2,15 @@ package lo
 
 import "reflect"
 
+// IsNil checks if a value is nil or if it's a reference type with a nil underlying value.
+func IsNil(x any) bool {
+	defer func() { recover() }() // nolint:errcheck
+	return x == nil || reflect.ValueOf(x).IsNil()
+}
+
 // ToPtr returns a pointer copy of value.
 func ToPtr[T any](x T) *T {
 	return &x
-}
-
-// IsNil checks if a value is nil or if it's a reference type with a nil underlying value.
-func IsNil(x any) bool {
-	defer func() { recover() }()
-	return x == nil || reflect.ValueOf(x).IsNil()
 }
 
 // EmptyableToPtr returns a pointer copy of value if it's nonzero.
@@ -45,9 +45,12 @@ func FromPtrOr[T any](x *T, fallback T) T {
 
 // ToSlicePtr returns a slice of pointer copy of value.
 func ToSlicePtr[T any](collection []T) []*T {
-	return Map(collection, func(x T, _ int) *T {
-		return &x
-	})
+	result := make([]*T, len(collection))
+
+	for i := range collection {
+		result[i] = &collection[i]
+	}
+	return result
 }
 
 // ToAnySlice returns a slice with all elements mapped to `any` type
@@ -105,4 +108,10 @@ func Coalesce[T comparable](v ...T) (result T, ok bool) {
 	}
 
 	return
+}
+
+// CoalesceOrEmpty returns the first non-empty arguments. Arguments must be comparable.
+func CoalesceOrEmpty[T comparable](v ...T) T {
+	result, _ := Coalesce(v...)
+	return result
 }
