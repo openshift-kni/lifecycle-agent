@@ -1360,6 +1360,8 @@ github.com/openshift/library-go v0.0.0-20191003152030-97c62d8a2901/go.mod h1:NBt
 github.com/openshift/library-go v0.0.0-20200831114015-2ab0c61c15de/go.mod h1:6vwp+YhYOIlj8MpkQKkebTTSn2TuYyvgiAFQ206jIEQ=
 github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63 h1:Cv1pmE4m2MJrytpTOk0HHJfaw7gvBOwAj8FJeGuffCg=
 github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63/go.mod h1:m/HsttSi90vSixwoy5mPUBHcZid2YRw/QbsLErLxF9s=
+github.com/openshift/local-storage-operator v0.0.0-20240629043313-7f342dad87fa h1:3puJMoclmyHo7nVcln0ySIBmRwNcnYy7UIDPsKzOHiI=
+github.com/openshift/local-storage-operator v0.0.0-20240629043313-7f342dad87fa/go.mod h1:Xd0acgr/PW7GbqjF/vM9cK0h+0XZyQgZj5w4GJ3GKoU=
 github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8 h1:xSTHSdkKb41Js/xtlUxu8cS2NsD9r64YZFw+0AlzhM4=
 github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8/go.mod h1:L8Myy4T/jDhxV1TYMbRgcqoun9jibxdyrcyj7cYZn7M=
 github.com/openshift/machine-config-operator v0.0.1-0.20201023110058-6c8bd9b2915c h1:IoRAW8eg94CSibrFxv0BBvsRzEC/8piFu5+sWGqy9ek=
@@ -1444,8 +1446,8 @@ github.com/rogpeppe/go-internal v1.3.0/go.mod h1:M8bDsm7K2OlrFYOpmOWEs/qY81heoFR
 github.com/rogpeppe/go-internal v1.6.1/go.mod h1:xXDCJY+GAPziupqXw64V24skbSoqbTEfhy4qGm1nDQc=
 github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
 github.com/rogpeppe/go-internal v1.10.0/go.mod h1:UQnix2H7Ngw/k4C5ijL5+65zddjncjaFoBhdsK/akog=
-github.com/rogpeppe/go-internal v1.11.0 h1:cWPaGQEPrBb5/AsnsZesgZZ9yb1OQ+GOISoDNXVBh4M=
-github.com/rogpeppe/go-internal v1.11.0/go.mod h1:ddIwULY96R17DhadqLgMfk9H9tvdUzkipdSkR5nkCZA=
+github.com/rogpeppe/go-internal v1.12.0 h1:exVL4IDcn6na9z1rAb56Vxr+CgyK3nn3O+epU5NdKM8=
+github.com/rogpeppe/go-internal v1.12.0/go.mod h1:E+RYuTGaKKdloAfM02xzb0FW3Paa99yedzYV+kq4uf4=
 github.com/russross/blackfriday v1.5.2/go.mod h1:JO/DiYxRf+HjHt06OyowR9PTA263kcR/rfWxYHBV53g=
 github.com/russross/blackfriday v1.6.0/go.mod h1:ti0ldHuxg49ri4ksnFxlkCfN+hvslNlmVHqNRXXJNAY=
 github.com/russross/blackfriday/v2 v2.0.1/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=

@@ -54,6 +54,7 @@ import (
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	lsov1 "github.com/openshift/local-storage-operator/api/v1"
 	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -601,6 +602,17 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 			msg = "Failure occurred during check for configured PVs in system validation"
 		} else {
 			msg = "Rejected: Cluster must not have any Persistent Volumes configured"
+		}
+		return
+	}
+
+	// Ensure no LocalVolume CRs exist, if LSO is installed
+	localVolumeList := &lsov1.LocalVolumeList{}
+	if err := r.List(ctx, localVolumeList); len(localVolumeList.Items) > 0 && !errors.IsNotFound(err) {
+		if err != nil {
+			msg = "Failure occurred during check for configured LocalVolumes in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any LocalVolumes configured"
 		}
 		return
 	}

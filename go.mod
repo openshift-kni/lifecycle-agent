@@ -12,6 +12,7 @@ require (
 	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63
+	github.com/openshift/local-storage-operator v0.0.0-20240629043313-7f342dad87fa
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.23.0
 	github.com/otiai10/copy v1.14.0

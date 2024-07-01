@@ -310,6 +310,9 @@ github.com/openshift/client-go/operator/listers/operator/v1alpha1
 # github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63
 ## explicit; go 1.21
 github.com/openshift/library-go/pkg/config/leaderelection
+# github.com/openshift/local-storage-operator v0.0.0-20240629043313-7f342dad87fa
+## explicit; go 1.21
+github.com/openshift/local-storage-operator/api/v1
 # github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 ## explicit; go 1.21
 github.com/openshift/lvm-operator/api/v1alpha1
