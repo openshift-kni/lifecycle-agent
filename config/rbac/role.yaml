@@ -227,6 +227,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - lvm.topolvm.io
+  resources:
+  - lvmclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - machineconfiguration.openshift.io
   resources:
   - machineconfigpools
