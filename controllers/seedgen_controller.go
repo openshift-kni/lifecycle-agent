@@ -54,6 +54,7 @@ import (
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -120,7 +121,8 @@ var phases = struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups=lvm.topolvm.io,resources=lvmclusters,verbs=get;list;watch
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
 func getPhase(seedgen *seedgenv1.SeedGenerator) seedgenReconcilerPhase {
@@ -599,6 +601,17 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 			msg = "Failure occurred during check for configured PVs in system validation"
 		} else {
 			msg = "Rejected: Cluster must not have any Persistent Volumes configured"
+		}
+		return
+	}
+
+	// Ensure no LVMCluster CR exists, if LVMS is installed
+	lvmClusterList := &lvmv1alpha1.LVMClusterList{}
+	if err := r.List(ctx, lvmClusterList); len(lvmClusterList.Items) > 0 && !errors.IsNotFound(err) {
+		if err != nil {
+			msg = "Failure occurred during check for configured LVMClusters in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any LVMClusters configured"
 		}
 		return
 	}
