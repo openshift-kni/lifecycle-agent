@@ -48,6 +48,7 @@ import (
 	ocpV1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -104,6 +105,7 @@ func init() {
 	utilruntime.Must(policyv1.AddToScheme(scheme))
 	utilruntime.Must(policiesv1.AddToScheme(scheme))
 	utilruntime.Must(sriovv1.AddToScheme(scheme))
+	utilruntime.Must(lvmv1alpha1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }
