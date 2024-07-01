@@ -592,6 +592,17 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
+	// Ensure no PVs are configured on the seed SNO
+	pvList := &corev1.PersistentVolumeList{}
+	if err := r.List(ctx, pvList); len(pvList.Items) > 0 {
+		if err != nil {
+			msg = "Failure occurred during check for configured PVs in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any Persistent Volumes configured"
+		}
+		return
+	}
+
 	return
 }
 
