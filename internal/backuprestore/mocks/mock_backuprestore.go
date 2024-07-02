@@ -44,6 +44,21 @@ func (m *MockBackuperRestorer) EXPECT() *MockBackuperRestorerMockRecorder {
 	return m.recorder
 }
 
+// CheckOadpMinimumVersion mocks base method.
+func (m *MockBackuperRestorer) CheckOadpMinimumVersion(ctx context.Context) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckOadpMinimumVersion", ctx)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckOadpMinimumVersion indicates an expected call of CheckOadpMinimumVersion.
+func (mr *MockBackuperRestorerMockRecorder) CheckOadpMinimumVersion(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckOadpMinimumVersion", reflect.TypeOf((*MockBackuperRestorer)(nil).CheckOadpMinimumVersion), ctx)
+}
+
 // CheckOadpOperatorAvailability mocks base method.
 func (m *MockBackuperRestorer) CheckOadpOperatorAvailability(ctx context.Context) error {
 	m.ctrl.T.Helper()
