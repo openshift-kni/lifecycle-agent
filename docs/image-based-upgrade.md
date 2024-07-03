@@ -244,7 +244,7 @@ status:
 Things to note from about `.status.history`
 
 - History is reset when desired stage is`Idle`.
-- Each history entry on the list will appear chronologically and will have `startTime` to indicated when a stage was desired for the first time. Optionally `completionTime` will appear when a stage completes successfully.
+- Each history entry on the list will appear chronologically and will have `startTime` to indicate when a stage was triggered. The `completionTime` will appear once a stage completes successfully.
 - A stage may have one or more `Phases` to help understand important tasks that were performed. Similar to history entries, each `Phase` will have a `startTime` and, once completed, a `completionTime`.
   - 'Prep' stage entry will have the following `Phases`:
     - `Stateroot`: Time taken to create the new stateroot.
