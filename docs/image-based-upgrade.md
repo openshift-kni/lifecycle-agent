@@ -211,7 +211,7 @@ status:
   - Prep
 ```
 
-IBU status `.histoy` can be used understand when stages were desired and time taken to complete successfully
+IBU status `.history` provides timing information for the stages, indicating start and completion times for the stages
 
 ```yaml
 status:
