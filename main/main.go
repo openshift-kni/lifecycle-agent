@@ -276,6 +276,7 @@ func main() {
 		NoncachedClient: mgr.GetAPIReader(),
 		Log:             seedgenLog,
 		Scheme:          mgr.GetScheme(),
+		BackupRestore:   backupRestore,
 		Executor:        executor,
 		Mux:             mux,
 
