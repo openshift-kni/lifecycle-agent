@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
@@ -69,6 +70,7 @@ type SeedGeneratorReconciler struct {
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
 	Recorder        record.EventRecorder
+	BackupRestore   backuprestore.BackuperRestorer
 	Executor        ops.Execute
 	Mux             *sync.Mutex
 
@@ -627,6 +629,17 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		}
 		return
 	}
+
+	// Ensure no DataProtectionApplication CR exists, if OADP installed
+	if r.BackupRestore.IsOadpInstalled(ctx) {
+		if dpaList, err := r.BackupRestore.GetDataProtectionApplicationList(ctx); len(dpaList.Items) > 0 {
+			if err != nil {
+				msg = "Failure occurred during check for configured DataProtectionApplications in system validation"
+			} else {
+				msg = "Rejected: Cluster must not have any DataProtectionApplication resources configured"
+			}
+			return
+		}
 
 	return
 }

@@ -100,6 +100,7 @@ type BackuperRestorer interface {
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
 	ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
 	IsOadpInstalled(ctx context.Context) bool
+	GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error)
 }
 
 // BRHandler handles the backup and restore
@@ -489,33 +490,16 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.
 
 func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	// Check if OADP is installed
-	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
-		return fmt.Errorf("could not list ClusterServiceVersion: %w", err)
-	}
-
-	oadpCsvExist := false
-	for _, csv := range oadpCsvList.Items {
-		if strings.Contains(csv.Name, "oadp-operator") {
-			oadpCsvExist = true
-			break
-		}
-	}
-
-	if !oadpCsvExist {
+	if !h.IsOadpInstalled(ctx) {
 		errMsg := fmt.Sprintf("Please ensure OADP operator is installed in the %s", OadpNs)
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
 	// Check if OADP DPA is reconciled
-	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(DpaGvkList)
-	opts := []client.ListOption{
-		client.InNamespace(OadpNs),
-	}
-	if err := h.List(ctx, dpaList, opts...); err != nil {
-		return fmt.Errorf("failed to list dpa: %w", err)
+	dpaList, err := h.GetDataProtectionApplicationList(ctx)
+	if err != nil {
+		return err
 	}
 
 	if len(dpaList.Items) == 0 {
@@ -534,8 +518,29 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	return nil
 }
 
-// IsOadpInstalled a simple function to determine if OADP is present by checking the presence of at least one OADP defined CRD
+// IsOadpInstalled a simple function to determine if OADP is installed by checking the presence
+// of its CSV and at least one OADP defined CRD
 func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
+	// Check if OADP CSV is installed
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
+		h.Log.Error(err, "could not list ClusterServiceVersion")
+		return false
+	}
+
+	oadpCsvExist := false
+	for _, csv := range oadpCsvList.Items {
+		if strings.Contains(csv.Name, "oadp-operator") {
+			oadpCsvExist = true
+			break
+		}
+	}
+
+	if !oadpCsvExist {
+		return false
+	}
+
+	// Check if OADP CRDs are installed
 	crds := &apiextensionsv1.CustomResourceDefinitionList{}
 	if err := h.Client.List(ctx, crds); err != nil {
 		h.Log.Error(err, "could not list CRDs to verify if OADP is installed")
@@ -557,4 +562,19 @@ func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
 	}
 
 	return len(oadpCrds) > 0
+}
+
+func (h *BRHandler) GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	dpaList := &unstructured.UnstructuredList{}
+	dpaList.SetGroupVersionKind(DpaGvkList)
+
+	opts := []client.ListOption{
+		client.InNamespace(OadpNs),
+	}
+
+	if err := h.List(ctx, dpaList, opts...); err != nil {
+		return dpaList, fmt.Errorf("failed to list dpa: %w", err)
+	}
+
+	return dpaList, nil
 }
