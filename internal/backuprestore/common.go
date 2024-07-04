@@ -26,6 +26,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -69,7 +70,8 @@ const (
 	OadpSecretPath  = OadpPath + "/secret"
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
-	OadpNs = "openshift-adp"
+	OadpNs                  = "openshift-adp"
+	OadpMinSupportedVersion = "1.3.1"
 
 	topolvmValue                   = "topolvm.io"
 	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
@@ -101,6 +103,7 @@ type BackuperRestorer interface {
 	ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
 	IsOadpInstalled(ctx context.Context) bool
 	GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error)
+	CheckOadpMinimumVersion(ctx context.Context) (bool, error)
 }
 
 // BRHandler handles the backup and restore
@@ -577,4 +580,36 @@ func (h *BRHandler) GetDataProtectionApplicationList(ctx context.Context) (*unst
 	}
 
 	return dpaList, nil
+}
+
+// CheckOadpMinimumVersion checks the minimum supported version for the OADP operator version from the installed CSV.
+func (h *BRHandler) CheckOadpMinimumVersion(ctx context.Context) (bool, error) {
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.Client.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
+		return false, fmt.Errorf("failed to list ClusterServiceVersions in namespace %s: %w", OadpNs, err)
+	}
+
+	minSupportedVersion, err := semver.Parse(OadpMinSupportedVersion)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse minimum supported version: %w", err)
+	}
+
+	for _, csv := range oadpCsvList.Items {
+		if !strings.Contains(csv.Name, "oadp-operator") {
+			continue
+		}
+
+		currentInstalledVersion, err := semver.Parse(csv.Spec.Version.String())
+		if err != nil {
+			return false, fmt.Errorf("failed to parse OADP operator version: %w", err)
+		}
+		if currentInstalledVersion.GTE(minSupportedVersion) {
+			return true, nil
+		}
+
+		h.Log.Info(fmt.Sprintf("oadp operator version %s is below the minimum supported version %s", currentInstalledVersion, OadpMinSupportedVersion))
+		return false, nil
+	}
+
+	return false, fmt.Errorf("failed to find CSV for OADP operator")
 }
