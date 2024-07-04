@@ -16,6 +16,7 @@ import (
 	backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	v10 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	gomock "go.uber.org/mock/gomock"
+	unstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 //go:generate mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
@@ -139,6 +140,21 @@ func (m *MockBackuperRestorer) ExportRestoresToDir(ctx context.Context, configMa
 func (mr *MockBackuperRestorerMockRecorder) ExportRestoresToDir(ctx, configMaps, toDir any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExportRestoresToDir", reflect.TypeOf((*MockBackuperRestorer)(nil).ExportRestoresToDir), ctx, configMaps, toDir)
+}
+
+// GetDataProtectionApplicationList mocks base method.
+func (m *MockBackuperRestorer) GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDataProtectionApplicationList", ctx)
+	ret0, _ := ret[0].(*unstructured.UnstructuredList)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDataProtectionApplicationList indicates an expected call of GetDataProtectionApplicationList.
+func (mr *MockBackuperRestorerMockRecorder) GetDataProtectionApplicationList(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDataProtectionApplicationList", reflect.TypeOf((*MockBackuperRestorer)(nil).GetDataProtectionApplicationList), ctx)
 }
 
 // GetSortedBackupsFromConfigmap mocks base method.
