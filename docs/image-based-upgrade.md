@@ -173,7 +173,7 @@ The spec fields include:
     Setting a value less than or equal to 0 will use the default
   - See [Configuring Automatic Rollback](#configuring-automatic-rollback) for more.
 
-The IBU CR status includes a list of conditions that indicates the progress of each stage:
+The IBU CR status `.condition` includes a list of conditions that indicates the progress of each stage:
 
 - Idle
 - PrepInProgress
@@ -210,6 +210,49 @@ status:
   validNextStages:
   - Prep
 ```
+
+IBU status `.history` provides timing information for the stages, indicating start and completion times for the stages
+
+```yaml
+status:
+  history:
+    - completionTime: "2024-06-26T03:27:05Z"
+      phases:
+        - completionTime: "2024-06-26T03:26:40Z"
+          phase: Stateroot
+          startTime: "2024-06-26T03:25:10Z"
+        - completionTime: "2024-06-26T03:27:05Z"
+          phase: Precache
+          startTime: "2024-06-26T03:26:41Z"
+      stage: Prep
+      startTime: "2024-06-26T03:25:07Z"
+    - completionTime: "2024-06-26T03:37:22Z"
+      phases:
+        - completionTime: "2024-06-26T03:27:37Z"
+          phase: PrePivot
+          startTime: "2024-06-26T03:27:36Z"
+        - completionTime: "2024-06-26T03:37:22Z"
+          phase: PostPivot
+          startTime: "2024-06-26T03:37:17Z"
+      stage: Upgrade
+      startTime: "2024-06-26T03:27:36Z"
+    - completionTime: "2024-06-26T03:48:12Z"
+      stage: Rollback
+      startTime: "2024-06-26T03:40:42Z"
+```
+
+Things to note from about `.status.history`
+
+- History is reset when desired stage is`Idle`.
+- Each history entry on the list will appear chronologically and will have `startTime` to indicate when a stage was triggered. The `completionTime` will appear once a stage completes successfully.
+- A stage may have one or more `Phases` to help understand important tasks that were performed. Similar to history entries, each `Phase` will have a `startTime` and, once completed, a `completionTime`.
+  - 'Prep' stage entry will have the following `Phases`:
+    - `Stateroot`: Time taken to create the new stateroot.
+    - `Precache`: Time taken to pull all images specified by the seed image.
+  - `Upgrade` stage entry will have the following `Phases`:
+    - `PrePivot`: Time taken complete all the steps before reboot is initiated.
+    - `PostPivot`: Time taken complete all the steps after a reboot to a new stateroot.
+    - TIP: Reboot time can be calculated using PrePivot completionTime and PostPivot startTime.
 
 ### Seed Image Pull Secret
 
