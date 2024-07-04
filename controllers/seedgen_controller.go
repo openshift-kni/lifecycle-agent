@@ -630,7 +630,7 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 		return
 	}
 
-	// Ensure no DataProtectionApplication CR exists, if OADP installed
+	// Ensure no DataProtectionApplication CR exists and minimum supported version, if OADP installed
 	if r.BackupRestore.IsOadpInstalled(ctx) {
 		if dpaList, err := r.BackupRestore.GetDataProtectionApplicationList(ctx); len(dpaList.Items) > 0 {
 			if err != nil {
@@ -640,6 +640,15 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 			}
 			return
 		}
+		if oadpSupportedVersion, err := r.BackupRestore.CheckOadpMinimumVersion(ctx); !oadpSupportedVersion {
+			if err != nil {
+				msg = fmt.Sprintf("Failure occurred when checking OADP version in system validation: %v", err)
+			} else {
+				msg = fmt.Sprintf("Rejected: Cluster must have OADP version >= %v", backuprestore.OadpMinSupportedVersion)
+			}
+			return
+		}
+	}
 
 	return
 }
