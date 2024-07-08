@@ -282,6 +282,29 @@ func TestCleanupBackupLabels(t *testing.T) {
 	}
 }
 
+func TestApplyBackupLabelsPreservereLabels(t *testing.T) {
+	sch := apiruntime.NewScheme()
+	objs := []runtime.Object{
+		newUnstructuredWithLabel("group/version", "resource", "namespace", "name", "label", "value"),
+	}
+	client := dynamicfake.NewSimpleDynamicClient(sch, objs...)
+	handler := &BRHandler{
+		Client:        nil,
+		DynamicClient: client,
+		Log:           ctrl.Log.WithName("BackupRestore"),
+	}
+	t.Run("Apply backup label should preserve labels", func(t *testing.T) {
+		backup := fakeBackupCr("backupName", "1", "b")
+		backup.Annotations[applyLabelAnn] = "group/version/resources/namespace/name"
+		err := handler.applyBackupLabels(context.Background(), backup)
+		assert.NoError(t, err)
+		get, err := client.Resource(schema.GroupVersionResource{
+			Group: "group", Version: "version", Resource: "resources",
+		}).Namespace("namespace").Get(context.TODO(), "name", metav1.GetOptions{})
+		assert.Equal(t, "value", get.GetLabels()["label"])
+		assert.NoError(t, err)
+	})
+}
 func TestApplyBackupLabels(t *testing.T) {
 	testcases := []struct {
 		name           string
