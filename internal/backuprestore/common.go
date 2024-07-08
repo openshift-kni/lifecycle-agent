@@ -368,7 +368,8 @@ func ReadOadpDataProtectionApplication(dpaYamlDir string) (*unstructured.Unstruc
 // patchObj patches the objects / resources defined in the Backup CRs of OADP.
 // Also, it has a isDryRun flag that allows to simulate patching the specified resources, which is handy when
 // validating the objects defined in Backup CRs within the OADP ConfigMap.
-func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, isDryRun bool, payload []byte) error {
+func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata,
+	isDryRun bool, payload []byte, patchType types.PatchType) error {
 	var err error
 	resourceClient := client.Resource(schema.GroupVersionResource{
 		Group:    obj.Group,
@@ -383,10 +384,10 @@ func patchObj(ctx context.Context, client dynamic.Interface, obj *ObjMetadata, i
 
 	if obj.Namespace != "" {
 		_, err = resourceClient.Namespace(obj.Namespace).Patch(
-			ctx, obj.Name, types.JSONPatchType, payload, patchOptions,
+			ctx, obj.Name, patchType, payload, patchOptions,
 		)
 	} else {
-		_, err = resourceClient.Patch(ctx, obj.Name, types.JSONPatchType, payload, patchOptions)
+		_, err = resourceClient.Patch(ctx, obj.Name, patchType, payload, patchOptions)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to patch object: %w", err)
@@ -426,13 +427,13 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.
 		}
 
 		// Check if we can apply backup label to objects included in apply-backup annotation
-		payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
+		payload := []byte(fmt.Sprintf(`{"metadata": {"labels": {"%s": "%s"}}}`, backupLabel, backup.GetName()))
 		objs, err := getObjsFromAnnotations(backup)
 		if err != nil {
 			return NewBRFailedValidationError("OADP", err.Error())
 		}
 		for _, obj := range objs {
-			err := patchObj(ctx, h.DynamicClient, &obj, true, payload) //nolint:gosec
+			err := patchObj(ctx, h.DynamicClient, &obj, true, payload, types.MergePatchType) //nolint:gosec
 			if err != nil {
 				return NewBRFailedValidationError("OADP", fmt.Sprintf("failed apply backup label to objects included in apply-backup annotation: %s", err.Error()))
 			}
