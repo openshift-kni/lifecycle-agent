@@ -7,6 +7,7 @@
     - [Extra Manifests](#extra-manifests)
   - [Target SNO Prerequisites](#target-sno-prerequisites)
   - [ImageBasedUpgrade CR](#imagebasedupgrade-cr)
+    - [Seed Image Pull Secret](#seed-image-pull-secret)
     - [Stage transitions](#stage-transitions)
   - [Image Based Upgrade Walkthrough](#image-based-upgrade-walkthrough)
     - [Disable auto importing of managed cluster](#disable-auto-importing-of-managed-cluster)
@@ -164,7 +165,7 @@ The target SNO has the following prerequisites:
 The spec fields include:
 
 - stage: defines the desired stage for the IBU (Idle, Prep, Upgrade or Rollback)
-- seedImageRef: defines the target OCP version, the seed image to be used and the secret required for accessing the image
+- seedImageRef: defines the target OCP version, the seed image to be used, and the secret required for accessing the image
 - oadpContent: defines the list of config maps where the OADP backup / restore CRs are stored. This is optional
 - extraManifests: defines the list of config maps where the additional CRs to be re-applied are stored
 - autoRollbackOnFailure: configures the auto-rollback feature for upgrade failure, which is enabled by default
@@ -208,6 +209,35 @@ status:
   observedGeneration: 1
   validNextStages:
   - Prep
+```
+
+### Seed Image Pull Secret
+
+If the seed image is stored in a private registry not covered by the cluster's pull secrets, a separate pull secret must be defined and included in the IBU CR in order to access the image.
+The Secret must be created in the openshift-lifecycle-agent namespace, but the naming is up to the user.
+
+```console
+apiVersion: v1
+kind: Secret
+metadata:
+  name: <name>
+  namespace: openshift-lifecycle-agent
+type: Opaque
+data:
+  .dockerconfigjson: <base64-encoded auth file>
+```
+
+For example:
+
+```console
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seed-pull-secret
+  namespace: openshift-lifecycle-agent
+type: Opaque
+data:
+  .dockerconfigjson: ewoJImF1dGhzIjogewoJCSJxdWF5LmlvL215dXNlcmlkIjogewoJCQkiYXV0aCI6ICJub3R0aGVyZWFsYXV0aHN0cmluZyIKCQl9Cgl9Cn0K
 ```
 
 ### Stage transitions
@@ -260,7 +290,7 @@ The success path upgrade will progress through the following stages:
 
 Idle -> Prep -> Upgrade -> Idle
 
-### Starting the Prep stage
+#### Starting the Prep stage
 
 The administrator patches the imagebasedupgrade CR:
 
@@ -401,7 +431,7 @@ Prep completed:
   - Upgrade
 ```
 
-### Starting the Upgrade stage
+#### Starting the Upgrade stage
 
 This is where the actual upgrade happens. It consists of three main steps: pre-pivot, pivot and post-pivot.
 This stage can only be applied if the prep stage completed successfully.
@@ -559,7 +589,7 @@ troubleshooting.
 
 See [Automatic Rollback Examples](examples.md#automatic-rollback-examples) for examples of IBU CR after an automatic rollback.
 
-### Configuring Automatic Rollback
+#### Configuring Automatic Rollback
 
 There is an `lca-init-monitor.service` that runs post-reboot with a configurable timeout. When LCA marks
 the upgrade complete, it shuts down this monitor. If this point is not reached within the configured timeout, the
