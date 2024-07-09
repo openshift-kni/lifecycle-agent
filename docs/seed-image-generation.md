@@ -28,14 +28,42 @@ The Lifecycle Agent provides orchestration of IBU Seed Image generation via the 
 
 The seed SNO configuration has some pre-requisites:
 
-- The CPU topology must align with the target SNO(s).
-  - Same number of cores.
-  - Same tuned performance configuration (ie. reserved CPUs).
-  - FIPS enablement (? *TODO*: confirm)
+- The seed SNO must align with the target SNO(s) on the following:
+  - CPU topology.
+    - Same number of cores.
+    - Same tuned performance configuration (ie. reserved CPUs).
+  - FIPS enablement.
+  - Proxy enabled or disabled - specific configuration does not need to match, but if target SNO has a proxy configured,
+    so must the seed SNO.
+  - Disconnected registry usage - specific configuration does not need to match, but if target SNO uses disconnected
+    registry, so must the seed SNO.
+  - Same IP version, ie. IPv4 vs IPv6.
+  - If the workload is currently running on target SNO(s) with cgroups v1 and cannot support v2, then the seed SNO must
+    be configured to set the cgroups version to v1 as well.
 - OADP operator must be deployed.
-- Container storage must be setup as shared between stateroots, such as with a separate partition.
-- Required dnsmasq configuration to support updating cluster name, domain, and IP from the seed image as part of IBU.
-- If seed SNO was deployed via ACM, the cluster must be detached prior to generating the seed image. If deployed with ZTP Gitops, it is highly recommended to drop the site-config and prune via argocd.
+- Container storage must be setup as shared between stateroots, such as with a separate partition, and this setup must
+  align between the seed and target SNOs, ie. using the same mount target. If mounted using partition label, for
+  example, the same label must be used on seed and target SNOs.
+- Required dnsmasq configuration to support updating cluster name, domain, and IP from the seed image as part of IBU
+  (provided automatically if deployed via ACM >= 2.9.2).
+- If seed SNO was deployed via ACM:
+  - The cluster must be detached prior to generating the seed image. If deployed with ZTP Gitops, it is highly recommended to drop the site-config and prune via argocd.
+  - ACM must not have addons enabled, such as observability addon, which creates hub-specific resources on the seed SNO.
+
+The seed SNO must also include:
+
+- If the target SNO requires a performance profile, this must also be applied on the seed SNO.
+- All machine configs that are required for the target SNO must also be applied on the seed SNO, as these would result
+  in a reboot if applied during the upgrade.
+- The full set of required Day2 operators, including the Lifecycle Agent Operator and the OADP Operator.
+
+The seed SNO must exclude the following, which can be applied on the target SNO(s) as extra-manifests during the upgrade:
+
+- Local volumes.
+  - localvolume CR(s), if LSO is used.
+  - storageclass CR(s) used in localvolumes.
+  - lvmcluster CR, if LVMS is used.
+- OADP DataProtectionApplication CR.
 
 ### Shared Container Storage
 
