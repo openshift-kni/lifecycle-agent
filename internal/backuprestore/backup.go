@@ -206,9 +206,9 @@ func (h *BRHandler) applyBackupLabels(ctx context.Context, backup *velerov1.Back
 	if err != nil {
 		return fmt.Errorf("failed to get objs from apply-label annotations: %w", err)
 	}
-	payload := []byte(fmt.Sprintf(`[{"op":"add","path":"/metadata/labels","value":{"%s":"%s"}}]`, backupLabel, backup.GetName()))
+	payload := []byte(fmt.Sprintf(`{"metadata": {"labels": {"%s": "%s"}}}`, backupLabel, backup.GetName()))
 	for _, obj := range objs {
-		err := patchObj(ctx, h.DynamicClient, &obj, false, payload) //nolint:gosec
+		err := patchObj(ctx, h.DynamicClient, &obj, false, payload, types.MergePatchType) //nolint:gosec
 		if err != nil {
 			return fmt.Errorf("failed to apply backup label on object name:%s namespace:%s resource:%s group:%s version:%s err:%w",
 				obj.Name, obj.Namespace, obj.Resource, obj.Group, obj.Version, err)
@@ -233,7 +233,7 @@ func (h *BRHandler) cleanupBackupLabels(ctx context.Context, backup *velerov1.Ba
 	for _, obj := range objs {
 		patchedObj := obj
 
-		if err := patchObj(ctx, h.DynamicClient, &patchedObj, false, payload); err != nil {
+		if err := patchObj(ctx, h.DynamicClient, &patchedObj, false, payload, types.JSONPatchType); err != nil {
 			if k8serrors.IsNotFound(err) || k8serrors.IsInvalid(err) {
 				h.Log.Info("backup label doesn't exist, no patching needed, ignoring", "name", obj.Name,
 					"namespace", obj.Namespace, "resource", obj.Resource, "group", obj.Group, "version", obj.Version)
