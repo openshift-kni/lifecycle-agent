@@ -260,6 +260,12 @@ func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostree
 		}
 	}
 
+	// clear temporary files and reclaim disk space
+	if err := rpmOstreeClient.RpmOstreeCleanup(); err != nil {
+		log.Error(err, "failed rpm-ostree cleanup -b")
+		failures += 1
+	}
+
 	// remove stateroots that are not listed in rpm-ostree, e.g failed deployments
 	files, err := osReadDir(getStaterootPath(""))
 	if err != nil {
