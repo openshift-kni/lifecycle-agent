@@ -288,6 +288,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 					fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf /ostree/deploy/%s\"",
 						stateroot))
 			}
+			rpmostreeclientMock.EXPECT().RpmOstreeCleanup().Return(nil)
 			r := &ImageBasedUpgradeReconciler{
 				Log:             logr.Discard(),
 				RPMOstreeClient: rpmostreeclientMock,
