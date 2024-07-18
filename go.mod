@@ -1,6 +1,7 @@
 module github.com/openshift-kni/lifecycle-agent
 
 go 1.21
+toolchain go1.22.5
 
 require (
 	github.com/containers/image v3.0.2+incompatible
@@ -26,11 +27,11 @@ require (
 	go.uber.org/mock v0.4.0
 	golang.org/x/crypto v0.25.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.29.5
-	k8s.io/apiextensions-apiserver v0.29.5
-	k8s.io/apimachinery v0.29.5
-	k8s.io/client-go v0.29.5
-	k8s.io/code-generator v0.29.5
+	k8s.io/api v0.30.3
+	k8s.io/apiextensions-apiserver v0.30.3
+	k8s.io/apimachinery v0.30.3
+	k8s.io/client-go v0.30.3
+	k8s.io/code-generator v0.30.3
 	open-cluster-management.io/api v0.14.0
 	open-cluster-management.io/config-policy-controller v0.14.0
 	open-cluster-management.io/governance-policy-propagator v0.14.0
@@ -135,8 +136,7 @@ require (
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	k8s.io/component-base v0.29.5 // indirect
-	k8s.io/gengo v0.0.0-20230829151522-9cce18d56c01 // indirect
+	k8s.io/component-base v0.30.3 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240521193020-835d969ad83a // indirect
 	k8s.io/utils v0.0.0-20240502163921-fe8a2dddb1d0 // indirect
