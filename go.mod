@@ -1,6 +1,7 @@
 module github.com/openshift-kni/lifecycle-agent
 
 go 1.21
+toolchain go1.22.5
 
 require (
 	github.com/containers/image v3.0.2+incompatible
@@ -28,7 +29,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.5
 	k8s.io/apiextensions-apiserver v0.29.5
-	k8s.io/apimachinery v0.29.5
+	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.29.5
 	k8s.io/code-generator v0.29.5
 	open-cluster-management.io/api v0.14.0
