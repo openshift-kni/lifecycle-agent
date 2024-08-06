@@ -28,10 +28,6 @@ var podmanRecertArgs = []string{
 	"run", "--rm", "--network=host", "--privileged", "--replace",
 }
 
-const (
-	containersFolder = "/var/lib/containers"
-)
-
 // Ops is an interface for executing commands and actions in the host namespace
 //
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
@@ -526,8 +522,8 @@ func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraP
 	cmds = append(cmds, NewCMD("mkfs.xfs", "-f", extraPartitionPath))
 	cmds = append(cmds, o.growRootPartitionCommands(installationDisk)...)
 	cmds = append(cmds, NewCMD("mount",
-		fmt.Sprintf("/dev/disk/by-partlabel/%s", extraPartitionLabel), "/var/lib/containers"),
-		NewCMD("restorecon", "-R", containersFolder))
+		fmt.Sprintf("/dev/disk/by-partlabel/%s", extraPartitionLabel), common.ContainerStoragePath),
+		NewCMD("restorecon", "-R", common.ContainerStoragePath))
 	if err := o.RunListOfCommands(cmds); err != nil {
 		return fmt.Errorf("failed to grow root partition: %w", err)
 	}
@@ -541,8 +537,8 @@ func (o *ops) SetupContainersFolderCommands() error {
 	cmds = append(cmds, NewCMD("chattr", "-i", "/mnt/"),
 		NewCMD("mkdir", "-p", "/mnt/containers"),
 		NewCMD("chattr", "+i", "/mnt/"),
-		NewCMD("mount", "-o", "bind", "/mnt/containers", containersFolder),
-		NewCMD("restorecon", "-R", containersFolder))
+		NewCMD("mount", "-o", "bind", "/mnt/containers", common.ContainerStoragePath),
+		NewCMD("restorecon", "-R", common.ContainerStoragePath))
 	if err := o.RunListOfCommands(cmds); err != nil {
 		return fmt.Errorf("failed to setup containers folder: %w", err)
 	}

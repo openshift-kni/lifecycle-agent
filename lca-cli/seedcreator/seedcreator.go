@@ -426,7 +426,7 @@ func (s *SeedCreator) backupVar() error {
 		"/var/lib/lca",
 		"/var/lib/log/*",
 		"/var/lib/cni/bin/*",
-		"/var/lib/containers/*",
+		common.ContainerStoragePath + "/*",
 		"/var/lib/kubelet/pods/*",
 		common.OvnIcEtcFolder + "/*",
 	}

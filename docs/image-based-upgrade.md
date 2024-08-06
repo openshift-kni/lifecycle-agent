@@ -335,7 +335,26 @@ The "Prep" stage will:
        > 📝 Warnings are not enforced, and it is up to the user to decide if it's safe to proceed with  `Upgrade` stage.
      - Other validation errors, such as random chars, missing resource Kind, resource ApiVersion, resource name or the presence of disallowed resource types (such as MachineConfig and operator manifests), will cause the Prep stage to fail and block the upgrade
    - Validate the version of the LCA in the seed image is compatible with the version on the running SNO
-2. Setup new stateroot
+2. Check container storage disk usage and perform automatic image cleanup, if usage exceeds a certain threshold.
+   - Images that are in-use, or pinned in CRI-O, will not be automatically deleted. Images are selected for deletion starting with dangling images first, then sorted oldest to newest, as determined by the image `Created` timestamp.
+   - The default disk usage threshold is 50%. This value can be override by setting an `image-cleanup.lca.openshift.io/disk-usage-threshold-percent` annotation on the IBU CR.
+   - The automated container storage cleanup can be disabled by setting an `image-cleanup.lca.openshift.io/on-prep='Disabled'` annotation on the IBU CR.
+
+     ```console
+     # Disabling automatic image cleanup
+     oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/on-prep='Disabled'
+
+     # Removing annotation to re-enable automatic image cleanup
+     oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/on-prep-
+
+     # Overriding default disk usage threshold to 65%
+     oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/disk-usage-threshold-percent='65'
+
+     # Removing threshold override
+     oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/disk-usage-threshold-percent-
+     ```
+
+3. Setup new stateroot
    - Pull the seed image
    - Unpack the seed image and perform various validations such as assert that the desired upgrade version matches the version of the seed image
    - Create a new ostree stateroot
@@ -343,7 +362,7 @@ The "Prep" stage will:
     >
     > At this point of `Prep` stage (Step 2), it is VERY important to let it run to completion. To help avoid unintended consequences of accidental deletion (e.g moving to `Idle` stage while `Prep` in progress), there are blocks in place to allow it to run its normal course before continuing with
      the deletion request. During this wait (could be up to several minutes), please refer to the pod logs for more information.
-3. Pull all images specified by the image list built into the seed image to streamline the
+4. Pull all images specified by the image list built into the seed image to streamline the
   upgrade process. This step is also referred to as `Precache`.
 
 Upon completion, the condition will be updated to "Prep Completed"

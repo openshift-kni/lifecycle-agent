@@ -431,6 +431,59 @@ Bootloader updated; bootconfig swap: yes; bootversion: boot.0.1, deployment coun
     origin: <unknown origin type>
 ```
 
+## Automatic Container Storage Cleanup on Prep
+
+At the start of the Prep stage, LCA checks the container storage disk usage. If the usage exceeds a certain threshold, which defaults to 50%, it will delete images
+from container storage until the disk usage is within the threshold. The list of image removal candidates is sorted by the image's Created timestamp, oldest to newest,
+with dangling images deleted first. Images that are in use or that are pinned are skipped.
+
+This automated container storage cleanup can be disabled by setting an `image-cleanup.lca.openshift.io/on-prep='Disabled'` annotation on the IBU CR. Additionally, the default
+disk usage threshold value can be overridden by setting an `image-cleanup.lca.openshift.io/disk-usage-threshold-percent` annotation.
+
+```console
+# Disabling automatic image cleanup
+oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/on-prep='Disabled'
+
+# Removing annotation to re-enable automatic image cleanup
+oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/on-prep-
+
+# Overriding default disk usage threshold to 65%
+oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/disk-usage-threshold-percent='65'
+
+# Removing threshold override
+oc -n  openshift-lifecycle-agent annotate ibu upgrade image-cleanup.lca.openshift.io/disk-usage-threshold-percent-
+```
+
+### Pinning Images in CRI-O
+
+Images can be pinned in CRI-O by setting the `crio.image/pinned_images` list in crio.conf. This can be done by adding a custom file in `/etc/crio/crio.conf.d`.
+See [crio.conf.md](https://github.com/cri-o/cri-o/blob/main/docs/crio.conf.5.md#crioimage-table) for more information.
+
+Example:
+
+```console
+# cat /etc/crio/crio.conf.d/50-pinned-images
+[crio.image]
+# List of images to be excluded from the kubelet's garbage collection.
+# It allows specifying image names using either exact, glob, or keyword
+# patterns. Exact matches must match the entire name, glob matches can
+# have a wildcard * at the end, and keyword matches can have wildcards
+# on both ends. By default, this list includes the "pause" image if
+# configured by the user, which is used as a placeholder in Kubernetes pods.
+pinned_images = [
+    "localhost/testimage:1",
+    "localhost/testimage:3",
+    "localhost/testimage:5",
+    "localhost/testimage:7",
+    "localhost/testimage:9",
+    "localhost/testimage:11",
+    "localhost/testimage:13",
+    "localhost/testimage:15",
+    "localhost/testimage:17",
+    "localhost/testimage:19",
+]
+```
+
 ## Automatic Rollback on Failure
 
 In an IBU, the LCA provides capability for automatic rollback upon failure at

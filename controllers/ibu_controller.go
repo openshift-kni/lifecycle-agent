@@ -29,6 +29,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/imagemgmt"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	kbatch "k8s.io/api/batch/v1"
 
@@ -75,6 +76,9 @@ type ImageBasedUpgradeReconciler struct {
 	RebootClient    reboot.RebootIntf
 	Mux             *sync.Mutex
 	Clientset       *kubernetes.Clientset
+
+	// Image Management client, used for container storage cleanup
+	ImageMgmtClient imagemgmt.ImageMgmtIntf
 
 	// Cluster data retrieved once, during init
 	ContainerStorageMountpointTarget string
