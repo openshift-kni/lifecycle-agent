@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
@@ -54,6 +55,8 @@ import (
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
+	lsov1 "github.com/openshift/local-storage-operator/api/v1"
+	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -67,6 +70,7 @@ type SeedGeneratorReconciler struct {
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
 	Recorder        record.EventRecorder
+	BackupRestore   backuprestore.BackuperRestorer
 	Executor        ops.Execute
 	Mux             *sync.Mutex
 
@@ -120,7 +124,8 @@ var phases = struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups=lvm.topolvm.io,resources=lvmclusters,verbs=get;list;watch
 
 // getPhase determines the reconciler phase based on the seedgen CR status conditions
 func getPhase(seedgen *seedgenv1.SeedGenerator) seedgenReconcilerPhase {
@@ -590,6 +595,59 @@ func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg strin
 	if strings.TrimSpace(string(dockerConfigJSON)) == strings.TrimSpace(common.PullSecretEmptyData) {
 		msg = "Rejected due to invalid cluster pull-secret (previously sanitized without proper restore)"
 		return
+	}
+
+	// Ensure no PVs are configured on the seed SNO
+	pvList := &corev1.PersistentVolumeList{}
+	if err := r.List(ctx, pvList); len(pvList.Items) > 0 {
+		if err != nil {
+			msg = "Failure occurred during check for configured PVs in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any Persistent Volumes configured"
+		}
+		return
+	}
+
+	// Ensure no LocalVolume CRs exist, if LSO is installed
+	localVolumeList := &lsov1.LocalVolumeList{}
+	if err := r.List(ctx, localVolumeList); len(localVolumeList.Items) > 0 && !errors.IsNotFound(err) {
+		if err != nil {
+			msg = "Failure occurred during check for configured LocalVolumes in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any LocalVolumes configured"
+		}
+		return
+	}
+
+	// Ensure no LVMCluster CR exists, if LVMS is installed
+	lvmClusterList := &lvmv1alpha1.LVMClusterList{}
+	if err := r.List(ctx, lvmClusterList); len(lvmClusterList.Items) > 0 && !errors.IsNotFound(err) {
+		if err != nil {
+			msg = "Failure occurred during check for configured LVMClusters in system validation"
+		} else {
+			msg = "Rejected: Cluster must not have any LVMClusters configured"
+		}
+		return
+	}
+
+	// Ensure no DataProtectionApplication CR exists and minimum supported version, if OADP installed
+	if r.BackupRestore.IsOadpInstalled(ctx) {
+		if dpaList, err := r.BackupRestore.GetDataProtectionApplicationList(ctx); len(dpaList.Items) > 0 {
+			if err != nil {
+				msg = "Failure occurred during check for configured DataProtectionApplications in system validation"
+			} else {
+				msg = "Rejected: Cluster must not have any DataProtectionApplication resources configured"
+			}
+			return
+		}
+		if oadpSupportedVersion, err := r.BackupRestore.CheckOadpMinimumVersion(ctx); !oadpSupportedVersion {
+			if err != nil {
+				msg = fmt.Sprintf("Failure occurred when checking OADP version in system validation: %v", err)
+			} else {
+				msg = fmt.Sprintf("Rejected: Cluster must have OADP version >= %v", backuprestore.OadpMinSupportedVersion)
+			}
+			return
+		}
 	}
 
 	return
