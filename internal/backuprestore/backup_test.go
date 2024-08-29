@@ -838,21 +838,26 @@ func TestCleanupBackups(t *testing.T) {
 
 	// Test backup cleanup for cluster1
 	go func() {
+		// CleanupBackups will create a DeleteBackupRequest for cluster1 only,
+		// wait for that DeleteBackupRequest to disappear, and verify that
+		// the Backup is deleted for cluster1.
 		err := handler.CleanupBackups(context.Background())
 		errorChan <- err
 	}()
 
 	// Mock the deletion of backup for cluster1
-	time.Sleep(1 * time.Second)
-
-	for _, backup := range backups {
-		dbr := &velerov1.DeleteBackupRequest{
-			ObjectMeta: metav1.ObjectMeta{Name: backup.GetName(), Namespace: backup.GetNamespace()},
-		}
-		fakeClient.Delete(context.Background(), dbr)
-	}
+	// Wait for the DeleteBackupRequest to be created by CleanupBackups function
+	// before deleting
+	time.Sleep(2 * time.Second)
 
 	if err := fakeClient.Delete(context.Background(), backups[0]); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	dbr := &velerov1.DeleteBackupRequest{
+		ObjectMeta: metav1.ObjectMeta{Name: backups[0].GetName(), Namespace: backups[0].GetNamespace()},
+	}
+	if err := fakeClient.Delete(context.Background(), dbr); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
