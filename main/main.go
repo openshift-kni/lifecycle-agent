@@ -27,6 +27,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
+	"github.com/openshift-kni/lifecycle-agent/internal/imagemgmt"
 	kbatchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -180,6 +181,7 @@ func main() {
 	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
 	ostreeClient := ostreeclient.NewClient(executor, false)
 	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient, op)
+	imageMgmtClient := imagemgmt.NewImageMgmtClient(&log, executor, common.PathOutsideChroot(common.ContainerStoragePath))
 
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
@@ -253,6 +255,8 @@ func main() {
 		},
 		Mux:       mux,
 		Clientset: clientset,
+
+		ImageMgmtClient: imageMgmtClient,
 
 		// Cluster data retrieved once during init
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
