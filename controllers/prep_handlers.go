@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -489,6 +490,44 @@ func initIBUWorkspaceDir() error {
 	return nil
 }
 
+// Cleanup container storage, if needed
+func (r *ImageBasedUpgradeReconciler) containerStorageCleanup(ibu *ibuv1.ImageBasedUpgrade) error {
+	// Check whether image cleanup is disabled using annotation
+	if val, exists := ibu.GetAnnotations()[common.ImageCleanupOnPrepAnnotation]; exists {
+		if val == common.ImageCleanupDisabledValue {
+			r.Log.Info("Automatic image cleanup is disabled")
+			return nil
+		}
+	}
+
+	thresholdPercent := common.ContainerStorageUsageThresholdPercentDefault
+
+	// Check for threshold override
+	if val, exists := ibu.GetAnnotations()[common.ContainerStorageUsageThresholdPercentAnnotation]; exists {
+		var err error
+		if thresholdPercent, err = strconv.Atoi(val); err != nil {
+			r.Log.Error(err, "Failed to parse threshold value from annotation", "value", val)
+			r.Log.Info("Automatic image cleanup is disabled, due to failure to parse threshold annotation")
+			return nil
+		}
+	}
+
+	// Check container storage disk usage
+	if exceeded, err := r.ImageMgmtClient.CheckDiskUsageAgainstThreshold(thresholdPercent); err != nil {
+		return fmt.Errorf("failed to check container storage disk usage: %w", err)
+	} else if !exceeded {
+		// Container storage disk usage is within threshold
+		return nil
+	}
+
+	r.Log.Info("Performing automatic image cleanup to reduce container storage disk usage to be within threshold")
+	if err := r.ImageMgmtClient.CleanupUnusedImages(thresholdPercent); err != nil {
+		return fmt.Errorf("failed during image cleanup: %w", err)
+	}
+
+	return nil
+}
+
 // handlePrep the main func to run prep stage
 func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Running health check for Prep")
@@ -523,6 +562,11 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			r.Log.Info("Validating seed information")
 			if err := r.validateSeedImageConfig(ctx, ibu); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate seed image info: %s", err.Error()), ibu)
+			}
+
+			r.Log.Info("Checking container storage disk space")
+			if err := r.containerStorageCleanup(ibu); err != nil {
+				return requeueWithError(fmt.Errorf("failed container storage cleanup: %w", err))
 			}
 
 			r.Log.Info("Launching a new stateroot job")
