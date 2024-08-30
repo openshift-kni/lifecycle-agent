@@ -26,6 +26,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-logr/logr"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -69,7 +70,8 @@ const (
 	OadpSecretPath  = OadpPath + "/secret"
 
 	// OadpNs is the namespace used for everything related OADP e.g configsMaps, DataProtectionApplicationm, Restore, etc
-	OadpNs = "openshift-adp"
+	OadpNs                  = "openshift-adp"
+	OadpMinSupportedVersion = "1.3.1"
 
 	topolvmValue                   = "topolvm.io"
 	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
@@ -100,6 +102,8 @@ type BackuperRestorer interface {
 	StartOrTrackRestore(ctx context.Context, restores []*velerov1.Restore) (*RestoreTracker, error)
 	ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
 	IsOadpInstalled(ctx context.Context) bool
+	GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error)
+	CheckOadpMinimumVersion(ctx context.Context) (bool, error)
 }
 
 // BRHandler handles the backup and restore
@@ -489,33 +493,16 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.
 
 func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	// Check if OADP is installed
-	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
-		return fmt.Errorf("could not list ClusterServiceVersion: %w", err)
-	}
-
-	oadpCsvExist := false
-	for _, csv := range oadpCsvList.Items {
-		if strings.Contains(csv.Name, "oadp-operator") {
-			oadpCsvExist = true
-			break
-		}
-	}
-
-	if !oadpCsvExist {
+	if !h.IsOadpInstalled(ctx) {
 		errMsg := fmt.Sprintf("Please ensure OADP operator is installed in the %s", OadpNs)
 		h.Log.Error(nil, errMsg)
 		return NewBRFailedValidationError("OADP", errMsg)
 	}
 
 	// Check if OADP DPA is reconciled
-	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(DpaGvkList)
-	opts := []client.ListOption{
-		client.InNamespace(OadpNs),
-	}
-	if err := h.List(ctx, dpaList, opts...); err != nil {
-		return fmt.Errorf("failed to list dpa: %w", err)
+	dpaList, err := h.GetDataProtectionApplicationList(ctx)
+	if err != nil {
+		return err
 	}
 
 	if len(dpaList.Items) == 0 {
@@ -534,8 +521,29 @@ func (h *BRHandler) CheckOadpOperatorAvailability(ctx context.Context) error {
 	return nil
 }
 
-// IsOadpInstalled a simple function to determine if OADP is present by checking the presence of at least one OADP defined CRD
+// IsOadpInstalled a simple function to determine if OADP is installed by checking the presence
+// of its CSV and at least one OADP defined CRD
 func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
+	// Check if OADP CSV is installed
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
+		h.Log.Error(err, "could not list ClusterServiceVersion")
+		return false
+	}
+
+	oadpCsvExist := false
+	for _, csv := range oadpCsvList.Items {
+		if strings.Contains(csv.Name, "oadp-operator") {
+			oadpCsvExist = true
+			break
+		}
+	}
+
+	if !oadpCsvExist {
+		return false
+	}
+
+	// Check if OADP CRDs are installed
 	crds := &apiextensionsv1.CustomResourceDefinitionList{}
 	if err := h.Client.List(ctx, crds); err != nil {
 		h.Log.Error(err, "could not list CRDs to verify if OADP is installed")
@@ -557,4 +565,51 @@ func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
 	}
 
 	return len(oadpCrds) > 0
+}
+
+func (h *BRHandler) GetDataProtectionApplicationList(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	dpaList := &unstructured.UnstructuredList{}
+	dpaList.SetGroupVersionKind(DpaGvkList)
+
+	opts := []client.ListOption{
+		client.InNamespace(OadpNs),
+	}
+
+	if err := h.List(ctx, dpaList, opts...); err != nil {
+		return dpaList, fmt.Errorf("failed to list dpa: %w", err)
+	}
+
+	return dpaList, nil
+}
+
+// CheckOadpMinimumVersion checks the minimum supported version for the OADP operator version from the installed CSV.
+func (h *BRHandler) CheckOadpMinimumVersion(ctx context.Context) (bool, error) {
+	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
+	if err := h.Client.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
+		return false, fmt.Errorf("failed to list ClusterServiceVersions in namespace %s: %w", OadpNs, err)
+	}
+
+	minSupportedVersion, err := semver.Parse(OadpMinSupportedVersion)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse minimum supported version: %w", err)
+	}
+
+	for _, csv := range oadpCsvList.Items {
+		if !strings.Contains(csv.Name, "oadp-operator") {
+			continue
+		}
+
+		currentInstalledVersion, err := semver.Parse(csv.Spec.Version.String())
+		if err != nil {
+			return false, fmt.Errorf("failed to parse OADP operator version: %w", err)
+		}
+		if currentInstalledVersion.GTE(minSupportedVersion) {
+			return true, nil
+		}
+
+		h.Log.Info(fmt.Sprintf("oadp operator version %s is below the minimum supported version %s", currentInstalledVersion, OadpMinSupportedVersion))
+		return false, nil
+	}
+
+	return false, fmt.Errorf("failed to find CSV for OADP operator")
 }
