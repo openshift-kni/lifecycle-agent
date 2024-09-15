@@ -935,8 +935,9 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := p.applyNMStateConfiguration(seedReconfiguration); err != nil {
-		return err
+	if err := utils.RunOnce("apply-static-network", p.workingDir, p.log, p.applyNMStateConfiguration,
+		seedReconfiguration); err != nil {
+		return fmt.Errorf("failed to apply static network: %w", err)
 	}
 
 	if _, err := p.ops.SystemctlAction("restart", nmService); err != nil {
