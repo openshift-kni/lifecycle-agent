@@ -38,7 +38,6 @@ import (
 
 	cp "github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
-	etcdClient "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -245,7 +244,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
 		path.Join(p.workingDir, recert.RecertConfigFile),
 		nil,
-		func() error { return p.postRecertCommands(ctx, seedReconfiguration) },
+		func() error { return p.postRecertCommands() },
 		"-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
 	if err != nil {
 		return fmt.Errorf("failed recert full flow: %w", err)
@@ -355,44 +354,11 @@ func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedR
 	return nil
 }
 
-func (p *PostPivot) etcdPostPivotOperations(ctx context.Context, reconfigurationInfo *clusterconfig_api.SeedReconfiguration) error {
-	p.log.Info("Start running etcd post pivot operations")
-	cli, err := etcdClient.New(etcdClient.Config{
-		Endpoints:   []string{common.EtcdDefaultEndpoint},
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		return fmt.Errorf("failed start new etcd client: %w", err)
-	}
-	defer cli.Close()
-
-	newEtcdIp := reconfigurationInfo.NodeIP
-	if utils.IsIpv6(newEtcdIp) {
-		newEtcdIp = fmt.Sprintf("[%s]", newEtcdIp)
-	}
-
-	members, err := cli.MemberList(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get etcd members list")
-	}
-	_, err = cli.MemberUpdate(ctx, members.Members[0].ID, []string{fmt.Sprintf("https://%s:2380", newEtcdIp)})
-	if err != nil {
-		return fmt.Errorf("failed to change etcd peer url, err: %w", err)
-	}
-
-	return nil
-}
-
-func (p *PostPivot) postRecertCommands(ctx context.Context, clusterInfo *clusterconfig_api.SeedReconfiguration) error {
+func (p *PostPivot) postRecertCommands() error {
 	// changing seed ip to new ip in all static pod files
 	_, err := p.ops.RunBashInHostNamespace("update-ca-trust")
 	if err != nil {
 		return fmt.Errorf("failed to run update-ca-trust after recert: %w", err)
-	}
-
-	//// TODO: remove after https://issues.redhat.com/browse/ETCD-503
-	if err := p.etcdPostPivotOperations(ctx, clusterInfo); err != nil {
-		return fmt.Errorf("failed to run post pivot etcd operations, err: %w", err)
 	}
 
 	return nil
