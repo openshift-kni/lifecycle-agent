@@ -69,6 +69,8 @@ type RecertConfig struct {
 	PullSecret                string   `json:"pull_secret,omitempty"`
 	ChronyConfig              string   `json:"chrony_config,omitempty"`
 	RegenerateServerSSHKeys   string   `json:"regenerate_server_ssh_keys,omitempty"`
+
+	EtcdDefrag bool `json:"etcd_defrag,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -183,6 +185,7 @@ func CreateRecertConfigFileForSeedCreation(path string, withPassword bool) error
 	config := createBaseRecertConfig()
 	config.SummaryFileClean = "/kubernetes/recert-seed-creation-summary.yaml"
 	config.ForceExpire = true
+	config.EtcdDefrag = true
 
 	config.KubeadminPasswordHash = ""
 	if withPassword {
