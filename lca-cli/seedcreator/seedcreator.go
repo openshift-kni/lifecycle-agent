@@ -300,7 +300,7 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
 	s.log.Info("Save list of downloaded images")
 	args := []string{"images", "-o", "json", "|", "jq", "-r",
-		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[0] end'"}
+		"'.images[] | if .repoTags | length > 0 then .repoTags[] else .repoDigests[] end'"}
 
 	output, err := s.ops.RunBashInHostNamespace("crictl", args...)
 	if err != nil {
