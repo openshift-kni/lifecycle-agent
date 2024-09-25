@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,9 +36,7 @@ type DeviceInfo struct {
 }
 
 const (
-	filesDir          = "files"
-	ovsUnitsDir       = "ovs-units"
-	switchdevUnitsDir = "switchdev-units"
+	ovsUnitsDir = "ovs-units"
 )
 
 func MakeRenderData() RenderData {
@@ -104,6 +101,11 @@ func RenderTemplate(path string, d *RenderData) ([]*unstructured.Unstructured, e
 			}
 			return nil, errors.Wrapf(err, "failed to unmarshal manifest %s", path)
 		}
+
+		if u.Object == nil {
+			continue
+		}
+
 		out = append(out, &u)
 	}
 
@@ -120,7 +122,7 @@ func renderTemplate(path string, d *RenderData) (*bytes.Buffer, error) {
 	tmpl.Funcs(template.FuncMap{"getOr": getOr, "isSet": isSet})
 	tmpl.Funcs(sprig.TxtFuncMap())
 
-	source, err := ioutil.ReadFile(path)
+	source, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to read manifest %s", path)
 	}
@@ -155,26 +157,10 @@ func GenerateMachineConfig(path, name, mcRole string, ovsOffload bool, d *Render
 	if !exists {
 		return nil, errors.Errorf("%s is not a directory", path)
 	}
-	files := map[string]string{}
 	units := map[string]string{}
 
-	// if err := filterTemplates(files, path, d); err != nil {
-	// 	return nil, err
-	// }
-
-	p := filepath.Join(path, filesDir)
-	exists, err = existsDir(p)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		if err := filterTemplates(files, p, d); err != nil {
-			return nil, err
-		}
-	}
-
 	if ovsOffload {
-		p = filepath.Join(path, ovsUnitsDir)
+		p := filepath.Join(path, ovsUnitsDir)
 		exists, err = existsDir(p)
 		if err != nil {
 			return nil, err
@@ -185,18 +171,6 @@ func GenerateMachineConfig(path, name, mcRole string, ovsOffload bool, d *Render
 			}
 		}
 	}
-
-	p = filepath.Join(path, switchdevUnitsDir)
-	exists, err = existsDir(p)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		if err := filterTemplates(units, p, d); err != nil {
-			return nil, err
-		}
-	}
-
 	// keySortVals returns a list of values, sorted by key
 	// we need the lists of files and units to have a stable ordering for the checksum
 	keySortVals := func(m map[string]string) []string {
@@ -214,7 +188,7 @@ func GenerateMachineConfig(path, name, mcRole string, ovsOffload bool, d *Render
 		return vs
 	}
 
-	ignCfg, err := common.TranspileCoreOSConfigToIgn(keySortVals(files), keySortVals(units))
+	ignCfg, err := common.TranspileCoreOSConfigToIgn(nil, keySortVals(units))
 	if err != nil {
 		return nil, errors.Wrap(err, "error transpiling CoreOS config to Ignition config")
 	}
