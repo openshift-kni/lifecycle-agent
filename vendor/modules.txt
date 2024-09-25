@@ -409,8 +409,8 @@ github.com/ulikunitz/xz/lzma
 # github.com/vincent-petithory/dataurl v1.0.0
 ## explicit
 github.com/vincent-petithory/dataurl
-# github.com/vmware-tanzu/velero v1.13.2
-## explicit; go 1.21
+# github.com/vmware-tanzu/velero v1.14.1
+## explicit; go 1.22.6
 github.com/vmware-tanzu/velero/pkg/apis/velero/shared
 github.com/vmware-tanzu/velero/pkg/apis/velero/v1
 # go.uber.org/mock v0.4.0
@@ -453,7 +453,7 @@ golang.org/x/exp/maps
 golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.25.0
+# golang.org/x/net v0.26.0
 ## explicit; go 1.18
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2

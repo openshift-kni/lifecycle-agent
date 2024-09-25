@@ -1,6 +1,7 @@
 module github.com/openshift-kni/lifecycle-agent
 
 go 1.21
+toolchain go1.22.7
 
 require (
 	github.com/containers/image v3.0.2+incompatible
@@ -21,7 +22,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.9.0
-	github.com/vmware-tanzu/velero v1.13.2
+	github.com/vmware-tanzu/velero v1.14.1
 	go.uber.org/mock v0.4.0
 	golang.org/x/crypto v0.27.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -117,7 +118,7 @@ require (
 	go4.org v0.0.0-20200104003542-c7e774b10ea0 // indirect
 	golang.org/x/exp v0.0.0-20240525044651-4c93da0ed11d // indirect
 	golang.org/x/mod v0.17.0 // indirect
-	golang.org/x/net v0.25.0 // indirect
+	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/oauth2 v0.20.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
