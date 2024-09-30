@@ -3,7 +3,9 @@ package postpivot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -388,29 +390,48 @@ func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicCli
 	}
 
 	for _, mFile := range mFiles {
-		var obj map[string]interface{}
-		if err := utils.ReadYamlOrJSONFile(filepath.Join(mPath, mFile.Name()), &obj); err != nil {
+		decoder, err := utils.GetYamlOrJsonDecoder(filepath.Join(mPath, mFile.Name()))
+		if err != nil {
 			return fmt.Errorf("failed to read manifest %s: %w", mFile.Name(), err)
 		}
-
-		if manifests, ok := obj["items"]; ok {
-			for _, m := range manifests.([]interface{}) {
-				manifest := unstructured.Unstructured{}
-				manifest.Object = m.(map[string]interface{})
-				if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
-					return fmt.Errorf("failed to apply manifest: %w", err)
-				}
+		for {
+			var obj map[string]interface{}
+			// decode until EOF since we might get multiple definitions in a single file
+			err := decoder.Decode(&obj)
+			if errors.Is(err, io.EOF) {
+				// End of file, break the loop
+				break
 			}
-		} else {
+			if err != nil {
+				return fmt.Errorf("failed to decode manifest %s: %w", mFile.Name(), err)
+			}
+			err = p.handleManifest(ctx, mPath, dynamicClient, restMapper, obj, mFile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (p *PostPivot) handleManifest(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper, obj map[string]interface{}, mFile os.DirEntry) error {
+	if manifests, ok := obj["items"]; ok {
+		for _, m := range manifests.([]interface{}) {
 			manifest := unstructured.Unstructured{}
-			manifest.Object = obj
+			manifest.Object = m.(map[string]interface{})
 			if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
 				return fmt.Errorf("failed to apply manifest: %w", err)
 			}
 		}
-
-		p.log.Infof("manifest applied: %s", filepath.Join(mPath, mFile.Name()))
+	} else {
+		manifest := unstructured.Unstructured{}
+		manifest.Object = obj
+		if err := extramanifest.ApplyExtraManifest(ctx, dynamicClient, restMapper, &manifest, false); err != nil {
+			return fmt.Errorf("failed to apply manifest: %w", err)
+		}
 	}
+
+	p.log.Infof("manifest applied: %s", filepath.Join(mPath, mFile.Name()))
 	return nil
 }
 
