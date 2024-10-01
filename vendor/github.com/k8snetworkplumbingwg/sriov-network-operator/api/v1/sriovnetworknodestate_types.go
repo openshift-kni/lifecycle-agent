@@ -25,18 +25,21 @@ import (
 
 // SriovNetworkNodeStateSpec defines the desired state of SriovNetworkNodeState
 type SriovNetworkNodeStateSpec struct {
-	DpConfigVersion string     `json:"dpConfigVersion,omitempty"`
-	Interfaces      Interfaces `json:"interfaces,omitempty"`
+	Interfaces Interfaces `json:"interfaces,omitempty"`
+	Bridges    Bridges    `json:"bridges,omitempty"`
 }
 
+type Interfaces []Interface
+
 type Interface struct {
-	PciAddress  string    `json:"pciAddress"`
-	NumVfs      int       `json:"numVfs,omitempty"`
-	Mtu         int       `json:"mtu,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	LinkType    string    `json:"linkType,omitempty"`
-	EswitchMode string    `json:"eSwitchMode,omitempty"`
-	VfGroups    []VfGroup `json:"vfGroups,omitempty"`
+	PciAddress        string    `json:"pciAddress"`
+	NumVfs            int       `json:"numVfs,omitempty"`
+	Mtu               int       `json:"mtu,omitempty"`
+	Name              string    `json:"name,omitempty"`
+	LinkType          string    `json:"linkType,omitempty"`
+	EswitchMode       string    `json:"eSwitchMode,omitempty"`
+	VfGroups          []VfGroup `json:"vfGroups,omitempty"`
+	ExternallyManaged bool      `json:"externallyManaged,omitempty"`
 }
 
 type VfGroup struct {
@@ -46,50 +49,85 @@ type VfGroup struct {
 	PolicyName   string `json:"policyName,omitempty"`
 	Mtu          int    `json:"mtu,omitempty"`
 	IsRdma       bool   `json:"isRdma,omitempty"`
+	VdpaType     string `json:"vdpaType,omitempty"`
 }
 
-type Interfaces []Interface
-
 type InterfaceExt struct {
-	Name        string            `json:"name,omitempty"`
-	Mac         string            `json:"mac,omitempty"`
-	Driver      string            `json:"driver,omitempty"`
-	PciAddress  string            `json:"pciAddress"`
-	Vendor      string            `json:"vendor,omitempty"`
-	DeviceID    string            `json:"deviceID,omitempty"`
-	NetFilter   string            `json:"netFilter,omitempty"`
-	Mtu         int               `json:"mtu,omitempty"`
-	NumVfs      int               `json:"numVfs,omitempty"`
-	LinkSpeed   string            `json:"linkSpeed,omitempty"`
-	LinkType    string            `json:"linkType,omitempty"`
-	EswitchMode string            `json:"eSwitchMode,omitempty"`
-	TotalVfs    int               `json:"totalvfs,omitempty"`
-	VFs         []VirtualFunction `json:"Vfs,omitempty"`
+	Name              string            `json:"name,omitempty"`
+	Mac               string            `json:"mac,omitempty"`
+	Driver            string            `json:"driver,omitempty"`
+	PciAddress        string            `json:"pciAddress"`
+	Vendor            string            `json:"vendor,omitempty"`
+	DeviceID          string            `json:"deviceID,omitempty"`
+	NetFilter         string            `json:"netFilter,omitempty"`
+	Mtu               int               `json:"mtu,omitempty"`
+	NumVfs            int               `json:"numVfs,omitempty"`
+	LinkSpeed         string            `json:"linkSpeed,omitempty"`
+	LinkType          string            `json:"linkType,omitempty"`
+	LinkAdminState    string            `json:"linkAdminState,omitempty"`
+	EswitchMode       string            `json:"eSwitchMode,omitempty"`
+	ExternallyManaged bool              `json:"externallyManaged,omitempty"`
+	TotalVfs          int               `json:"totalvfs,omitempty"`
+	VFs               []VirtualFunction `json:"Vfs,omitempty"`
 }
 type InterfaceExts []InterfaceExt
 
 type VirtualFunction struct {
-	Name       string `json:"name,omitempty"`
-	Mac        string `json:"mac,omitempty"`
-	Assigned   string `json:"assigned,omitempty"`
-	Driver     string `json:"driver,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Mac             string `json:"mac,omitempty"`
+	Assigned        string `json:"assigned,omitempty"`
+	Driver          string `json:"driver,omitempty"`
+	PciAddress      string `json:"pciAddress"`
+	Vendor          string `json:"vendor,omitempty"`
+	DeviceID        string `json:"deviceID,omitempty"`
+	Vlan            int    `json:"Vlan,omitempty"`
+	Mtu             int    `json:"mtu,omitempty"`
+	VfID            int    `json:"vfID"`
+	VdpaType        string `json:"vdpaType,omitempty"`
+	RepresentorName string `json:"representorName,omitempty"`
+	GUID            string `json:"guid,omitempty"`
+}
+
+// Bridges contains list of bridges
+type Bridges struct {
+	OVS []OVSConfigExt `json:"ovs,omitempty"`
+}
+
+// OVSConfigExt contains configuration for the concrete OVS bridge
+type OVSConfigExt struct {
+	// name of the bridge
+	Name string `json:"name"`
+	// bridge-level configuration for the bridge
+	Bridge OVSBridgeConfig `json:"bridge,omitempty"`
+	// uplink-level bridge configuration for each uplink(PF).
+	// currently must contain only one element
+	Uplinks []OVSUplinkConfigExt `json:"uplinks,omitempty"`
+}
+
+// OVSUplinkConfigExt contains configuration for the concrete OVS uplink(PF)
+type OVSUplinkConfigExt struct {
+	// pci address of the PF
 	PciAddress string `json:"pciAddress"`
-	Vendor     string `json:"vendor,omitempty"`
-	DeviceID   string `json:"deviceID,omitempty"`
-	Vlan       int    `json:"Vlan,omitempty"`
-	Mtu        int    `json:"mtu,omitempty"`
-	VfID       int    `json:"vfID"`
+	// name of the PF interface
+	Name string `json:"name,omitempty"`
+	// configuration from the Interface OVS table for the PF
+	Interface OVSInterfaceConfig `json:"interface,omitempty"`
 }
 
 // SriovNetworkNodeStateStatus defines the observed state of SriovNetworkNodeState
 type SriovNetworkNodeStateStatus struct {
 	Interfaces    InterfaceExts `json:"interfaces,omitempty"`
+	Bridges       Bridges       `json:"bridges,omitempty"`
 	SyncStatus    string        `json:"syncStatus,omitempty"`
 	LastSyncError string        `json:"lastSyncError,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:name="Sync Status",type=string,JSONPath=`.status.syncStatus`
+//+kubebuilder:printcolumn:name="Desired Sync State",type=string,JSONPath=`.metadata.annotations.sriovnetwork\.openshift\.io/desired-state`
+//+kubebuilder:printcolumn:name="Current Sync State",type=string,JSONPath=`.metadata.annotations.sriovnetwork\.openshift\.io/current-state`
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // SriovNetworkNodeState is the Schema for the sriovnetworknodestates API
 type SriovNetworkNodeState struct {
