@@ -3,7 +3,6 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.21
 
 require (
-	github.com/containers/image v3.0.2+incompatible
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.19.0
 	github.com/go-logr/logr v1.4.2
@@ -16,7 +15,6 @@ require (
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.23.0
 	github.com/otiai10/copy v1.14.0
-	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.47.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
@@ -38,13 +36,10 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.3.2 // indirect
 	github.com/cavaliercoder/go-cpio v0.0.0-20180626203310-925f9528c45e // indirect
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/golang/mock v1.6.0 // indirect
-	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.1.0-rc5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect

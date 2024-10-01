@@ -13,7 +13,6 @@ COPY go.* .
 COPY api api
 COPY controllers controllers
 COPY lca-cli lca-cli
-COPY ib-cli ib-cli
 COPY internal internal
 COPY main main
 COPY utils utils
@@ -21,7 +20,6 @@ COPY utils utils
 # Build the binaries
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ib-cli main/ib-cli/main.go
 
 #####################################################################################################
 # Build the operator image
@@ -40,7 +38,6 @@ RUN if [[ ! -f /bin/nsenter ]]; then \
 COPY --from=builder \
     /opt/app-root/src/build/manager \
     /opt/app-root/src/build/lca-cli \
-    /opt/app-root/src/build/ib-cli \
     /usr/local/bin/
 
 COPY lca-cli/installation_configuration_files/ /usr/local/installation_configuration_files/
