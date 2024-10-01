@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -64,6 +65,15 @@ func podmanImgPull(image, authFile string) error {
 	return nil
 }
 
+func podmanImgExists(image string) bool {
+	args := []string{"image", "exists", image}
+	_, err := Executor.Execute("podman", args...)
+	if err != nil {
+		log.Errorf("failed podman image check with args %s: %v", args, err)
+	}
+	return err == nil
+}
+
 // pullImage attempts to pull an image via podman CLI
 func pullImage(image, authFile string, progress *precache.Progress) error {
 
@@ -74,7 +84,12 @@ func pullImage(image, authFile string, progress *precache.Progress) error {
 			log.Infof("Successfully pulled image: %s", image)
 			break
 		} else {
-			log.Infof("Attempt %d/%d: Failed to pull %s: %v", i+1, MaxRetries, image, err)
+			message := fmt.Sprintf("%v", err)
+			log.Infof("Attempt %d/%d: Failed to pull %s: %s", i+1, MaxRetries, image, message)
+			if strings.Contains(message, "manifest unknown") {
+				// no point to retry if we can reach the registry and the digest doesn't exist
+				break
+			}
 		}
 	}
 	// update precache progress tracker
@@ -158,9 +173,19 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 	// Check pre-caching execution status
 	if status.Failed != 0 {
+		var imagesFound []string
 		log.Info("Failed to pre-cache the following images:")
 		for _, image := range status.FailedPullList {
-			log.Info(image)
+			if podmanImgExists(image) {
+				log.Infof("%s, but found locally after downloading other images", image)
+				imagesFound = append(imagesFound, image)
+			} else {
+				log.Info(image)
+			}
+		}
+		// return success if the number of images found matches the fail count
+		if len(imagesFound) == status.Failed {
+			return nil
 		}
 		if bestEffort {
 			log.Info("Failed to precache, running in best-effort mode, skip error")
