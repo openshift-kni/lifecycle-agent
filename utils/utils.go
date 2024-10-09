@@ -92,19 +92,26 @@ func GetSNOMasterNode(ctx context.Context, client runtimeclient.Client) (*corev1
 }
 
 func ReadYamlOrJSONFile(fp string, into any) error {
+	decoder, err := GetYamlOrJsonDecoder(fp)
+	if err != nil {
+		return err
+	}
+	if err := decoder.Decode(into); err != nil {
+		return fmt.Errorf("failed to decode %s: %w", fp, err)
+	}
+	return nil
+}
+
+func GetYamlOrJsonDecoder(fp string) (*yaml.YAMLOrJSONDecoder, error) {
 	fp = filepath.Clean(fp)
 
 	data, err := os.ReadFile(fp)
 	if err != nil {
-		return err // nolint:wrapcheck
+		return nil, err // nolint:wrapcheck
 	}
 
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
-	if err := decoder.Decode(into); err != nil {
-		return fmt.Errorf("failed to decode %s: %w", fp, err)
-	}
-
-	return nil
+	return decoder, nil
 }
 
 func IsIpv6(provideIp string) bool {
