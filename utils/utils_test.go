@@ -1,12 +1,14 @@
 package utils
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -174,4 +176,42 @@ func TestLoadGroupedManifestsFromPath(t *testing.T) {
 	assert.Equal(t, 2, len(manifests[0]))
 	assert.Equal(t, 1, len(manifests[1]))
 
+}
+
+func TestReadSeedReconfigurationFromFile(t *testing.T) {
+	type dummySeedReconfiguration struct {
+		seedreconfig.SeedReconfiguration
+		DummyField string `yaml:"dummy_file, omitempty"`
+	}
+	tmpDir, err := os.MkdirTemp("", "staterootB")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	data := &dummySeedReconfiguration{
+		SeedReconfiguration: seedreconfig.SeedReconfiguration{
+			APIVersion:  seedreconfig.SeedReconfigurationVersion,
+			BaseDomain:  "test.com",
+			ClusterName: "test-cluster",
+		},
+		// testing that adding a dummy field to the struct doesn't break the unmarshalling
+		DummyField: "dummy",
+	}
+	marshalled, err := json.Marshal(data)
+	assert.Equal(t, err, nil)
+	// omitting node_labels field
+	assert.NotContains(t, string(marshalled), "node_labels")
+	// Create seed-reconfiguration.yaml file
+	seedReconfigurationFile := filepath.Join(tmpDir, "seed-reconfiguration.yaml")
+	if err := os.WriteFile(seedReconfigurationFile, marshalled, 0644); err != nil {
+		t.Fatalf("Failed to create seed-reconfiguration.yaml file: %v", err)
+	}
+
+	seedReconfig, err := ReadSeedReconfigurationFromFile(seedReconfigurationFile)
+	assert.Equal(t, err, nil)
+	assert.Equal(t, seedReconfig.APIVersion, seedreconfig.SeedReconfigurationVersion)
+	assert.Equal(t, seedReconfig.BaseDomain, "test.com")
+	assert.Equal(t, seedReconfig.ClusterName, "test-cluster")
+	assert.Equal(t, len(seedReconfig.NodeLabels), 0)
 }
