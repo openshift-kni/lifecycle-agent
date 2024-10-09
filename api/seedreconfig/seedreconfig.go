@@ -147,6 +147,9 @@ type SeedReconfiguration struct {
 	ChronyConfig string `json:"chrony_config,omitempty"`
 
 	AdditionalTrustBundle AdditionalTrustBundle `json:"additionalTrustBundle,omitempty"`
+
+	// The desired node labels for the SNO node.
+	NodeLabels map[string]string `json:"node_labels,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {
