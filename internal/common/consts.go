@@ -155,3 +155,17 @@ var CertPrefixes = []string{
 }
 
 var TarOpts = []string{"--selinux", "--xattrs", "--xattrs-include=*", "--acls"}
+
+// status for ClusterClaims
+const (
+	Failed    = "failed"
+	Completed = "completed"
+)
+
+// actions for ClusterClaims
+const (
+	Prep     = "prep"
+	Upgrade  = "upgrade"
+	Finalize = "finalize"
+	Abort    = "abort"
+)
