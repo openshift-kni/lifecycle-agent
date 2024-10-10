@@ -195,6 +195,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once set_cluster_id for post pivot: %w", err)
 	}
 
+	if err := utils.RunOnce("set_node_labels", p.workingDir, p.log, p.setNodeLabels, ctx, client, seedReconfiguration.NodeLabels, 5*time.Minute); err != nil {
+		return fmt.Errorf("failed to run once set_cluster_id for post pivot: %w", err)
+	}
+
 	// Restore lvm devices
 	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
 		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
@@ -952,5 +956,55 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
 	}
 
+	return nil
+}
+
+func (p *PostPivot) setNodeLabels(ctx context.Context, client runtimeclient.Client, nodeLabels map[string]string, timeout time.Duration) error {
+	labels := map[string]string{}
+	// no need to set default labels, we search only for custom ones
+	defaultLabels := map[string]string{
+		"beta.kubernetes.io/arch":               "",
+		"beta.kubernetes.io/os":                 "",
+		"kubernetes.io/arch":                    "",
+		"kubernetes.io/hostname":                "",
+		"kubernetes.io/os":                      "",
+		"node-role.kubernetes.io/control-plane": "",
+		"node-role.kubernetes.io/master":        "",
+		"node.openshift.io/os_id":               "",
+		"node-role.kubernetes.io/worker":        "",
+	}
+	for k, v := range nodeLabels {
+		if _, ok := defaultLabels[k]; !ok {
+			labels[k] = v
+		}
+	}
+
+	if len(labels) == 0 {
+		p.log.Infof("No custom node labels were provided, skipping")
+		return nil
+	}
+
+	labelsAsString, err := json.Marshal(labels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal node labels %w", err)
+	}
+	p.log.Infof("Patching node with new labels %s", labelsAsString)
+	data := []byte(`{"metadata": {"labels": ` + string(labelsAsString) + `}}`)
+	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+
+		node, err := utils.GetSNOMasterNode(ctx, client)
+		if err != nil {
+			p.log.Warnf("failed to get node, will retry, err: %v", err)
+			return false, nil
+		}
+		if err := client.Patch(context.Background(), node, runtimeclient.RawPatch(types.MergePatchType, data)); err != nil {
+			p.log.Warnf("failed to patch node with new labels, will retry, err: %v", err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to patch node with new labels %w", err)
+	}
 	return nil
 }
