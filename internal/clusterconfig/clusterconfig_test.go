@@ -84,7 +84,7 @@ var (
 
 	validMasterNode = &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{"node-role.kubernetes.io/master": ""},
+			Labels: map[string]string{"node-role.kubernetes.io/master": "", "test": "test"},
 		},
 		Status: corev1.NodeStatus{
 			Addresses: []corev1.NodeAddress{
@@ -303,6 +303,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
 				assert.Equal(t, "chrony config", seedReconfig.ChronyConfig)
+				assert.Equal(t, map[string]string{"test": "test", "node-role.kubernetes.io/master": ""}, seedReconfig.NodeLabels)
 			},
 		},
 		{
