@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/sirupsen/logrus"
@@ -19,9 +20,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
@@ -772,6 +775,123 @@ func TestProxyAndProxyStatus(t *testing.T) {
 				assert.Contains(t, seedReconfiguration.Proxy.NoProxy, tc.proxy.NoProxy)
 
 				assert.Equal(t, seedReconfiguration.Proxy, seedReconfiguration.StatusProxy)
+			}
+
+		})
+	}
+}
+
+// test nodeLabelsProvided
+func TestNodeLabelsProvided(t *testing.T) {
+	testcases := []struct {
+		name           string
+		nodeLabels     map[string]string
+		labelsToFilter map[string]string
+		node           *corev1.Node
+		expectedError  bool
+	}{
+		{
+			name: "Happy flow",
+			nodeLabels: map[string]string{
+				"test": "test",
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"node-role.kubernetes.io/master": "",
+					},
+				},
+			},
+			expectedError: false,
+		},
+		{
+			name: "Happy flow filter default values test",
+			nodeLabels: map[string]string{
+				"test":                                  "test",
+				"beta.kubernetes.io/arch":               "test",
+				"beta.kubernetes.io/os":                 "test",
+				"kubernetes.io/arch":                    "test",
+				"kubernetes.io/hostname":                "test",
+				"kubernetes.io/os":                      "test",
+				"node-role.kubernetes.io/control-plane": "test",
+				"node.openshift.io/os_id":               "test",
+				"node-role.kubernetes.io/worker":        "test",
+			},
+			labelsToFilter: map[string]string{
+				"beta.kubernetes.io/arch":               "test",
+				"beta.kubernetes.io/os":                 "test",
+				"kubernetes.io/arch":                    "test",
+				"kubernetes.io/hostname":                "test",
+				"kubernetes.io/os":                      "test",
+				"node-role.kubernetes.io/control-plane": "test",
+				"node.openshift.io/os_id":               "test",
+				"node-role.kubernetes.io/worker":        "test",
+			},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"node-role.kubernetes.io/master": "",
+					},
+				},
+			},
+			expectedError: false,
+		},
+		{
+			name:          "No labels provided",
+			nodeLabels:    map[string]string{},
+			expectedError: false,
+		},
+		{
+			name: "Only default labels provided",
+			nodeLabels: map[string]string{
+				"beta.kubernetes.io/arch":               "test",
+				"beta.kubernetes.io/os":                 "test",
+				"kubernetes.io/arch":                    "test",
+				"kubernetes.io/hostname":                "test",
+				"kubernetes.io/os":                      "test",
+				"node-role.kubernetes.io/control-plane": "test",
+				"node.openshift.io/os_id":               "test",
+				"node-role.kubernetes.io/worker":        "test",
+			},
+			expectedError: false,
+		},
+		{
+			name:          "No node found",
+			nodeLabels:    map[string]string{"test": "test"},
+			expectedError: true,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, nil, "", "", "")
+			localScheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(localScheme)
+			client := fake.NewClientBuilder().WithScheme(localScheme).Build()
+			ctx := context.TODO()
+			// Create the node using the dynamic client
+			if tc.node != nil {
+				err := client.Create(ctx, tc.node)
+				assert.Nil(t, err)
+			}
+
+			err := pp.setNodeLabels(ctx, client, tc.nodeLabels, 2*time.Second)
+			assert.Equal(t, tc.expectedError, err != nil, err)
+			if !tc.expectedError && tc.node != nil {
+				node := &corev1.Node{}
+				err = client.Get(ctx, types.NamespacedName{Name: tc.node.Name}, node)
+				assert.Nil(t, err)
+				for k, v := range tc.nodeLabels {
+					val, ok := node.Labels[k]
+					if _, okFilter := tc.labelsToFilter[k]; !okFilter {
+						assert.Equal(t, ok, true)
+						assert.Equal(t, val, v)
+					} else {
+						assert.Equal(t, ok, false)
+					}
+				}
 			}
 
 		})
