@@ -542,6 +542,105 @@ func fakeManifests(tmpDir string) error {
 	return nil
 }
 
+func fakeManifestsSingleFile(tmpDir string) error {
+	resources := `---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ibi-post-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ibi-config
+  namespace: ibi-post-config
+data:
+  config-key1: "ibi"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ibi-config-2
+  namespace: ibi-post-config
+data:
+  config-key2: "ibi"
+`
+	filePath := filepath.Join(tmpDir, "extramManifests.yaml")
+	err := os.WriteFile(filePath, []byte(resources), 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to write file to %s: %w", filePath, err)
+	}
+	return nil
+}
+
+func TestApplyManifestsWithMultipleResources(t *testing.T) {
+	var (
+		mockController = gomock.NewController(t)
+		mockOps        = ops.NewMockOps(mockController)
+	)
+
+	defer func() {
+		mockController.Finish()
+	}()
+
+	testscheme := scheme.Scheme
+	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
+		&operatorv1alpha1.ImageContentSourcePolicyList{})
+
+	// create static rest mapper
+	namespaceGvk := corev1.SchemeGroupVersion.WithKind("Namespace")
+	cmGvk := corev1.SchemeGroupVersion.WithKind("ConfigMap")
+	restMapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{
+		operatorv1alpha1.GroupVersion,
+		corev1.SchemeGroupVersion,
+	})
+	restMapper.Add(namespaceGvk, meta.RESTScopeRoot)
+	restMapper.Add(cmGvk, meta.RESTScopeNamespace)
+
+	// create objs mappings
+	namespaceGvkMapping, _ := restMapper.RESTMapping(namespaceGvk.GroupKind(), corev1.SchemeGroupVersion.Version)
+	cmMapping, _ := restMapper.RESTMapping(cmGvk.GroupKind(), corev1.SchemeGroupVersion.Version)
+
+	tmpDir := t.TempDir()
+	log := &logrus.Logger{}
+	pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
+
+	// fake manifests in a single file
+	if err := fakeManifestsSingleFile(tmpDir); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// fake dynamic client
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(testscheme)
+
+	// apply manifests
+	err := pp.applyManifests(context.Background(), tmpDir, dynamicClient, restMapper)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// validate applied resources
+	opts := metav1.ListOptions{}
+	namespaceResource := dynamicClient.Resource(namespaceGvkMapping.Resource)
+	namespaces, err := namespaceResource.List(context.Background(), opts)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	assert.Equal(t, 1, len(namespaces.Items))
+	assert.Equal(t, "ibi-post-config", namespaces.Items[0].GetName())
+
+	cmResource := dynamicClient.Resource(cmMapping.Resource)
+	configMaps, err := cmResource.List(context.Background(), opts)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	assert.Equal(t, 2, len(configMaps.Items))
+	assert.Equal(t, "ibi-post-config", configMaps.Items[0].GetNamespace())
+	assert.Equal(t, "ibi-post-config", configMaps.Items[1].GetNamespace())
+}
+
 func TestApplyManifests(t *testing.T) {
 	var (
 		mockController = gomock.NewController(t)
