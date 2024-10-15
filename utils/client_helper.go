@@ -84,6 +84,7 @@ type ClusterInfo struct {
 	ClusterNetworks          []string
 	ServiceNetworks          []string
 	MachineNetwork           string
+	NodeLabels               map[string]string
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
@@ -120,6 +121,8 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		return nil, err
 	}
 
+	nodeLabels := node.GetLabels()
+
 	releaseRegistry, err := GetReleaseRegistry(ctx, client)
 	if err != nil {
 		return nil, err
@@ -146,6 +149,7 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		ClusterNetworks:          clusterNetworks,
 		ServiceNetworks:          serviceNetworks,
 		MachineNetwork:           machineNetwork,
+		NodeLabels:               nodeLabels,
 	}, nil
 }
 

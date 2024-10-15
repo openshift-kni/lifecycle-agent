@@ -326,6 +326,7 @@ func SeedReconfigurationFromClusterInfo(
 			ProxyConfigmapName:   additionalTrustBundle.ProxyConfigmapName,
 			ProxyConfigmapBundle: additionalTrustBundle.ProxyConfigmapBundle,
 		},
+		NodeLabels: clusterInfo.NodeLabels,
 	}
 }
 
