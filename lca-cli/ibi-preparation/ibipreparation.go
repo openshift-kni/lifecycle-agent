@@ -164,7 +164,7 @@ func (i *IBIPrepare) diskPreparation() error {
 		}
 	} else {
 		if err := i.ops.CreateExtraPartition(i.config.InstallationDisk, i.config.ExtraPartitionLabel,
-			i.config.ExtraPartitionStart, i.config.ExtraPartitionEnd, i.config.ExtraPartitionNumber); err != nil {
+			i.config.ExtraPartitionStart, i.config.ExtraPartitionSize, i.config.ExtraPartitionNumber); err != nil {
 			return fmt.Errorf("failed to create extra partition: %w", err)
 		}
 	}

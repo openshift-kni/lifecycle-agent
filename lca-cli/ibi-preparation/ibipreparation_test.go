@@ -20,7 +20,7 @@ func TestDiskPreparation(t *testing.T) {
 	installationDisk := "/dev/sda"
 	extraPartitionLabel := "label"
 	extraPartitionStart := "-40"
-	extraPartitionEnd := "0"
+	extraPartitionSize := "0"
 	extraPartitionNumber := uint(5)
 
 	testcases := []struct {
@@ -103,10 +103,10 @@ func TestDiskPreparation(t *testing.T) {
 			if !tc.UseContainersFolder {
 				if !tc.partitionError {
 					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
-						extraPartitionStart, extraPartitionEnd, extraPartitionNumber).Return(nil).Times(1)
+						extraPartitionStart, extraPartitionSize, extraPartitionNumber).Return(nil).Times(1)
 				} else {
 					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
-						extraPartitionStart, extraPartitionEnd, extraPartitionNumber).Return(fmt.Errorf("dummy")).Times(1)
+						extraPartitionStart, extraPartitionSize, extraPartitionNumber).Return(fmt.Errorf("dummy")).Times(1)
 				}
 
 				mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(0)

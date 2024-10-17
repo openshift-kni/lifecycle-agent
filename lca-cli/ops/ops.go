@@ -50,7 +50,7 @@ type Ops interface {
 	Mount(deviceName, mountFolder string) error
 	Umount(deviceName string) error
 	Chroot(chrootPath string) (func() error, error)
-	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionEnd string, extraPartitionNumber uint) error
+	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionSize string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
 	GetHostname() (string, error)
 	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
@@ -476,14 +476,14 @@ func (o *ops) RunListOfCommands(cmds []*CMD) error {
 	return nil
 }
 
-func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionEnd string, extraPartitionNumber uint) error {
+func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionSize string, extraPartitionNumber uint) error {
 	o.log.Info("Creating extra partition")
 	if _, err := o.RunBashInHostNamespace(
 		"echo", "write", "|", "sfdisk", installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
 	if _, err := o.RunInHostNamespace("sgdisk", "--new",
-		fmt.Sprintf("%d:%s:%s", extraPartitionNumber, extraPartitionStart, extraPartitionEnd),
+		fmt.Sprintf("%d:%s:%s", extraPartitionNumber, extraPartitionStart, extraPartitionSize),
 		"--change-name", fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionLabel),
 		installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)

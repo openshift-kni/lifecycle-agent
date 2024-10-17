@@ -54,17 +54,17 @@ func (mr *MockOpsMockRecorder) Chroot(chrootPath any) *gomock.Call {
 }
 
 // CreateExtraPartition mocks base method.
-func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionEnd string, extraPartitionNumber uint) error {
+func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionSize string, extraPartitionNumber uint) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateExtraPartition", installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionEnd, extraPartitionNumber)
+	ret := m.ctrl.Call(m, "CreateExtraPartition", installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionSize, extraPartitionNumber)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateExtraPartition indicates an expected call of CreateExtraPartition.
-func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionEnd, extraPartitionNumber any) *gomock.Call {
+func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionSize, extraPartitionNumber any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionEnd, extraPartitionNumber)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionSize, extraPartitionNumber)
 }
 
 // CreateIsoWithEmbeddedIgnition mocks base method.
