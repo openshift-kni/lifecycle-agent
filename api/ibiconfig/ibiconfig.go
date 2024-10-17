@@ -104,6 +104,13 @@ type IBIPrepareConfig struct {
 	// +optional
 	ExtraPartitionStart string `json:"extraPartitionStart,omitempty"`
 
+	// ExtraPartitionEnd End of the /var/lib/containers partition. Free space at the end of the disk is free to be used by another partition
+	// It must be a positive number and can only be used when ExtraPartitionStart is defined:
+	// - Positive number: partition will start at position defined by ExtraPartitionStart and extend by the value here. Example: +120G
+	// Default is 0G (extend to the end of the disk)
+	// +optional
+	ExtraPartitionEnd string `json:"extraPartitionEnd,omitempty"`
+
 	// ExtraPartitionLabel label of extra partition used for /var/lib/containers.
 	// Default is varlibcontainers
 	// +optional
@@ -217,6 +224,12 @@ func (c *IBIPrepareConfig) Validate() error {
 	if c.InstallationDisk == "" {
 		return fmt.Errorf("installationDisk is required")
 	}
+	if (c.ExtraPartitionStart == "") && (c.ExtraPartitionEnd != "") {
+		return fmt.Errorf("can not define extraPartitionEnd without defining extraPartitionStart")
+	}
+	if (strings.Contains(c.ExtraPartitionStart, "-")) && (c.ExtraPartitionEnd != "") {
+		return fmt.Errorf("can not define extraPartitionEnd with negative extraPartitionStart defined")
+	}
 
 	return nil
 }
@@ -224,6 +237,9 @@ func (c *IBIPrepareConfig) Validate() error {
 func (c *IBIPrepareConfig) SetDefaultValues() {
 	if c.ExtraPartitionStart == "" {
 		c.ExtraPartitionStart = "-40G"
+	}
+	if c.ExtraPartitionEnd == "" {
+		c.ExtraPartitionEnd = "0"
 	}
 	if c.ExtraPartitionNumber == 0 {
 		c.ExtraPartitionNumber = 5

@@ -2,10 +2,11 @@ package ibi_preparation
 
 import (
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"os"
 	"path"
 	"testing"
+
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
@@ -19,6 +20,7 @@ func TestDiskPreparation(t *testing.T) {
 	installationDisk := "/dev/sda"
 	extraPartitionLabel := "label"
 	extraPartitionStart := "-40"
+	extraPartitionEnd := "0"
 	extraPartitionNumber := uint(5)
 
 	testcases := []struct {
@@ -101,16 +103,16 @@ func TestDiskPreparation(t *testing.T) {
 			if !tc.UseContainersFolder {
 				if !tc.partitionError {
 					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
-						extraPartitionStart, extraPartitionNumber).Return(nil).Times(1)
+						extraPartitionStart, extraPartitionEnd, extraPartitionNumber).Return(nil).Times(1)
 				} else {
 					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
-						extraPartitionStart, extraPartitionNumber).Return(fmt.Errorf("dummy")).Times(1)
+						extraPartitionStart, extraPartitionEnd, extraPartitionNumber).Return(fmt.Errorf("dummy")).Times(1)
 				}
 
 				mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(0)
 			} else {
 				mockOps.EXPECT().CreateExtraPartition(gomock.Any(), gomock.Any(),
-					gomock.Any(), gomock.Any()).Return(nil).Times(0)
+					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(0)
 				if !tc.setupFolderError {
 					mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 				} else {
