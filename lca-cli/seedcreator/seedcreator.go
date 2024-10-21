@@ -242,6 +242,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		hasFIPS,
 		seedAdditionalTrustBundle,
 		containerStorageMountpointTarget,
+		clusterInfo.IngressCertificateCN,
 	)
 
 	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {

@@ -137,14 +137,6 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	seedFullDomain := fmt.Sprintf("%s.%s", seedClusterInfo.ClusterName, seedClusterInfo.BaseDomain)
 	clusterFullDomain := fmt.Sprintf("%s.%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
 	config.ExtendExpiration = true
-	config.CNSanReplaceRules = []string{
-		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
-		fmt.Sprintf("%s,%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
-		fmt.Sprintf("%s,%s", seedClusterInfo.NodeIP, seedReconfig.NodeIP),
-		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
-		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),
-		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
-	}
 	config.KubeadminPasswordHash = seedReconfig.KubeadminPasswordHash
 	config.PullSecret = seedReconfig.PullSecret
 	if seedReconfig.ChronyConfig != "" {
@@ -160,7 +152,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	}
 
 	if _, err := os.Stat(cryptoDir); err == nil {
-		ingressFile, ingressCN, err := getIngressCNAndFile(cryptoDir)
+		ingressKeyFile, err := getIngressKeyPath(cryptoDir)
 		if err != nil {
 			return err
 		}
@@ -168,9 +160,23 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", cryptoDir),
 			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", cryptoDir),
 			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", cryptoDir),
-			fmt.Sprintf("%s %s/%s", ingressCN, cryptoDir, ingressFile),
+			fmt.Sprintf("%s %s/%s", seedClusterInfo.IngressCertificateCN, cryptoDir, ingressKeyFile),
 		}
 		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
+	}
+
+	config.CNSanReplaceRules = []string{
+		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
+		fmt.Sprintf("%s,%s", seedClusterInfo.NodeIP, seedReconfig.NodeIP),
+		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
+		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),
+		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
+	}
+	// check if there is an ingress CN provided for backwards compatibility
+	if seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN != "" {
+		config.CNSanReplaceRules = append(config.CNSanReplaceRules,
+			fmt.Sprintf("%s,%s", seedClusterInfo.IngressCertificateCN, seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN))
 	}
 
 	p := filepath.Join(recertConfigFolder, RecertConfigFile)
@@ -251,17 +257,17 @@ func createBaseRecertConfig() RecertConfig {
 	}
 }
 
-func getIngressCNAndFile(certsFolder string) (string, string, error) {
+func getIngressKeyPath(certsFolder string) (string, error) {
 	certsFiles, err := os.ReadDir(certsFolder)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to list files in %s while searching for ingress cn, "+
+		return "", fmt.Errorf("failed to list files in %s while searching for ingress cn, "+
 			"err: %w", certsFolder, err)
 	}
 
 	for _, path := range certsFiles {
 		if strings.HasPrefix(path.Name(), "ingresskey-") {
-			return path.Name(), strings.Replace(path.Name(), "ingresskey-", "", 1), nil
+			return path.Name(), nil
 		}
 	}
-	return "", "", fmt.Errorf("failed to find ingress key file")
+	return "", fmt.Errorf("failed to find ingress key file")
 }
