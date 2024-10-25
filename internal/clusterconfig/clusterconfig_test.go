@@ -18,11 +18,19 @@ package clusterconfig
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -96,6 +104,21 @@ var (
 
 	seedManifestData = seedreconfig.SeedReconfiguration{BaseDomain: "seed.com", ClusterName: "seed", NodeIP: "192.168.127.10", Hostname: "seed"}
 
+	testIngressCrt = &x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "ingress-operator@482023856",
+		},
+		SerialNumber:          big.NewInt(42),
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(1 * time.Hour),
+		IsCA:                  true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	}
+	testIngressCrtPemBlock, _, _ = genSelfSignedKeyPair(testIngressCrt)
+	testIngressCrtPEM            = pem.EncodeToMemory(testIngressCrtPemBlock)
+
 	csvDeployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
 		Name: common.CsvDeploymentName, Namespace: common.CsvDeploymentNamespace},
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -136,7 +159,7 @@ var (
 				Name:      "router-ca",
 				Namespace: "openshift-ingress-operator",
 			},
-			Data: map[string][]byte{"tls.key": []byte("test")},
+			Data: map[string][]byte{"tls.crt": testIngressCrtPEM, "tls.key": []byte("test")},
 		},
 	}
 
@@ -303,6 +326,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
 				assert.Equal(t, "chrony config", seedReconfig.ChronyConfig)
+				assert.Equal(t, testIngressCrt.Subject.CommonName, seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN)
 				assert.Equal(t, map[string]string{"test": "test", "node-role.kubernetes.io/master": ""}, seedReconfig.NodeLabels)
 			},
 		},
@@ -349,6 +373,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
+				assert.Equal(t, testIngressCrt.Subject.CommonName, seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN)
 				assert.Equal(t, "", seedReconfig.ChronyConfig)
 			},
 		},
@@ -647,4 +672,19 @@ func TestNetworkConfig(t *testing.T) {
 			tc.validateFunc(t, tmpDir, err, tc.filesToCreate, unc)
 		})
 	}
+}
+
+// genSelfSignedKeyPair generates a key and a self-signed certificate from the provided Certificate.
+func genSelfSignedKeyPair(cert *x509.Certificate) (*pem.Block, *ecdsa.PrivateKey, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not generate rsa key - %w", err)
+	}
+
+	signedCert, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not generate self-signed certificate - %w", err)
+	}
+
+	return &pem.Block{Type: "CERTIFICATE", Bytes: signedCert}, key, err
 }
