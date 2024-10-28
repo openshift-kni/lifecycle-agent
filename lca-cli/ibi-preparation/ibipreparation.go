@@ -154,7 +154,8 @@ func (i *IBIPrepare) diskPreparation() error {
 	i.cleanupDisk()
 
 	i.log.Info("Writing image to disk")
-	if _, err := i.ops.RunInHostNamespace("coreos-installer", "install", i.config.InstallationDisk); err != nil {
+	if _, err := i.ops.RunInHostNamespace("coreos-installer",
+		append([]string{"install", i.config.InstallationDisk}, i.config.CoreosInstallerArgs...)...); err != nil {
 		return fmt.Errorf("failed to write image to disk: %w", err)
 	}
 

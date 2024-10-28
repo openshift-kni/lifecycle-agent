@@ -28,6 +28,7 @@ func TestDiskPreparation(t *testing.T) {
 		UseContainersFolder bool
 		skipDiskCleanup     bool
 		failCleanupDisk     bool
+		CoreosInstallerArgs []string
 	}{
 		{
 			name:                "PrepareDisk with external partition - happy flow",
@@ -69,6 +70,15 @@ func TestDiskPreparation(t *testing.T) {
 			skipDiskCleanup:     false,
 			failCleanupDisk:     false,
 		},
+		{
+			name:                "PrepareDisk with coreos installer params provided - happy flow",
+			partitionError:      false,
+			setupFolderError:    false,
+			UseContainersFolder: false,
+			skipDiskCleanup:     false,
+			failCleanupDisk:     false,
+			CoreosInstallerArgs: []string{"--save-partindex=5"},
+		},
 	}
 
 	for _, tc := range testcases {
@@ -84,6 +94,7 @@ func TestDiskPreparation(t *testing.T) {
 				ExtraPartitionNumber: extraPartitionNumber,
 				UseContainersFolder:  tc.UseContainersFolder,
 				SkipDiskCleanup:      tc.skipDiskCleanup,
+				CoreosInstallerArgs:  tc.CoreosInstallerArgs,
 			}
 			ibi := NewIBIPrepare(log, mockOps, nil, nil, cleanupMock,
 				ibiCobfig)
@@ -95,8 +106,8 @@ func TestDiskPreparation(t *testing.T) {
 					cleanupMock.EXPECT().CleanupInstallDevice(installationDisk).Return(nil)
 				}
 			}
-
-			mockOps.EXPECT().RunInHostNamespace("coreos-installer", "install", "/dev/sda").Return("", nil).Times(1)
+			args := append([]string{"install", "/dev/sda"}, tc.CoreosInstallerArgs...)
+			mockOps.EXPECT().RunInHostNamespace("coreos-installer", args).Return("", nil).Times(1)
 
 			if !tc.UseContainersFolder {
 				if !tc.partitionError {
