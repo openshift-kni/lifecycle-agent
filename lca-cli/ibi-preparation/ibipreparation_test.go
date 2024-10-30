@@ -2,9 +2,9 @@ package ibi_preparation
 
 import (
 	"fmt"
-	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
@@ -161,5 +164,41 @@ func TestPostDeployment(t *testing.T) {
 	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", fmt.Errorf("dummy")).Times(1)
 	err = ibi.postDeployment(postSH)
 	assert.NotNil(t, err)
+}
 
+func TestCleanupRhcosSysroot(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeClientMock := ostreeclient.NewMockIClient(ctrl)
+	log := &logrus.Logger{}
+	ibiConfig := &ibiconfig.IBIPrepareConfig{}
+	ibi := NewIBIPrepare(log, mockOps, nil, ostreeClientMock, nil, ibiConfig)
+	tmpDir := t.TempDir()
+	common.OstreeDeployPathPrefix = tmpDir
+
+	// Test case when rhcosOstreePath doesn't exists, we still should succeed
+	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil).Times(0)
+	err := ibi.cleanupRhcosSysroot()
+	assert.Nil(t, err)
+
+	// failed to undeploy
+	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(fmt.Errorf("dummy")).Times(1)
+	err = ibi.cleanupRhcosSysroot()
+	assert.NotNil(t, err)
+
+	// Happy flow
+	if err := os.MkdirAll(filepath.Join(tmpDir, rhcosOstreePath), 0o700); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace("rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", nil).Times(1)
+	err = ibi.cleanupRhcosSysroot()
+	assert.Nil(t, err)
+
+	// Failed to remove folder
+	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace("rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", fmt.Errorf("dummy")).Times(1)
+	err = ibi.cleanupRhcosSysroot()
+	assert.NotNil(t, err)
 }
