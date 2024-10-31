@@ -19,7 +19,11 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
-const imageListFile = "var/tmp/imageListFile"
+const (
+	imageListFile    = "var/tmp/imageListFile"
+	rhcosOstreeIndex = 1
+	rhcosOstreePath  = "ostree/deploy/rhcos"
+)
 
 type IBIPrepare struct {
 	log             *logrus.Logger
@@ -68,6 +72,10 @@ func (i *IBIPrepare) Run() error {
 
 	if err := i.postDeployment(common.PostDeploymentScriptPath); err != nil {
 		return fmt.Errorf("failed to run post deployment: %w", err)
+	}
+
+	if err := i.cleanupRhcosSysroot(); err != nil {
+		return fmt.Errorf("failed to cleanup rhcos sysroot: %w", err)
 	}
 
 	return i.shutdownNode()
@@ -181,6 +189,25 @@ func (i *IBIPrepare) postDeployment(scriptPath string) error {
 		if _, err := i.ops.RunBashInHostNamespace(scriptPath); err != nil {
 			return fmt.Errorf("failed to run post deployment script: %w", err)
 		}
+	}
+	return nil
+}
+
+// cleanupRhcosSysroot cleanups ostree that was written by us as part of diskPreparation
+// as each new deployed ostree takes index 0, we know that the one we created earlier will be "1"
+// that's why we can set it hardcoded
+func (i *IBIPrepare) cleanupRhcosSysroot() error {
+	if err := i.ostreeClient.Undeploy(rhcosOstreeIndex); err != nil {
+		return fmt.Errorf("failed to undeploy sysroot written by coreos installer command with index %d: %w", 1, err)
+	}
+	// We set hardcoded value here cause we know exact path for written sysroot
+	rhcosysrootPath := filepath.Join(common.OstreeDeployPathPrefix, rhcosOstreePath)
+	if _, err := os.Stat(rhcosysrootPath); err != nil {
+		i.log.Warnf("rhcos sysroot %s doesn't exists but it was expected", rhcosysrootPath)
+		return nil
+	}
+	if _, err := i.ops.RunBashInHostNamespace("rm", "-rf", rhcosysrootPath); err != nil {
+		return fmt.Errorf("removing sysroot %s failed: %w", rhcosysrootPath, err)
 	}
 	return nil
 }
