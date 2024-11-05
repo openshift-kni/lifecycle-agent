@@ -173,7 +173,15 @@ type ClientAuthCrypto struct {
 }
 
 type IngresssCrypto struct {
-	IngressCA PEM `json:"ingress_ca,omitempty"`
+	IngressCAPrivateKey PEM `json:"ingress_ca,omitempty"`
+
+	// IngressCertificateCN is the common name of the ingress CA used to sign the
+	// ingress certificate. The ingress CA is contained in the cluster's CA bundle,
+	// which is in turn contained in the kubeconfig CA. We need to reconfigure it
+	// during an IBU, in order for the ingress certificate to be regenerated and
+	// trusted with the target cluster's CA bundle.
+	// Its format is `ingress-operator@<unix-timestamp>`.
+	IngressCertificateCN string `json:"ingress_certificate_cn,omitempty"`
 }
 
 // Proxy defines the proxy settings for the cluster.
