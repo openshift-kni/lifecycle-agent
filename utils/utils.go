@@ -127,9 +127,8 @@ func CreateKubeClient(scheme *runtime.Scheme, kubeconfig string) (runtimeclient.
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config from flags for kube client: %w", err)
 	}
-
-	rc, err := runtimeclient.New(config, runtimeclient.Options{Scheme: scheme,
-		WarningHandler: runtimeclient.WarningHandlerOptions{SuppressWarnings: true}})
+	config.WarningHandler = rest.NoWarnings{}
+	rc, err := runtimeclient.New(config, runtimeclient.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create runtimeclient for kube: %w", err)
 	}
