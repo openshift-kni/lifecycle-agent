@@ -1,7 +1,8 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.22.0
-toolchain go1.22.5
+go 1.22.4
+
+toolchain go1.22.7
 
 require (
 	github.com/coreos/go-semver v0.3.1
