@@ -1,4 +1,4 @@
-// Copyright 2019 CoreOS, Inc.
+// Copyright 2021 Red Hat, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package types
 
-import (
-	exp "github.com/coreos/ignition/v2/config/v3_6_experimental"
-	types_exp "github.com/coreos/ignition/v2/config/v3_6_experimental/types"
-
-	"github.com/coreos/vcontext/report"
-)
-
-// Parse parses a config of any supported version and returns the equivalent config at the latest
-// supported version.
-func Parse(raw []byte) (types_exp.Config, report.Report, error) {
-	return exp.ParseCompatibleVersion(raw)
+func (k KernelArguments) MergedKeys() map[string]string {
+	return map[string]string{
+		"ShouldExist":    "KernelArgument",
+		"ShouldNotExist": "KernelArgument",
+	}
 }
