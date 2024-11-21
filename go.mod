@@ -32,7 +32,7 @@ require (
 	k8s.io/code-generator v0.31.2
 	open-cluster-management.io/api v0.15.0
 	open-cluster-management.io/config-policy-controller v0.15.0
-	open-cluster-management.io/governance-policy-propagator v0.14.0
+	open-cluster-management.io/governance-policy-propagator v0.15.0
 	sigs.k8s.io/controller-runtime v0.19.1
 	sigs.k8s.io/yaml v1.4.0
 )
