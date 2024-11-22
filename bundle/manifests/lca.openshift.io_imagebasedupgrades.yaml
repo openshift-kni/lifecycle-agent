@@ -130,9 +130,6 @@ spec:
           status:
             description: ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
             properties:
-              completedAt:
-                format: date-time
-                type: string
               conditions:
                 items:
                   description: "Condition contains details for one aspect of the current
@@ -201,16 +198,54 @@ spec:
                   - type
                   type: object
                 type: array
+              history:
+                description: History stores timing info of different IBU stages and
+                  their important phases
+                items:
+                  properties:
+                    completionTime:
+                      description: CompletionTime A timestamp indicating the Stage
+                        completed. This is only available when a Stage completes successfully
+                      format: date-time
+                      type: string
+                    phases:
+                      description: Phase Allows for a more granular view of the important
+                        tasks that are performed when moving a desired Stage
+                      items:
+                        properties:
+                          completionTime:
+                            description: CompletionTime A timestamp indicating the
+                              phase completed. This is only available when a Phase
+                              completes successfully
+                            format: date-time
+                            type: string
+                          phase:
+                            description: Phase current phase within a Stage
+                            type: string
+                          startTime:
+                            description: StartTime A timestamp indicating the Phase
+                              has started
+                            format: date-time
+                            type: string
+                        type: object
+                      type: array
+                    stage:
+                      description: Stage The desired stage name read from spec
+                      type: string
+                    startTime:
+                      description: StartTime A timestamp to indicate the Stage has
+                        started
+                      format: date-time
+                      type: string
+                  type: object
+                type: array
               observedGeneration:
                 format: int64
                 type: integer
               rollbackAvailabilityExpiration:
                 description: RollbackAvailabilityExpiration reflects the point at
                   which rolling back may require manual recovery from expired control
-                  plane certficates.
-                format: date-time
-                type: string
-              startedAt:
+                  plane certificates.
                 format: date-time
                 type: string
               validNextStages:
