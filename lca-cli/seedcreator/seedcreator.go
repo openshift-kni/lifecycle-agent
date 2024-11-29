@@ -24,6 +24,8 @@ import (
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	_ "embed"
+	controller_utils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
@@ -31,11 +33,11 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
-// containerFileContent is the Dockerfile content for the IBU seed image
-const containerFileContent = `
-FROM scratch
-COPY . /
-`
+//go:embed Containerfile
+var defaultContainerfileContent string
+
+//go:embed Containerfile.bootc
+var bootcContainerileContent string
 
 // SeedCreator TODO: move params to Options
 type SeedCreator struct {
@@ -49,11 +51,12 @@ type SeedCreator struct {
 	authFile             string
 	recertContainerImage string
 	recertSkipValidation bool
+	useBootc             bool
 }
 
 // NewSeedCreator is a constructor function for SeedCreator
 func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, authFile, recertContainerImage string, recertSkipValidation bool) *SeedCreator {
+	kubeconfig, containerRegistry, authFile, recertContainerImage string, recertSkipValidation bool, useBootc bool) *SeedCreator {
 
 	return &SeedCreator{
 		client:               client,
@@ -66,6 +69,7 @@ func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostr
 		authFile:             authFile,
 		recertContainerImage: recertContainerImage,
 		recertSkipValidation: recertSkipValidation,
+		useBootc:             useBootc,
 	}
 }
 
@@ -146,8 +150,11 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to run once backup_etc: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
-		return fmt.Errorf("failed to run once backup_ostree: %w", err)
+	if !s.useBootc {
+		// ostree archive is not needed for bootc images
+		if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
+			return fmt.Errorf("failed to run once backup_ostree: %w", err)
+		}
 	}
 
 	if err := utils.RunOnce("backup_rpmostree", common.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
@@ -533,6 +540,25 @@ func (s *SeedCreator) backupMCOConfig() error {
 	return nil
 }
 
+func getOsImageURL() (string, error) {
+	data, err := os.ReadFile(common.MCDCurrentConfig)
+	if err != nil {
+		return "", fmt.Errorf("unable to read MCD currentconfig: %w", err)
+	}
+
+	var mc mcv1.MachineConfig
+
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return "", fmt.Errorf("unable to parse MCD currentconfig: %w", err)
+	}
+
+	if mc.Spec.OSImageURL == "" {
+		return "", fmt.Errorf("unable to find osimageurl in MCD currentconfig")
+	}
+
+	return mc.Spec.OSImageURL, nil
+}
+
 // Building and pushing OCI image
 func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	s.log.Info("Build and push OCI image to ", s.containerRegistry)
@@ -554,6 +580,16 @@ func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	}
 	defer os.Remove(tmpfile.Name()) // Clean up the temporary file
 
+	osImageURL, err := getOsImageURL()
+	if err != nil {
+		return fmt.Errorf("failed to get osimageurl from MCD currentconfig: %w", err)
+	}
+
+	containerFileContent := defaultContainerfileContent
+	if s.useBootc {
+		containerFileContent = bootcContainerileContent
+	}
+
 	// Write the content to the temporary file
 	_, err = tmpfile.WriteString(containerFileContent)
 	if err != nil {
@@ -570,6 +606,19 @@ func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 		"--label", fmt.Sprintf("%s=%s", common.SeedClusterInfoOCILabel, clusterInfo),
 		s.backupDir,
 	}
+
+	if s.useBootc {
+		podmanBuildArgs = append(podmanBuildArgs,
+			// A pull secret is only needed for bootc images because normal ones are FROM scratch.
+			// We must use the backed up pull secret and not /var/lib/kubelet/config.json (because
+			// the latter is wiped clean with dummy values before seed generation so that the pull
+			// secret is not leaked in the seed, so it is useless)
+			"--authfile", controller_utils.StoredPullSecret,
+			"--build-arg", fmt.Sprintf("SEED_STAGE_BASE_IMAGE=%s", osImageURL),
+			"--label", fmt.Sprintf("%s=%s", common.SeedUseBootcOCILabel, "true"),
+		)
+	}
+
 	_, err = s.ops.RunInHostNamespace(
 		"podman", podmanBuildArgs...)
 	if err != nil {
