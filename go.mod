@@ -1,8 +1,7 @@
 module github.com/openshift-kni/lifecycle-agent
 
 go 1.22.4
-
-toolchain go1.22.7
+toolchain go1.22.9
 
 require (
 	github.com/coreos/go-semver v0.3.1
@@ -21,7 +20,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.9.0
-	github.com/vmware-tanzu/velero v1.13.2
+	github.com/vmware-tanzu/velero v1.15.0
 	go.uber.org/mock v0.5.0
 	golang.org/x/crypto v0.29.0
 	gopkg.in/yaml.v3 v3.0.1

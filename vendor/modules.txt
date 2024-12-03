@@ -485,8 +485,8 @@ github.com/ulikunitz/xz/lzma
 # github.com/vincent-petithory/dataurl v1.0.0
 ## explicit
 github.com/vincent-petithory/dataurl
-# github.com/vmware-tanzu/velero v1.13.2
-## explicit; go 1.21
+# github.com/vmware-tanzu/velero v1.15.0
+## explicit; go 1.22.8
 github.com/vmware-tanzu/velero/pkg/apis/velero/shared
 github.com/vmware-tanzu/velero/pkg/apis/velero/v1
 # github.com/x448/float16 v0.8.4
