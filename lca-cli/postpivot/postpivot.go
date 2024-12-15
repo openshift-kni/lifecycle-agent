@@ -88,6 +88,7 @@ const (
 	dnsmasqService = "dnsmasq.service"
 
 	localhost = "localhost"
+	timeout   = 5 * time.Minute
 )
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
@@ -195,7 +196,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once set_cluster_id for post pivot: %w", err)
 	}
 
-	if err := utils.RunOnce("set_node_labels", p.workingDir, p.log, p.setNodeLabels, ctx, client, seedReconfiguration.NodeLabels, 5*time.Minute); err != nil {
+	if err := utils.RunOnce("set_node_labels", p.workingDir, p.log, p.setNodeLabels, ctx, client, seedReconfiguration.NodeLabels, timeout); err != nil {
 		return fmt.Errorf("failed to run once set_cluster_id for post pivot: %w", err)
 	}
 
@@ -771,7 +772,11 @@ func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 
 // applyNMStateConfiguration is applying nmstate yaml provided as string in seedReconfiguration.
 // It uses nmstatectl apply <file> command that will return error in case configuration is not successful
-func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+func (p *PostPivot) applyNMStateConfiguration(
+	ctx context.Context,
+	seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	timeout time.Duration) error {
+
 	if seedReconfiguration.RawNMStateConfig == "" {
 		p.log.Infof("NMState config is empty, skipping")
 		return nil
@@ -781,8 +786,19 @@ func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig
 	if err := os.WriteFile(nmFile, []byte(seedReconfiguration.RawNMStateConfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write nmstate config to %s, err %w", nmFile, err)
 	}
-	if _, err := p.ops.RunInHostNamespace("nmstatectl", "apply", nmFile); err != nil {
-		return fmt.Errorf("failed to apply nmstate config %s, err: %w", seedReconfiguration.RawNMStateConfig, err)
+	var applyError error
+
+	_ = wait.PollUntilContextTimeout(ctx, 1*time.Second, timeout, true, func(ctx context.Context) (done bool, err error) {
+		_, applyError = p.ops.RunInHostNamespace("nmstatectl", "apply", nmFile)
+		if applyError != nil {
+			p.log.Warn("failed to apply static networking, will retry")
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if applyError != nil {
+		return fmt.Errorf("failed to apply static networking %w", applyError)
 	}
 
 	return nil
@@ -926,8 +942,8 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := utils.RunOnce("apply-static-network", p.workingDir, p.log, p.applyNMStateConfiguration,
-		seedReconfiguration); err != nil {
+	if err := utils.RunOnce("apply-static-network", p.workingDir, p.log, p.applyNMStateConfiguration, ctx,
+		seedReconfiguration, timeout); err != nil {
 		return fmt.Errorf("failed to apply static network: %w", err)
 	}
 

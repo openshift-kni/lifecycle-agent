@@ -234,7 +234,7 @@ interfaces:
 				mockOps.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateFile).Return("", nil)
 			}
 
-			err := pp.applyNMStateConfiguration(tc.seedReconfiguration)
+			err := pp.applyNMStateConfiguration(context.TODO(), tc.seedReconfiguration, 1*time.Millisecond)
 			if !tc.expectedError {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
