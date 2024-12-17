@@ -198,6 +198,21 @@ func (mr *MockOpsMockRecorder) Mount(deviceName, mountFolder any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Mount", reflect.TypeOf((*MockOps)(nil).Mount), deviceName, mountFolder)
 }
 
+// MountImage mocks base method.
+func (m *MockOps) MountImage(img string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MountImage", img)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MountImage indicates an expected call of MountImage.
+func (mr *MockOpsMockRecorder) MountImage(img any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MountImage", reflect.TypeOf((*MockOps)(nil).MountImage), img)
+}
+
 // RecertFullFlow mocks base method.
 func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
 	m.ctrl.T.Helper()
