@@ -152,7 +152,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	}
 
-	mountpoint, err := ops.RunInHostNamespace("podman", "image", "mount", seedImage)
+	mountpoint, err := ops.MountImage(seedImage)
 	if err != nil {
 		return fmt.Errorf("failed to mount seed image: %w", err)
 	}
