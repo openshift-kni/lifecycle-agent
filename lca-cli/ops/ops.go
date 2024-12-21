@@ -22,6 +22,10 @@ import (
 	"github.com/openshift/assisted-image-service/pkg/isoeditor"
 )
 
+const (
+	podman = "podman"
+)
+
 var podmanRecertArgs = []string{
 	"run", "--rm", "--network=host", "--privileged", "--replace",
 }
@@ -44,6 +48,7 @@ type Ops interface {
 	ImageExists(img string) (bool, error)
 	IsImageMounted(img string) (bool, error)
 	UnmountAndRemoveImage(img string) error
+	MountImage(img string) (string, error)
 	RecertFullFlow(recertContainerImage, authFile, configFile string,
 		preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error
 	ListBlockDevices() ([]BlockDevice, error)
@@ -170,7 +175,7 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 
 	o.log.Info("Run unauthenticated etcd server for recert tool")
 
-	command := "podman"
+	command := podman
 	args := append(podmanRecertArgs,
 		"--authfile", authFile, "--detach",
 		"--name", name,
@@ -222,7 +227,7 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 
 func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
 	o.log.Info("Start running recert")
-	command := "podman"
+	command := podman
 
 	args := append(podmanRecertArgs, "--name", "recert",
 		"-v", fmt.Sprintf("/etc:%s", recert.EtcMount),
@@ -300,7 +305,7 @@ func (o *ops) RemountSysroot() error {
 }
 
 func (o *ops) ImageExists(img string) (bool, error) {
-	_, err := o.hostCommandsExecutor.Execute("podman", "image", "exists", img)
+	_, err := o.hostCommandsExecutor.Execute(podman, "image", "exists", img)
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -322,7 +327,7 @@ type PodmanImage struct {
 // IsImageMounted checkes whether certain image is mounted
 // pass in the full address with tag e.g: quay.io/openshift/lifecycle-agent-operator:latest
 func (o *ops) IsImageMounted(imgName string) (bool, error) {
-	output, err := o.hostCommandsExecutor.Execute("podman", "image", "mount", "--format", "json")
+	output, err := o.hostCommandsExecutor.Execute(podman, "image", "mount", "--format", "json")
 	if err != nil {
 		return false, fmt.Errorf("failed to mount podamn image: %w", err)
 	}
@@ -349,7 +354,7 @@ func (o *ops) removeImage(img string) error {
 		return nil
 	}
 	if _, err := o.hostCommandsExecutor.Execute(
-		"podman", "rmi", img,
+		podman, "rmi", img,
 	); err != nil {
 		return fmt.Errorf("failed to remove image: %w", err)
 	}
@@ -361,13 +366,33 @@ func (o *ops) UnmountAndRemoveImage(img string) error {
 		return fmt.Errorf("failed to check if image is mounted: %w", err)
 	} else if mounted {
 		if _, err := o.hostCommandsExecutor.Execute(
-			"podman", "image", "umount", img,
+			podman, "image", "umount", img,
 		); err != nil {
 			return fmt.Errorf("failed to unmount image: %w", err)
 		}
 	}
 
 	return o.removeImage(img)
+}
+
+func (o *ops) MountImage(img string) (string, error) {
+	command := podman
+	args := []string{"image", "mount", img}
+
+	// In 4.18 crio got an update which removes all containers
+	// that don't have a mount point on the host.
+	// In order to workaround the issue we need to mount image in host namespace
+	if _, ok := o.hostCommandsExecutor.(*chrootExecutor); ok {
+		args = append([]string{command}, args...)
+		args = append(nsenterArgs(), args...)
+		command = nsenter
+	}
+
+	mountpoint, err := o.hostCommandsExecutor.Execute(command, args...)
+	if err != nil {
+		return mountpoint, fmt.Errorf("failed to mount seed image: %w", err)
+	}
+	return mountpoint, nil
 }
 
 func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
@@ -378,7 +403,7 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 
 	defer func() {
 		o.log.Info("Killing the unauthenticated etcd server")
-		if _, err := o.RunInHostNamespace("podman", "stop", common.EtcdContainerName); err != nil {
+		if _, err := o.RunInHostNamespace(podman, "stop", common.EtcdContainerName); err != nil {
 			o.log.WithError(err).Errorf("failed to kill %s container.", common.EtcdContainerName)
 		}
 	}()
