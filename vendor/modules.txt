@@ -407,9 +407,13 @@ github.com/openshift/machine-config-operator/pkg/version
 github.com/operator-framework/api/pkg/lib/version
 github.com/operator-framework/api/pkg/operators
 github.com/operator-framework/api/pkg/operators/v1alpha1
-# github.com/otiai10/copy v1.14.0
+# github.com/otiai10/copy v1.14.1
 ## explicit; go 1.18
 github.com/otiai10/copy
+# github.com/otiai10/mint v1.6.3
+## explicit; go 1.18
+github.com/otiai10/mint
+github.com/otiai10/mint/mquery
 # github.com/pierrec/lz4/v4 v4.1.17
 ## explicit; go 1.14
 github.com/pierrec/lz4/v4

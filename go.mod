@@ -16,7 +16,7 @@ require (
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.23.0
-	github.com/otiai10/copy v1.14.0
+	github.com/otiai10/copy v1.14.1
 	github.com/samber/lo v1.47.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.1
@@ -44,6 +44,7 @@ require (
 	github.com/evanphx/json-patch v5.9.0+incompatible // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/golang/mock v1.6.0 // indirect
+	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
