@@ -5,11 +5,24 @@
 
 version: 2
 updates:
-  - package-ecosystem: "gomod" # See documentation for possible values
-    directory: "/" # Location of package manifests
-    schedule:
-      interval: "daily"
-    open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-patch"]
+- package-ecosystem: "gomod" # See documentation for possible values
+  directory: "/" # Location of package manifests
+  schedule:
+    interval: "daily"
+  open-pull-requests-limit: 5
+  groups:
+    k8s:
+      patterns: [ "k8s.io/*", "sig.k8s.io/*" ]
+      update-types: [ "major", "minor", "patch" ]
+    golang:
+      patterns: [ "golang.org/*" ]
+      update-types: [ "major", "minor", "patch" ]  
+  ignore:
+    # k8s.io moved to go 1.23 in v0.32, so ignore major/minor updates until this repo is 1.23-based
+    - dependency-name: "k8s.io/*"
+      update-types: ["version-update:semver-major","version-update:semver-minor"]
+    # sig.k8s.io moved to go 1.23 in v0.20, so ignore major/minor updates until this repo is 1.23-based
+    - dependency-name: "sig.k8s.io/*"
+      update-types: ["version-update:semver-major","version-update:semver-minor"]
+    # - dependency-name: "*"
+    #   update-types: ["version-update:semver-patch"]
