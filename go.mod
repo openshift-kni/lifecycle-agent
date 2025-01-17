@@ -25,11 +25,11 @@ require (
 	go.uber.org/mock v0.5.0
 	golang.org/x/crypto v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.31.2
-	k8s.io/apiextensions-apiserver v0.31.2
-	k8s.io/apimachinery v0.31.2
-	k8s.io/client-go v0.31.2
-	k8s.io/code-generator v0.31.2
+	k8s.io/api v0.31.5
+	k8s.io/apiextensions-apiserver v0.31.5
+	k8s.io/apimachinery v0.31.5
+	k8s.io/client-go v0.31.5
+	k8s.io/code-generator v0.31.5
 	open-cluster-management.io/api v0.15.0
 	open-cluster-management.io/config-policy-controller v0.15.0
 	open-cluster-management.io/governance-policy-propagator v0.15.0
@@ -52,8 +52,8 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	gopkg.in/djherbis/times.v1 v1.3.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
-	k8s.io/apiserver v0.31.2 // indirect
-	k8s.io/component-base v0.31.2 // indirect
+	k8s.io/apiserver v0.31.5 // indirect
+	k8s.io/component-base v0.31.5 // indirect
 	k8s.io/gengo/v2 v2.0.0-20240228010128-51d4e06bde70 // indirect
 	k8s.io/kube-aggregator v0.29.0 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.6-0.20230721195810-5c8923c5ff96 // indirect
