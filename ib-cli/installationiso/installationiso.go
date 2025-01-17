@@ -231,7 +231,7 @@ func (r *InstallationIso) renderIgnition(imageConfig *ibiconfig.ImageBasedInstal
 			return nil, fmt.Errorf("failed to read post deployment script `%s`: %w",
 				path.Join(r.workDir, postDeploymentScript), err)
 		}
-		setFileInIgnition(config, common.PostDeploymentScriptPath, string(data), 0o755)
+		setFileInIgnition(config, common.IBIPostDeploymentScriptPath, string(data), 0o755)
 	}
 
 	return config, nil
