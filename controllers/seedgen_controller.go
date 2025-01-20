@@ -289,36 +289,6 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 	interval := 10 * time.Second
 	maxRetries := 90 // ~15 minutes
 
-	// Trigger deletion for any remaining ACM namespaces
-	acmNamespaces := r.currentAcmNamespaces(ctx)
-	if len(acmNamespaces) > 0 {
-		r.Log.Info("Deleting ACM namespaces")
-		for _, nsName := range r.currentAcmNamespaces(ctx) {
-			ns := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nsName,
-				}}
-			r.Log.Info(fmt.Sprintf("Deleting namespace %s", nsName))
-			if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
-			}
-		}
-
-		// Verify ACM namespaces have been deleted
-		current := 0
-		r.Log.Info("Waiting until ACM namespaces are deleted")
-		for len(r.currentAcmNamespaces(ctx)) > 0 {
-			if current < maxRetries {
-				time.Sleep(interval)
-				current += 1
-			} else {
-				return fmt.Errorf("timed out waiting for ACM namespace deletion")
-			}
-		}
-	} else {
-		r.Log.Info("No ACM namespaces found")
-	}
-
 	// Trigger deletion for any remaining ACM CRDs
 	acmCrds := r.currentAcmCrds(ctx)
 	if len(acmCrds) > 0 {
@@ -348,6 +318,36 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 		}
 	} else {
 		r.Log.Info("No ACM CRDs found")
+	}
+
+	// Trigger deletion for any remaining ACM namespaces
+	acmNamespaces := r.currentAcmNamespaces(ctx)
+	if len(acmNamespaces) > 0 {
+		r.Log.Info("Deleting ACM namespaces")
+		for _, nsName := range r.currentAcmNamespaces(ctx) {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+				}}
+			r.Log.Info(fmt.Sprintf("Deleting namespace %s", nsName))
+			if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
+			}
+		}
+
+		// Verify ACM namespaces have been deleted
+		current := 0
+		r.Log.Info("Waiting until ACM namespaces are deleted")
+		for len(r.currentAcmNamespaces(ctx)) > 0 {
+			if current < maxRetries {
+				time.Sleep(interval)
+				current += 1
+			} else {
+				return fmt.Errorf("timed out waiting for ACM namespace deletion")
+			}
+		}
+	} else {
+		r.Log.Info("No ACM namespaces found")
 	}
 
 	// Delete remaining cluster resources leftover from ACM (or install)
