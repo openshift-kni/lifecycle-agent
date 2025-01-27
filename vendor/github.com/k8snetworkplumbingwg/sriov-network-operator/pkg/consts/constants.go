@@ -54,6 +54,9 @@ const (
 	VdpaTypeVirtio      = "virtio"
 	VdpaTypeVhost       = "vhost"
 
+	RdmaSubsystemModeShared    = "shared"
+	RdmaSubsystemModeExclusive = "exclusive"
+
 	ClusterTypeOpenshift  = "openshift"
 	ClusterTypeKubernetes = "kubernetes"
 
@@ -66,6 +69,10 @@ const (
 	MachineConfigPoolPausedAnnotation       = "sriovnetwork.openshift.io/state"
 	MachineConfigPoolPausedAnnotationIdle   = "Idle"
 	MachineConfigPoolPausedAnnotationPaused = "Paused"
+
+	SriovDevicePluginLabel         = "sriovnetwork.openshift.io/device-plugin"
+	SriovDevicePluginLabelEnabled  = "Enabled"
+	SriovDevicePluginLabelDisabled = "Disabled"
 
 	NodeDrainAnnotation             = "sriovnetwork.openshift.io/state"
 	NodeStateDrainAnnotation        = "sriovnetwork.openshift.io/desired-state"
@@ -85,6 +92,14 @@ const (
 
 	MCPPauseAnnotationState = "sriovnetwork.openshift.io/state"
 	MCPPauseAnnotationTime  = "sriovnetwork.openshift.io/time"
+
+	// NodeStateKeepUntilAnnotation contains name of the "keep until time" annotation for SriovNetworkNodeState object.
+	// The "keep until time" specifies the earliest time at which the state object can be removed
+	// if the daemon's pod is not found on the node.
+	NodeStateKeepUntilAnnotation = "sriovnetwork.openshift.io/keep-state-until"
+	// DefaultNodeStateCleanupDelayMinutes contains default delay before removing stale SriovNetworkNodeState CRs
+	// (the CRs that no longer have a corresponding node with the daemon).
+	DefaultNodeStateCleanupDelayMinutes = 30
 
 	CheckpointFileName = "sno-initial-node-state.json"
 	Unknown            = "Unknown"
@@ -121,9 +136,12 @@ const (
 		`IMPORT{program}="/etc/udev/switchdev-vf-link-name.sh $attr{phys_port_name}", ` +
 		`NAME="%s_$env{NUMBER}"`
 
-	KernelArgPciRealloc = "pci=realloc"
-	KernelArgIntelIommu = "intel_iommu=on"
-	KernelArgIommuPt    = "iommu=pt"
+	KernelArgPciRealloc       = "pci=realloc"
+	KernelArgIntelIommu       = "intel_iommu=on"
+	KernelArgIommuPt          = "iommu=pt"
+	KernelArgIommuPassthrough = "iommu.passthrough=1"
+	KernelArgRdmaShared       = "ib_core.netns_mode=1"
+	KernelArgRdmaExclusive    = "ib_core.netns_mode=0"
 
 	// Feature gates
 	// ParallelNicConfigFeatureGate: allow to configure nics in parallel

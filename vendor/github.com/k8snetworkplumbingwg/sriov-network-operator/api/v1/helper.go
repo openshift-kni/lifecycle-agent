@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,11 +27,12 @@ import (
 )
 
 const (
-	LASTNETWORKNAMESPACE    = "operator.sriovnetwork.openshift.io/last-network-namespace"
-	NETATTDEFFINALIZERNAME  = "netattdef.finalizers.sriovnetwork.openshift.io"
-	POOLCONFIGFINALIZERNAME = "poolconfig.finalizers.sriovnetwork.openshift.io"
-	ESwithModeLegacy        = "legacy"
-	ESwithModeSwitchDev     = "switchdev"
+	LASTNETWORKNAMESPACE        = "operator.sriovnetwork.openshift.io/last-network-namespace"
+	NETATTDEFFINALIZERNAME      = "netattdef.finalizers.sriovnetwork.openshift.io"
+	POOLCONFIGFINALIZERNAME     = "poolconfig.finalizers.sriovnetwork.openshift.io"
+	OPERATORCONFIGFINALIZERNAME = "operatorconfig.finalizers.sriovnetwork.openshift.io"
+	ESwithModeLegacy            = "legacy"
+	ESwithModeSwitchDev         = "switchdev"
 
 	SriovCniStateEnable  = "enable"
 	SriovCniStateDisable = "disable"
@@ -260,23 +262,23 @@ func NeedToUpdateSriov(ifaceSpec *Interface, ifaceStatus *InterfaceExt) bool {
 	if ifaceSpec.Mtu > 0 {
 		mtu := ifaceSpec.Mtu
 		if mtu > ifaceStatus.Mtu {
-			log.V(2).Info("NeedToUpdateSriov(): MTU needs update", "desired", mtu, "current", ifaceStatus.Mtu)
+			log.V(0).Info("NeedToUpdateSriov(): MTU needs update", "desired", mtu, "current", ifaceStatus.Mtu)
 			return true
 		}
 	}
 	currentEswitchMode := GetEswitchModeFromStatus(ifaceStatus)
 	desiredEswitchMode := GetEswitchModeFromSpec(ifaceSpec)
 	if currentEswitchMode != desiredEswitchMode {
-		log.V(2).Info("NeedToUpdateSriov(): EswitchMode needs update", "desired", desiredEswitchMode, "current", currentEswitchMode)
+		log.V(0).Info("NeedToUpdateSriov(): EswitchMode needs update", "desired", desiredEswitchMode, "current", currentEswitchMode)
 		return true
 	}
 	if ifaceSpec.NumVfs != ifaceStatus.NumVfs {
-		log.V(2).Info("NeedToUpdateSriov(): NumVfs needs update", "desired", ifaceSpec.NumVfs, "current", ifaceStatus.NumVfs)
+		log.V(0).Info("NeedToUpdateSriov(): NumVfs needs update", "desired", ifaceSpec.NumVfs, "current", ifaceStatus.NumVfs)
 		return true
 	}
 
 	if ifaceStatus.LinkAdminState == consts.LinkAdminStateDown {
-		log.V(2).Info("NeedToUpdateSriov(): PF link status needs update", "desired to include", "up", "current", ifaceStatus.LinkAdminState)
+		log.V(0).Info("NeedToUpdateSriov(): PF link status needs update", "desired to include", "up", "current", ifaceStatus.LinkAdminState)
 		return true
 	}
 
@@ -285,24 +287,24 @@ func NeedToUpdateSriov(ifaceSpec *Interface, ifaceStatus *InterfaceExt) bool {
 			for _, groupSpec := range ifaceSpec.VfGroups {
 				if IndexInRange(vfStatus.VfID, groupSpec.VfRange) {
 					if vfStatus.Driver == "" {
-						log.V(2).Info("NeedToUpdateSriov(): Driver needs update - has no driver",
+						log.V(0).Info("NeedToUpdateSriov(): Driver needs update - has no driver",
 							"desired", groupSpec.DeviceType)
 						return true
 					}
 					if groupSpec.DeviceType != "" && groupSpec.DeviceType != consts.DeviceTypeNetDevice {
 						if groupSpec.DeviceType != vfStatus.Driver {
-							log.V(2).Info("NeedToUpdateSriov(): Driver needs update",
+							log.V(0).Info("NeedToUpdateSriov(): Driver needs update",
 								"desired", groupSpec.DeviceType, "current", vfStatus.Driver)
 							return true
 						}
 					} else {
 						if StringInArray(vfStatus.Driver, vars.DpdkDrivers) {
-							log.V(2).Info("NeedToUpdateSriov(): Driver needs update",
+							log.V(0).Info("NeedToUpdateSriov(): Driver needs update",
 								"desired", groupSpec.DeviceType, "current", vfStatus.Driver)
 							return true
 						}
 						if vfStatus.Mtu != 0 && groupSpec.Mtu != 0 && vfStatus.Mtu != groupSpec.Mtu {
-							log.V(2).Info("NeedToUpdateSriov(): VF MTU needs update",
+							log.V(0).Info("NeedToUpdateSriov(): VF MTU needs update",
 								"vf", vfStatus.VfID, "desired", groupSpec.Mtu, "current", vfStatus.Mtu)
 							return true
 						}
@@ -312,20 +314,20 @@ func NeedToUpdateSriov(ifaceSpec *Interface, ifaceStatus *InterfaceExt) bool {
 							// Node GUID. We intentionally skip empty Node GUID in vfStatus because this may happen
 							// when the VF is allocated to a workload.
 							if vfStatus.GUID == consts.UninitializedNodeGUID {
-								log.V(2).Info("NeedToUpdateSriov(): VF GUID needs update",
+								log.V(0).Info("NeedToUpdateSriov(): VF GUID needs update",
 									"vf", vfStatus.VfID, "current", vfStatus.GUID)
 								return true
 							}
 						}
 						// this is needed to be sure the admin mac address is configured as expected
 						if ifaceSpec.ExternallyManaged {
-							log.V(2).Info("NeedToUpdateSriov(): need to update the device as it's externally manage",
+							log.V(0).Info("NeedToUpdateSriov(): need to update the device as it's externally manage",
 								"device", ifaceStatus.PciAddress)
 							return true
 						}
 					}
 					if groupSpec.VdpaType != vfStatus.VdpaType {
-						log.V(2).Info("NeedToUpdateSriov(): VF VdpaType mismatch",
+						log.V(0).Info("NeedToUpdateSriov(): VF VdpaType mismatch",
 							"desired", groupSpec.VdpaType, "current", vfStatus.VdpaType)
 						return true
 					}
@@ -481,6 +483,10 @@ func (p *SriovNetworkNodePolicy) ApplyBridgeConfig(state *SriovNetworkNodeState)
 					Name:       iface.Name,
 					Interface:  p.Spec.Bridge.OVS.Uplink.Interface,
 				}},
+			}
+			if p.Spec.Mtu > 0 {
+				mtu := p.Spec.Mtu
+				ovsBridge.Uplinks[0].Interface.MTURequest = &mtu
 			}
 			log.Info("Update bridge for interface", "name", iface.Name, "bridge", ovsBridge.Name)
 
@@ -1003,4 +1009,44 @@ func GenerateBridgeName(iface *InterfaceExt) string {
 // NeedToUpdateBridges returns true if bridge for the host requires update
 func NeedToUpdateBridges(bridgeSpec, bridgeStatus *Bridges) bool {
 	return !reflect.DeepEqual(bridgeSpec, bridgeStatus)
+}
+
+// SetKeepUntilTime sets an annotation to hold the "keep until time" for the node’s state.
+// The "keep until time" specifies the earliest time at which the state object can be removed
+// if the daemon's pod is not found on the node.
+func (s *SriovNetworkNodeState) SetKeepUntilTime(t time.Time) {
+	ts := t.Format(time.RFC3339)
+	annotations := s.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[consts.NodeStateKeepUntilAnnotation] = ts
+	s.SetAnnotations(annotations)
+}
+
+// GetKeepUntilTime returns the value that is stored in the "keep until time" annotation.
+// The "keep until time" specifies the earliest time at which the state object can be removed
+// if the daemon's pod is not found on the node.
+// Return zero time instant if annotaion is not found on the object or if it has a wrong format.
+func (s *SriovNetworkNodeState) GetKeepUntilTime() time.Time {
+	t, err := time.Parse(time.RFC3339, s.GetAnnotations()[consts.NodeStateKeepUntilAnnotation])
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// ResetKeepUntilTime removes "keep until time" annotation from the state object.
+// The "keep until time" specifies the earliest time at which the state object can be removed
+// if the daemon's pod is not found on the node.
+// Returns true if the value was removed, false otherwise.
+func (s *SriovNetworkNodeState) ResetKeepUntilTime() bool {
+	annotations := s.GetAnnotations()
+	_, exist := annotations[consts.NodeStateKeepUntilAnnotation]
+	if !exist {
+		return false
+	}
+	delete(annotations, consts.NodeStateKeepUntilAnnotation)
+	s.SetAnnotations(annotations)
+	return true
 }
