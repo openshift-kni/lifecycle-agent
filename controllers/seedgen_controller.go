@@ -493,6 +493,22 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 	systemdRunOpts := []string{
 		"--collect",
 		"--wait",
+		// Conmon is the process that podman uses to cleanup after a container exits.
+		// After cleanup the container status moves from stopped to exited. The following:
+		//
+		//   - Podman 5.3 improved the container exit wait time.
+		//   - Systemd by default kills all processes in the control group after the
+		//     main process (i.e. podman) exits.
+		//
+		// lead to the container never reaching the exited status (i.e. no container
+		// cleanup is executed), because systemd kills the conmon process before it
+		// has a chance to cleanup as podman exits faster than before.
+		//
+		// This flag indicates to systemd that it should wait for all the processes
+		// in the control group to exit, instead of waiting only on the main process.
+		//
+		// https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#ExitType=
+		"--property", "ExitType=cgroup",
 		"--unit", "lca-generate-seed-image",
 		// Ensure the proxy environment variables of the LCA container are
 		// passed through systemd-run to the podman process (which will pass it
@@ -546,7 +562,7 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 	}
 
 	if containers[0].State.ExitCode != expectedExitCode {
-		return fmt.Errorf("expected container status %d, found: %d", expectedExitCode, containers[0].State.ExitCode)
+		return fmt.Errorf("expected container exit code %d, found: %d", expectedExitCode, containers[0].State.ExitCode)
 	}
 
 	r.Log.Info("Seed image generation was successful")
