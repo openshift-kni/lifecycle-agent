@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/go-logr/logr"
+	"github.com/pelletier/go-toml"
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
 
@@ -17,12 +19,14 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
+	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
 const (
-	imageListFile    = "var/tmp/imageListFile"
-	rhcosOstreeIndex = 1
-	rhcosOstreePath  = "ostree/deploy/rhcos"
+	defaultRegistriesConfFile = "/etc/containers/registries.conf"
+	rhcosOstreeIndex          = 1
+	rhcosOstreePath           = "ostree/deploy/rhcos"
 )
 
 type IBIPrepare struct {
@@ -53,7 +57,7 @@ func (i *IBIPrepare) Run() error {
 	}
 
 	i.log.Info("Pulling seed image")
-	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPSFile, i.config.SeedImage); err != nil {
+	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPullSecretFilePath, i.config.SeedImage); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
@@ -62,15 +66,15 @@ func (i *IBIPrepare) Run() error {
 	common.OstreeDeployPathPrefix = "/mnt/"
 	// Setup state root
 	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
-		i.config.SeedImage, i.config.SeedVersion, imageListFile, true); err != nil {
+		i.config.SeedImage, i.config.SeedVersion, true); err != nil {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
-	if err := i.precacheFlow(imageListFile); err != nil {
+	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile); err != nil {
 		return fmt.Errorf("failed to precache: %w", err)
 	}
 
-	if err := i.postDeployment(common.PostDeploymentScriptPath); err != nil {
+	if err := i.postDeployment(common.IBIPostDeploymentScriptPath); err != nil {
 		return fmt.Errorf("failed to run post deployment: %w", err)
 	}
 
@@ -81,15 +85,34 @@ func (i *IBIPrepare) Run() error {
 	return i.shutdownNode()
 }
 
-func (i *IBIPrepare) precacheFlow(imageListFile string) error {
-	// TODO: add support for mirror registry
+func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) error {
 	if i.config.PrecacheDisabled {
 		i.log.Info("Precache disabled, skipping it")
 		return nil
 	}
 
-	i.log.Info("Precaching imaging")
-	imageList, err := prep.ReadPrecachingList(imageListFile, "", "", false)
+	i.log.Info("Checking seed image info")
+	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(seedInfoFile)
+	if err != nil {
+		return fmt.Errorf("failed to read seed info: %s, %w", common.PathOutsideChroot(seedInfoFile), err)
+	}
+	i.log.Info("Collected seed info for precache: ", fmt.Sprintf("%+v", seedInfo))
+
+	i.log.Info("Getting mirror registry source registries")
+	mirrorRegistrySources, err := mirrorRegistrySourceRegistries(registriesConfFile)
+	if err != nil {
+		return fmt.Errorf("failed to get mirror registry source registries: %w", err)
+	}
+
+	i.log.Info("Checking whether to override seed registry")
+	shouldOverrideSeedRegistry, err := utils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
+	if err != nil {
+		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry: %w", err)
+	}
+	i.log.Info("Should override seed registry", "shouldOverrideSeedRegistry", shouldOverrideSeedRegistry, "releaseRegistry", i.config.ReleaseRegistry)
+
+	i.log.Info("Precaching images")
+	imageList, err := prep.ReadPrecachingList(imageListFile, i.config.ReleaseRegistry, seedInfo.ReleaseRegistry, shouldOverrideSeedRegistry)
 	if err != nil {
 		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return err
@@ -106,7 +129,7 @@ func (i *IBIPrepare) precacheFlow(imageListFile string) error {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, common.IBIPSFile, i.config.PrecacheBestEffort); err != nil {
+	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
@@ -210,4 +233,26 @@ func (i *IBIPrepare) cleanupRhcosSysroot() error {
 		return fmt.Errorf("removing sysroot %s failed: %w", rhcosysrootPath, err)
 	}
 	return nil
+}
+
+func mirrorRegistrySourceRegistries(registriesConfFile string) ([]string, error) {
+	content, err := os.ReadFile(registriesConfFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read registry config file: %w", err)
+	}
+
+	config := &sysregistriesv2.V2RegistriesConf{}
+
+	if err := toml.Unmarshal(content, config); err != nil {
+		return nil, fmt.Errorf("failed to parse registry config: %w", err)
+	}
+
+	sources := make([]string, 0, len(config.Registries))
+	for _, registry := range config.Registries {
+		if registry.Location != "" {
+			sources = append(sources, utils.ExtractRegistryFromImage(registry.Location))
+		}
+	}
+
+	return sources, nil
 }
