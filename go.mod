@@ -10,7 +10,7 @@ require (
 	github.com/coreos/ignition/v2 v2.20.0
 	github.com/go-logr/logr v1.4.2
 	github.com/google/go-cmp v0.6.0
-	github.com/k8snetworkplumbingwg/sriov-network-operator v1.4.0
+	github.com/k8snetworkplumbingwg/sriov-network-operator v1.5.0
 	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63
