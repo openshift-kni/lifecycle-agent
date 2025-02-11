@@ -10,7 +10,7 @@ require (
 	github.com/coreos/ignition/v2 v2.20.0
 	github.com/go-logr/logr v1.4.2
 	github.com/google/go-cmp v0.6.0
-	github.com/k8snetworkplumbingwg/sriov-network-operator v1.4.0
+	github.com/k8snetworkplumbingwg/sriov-network-operator v1.5.0
 	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63
@@ -19,13 +19,13 @@ require (
 	github.com/operator-framework/api v0.23.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5
-	github.com/samber/lo v1.47.0
+	github.com/samber/lo v1.49.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.10.0
 	github.com/vmware-tanzu/velero v1.15.2
 	go.uber.org/mock v0.5.0
-	golang.org/x/crypto v0.32.0
+	golang.org/x/crypto v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.31.5
 	k8s.io/apiextensions-apiserver v0.31.5
@@ -135,10 +135,10 @@ require (
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.22.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
