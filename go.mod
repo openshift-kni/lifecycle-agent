@@ -50,10 +50,11 @@ require (
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.1 // indirect
+	github.com/moby/sys/user v0.3.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0-rc2 // indirect
-	github.com/opencontainers/runc v1.1.10 // indirect
-	github.com/opencontainers/runtime-spec v1.0.3-0.20220909204839-494a5a6aca78 // indirect
+	github.com/opencontainers/runc v1.2.0 // indirect
+	github.com/opencontainers/runtime-spec v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
