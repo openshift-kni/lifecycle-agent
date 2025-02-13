@@ -478,7 +478,8 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 			return v1.ImageDigestMirrorSetList{}, err
 		}
 		obj.TypeMeta = *typeMeta
-
+		obj.ObjectMeta.Labels = idms.Labels
+		obj.ObjectMeta.Annotations = idms.Annotations
 		idmsList.Items = append(idmsList.Items, obj)
 	}
 	typeMeta, err := r.typeMetaForObject(&idmsList)
@@ -516,6 +517,8 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 			return err
 		}
 		obj.TypeMeta = *typeMeta
+		obj.ObjectMeta.Labels = icp.Labels
+		obj.ObjectMeta.Annotations = icp.Annotations
 		iscpsList.Items = append(iscpsList.Items, obj)
 	}
 	typeMeta, err := r.typeMetaForObject(iscpsList)
