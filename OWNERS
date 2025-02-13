@@ -29,6 +29,7 @@ filters:
     - oourfali
     - romfreiman
     - tsorya
+    konflux-approvers:
     - rauhersu
     - fontivan
   ^api/seedreconfig/seedreconfig.go:
