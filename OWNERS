@@ -29,6 +29,8 @@ filters:
     - oourfali
     - romfreiman
     - tsorya
+    - rauhersu
+    - fontivan
   ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed
