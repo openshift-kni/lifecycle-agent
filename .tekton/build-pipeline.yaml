@@ -226,17 +226,17 @@ spec:
         - name: LABELS
           value:
             - $(tasks.generate-labels.results.labels[*])
-            - com.redhat.component=topology-aware-lifecycle-manager-operator-container
-            - description=topology-aware-lifecycle-manager
+            - com.redhat.component=lifecycle-agent-operator-container
+            - description=lifecycle-agent
             - distribution-scope=public
-            - io.k8s.description=topology-aware-lifecycle-manager
-            - name=openshift4/topology-aware-lifecycle-manager-rhel9-operator
+            - io.k8s.description=lifecycle-agent
+            - name=openshift4/lifecycle-agent-rhel9-operator
             - release=4.19
-            - url=https://github.com/openshift-kni/cluster-group-upgrades-operator
+            - url=https://github.com/openshift-kni/lifecycle-agent
             - vendor=Red Hat, Inc.
-            - io.k8s.display-name=topology-aware-lifecycle-manager
+            - io.k8s.display-name=lifecycle-agent
             - io.openshift.tags=operator
-            - summary=topology-aware-lifecycle-manager
+            - summary=lifecycle-agent
             - maintainer=rauherna@redhat.com,sskeard@redhat.com
       runAfter:
         - prefetch-dependencies
