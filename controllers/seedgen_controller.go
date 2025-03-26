@@ -997,6 +997,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return
 	case phases.PhaseInitial:
 		// Run the system validation
+		// nolint: gocritic
 		if rejection := r.validateSystem(ctx); len(rejection) > 0 {
 			setSeedGenStatusFailed(seedgen, rejection)
 			r.Log.Info(fmt.Sprintf("Seed generation rejected: system validation failed: %s", rejection))
