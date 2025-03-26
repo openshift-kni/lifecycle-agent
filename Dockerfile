@@ -1,6 +1,11 @@
 #####################################################################################################
+# Build arguments
+ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.23
+ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
+ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:latest
+
 # Build the binaries
-FROM registry.access.redhat.com/ubi9/go-toolset:1.22.5-1730550521 as builder
+FROM ${BUILDER_IMAGE} as builder
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
@@ -24,8 +29,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 #####################################################################################################
 # Build the operator image
 # note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.18`
-FROM quay.io/openshift/origin-cli-artifacts:latest AS origincli
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM ${ORIGIN_CLI_IMAGE} AS origincli
+FROM ${RUNTIME_IMAGE}
 
 RUN if [[ ! -f /bin/nsenter ]]; then \
         microdnf -y install util-linux-core && \
