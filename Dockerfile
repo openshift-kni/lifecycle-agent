@@ -7,6 +7,9 @@ ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:latest
 # Build the binaries
 FROM ${BUILDER_IMAGE} as builder
 
+# Explicitly set the working directory
+WORKDIR /opt/app-root
+
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
 COPY vendor/ vendor/
@@ -32,6 +35,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 FROM ${ORIGIN_CLI_IMAGE} AS origincli
 FROM ${RUNTIME_IMAGE}
 
+# Explicitly set the working directory
+WORKDIR /
+
 RUN if [[ ! -f /bin/nsenter ]]; then \
         microdnf -y install util-linux-core && \
         microdnf -y install rsync && \
@@ -40,9 +46,10 @@ RUN if [[ ! -f /bin/nsenter ]]; then \
         rm -rf /var/cache/yum ; \
     fi
 
+
 COPY --from=builder \
-    /opt/app-root/src/build/manager \
-    /opt/app-root/src/build/lca-cli \
+    /opt/app-root/build/manager \
+    /opt/app-root/build/lca-cli \
     /usr/local/bin/
 
 COPY lca-cli/installation_configuration_files/ /usr/local/installation_configuration_files/
