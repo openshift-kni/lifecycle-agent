@@ -2,6 +2,7 @@
 # Build arguments
 ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.23
 ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
+# note: update origin-cli-artifacts from `latest` to an appropriate OCP version during release e.g `4.18`
 ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:latest
 
 # Assume x86 unless otherwise specified
@@ -37,7 +38,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendo
 
 #####################################################################################################
 # Build the operator image
-# note: update origin-cli-artifacts from `latest` to an appropriate OCP verison during release e.g `4.18`
 FROM ${ORIGIN_CLI_IMAGE} AS origincli
 FROM ${RUNTIME_IMAGE}
 
