@@ -25,7 +25,7 @@ spec:
     - name: output-image
       value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-bundle-4-19:{{revision}}
     - name: dockerfile
-      value: bundle.Dockerfile
+      value: bundle.konflux.Dockerfile
     - name: build-args-file
       value: konflux_build_args.conf
     - name: hermetic
