@@ -150,7 +150,7 @@ konflux-update: konflux-task-manifest-updates
 
 .PHONY: konflux-task-manifest-updates
 konflux-task-manifest-updates:
-	hack/update-konflux-task-refs.sh .tekton/build-pipeline.yaml
+	hack/konflux_update_task_refs.sh .tekton/build-pipeline.yaml
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
