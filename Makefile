@@ -140,6 +140,13 @@ check-coverage: install-go-test-coverage
 .PHONY: ci-job
 ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
 
+.PHONY: konflux-update
+konflux-update: konflux-task-manifest-updates
+
+.PHONY: konflux-task-manifest-updates
+konflux-task-manifest-updates:
+	hack/update-konflux-task-refs.sh .tekton/build-pipeline.yaml
+
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
 
