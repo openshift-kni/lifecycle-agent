@@ -30,8 +30,9 @@ spec:
       value: Dockerfile
     - name: build-args-file
       value: konflux_build_args.conf
-    - name: hermetic
-      value: "true"
+    # hermetic will be configured later
+    # - name: hermetic
+    #   value: "true"
     - name: prefetch-input
       value: gomod
     - name: build-source-image

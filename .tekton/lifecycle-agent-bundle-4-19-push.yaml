@@ -28,8 +28,9 @@ spec:
       value: bundle.konflux.Dockerfile
     - name: build-args-file
       value: konflux_build_args.conf
-    - name: hermetic
-      value: "true"
+    # hermetic will be configured later
+    # - name: hermetic
+    #   value: "true"
     - name: prefetch-input
       value: ""
     - name: build-source-image
