@@ -126,6 +126,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			logger.Error(fmt.Errorf("proceeding to shutdown stateroot setup job"), "")
 			os.Exit(1)
 		default:
+			// nolint: staticcheck
 			logger.Error(fmt.Errorf(s.String()), "Unknown signal") // this is not expected to be hit
 		}
 	}()

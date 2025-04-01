@@ -1,8 +1,6 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.22.4
-
-toolchain go1.22.7
+go 1.23.0
 
 require (
 	github.com/containers/image/v5 v5.29.3
