@@ -14,6 +14,6 @@ updates:
     k8s:
       patterns: [ "k8s.io/*", "sig.k8s.io/*" ]
       update-types: [ "major", "minor", "patch" ]
-  ignore:
+#  ignore:
     # - dependency-name: "*"
     #   update-types: ["version-update:semver-patch"]
