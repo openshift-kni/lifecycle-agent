@@ -299,6 +299,7 @@ func createServerSSHKeyFile(serverSSHKey clusterconfig_api.ServerSSHKey) error {
 	}
 
 	fullKeyPath := filepath.Join(common.SSHServerKeysDirectory, serverSSHKey.FileName)
+	// nolint: gosec
 	if err := os.WriteFile(fullKeyPath, []byte(serverSSHKey.FileContent), fs.FileMode(mode)); err != nil {
 		return fmt.Errorf("failed to write server SSH key %s: %w", fullKeyPath, err)
 	}
@@ -345,6 +346,7 @@ func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedR
 		set.Insert(nss)
 	}
 
+	// nolint: gocritic
 	if len(seedReconfig.Proxy.NoProxy) > 0 {
 		for _, userValue := range strings.Split(seedReconfig.Proxy.NoProxy, ",") {
 			if userValue != "" {
@@ -571,9 +573,14 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
 	seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 
+	mirrorRegistrySources, err := utils.GetMirrorRegistrySourceRegistries(ctx, client)
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+
 	// in case we should not override we can skip
-	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client,
-		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry); !shouldOverride || err != nil {
+	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(
+		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry, mirrorRegistrySources); !shouldOverride || err != nil {
 		return err //nolint:wrapcheck
 	}
 

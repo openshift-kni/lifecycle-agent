@@ -14,15 +14,11 @@ updates:
     k8s:
       patterns: [ "k8s.io/*", "sig.k8s.io/*" ]
       update-types: [ "major", "minor", "patch" ]
-    golang:
-      patterns: [ "golang.org/*" ]
-      update-types: [ "major", "minor", "patch" ]  
-  ignore:
-    # k8s.io moved to go 1.23 in v0.32, so ignore major/minor updates until this repo is 1.23-based
-    - dependency-name: "k8s.io/*"
-      update-types: ["version-update:semver-major","version-update:semver-minor"]
-    # sigs.k8s.io moved to go 1.23 in v0.20, so ignore major/minor updates until this repo is 1.23-based
-    - dependency-name: "sigs.k8s.io/*"
-      update-types: ["version-update:semver-major","version-update:semver-minor"]
+    ginkgo:
+      patterns: ["github.com/onsi/gomega", "github.com/onsi/ginkgo/v2"]
+      update-types: [ "major", "minor" ]
+    ocm:
+      patterns: ["open-cluster-management.io/*"]      
+#  ignore:
     # - dependency-name: "*"
     #   update-types: ["version-update:semver-patch"]

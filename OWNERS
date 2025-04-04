@@ -19,6 +19,8 @@ filters:
     - leo8a
     - omertuc
     - mresvanis
+    - rauhersu
+    - fontivan    
     approvers:
     - browsell
     - donpenney
@@ -29,6 +31,9 @@ filters:
     - oourfali
     - romfreiman
     - tsorya
+    konflux-approvers:
+    - rauhersu
+    - fontivan
   ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed

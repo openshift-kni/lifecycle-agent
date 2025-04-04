@@ -229,12 +229,8 @@ func (c *RebootClient) InitiateRollback(msg string) error {
 		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 	}
 
-	if err = c.RebootToNewStateRoot("rollback"); err != nil {
-		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
-	}
-
-	// Should never get here
-	return nil
+	err = c.RebootToNewStateRoot("rollback")
+	return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 }
 
 func (c *RebootClient) AutoRollbackIfEnabled(component, msg string) {

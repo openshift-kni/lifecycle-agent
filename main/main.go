@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -37,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -115,9 +117,12 @@ func init() {
 
 func main() {
 	var metricsAddr string
+	var metricsCertDir string
 	var enableLeaderElection bool
 	var probeAddr string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&metricsCertDir, "metrics-tls-cert-dir", "",
+		"The directory containing the tls.crt and tls.key.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -142,6 +147,12 @@ func main() {
 
 	mux := &sync.Mutex{}
 
+	tlsOpts := []func(*tls.Config){
+		func(c *tls.Config) {
+			c.NextProtos = []string{"http/1.1"}
+		},
+	}
+
 	cfg := ctrl.GetConfigOrDie()
 	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -154,7 +165,11 @@ func main() {
 		RetryPeriod:                   &le.RetryPeriod.Duration,
 		LeaderElectionReleaseOnCancel: true,
 		Metrics: server.Options{
-			BindAddress: metricsAddr,
+			BindAddress:    metricsAddr,
+			SecureServing:  metricsCertDir != "",
+			CertDir:        metricsCertDir,
+			TLSOpts:        tlsOpts,
+			FilterProvider: filters.WithAuthenticationAndAuthorization,
 		},
 		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
 			ByObject: map[client.Object]cache.ByObject{

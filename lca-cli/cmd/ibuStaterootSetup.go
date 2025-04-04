@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
-	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
@@ -87,7 +86,7 @@ func ibuStaterootSetupRun() error {
 	}
 
 	logger.Info("Setting up stateroot")
-	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, precache.ImageListFile, false); err != nil {
+	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
 		return fmt.Errorf("failed to complete stateroot setup: %w", err)
 	}
 
@@ -127,6 +126,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			logger.Error(fmt.Errorf("proceeding to shutdown stateroot setup job"), "")
 			os.Exit(1)
 		default:
+			// nolint: staticcheck
 			logger.Error(fmt.Errorf(s.String()), "Unknown signal") // this is not expected to be hit
 		}
 	}()

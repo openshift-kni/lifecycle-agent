@@ -43,5 +43,3 @@ resources:
 - ../rbac
 - ../manager
 - ../prometheus
-patches:
-- path: manager_auth_proxy_patch.yaml
