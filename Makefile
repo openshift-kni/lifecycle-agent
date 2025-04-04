@@ -119,6 +119,11 @@ bashate: ## Run bashate.
 	@echo "Running bashate"
 	hack/bashate.sh
 
+.PHONY: yamllint
+yamllint: ## Run yamllint
+	@echo "Running yamllint"
+	hack/yamllint.sh
+
 .PHONY: scorecard
 scorecard: operator-sdk ## Run scorecard tests against bundle
 ifeq ($(KUBECONFIG),)
@@ -138,7 +143,14 @@ check-coverage: install-go-test-coverage
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
+
+.PHONY: konflux-update
+konflux-update: konflux-task-manifest-updates
+
+.PHONY: konflux-task-manifest-updates
+konflux-task-manifest-updates:
+	hack/konflux_update_task_refs.sh .tekton/build-pipeline.yaml
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
