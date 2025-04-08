@@ -1,0 +1,35 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
+aliases:
+  lifecycle-agent-reviewers:
+    - browsell
+    - donpenney
+    - eranco74
+    - imiller0
+    - jc-rh
+    - oourfali
+    - romfreiman
+    - sakhoury
+    - sudomakeinstall2
+    - Missxiaoguo
+    - pixelsoccupied
+    - tsorya
+    - javipolo
+    - leo8a
+    - omertuc
+    - mresvanis
+    - rauhersu
+    - fontivan
+  lifecycle-agent-approvers:
+    - browsell
+    - donpenney
+    - eranco74
+    - omertuc
+    - imiller0
+    - jc-rh
+    - oourfali
+    - romfreiman
+    - tsorya
+  konflux-approvers:
+    - rauhersu
+    - fontivan
