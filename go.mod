@@ -24,7 +24,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/vmware-tanzu/velero v1.15.2
-	go.uber.org/mock v0.5.0
+	go.uber.org/mock v0.5.1
 	golang.org/x/crypto v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.32.3
