@@ -14,6 +14,9 @@ FROM ${BUILDER_IMAGE} as builder
 # Pass GOARCH into builder
 ARG GOARCH
 
+# Default Konflux to false
+ARG KONFLUX="false"
+
 # Explicitly set the working directory
 WORKDIR /opt/app-root
 
@@ -32,9 +35,17 @@ COPY internal internal
 COPY main main
 COPY utils utils
 
-# Build the binaries
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go
+# For Konflux, compile with FIPS enabled
+# Otherwise compile normally
+RUN if [[ "${KONFLUX}" == "true" ]]; then \
+        echo "Compiling with fips" && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -o build/manager main/main.go && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/lca-cli main/lca-cli/main.go; \
+    else \
+        echo "Compiling without fips" && \
+        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go && \
+        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go; \
+    fi
 
 #####################################################################################################
 # Build the operator image
