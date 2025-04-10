@@ -31,11 +31,12 @@ spec:
       value: Dockerfile
     - name: build-arg-file
       value: konflux_build_args.conf
-    # To enable hermetic for this build will mean configuring rpm lockfile, which will be done later
-    # - name: hermetic
-    #   value: "true"
+    - name: hermetic
+      value: "true"
+    - name: dev-package-managers
+      value: "true"
     - name: prefetch-input
-      value: gomod
+      value: '[{"type": "rpm", "path": ".konflux/lock-runtime"}, {"type": "gomod", "path": "."}]'
     - name: build-source-image
       value: "true"
   pipelineRef:

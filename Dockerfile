@@ -50,7 +50,7 @@ RUN if [[ "${KONFLUX}" == "true" ]]; then \
 #####################################################################################################
 # Build the operator image
 FROM ${ORIGIN_CLI_IMAGE} AS origincli
-FROM ${RUNTIME_IMAGE}
+FROM ${RUNTIME_IMAGE} as runtime-image
 
 # Pass GOARCH into runtime
 ARG GOARCH
