@@ -1,1 +1,2 @@
-manager quay.io/openshift-kni/lifecycle-agent-operator:4.19.0 quay.io/openshift-kni/lifecycle-agent-operator:4.19.0
+manager quay.io/openshift-kni/lifecycle-agent-operator:4.19.0 quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-19:c60b2e826aabe99eba9db580c00c76c4977f24bd
+recert quay.io/edge-infrastructure/recert:v0 quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-19:267e2a349de3b3e09a57996e239bab3daaa77960
