@@ -29,7 +29,7 @@ spec:
         - linux/x86_64
     - name: dockerfile
       value: bundle.konflux.Dockerfile
-    - name: build-arg-file
+    - name: build-args-file
       value: konflux_build_args.conf
     - name: hermetic
       value: "true"
