@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="0.7.2"
+VERSION="0.10.0"
 
 rootdir=$(git rev-parse --show-toplevel)
 if [ -z "${rootdir}" ]; then
@@ -11,11 +11,35 @@ fi
 bindir="${rootdir}/bin"
 shellcheck="${bindir}/shellcheck"
 
+function get_os {
+    local os
+    # shellcheck uses lowercase names in its release url
+    os=$(uname | awk '{print tolower($0)}')
+    echo $os
+}
+
+function get_arch {
+    local arch
+    arch=$(uname -m)
+
+    local os
+    os=$(get_os)
+
+    # macos returns arm64, but shellcheck uses aarch64
+    if [[ $os == 'darwin' ]]; then
+        if [[ $arch == 'arm64' ]]; then
+            arch='aarch64'
+        fi
+    fi
+
+    echo $arch
+}
+
 function get_tool {
     mkdir -p "${bindir}"
     echo "Downloading shellcheck tool"
     scversion="v${VERSION}"
-    wget -qO- "https://github.com/koalaman/shellcheck/releases/download/${scversion}/shellcheck-${scversion}.linux.x86_64.tar.xz" \
+    wget -qO- "https://github.com/koalaman/shellcheck/releases/download/${scversion}/shellcheck-${scversion}.$(get_os).$(get_arch).tar.xz" \
         | tar -xJ -C "${bindir}" --strip=1 shellcheck-${scversion}/shellcheck
 }
 
