@@ -13,9 +13,9 @@ shellcheck="${bindir}/shellcheck"
 
 function get_os {
     local os
-    # shellcheck uses lowercase names in its release url
+    # On github shellcheck uses lowercase names in its release url
     os=$(uname | awk '{print tolower($0)}')
-    echo $os
+    echo "${os}"
 }
 
 function get_arch {
@@ -25,14 +25,14 @@ function get_arch {
     local os
     os=$(get_os)
 
-    # macos returns arm64, but shellcheck uses aarch64
+    # MacOS returns arm64, but shellcheck uses aarch64
     if [[ $os == 'darwin' ]]; then
         if [[ $arch == 'arm64' ]]; then
             arch='aarch64'
         fi
     fi
 
-    echo $arch
+    echo "${arch}"
 }
 
 function get_tool {
