@@ -9,7 +9,7 @@ ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:latest
 ARG GOARCH="amd64"
 
 # Build the binaries
-FROM ${BUILDER_IMAGE} as builder
+FROM --platform=linux/${GOARCH} ${BUILDER_IMAGE} as builder
 
 # Pass GOARCH into builder
 ARG GOARCH
@@ -49,8 +49,9 @@ RUN if [[ "${KONFLUX}" == "true" ]]; then \
 
 #####################################################################################################
 # Build the operator image
-FROM ${ORIGIN_CLI_IMAGE} AS origincli
-FROM ${RUNTIME_IMAGE} as runtime-image
+# The origin cli image is similar to most bundles, where it is defined only as "amd64" but is actually multi-arch
+FROM --platform=linux/amd64 ${ORIGIN_CLI_IMAGE} AS origincli
+FROM --platform=linux/${GOARCH} ${RUNTIME_IMAGE} as runtime-image
 
 # Pass GOARCH into runtime
 ARG GOARCH
