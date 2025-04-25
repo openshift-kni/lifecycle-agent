@@ -1,25 +1,51 @@
 {
     "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "docker": {
-        "_comment": "We want to make sure the image digests in the build args get updates",
-        "fileMatch": [
-            "\\.conf$"
-        ],
-        "includePaths": [
-            "./konflux_build_args.conf"
-        ]
-    },
-    "extends": [
-        "https://github.com/konflux-ci/mintmaker/blob/main/config/renovate/renovate.json?raw=true"
+    "automergeStrategy": "rebase",
+    "automergeType": "pr",
+    "customManagers": [
+        {
+            "customType": "regex",
+            "datasourceTemplate": "docker",
+            "fileMatch": [
+                "\\.conf$",
+                "\\.yaml$",
+                "\\.yml$"
+            ],
+            "includePaths": [
+                ".konflux/**"
+            ],
+            "matchStrings": [
+                "(?<depName>[\\w\\-\\.\\/]+):?(?<currentValue>[\\w\\-\\.]+)?@(?<currentDigest>sha256:[a-f0-9]+)"
+            ],
+            "versioningTemplate": "docker"
+        }
     ],
+    "packageRules": [
+        {
+            "autoApprove": true,
+            "automerge": true,
+            "enabled": true,
+            "ignoreTests": false,
+            "matchManagers": [
+                "custom.regex"
+            ],
+            "platformAutomerge": true
+        }
+    ],
+    "prConcurrentLimit": 0,
+    "pruneBranchAfterAutomerge": true,
     "tekton": {
-        "_comment": "We want the Tekton Mintmaker PRs to merge automatically because they would otherwise be very noisy",
+        "autoApprove": true,
         "automerge": true,
-        "automergeStrategy": "rebase",
-        "automergeType": "pr",
         "enabled": true,
+        "fileMatch": [
+            "\\.yaml$",
+            "\\.yml$"
+        ],
         "ignoreTests": false,
-        "platformAutomerge": true,
-        "schedule": ["0 1 * * *"]
+        "includePaths": [
+            ".tekton/**"
+        ],
+        "platformAutomerge": true
     }
 }

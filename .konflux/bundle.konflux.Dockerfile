@@ -7,13 +7,17 @@ FROM quay.io/konflux-ci/yq:latest@sha256:5ff4dd745c6f4cc67ae4f00fd2a38dd31f7d99c
 # Set work dir
 WORKDIR /tmp
 
-# Copy manifests into the container
-COPY --chown=yq:yq bundle/manifests /tmp/manifests
+# Copy bundle manifests
+ENV MANIFESTS_PATH=/tmp/manifests
+COPY --chown=yq:yq bundle/manifests $MANIFESTS_PATH
 
-# Check if this is a Konflux build to overlay the clusterserviceversion
-COPY konflux_clusterserviceversion_overlay.sh .
-COPY konflux_clusterserviceversion_overlay.data .
-RUN /tmp/konflux_clusterserviceversion_overlay.sh
+# Copy overlay scripts
+ENV OVERLAY_PATH=/tmp/overlay
+RUN mkdir -p $OVERLAY_PATH
+COPY .konflux/overlay/ $OVERLAY_PATH
+
+# Run the overlay
+RUN $OVERLAY_PATH/overlay.bash --set-pinning-file $OVERLAY_PATH/pin_images.in.yaml --set-csv-file $MANIFESTS_PATH/lifecycle-agent.clusterserviceversion.yaml
 
 # From here downwards this should mostly match the non-konflux bundle, i.e., `bundle.Dockerfile`
 # However there are a few exceptions:
