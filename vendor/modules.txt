@@ -543,8 +543,8 @@ github.com/prometheus/client_golang/prometheus/promhttp
 # github.com/prometheus/client_model v0.6.1
 ## explicit; go 1.19
 github.com/prometheus/client_model/go
-# github.com/prometheus/common v0.57.0
-## explicit; go 1.20
+# github.com/prometheus/common v0.62.0
+## explicit; go 1.21
 github.com/prometheus/common/expfmt
 github.com/prometheus/common/model
 # github.com/prometheus/procfs v0.15.1
@@ -598,8 +598,8 @@ github.com/ulikunitz/xz/lzma
 # github.com/vincent-petithory/dataurl v1.0.0
 ## explicit
 github.com/vincent-petithory/dataurl
-# github.com/vmware-tanzu/velero v1.15.2
-## explicit; go 1.22.0
+# github.com/vmware-tanzu/velero v1.16.0
+## explicit; go 1.23.0
 github.com/vmware-tanzu/velero/pkg/apis/velero/shared
 github.com/vmware-tanzu/velero/pkg/apis/velero/v1
 # github.com/x448/float16 v0.8.4
@@ -1440,8 +1440,8 @@ k8s.io/klog/v2/internal/dbg
 k8s.io/klog/v2/internal/serialize
 k8s.io/klog/v2/internal/severity
 k8s.io/klog/v2/internal/sloghandler
-# k8s.io/kube-aggregator v0.29.0
-## explicit; go 1.21
+# k8s.io/kube-aggregator v0.31.3
+## explicit; go 1.22.0
 k8s.io/kube-aggregator/pkg/apis/apiregistration
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1beta1
