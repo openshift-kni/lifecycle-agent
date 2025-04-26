@@ -3,7 +3,7 @@
 ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.23
 ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
 # note: update origin-cli-artifacts from `latest` to an appropriate OCP version during release e.g `4.18`
-ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:4.19
+ARG ORIGIN_CLI_IMAGE=quay.io/openshift/origin-cli-artifacts:4.20
 
 # Assume x86 unless otherwise specified
 ARG GOARCH="amd64"
