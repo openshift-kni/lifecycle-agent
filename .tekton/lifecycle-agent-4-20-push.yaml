@@ -8,13 +8,13 @@ metadata:
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "main"
+    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "main" && files.all != ["konflux_clusterserviceversion_overlay.data"]
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: lifecycle-agent-4-19
-    appstudio.openshift.io/component: lifecycle-agent-operator-bundle-4-19
+    appstudio.openshift.io/application: lifecycle-agent-4-20
+    appstudio.openshift.io/component: lifecycle-agent-4-20
     pipelines.appstudio.openshift.io/type: build
-  name: lifecycle-agent-operator-bundle-4-19-on-push
+  name: lifecycle-agent-4-20-on-push
   namespace: telco-5g-tenant
 spec:
   params:
@@ -23,22 +23,22 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19:{{revision}}
+      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20:{{revision}}
     - name: build-platforms
       value:
         - linux/x86_64
     - name: dockerfile
-      value: bundle.konflux.Dockerfile
+      value: Dockerfile
     - name: build-args-file
       value: konflux_build_args.conf
     - name: hermetic
       value: "true"
+    - name: dev-package-managers
+      value: "true"
     - name: prefetch-input
-      value: gomod
+      value: '[{"type": "rpm", "path": ".konflux/lock-runtime"}, {"type": "gomod", "path": "."}]'
     - name: build-source-image
       value: "true"
-    - name: skip-preflight
-      value: true
   pipelineRef:
     name: build-pipeline
   taskRunTemplate: {}
