@@ -17,8 +17,11 @@ ENV OVERLAY_PATH=/tmp/overlay
 RUN mkdir -p $OVERLAY_PATH
 COPY .konflux/overlay/ $OVERLAY_PATH
 
-# Run the overlay
-RUN $OVERLAY_PATH/overlay.bash --set-pinning-file $OVERLAY_PATH/pin_images.in.yaml --set-csv-file $MANIFESTS_PATH/lifecycle-agent.clusterserviceversion.yaml
+RUN $OVERLAY_PATH/overlay.bash \
+    --set-pinning-file $OVERLAY_PATH/pin_images.in.yaml \
+    --set-mapping-file $OVERLAY_PATH/map_images.in.yaml \
+    --set-mapping-production \
+    --set-csv-file $MANIFESTS_PATH/lifecycle-agent.clusterserviceversion.yaml
 
 # From here downwards this should mostly match the non-konflux bundle, i.e., `bundle.Dockerfile`
 # However there are a few exceptions:
