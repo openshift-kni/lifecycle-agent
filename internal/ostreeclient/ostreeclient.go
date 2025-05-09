@@ -15,7 +15,7 @@ import (
 type IClient interface {
 	PullLocal(repoPath string) error
 	OSInit(osname string) error
-	Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error
+	Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool, useBootc bool) error
 	Undeploy(ostreeIndex int) error
 	SetDefaultDeployment(index int) error
 	IsOstreeAdminSetDefaultFeatureEnabled() bool
@@ -59,31 +59,64 @@ func (c *Client) OSInit(osname string) error {
 	return nil
 }
 
-func (c *Client) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error {
-	args := []string{"admin", "deploy", "--os", osname, "--no-prune"}
-	if c.ibi {
-		args = append(args, "--sysroot", "/mnt")
-	}
-	args = append(args, kargs...)
-	args = append(args, refsepc)
-	if !c.ibi && c.IsOstreeAdminSetDefaultFeatureEnabled() {
-		args = append(args, "--not-as-default")
-	}
-
-	// Run the command in bash to preserve the quoted kargs
-	args = append([]string{"ostree"}, args...)
-	if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
-		return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
-	}
-
-	if !ibi {
-		// In an IBU where both releases have the same underlying rhcos image, the parent commit of the deployment has
-		// unique commit IDs (due to import from seed), but the same checksum. In order to avoid pruning the original parent
-		// commit and corrupting the ostree, the previous "ostree admin deploy" command was called with the "--no-prune" option.
-		// This must also be followed up with a call to "rpm-ostree cleanup -b" to update the base refs.
-		if err := rpmOstreeClient.RpmOstreeCleanup(); err != nil {
-			return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
+func (c *Client) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool, useBootc bool) error {
+	if !useBootc {
+		args := []string{"admin", "deploy", "--os", osname, "--no-prune"}
+		if c.ibi {
+			args = append(args, "--sysroot", "/mnt")
 		}
+
+		for _, karg := range kargs {
+			args = append(args, "--karg-append", karg)
+		}
+
+		args = append(args, refsepc)
+		if !c.ibi && c.IsOstreeAdminSetDefaultFeatureEnabled() {
+			args = append(args, "--not-as-default")
+		}
+
+		// Run the command in bash to preserve the quoted kargs
+		args = append([]string{"ostree"}, args...)
+		if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
+			return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
+		}
+
+		if !ibi {
+			// In an IBU where both releases have the same underlying rhcos image, the parent commit of the deployment has
+			// unique commit IDs (due to import from seed), but the same checksum. In order to avoid pruning the original parent
+			// commit and corrupting the ostree, the previous "ostree admin deploy" command was called with the "--no-prune" option.
+			// This must also be followed up with a call to "rpm-ostree cleanup -b" to update the base refs.
+			if err := rpmOstreeClient.RpmOstreeCleanup(); err != nil {
+				return fmt.Errorf("failed rpm-ostree cleanup -b: %w", err)
+			}
+		}
+	} else {
+		args := []string{
+			"run", "--privileged",
+			"--env", "RUST_LOG=trace",
+			// TODO: We can probably remove many of these mounts and it would still work, due to recent improvements in bootc
+			"-v", "/:/target",
+			"-v", "/boot:/target/sysroot/boot",
+			"-v", "/var/tmp:/var/tmp",
+			"-v", "/var/lib/containers/storage:/var/lib/containers/storage",
+			"--pid=host", "-it",
+			refsepc,
+			"bootc", "install", "to-existing-root",
+			"--acknowledge-destructive",
+			"--stateroot", osname,
+		}
+
+		for _, karg := range kargs {
+			args = append(args, "--karg", karg)
+		}
+
+		// Run the command in bash to preserve the quoted kargs
+		args = append([]string{"podman"}, args...)
+		if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
+			return fmt.Errorf("failed to run bootc with args %s: %w", args, err)
+		}
+
+		return nil
 	}
 
 	return nil

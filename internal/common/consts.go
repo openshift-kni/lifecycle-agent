@@ -94,6 +94,11 @@ const (
 	ImageCleanupOnPrepAnnotation = "image-cleanup.lca.openshift.io/on-prep"
 	// ImageCleanupDisabledValue value to disable image cleanup
 	ImageCleanupDisabledValue = "Disabled"
+	// UnsupportedExperimentalUseBootcAnnotation configures the use of bootc for image-based upgrade
+	// Only acceptable value is UnsupportedExperimentalUseBootcDisabledValue. Any other value is ignored.
+	UnsupportedExperimentalUseBootcAnnotation = "unsupported-experimental.lca.openshift.io/use-bootc"
+	// UnsupportedExperimentalUseBootcValue is the value to use bootc
+	UnsupportedExperimentalUseBootcValue = "Use"
 
 	LcaNamespace = "openshift-lifecycle-agent"
 	Host         = "/host"
@@ -117,6 +122,10 @@ const (
 	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
 
 	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
+
+	// SeedUseBootcOCILabel is the name of the OCI label applied to seed images
+	// to indicate whether they're bootc seed images or normal ones
+	SeedUseBootcOCILabel = "com.openshift.lifecycle-agent.bootc_seed"
 
 	PullSecretName           = "pull-secret"
 	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}" //nolint:gosec
