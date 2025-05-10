@@ -31,38 +31,39 @@ metadata:
   namespace: telco-5g-tenant
 spec:
   params:
-    - name: git-url
-      value: '{{source_url}}'
-    - name: revision
-      value: '{{revision}}'
-    - name: output-image
-      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19:{{revision}}
-    - name: build-platforms
-      value:
-        - linux/x86_64
-    - name: dockerfile
-      value: .konflux/bundle.Dockerfile
-    - name: build-args-file
-      value: .konflux/container_build_args.conf
-    - name: hermetic
-      value: "true"
-    - name: prefetch-input
-      value: gomod
-    - name: build-source-image
-      value: "true"
-    - name: skip-preflight
-      value: "true"
-    - name: build-image-index
-      value: "false"
-    - name: image-append-platform
-      value: "false"
-    - name: skip-sast-coverity
-      value: "true"
+  - name: git-url
+    value: '{{source_url}}'
+  - name: revision
+    value: '{{revision}}'
+  - name: output-image
+    value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19:{{revision}}
+  - name: build-platforms
+    value:
+    - linux/x86_64
+  - name: dockerfile
+    value: .konflux/bundle.Dockerfile
+  - name: build-args-file
+    value: .konflux/container_build_args.conf
+  - name: hermetic
+    value: "true"
+  - name: prefetch-input
+    value: gomod
+  - name: build-source-image
+    value: "true"
+  - name: skip-preflight
+    value: "true"
+  - name: build-image-index
+    value: "false"
+  - name: image-append-platform
+    value: "false"
+  - name: skip-sast-coverity
+    value: "true"
   pipelineRef:
     name: build-pipeline
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-lifecycle-agent-operator-bundle-4-19
   workspaces:
-    - name: git-auth
-      secret:
-        secretName: '{{ git_auth_secret }}'
+  - name: git-auth
+    secret:
+      secretName: '{{ git_auth_secret }}'
 status: {}
