@@ -8,6 +8,23 @@ VERSION ?= 4.16.0
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
+# By default we build the same architecture we are running
+# Override this by specifying a different GOARCH in your environment
+HOST_ARCH ?= $(shell uname -m)
+
+# Convert from uname format to GOARCH format
+ifeq ($(HOST_ARCH),aarch64)
+	HOST_ARCH=arm64
+endif
+ifeq ($(HOST_ARCH),x86_64)
+	HOST_ARCH=amd64
+endif
+
+# Define GOARCH as HOST_ARCH if not otherwise defined
+ifndef GOARCH
+	GOARCH=$(HOST_ARCH)
+endif
+
 # Path to go binary in local
 GOBIN ?= $$(go env GOPATH)/bin
 
@@ -55,7 +72,7 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(VERSION)
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
+OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 MOCK_GEN = $(shell pwd)/bin/mockgen
@@ -119,6 +136,11 @@ bashate: ## Run bashate.
 	@echo "Running bashate"
 	hack/bashate.sh
 
+.PHONY: yamllint
+yamllint: ## Run yamllint
+	@echo "Running yamllint"
+	hack/yamllint.sh
+
 .PHONY: scorecard
 scorecard: operator-sdk ## Run scorecard tests against bundle
 ifeq ($(KUBECONFIG),)
@@ -138,7 +160,14 @@ check-coverage: install-go-test-coverage
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
+
+.PHONY: konflux-update
+konflux-update: konflux-task-manifest-updates
+
+.PHONY: konflux-task-manifest-updates
+konflux-task-manifest-updates:
+	hack/konflux_update_task_refs.sh .tekton/build-pipeline.yaml
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
@@ -147,7 +176,11 @@ OPERATOR_SDK_VERSION = $(shell $(OPERATOR_SDK) version 2>/dev/null | sed 's/^ope
 OPERATOR_SDK_VERSION_REQ = v1.28.0-ocp
 operator-sdk: ## Download operator-sdk locally if necessary.
 ifneq ($(OPERATOR_SDK_VERSION_REQ),$(OPERATOR_SDK_VERSION))
-	curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-linux-x86_64.tar.gz | tar -xz -C bin/
+	@{ \
+	set -e ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell arch) && if [ $${ARCH} == "arm64" ]; then ARCH=aarch64; fi; \
+	curl -Lv https://mirror.openshift.com/pub/openshift-v4/$${ARCH}/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-$${OS}-$${ARCH}.tar.gz | tar --strip-components 2 -xz -C bin/ ;\
+	}
 endif
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
@@ -177,7 +210,7 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
-	${ENGINE} build -t ${IMG} -f Dockerfile .
+	${ENGINE} build --arch ${GOARCH} --build-arg GOARCH=${GOARCH} -t ${IMG} -f Dockerfile .
 
 docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}
