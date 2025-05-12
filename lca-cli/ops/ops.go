@@ -176,6 +176,7 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	o.log.Info("Run unauthenticated etcd server for recert tool")
 
 	command := podman
+	// nolint: gocritic
 	args := append(podmanRecertArgs,
 		"--authfile", authFile, "--detach",
 		"--name", name,
@@ -229,6 +230,7 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 	o.log.Info("Start running recert")
 	command := podman
 
+	// nolint: gocritic
 	args := append(podmanRecertArgs, "--name", "recert",
 		"-v", fmt.Sprintf("/etc:%s", recert.EtcMount),
 		"-v", fmt.Sprintf("/etc/ssh:%s", recert.EtcSSHMount),

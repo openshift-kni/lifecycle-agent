@@ -299,6 +299,7 @@ func createServerSSHKeyFile(serverSSHKey clusterconfig_api.ServerSSHKey) error {
 	}
 
 	fullKeyPath := filepath.Join(common.SSHServerKeysDirectory, serverSSHKey.FileName)
+	// nolint: gosec
 	if err := os.WriteFile(fullKeyPath, []byte(serverSSHKey.FileContent), fs.FileMode(mode)); err != nil {
 		return fmt.Errorf("failed to write server SSH key %s: %w", fullKeyPath, err)
 	}
@@ -345,6 +346,7 @@ func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedR
 		set.Insert(nss)
 	}
 
+	// nolint: gocritic
 	if len(seedReconfig.Proxy.NoProxy) > 0 {
 		for _, userValue := range strings.Split(seedReconfig.Proxy.NoProxy, ",") {
 			if userValue != "" {
