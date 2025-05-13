@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a
 
 #####################################################################################################
 # Build the operator image
-FROM quay.io/openshift/origin-cli-artifacts:4.17 AS origincli
+FROM quay.io/openshift/origin-cli-artifacts:4.20 AS origincli
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 RUN if [[ ! -f /bin/nsenter ]]; then \
