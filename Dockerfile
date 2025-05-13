@@ -1,6 +1,6 @@
 #####################################################################################################
 # Build the binaries
-FROM registry.access.redhat.com/ubi9/go-toolset:1.21 as builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.23.6-1747059472 as builder
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
