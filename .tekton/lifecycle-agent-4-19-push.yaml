@@ -64,7 +64,8 @@ spec:
       value: "true"
   pipelineRef:
     name: build-pipeline
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-lifecycle-agent-4-19
   workspaces:
     - name: git-auth
       secret:
