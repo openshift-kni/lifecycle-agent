@@ -8,6 +8,7 @@ VENVDIR=$(mktemp --tmpdir -d venv.XXXXXX) || {
 
 function cleanup {
     # Clean up the temporary directory
+    # shellcheck disable=SC2317
     rm -rf "${VENVDIR}"
 }
 trap cleanup EXIT
