@@ -266,7 +266,7 @@ parse_args() {
 
 overlay_release()
 {
-    echo "Overlaying relase..."
+    echo "Overlaying release..."
 
     local display_name="lifecycle-agent-operator"
     local description="lifecycle-agent-operator"
@@ -277,6 +277,7 @@ overlay_release()
     local skip_range=">=4.9.0 <4.20.0"
     local replaces="lifecycle-agent-operator.v4.20.0"
     # min_kube_version should match ocp
+    # https://access.redhat.com/solutions/4870701
     export min_kube_version="1.32.0"
 
     yq e -i ".metadata.annotations[\"containerImage\"] = \"${IMAGE_TO_TARGET[$MANAGER_KEY]}\"" $ARG_CSV_FILE
