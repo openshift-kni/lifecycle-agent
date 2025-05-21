@@ -1,20 +1,23 @@
 #####################################################################################################
 # Build arguments
 ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.23
-ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
 ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:latest
+ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
+ARG YQ_IMAGE=quay.io/konflux-ci/yq:latest
 
 # Assume x86 unless otherwise specified
 ARG GOARCH="amd64"
 
+# Default Konflux to false
+ARG KONFLUX="false"
+
+#####################################################################################################
 # Build the binaries
 FROM --platform=linux/${GOARCH} ${BUILDER_IMAGE} as builder
 
-# Pass GOARCH into builder
+# Pass arguments into layer
 ARG GOARCH
-
-# Default Konflux to false
-ARG KONFLUX="false"
+ARG KONFLUX
 
 # Explicitly set the working directory
 WORKDIR /opt/app-root
@@ -47,12 +50,36 @@ RUN if [[ "${KONFLUX}" == "true" ]]; then \
     fi
 
 #####################################################################################################
+# We have to scrape the recert image out of the CSV file
+FROM ${YQ_IMAGE} AS overlay
+
+# Pass argument into layer
+ARG KONFLUX
+
+# Set work dir
+WORKDIR /tmp
+
+# Copy the Konflux overlay pinning file since it contains both the default image and the Konflux image
+COPY .konflux/overlay/pin_images.in.yaml .
+
+# Prepare the configuration file
+RUN echo -n "RELATED_IMAGE_RECERT_IMAGE=" > /tmp/recert_image.sh
+
+# Extract the final recert key
+RUN if [[ "${KONFLUX}" == "true" ]]; then \
+        yq '.[] | select(.key == "recert") | .target' /tmp/pin_images.in.yaml >> /tmp/recert_image.sh; \
+    else \
+        yq '.[] | select(.key == "recert") | .source' /tmp/pin_images.in.yaml >> /tmp/recert_image.sh; \
+    fi
+
+# Export the variable and make sure the script is executable for later
+RUN echo "export RELATED_IMAGE_RECERT_IMAGE" >> /tmp/recert_image.sh && \
+    chmod +x /tmp/recert_image.sh
+
+#####################################################################################################
 # Build the operator image
 FROM --platform=linux/${GOARCH} ${OPENSHIFT_CLI_IMAGE} AS openshift-cli
 FROM --platform=linux/${GOARCH} ${RUNTIME_IMAGE} as runtime-image
-
-# Pass GOARCH into runtime
-ARG GOARCH
 
 # Explicitly set the working directory
 WORKDIR /
@@ -65,7 +92,6 @@ RUN if [[ ! -f /bin/nsenter ]]; then \
         rm -rf /var/cache/yum ; \
     fi
 
-
 COPY --from=builder \
     /opt/app-root/build/manager \
     /opt/app-root/build/lca-cli \
@@ -77,4 +103,7 @@ COPY --from=openshift-cli /usr/bin/oc /usr/bin/oc
 
 COPY must-gather/collection-scripts/ /usr/bin/
 
-ENTRYPOINT ["/usr/local/bin/manager"]
+# The entrypoint script will set the environment variable for `RELATED_IMAGE_RECERT_IMAGE` and then start the binary
+COPY --from=overlay /tmp/recert_image.sh /recert_image.sh
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
