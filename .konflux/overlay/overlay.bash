@@ -266,18 +266,19 @@ parse_args() {
 
 overlay_release()
 {
-    echo "Overlaying relase..."
+    echo "Overlaying release..."
 
     local display_name="lifecycle-agent-operator"
     local description="lifecycle-agent-operator"
-    local version="4.18.0"
+    local version="4.18.1"
     local name="lifecycle-agent-operator"
     local name_version="$name.v$version"
     local manager="lifecycle-agent-operator"
-    local skip_range=">=4.9.0 <4.18.0"
+    local skip_range=">=4.9.0 <4.18.1"
     local replaces="lifecycle-agent-operator.v4.18.0"
     # min_kube_version should match ocp
-    export min_kube_version="1.28"
+    # https://access.redhat.com/solutions/4870701
+    export min_kube_version="1.31"
 
     yq e -i ".metadata.annotations[\"containerImage\"] = \"${IMAGE_TO_TARGET[$MANAGER_KEY]}\"" $ARG_CSV_FILE
     yq e -i ".spec.displayName = \"$display_name\"" $ARG_CSV_FILE
@@ -288,10 +289,15 @@ overlay_release()
     yq e -i ".spec.minKubeVersion = \"$min_kube_version\"" $ARG_CSV_FILE
 
     # dont need 'replaces' for first release in a new channel (4.18.0)
-    yq e -i "del(.spec.replaces)" $ARG_CSV_FILE
+    # yq e -i "del(.spec.replaces)" $ARG_CSV_FILE
 
     # use this from 4.18.1 onwards
-    # ./yq e -i ".spec.replaces = $replaces)" $ARG_CSV_FILE
+    yq e -i ".spec.replaces = $replaces" $ARG_CSV_FILE
+
+    # Special LCA considerations for the recert container
+    yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].name = \"RELATED_IMAGE_RECERT_IMAGE\"" $ARG_CSV_FILE
+    RECERT_VALUE=$(yq '.[] | select(.key == "recert") | .target' "$ARG_PINNING_FILE")
+    yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].value = \"$RECERT_VALUE\"" "$ARG_CSV_FILE"
 
     echo "Overlaying release completed!"
 }
