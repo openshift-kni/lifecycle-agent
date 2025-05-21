@@ -292,7 +292,7 @@ overlay_release()
     # yq e -i "del(.spec.replaces)" $ARG_CSV_FILE
 
     # use this from 4.17.1 onwards
-    yq e -i ".spec.replaces = $replaces" $ARG_CSV_FILE
+    yq e -i ".spec.replaces = \"$replaces\"" $ARG_CSV_FILE
 
     # Special LCA considerations for the recert container
     yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].name = \"RELATED_IMAGE_RECERT_IMAGE\"" $ARG_CSV_FILE
