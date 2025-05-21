@@ -294,6 +294,11 @@ overlay_release()
     # use this from 4.20.1 onwards
     # ./yq e -i ".spec.replaces = $replaces)" $ARG_CSV_FILE
 
+    # Special LCA considerations for the recert container
+    yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].name = \"RELATED_IMAGE_RECERT_IMAGE\"" $ARG_CSV_FILE
+    RECERT_VALUE=$(yq '.[] | select(.key == "recert") | .target' "$ARG_PINNING_FILE")
+    yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].value = \"$RECERT_VALUE\"" "$ARG_CSV_FILE"
+
     echo "Overlaying release completed!"
 }
 
