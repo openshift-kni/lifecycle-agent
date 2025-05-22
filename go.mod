@@ -5,6 +5,7 @@ go 1.22.4
 toolchain go1.22.7
 
 require (
+	github.com/containers/image/v5 v5.24.2
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.20.0
 	github.com/go-logr/logr v1.4.2
@@ -17,6 +18,7 @@ require (
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.23.0
 	github.com/otiai10/copy v1.14.0
+	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.47.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.1
@@ -38,16 +40,25 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.3.2 // indirect
 	github.com/cavaliercoder/go-cpio v0.0.0-20180626203310-925f9528c45e // indirect
+	github.com/containers/storage v1.45.3 // indirect
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/evanphx/json-patch v5.9.0+incompatible // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/golang/mock v1.6.0 // indirect
+	github.com/moby/sys/mountinfo v0.7.1 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.1.0-rc2 // indirect
+	github.com/opencontainers/runc v1.1.10 // indirect
+	github.com/opencontainers/runtime-spec v1.0.3-0.20220909204839-494a5a6aca78 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stolostron/kubernetes-dependency-watches v0.10.0 // indirect
+	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	gopkg.in/djherbis/times.v1 v1.3.0 // indirect

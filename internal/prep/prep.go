@@ -123,7 +123,7 @@ func getDeploymentFromDeploymentID(deploymentID string) (string, error) {
 }
 
 func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient,
-	rpmOstreeClient rpmostreeclient.IClient, seedImage, expectedVersion, imageListFile string, ibi bool) error {
+	rpmOstreeClient rpmostreeclient.IClient, seedImage, expectedVersion string, ibi bool) error {
 	log.Info("Start setupstateroot")
 
 	defer ops.UnmountAndRemoveImage(seedImage)
@@ -246,8 +246,12 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed to process etc.deletions: %w", err)
 	}
 
-	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, "containers.list"), imageListFile); err != nil {
+	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, common.ContainersListFileName), common.ContainersListFilePath); err != nil {
 		return fmt.Errorf("failed to copy image list file: %w", err)
+	}
+
+	if err := common.CopyOutsideChroot(filepath.Join(mountpoint, common.SeedClusterInfoFileName), common.IBISeedInfoFilePath); err != nil {
+		return fmt.Errorf("failed to copy %s file: %w", common.SeedClusterInfoFileName, err)
 	}
 
 	log.Info("Stateroot setup done successfully")

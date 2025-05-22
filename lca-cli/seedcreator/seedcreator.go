@@ -289,7 +289,7 @@ func (s *SeedCreator) getCsvRelatedImages(ctx context.Context) (imageList []stri
 
 func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Saving list of running containers and catalogsources.")
-	containersListFileName := s.backupDir + "/containers.list"
+	containersListFileName := filepath.Join(s.backupDir, common.ContainersListFileName)
 
 	// purge all unknown image if exists
 	s.log.Info("Cleaning image list")

@@ -43,7 +43,6 @@ const (
 	EnvPrecacheSpecFile   string = "PRECACHE_SPEC_FILE"
 	EnvMaxPullThreads     string = "MAX_PULL_THREADS"
 	EnvPrecacheBestEffort string = "PRECACHE_BEST_EFFORT"
-	ImageListFile                = "var/tmp/imageListFile"
 )
 
 // Precaching job specs
