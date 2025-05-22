@@ -383,8 +383,14 @@ func (r *ImageBasedUpgradeReconciler) launchPrecaching(ctx context.Context, imag
 	// TODO: if seedInfo.hasProxy we also require that the LCA deployment contain "NO_PROXY" + "HTTP_PROXY" + "HTTPS_PROXY" as env vars. Produce a warning and/or document this.
 	r.Log.Info("Collected seed info for precache", "seed info", fmt.Sprintf("%+v", seedInfo))
 
+	r.Log.Info("Getting mirror registry source registries from cluster")
+	mirrorRegistrySources, err := lcautils.GetMirrorRegistrySourceRegistries(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("failed to get mirror registry source registries from cluster %w", err)
+	}
+
 	r.Log.Info("Checking whether to override seed registry")
-	shouldOverrideRegistry, err := lcautils.ShouldOverrideSeedRegistry(ctx, r.Client, seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry)
+	shouldOverrideRegistry, err := lcautils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
 	if err != nil {
 		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry %w", err)
 	}
@@ -611,7 +617,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("Launching a new precache job")
-			if err := r.launchPrecaching(ctx, precache.ImageListFile, ibu); err != nil {
+			if err := r.launchPrecaching(ctx, common.ContainersListFilePath, ibu); err != nil {
 				return requeueWithError(fmt.Errorf("failed to launch precaching job: %w", err))
 			}
 			// start prep stage precache phase timing

@@ -438,13 +438,13 @@ func TestInstallationIso(t *testing.T) {
 					assert.Nil(t, overrideFile)
 				}
 				if tc.postScript {
-					postScriptFile := findFileInIgnition(t, config, common.PostDeploymentScriptPath)
+					postScriptFile := findFileInIgnition(t, config, common.IBIPostDeploymentScriptPath)
 					assert.NotNil(t, postScriptFile)
 					assert.NotNil(t, postScriptFile.Contents)
 					assert.NotNil(t, postScriptFile.Contents.Source)
 					assert.Equal(t, *postScriptFile.Contents.Source, "echo hello")
 				} else {
-					postScriptFile := findFileInIgnition(t, config, common.PostDeploymentScriptPath)
+					postScriptFile := findFileInIgnition(t, config, common.IBIPostDeploymentScriptPath)
 					assert.Nil(t, postScriptFile)
 				}
 
