@@ -2,7 +2,7 @@
 # Build arguments
 ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.21
 ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
-ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:v4.16
+ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:v4.18
 
 # Assume x86 unless otherwise specified
 ARG GOARCH="amd64"
