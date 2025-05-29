@@ -607,9 +607,14 @@ func (p *PostPivot) deleteCatalogSources(ctx context.Context, client runtimeclie
 func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client runtimeclient.Client,
 	seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 
+	mirrorRegistrySources, err := utils.GetMirrorRegistrySourceRegistries(ctx, client)
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+
 	// in case we should not override we can skip
-	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(ctx, client,
-		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry); !shouldOverride || err != nil {
+	if shouldOverride, err := utils.ShouldOverrideSeedRegistry(
+		seedClusterInfo.MirrorRegistryConfigured, seedClusterInfo.ReleaseRegistry, mirrorRegistrySources); !shouldOverride || err != nil {
 		return err //nolint:wrapcheck
 	}
 
