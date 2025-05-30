@@ -21,7 +21,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	github.com/vmware-tanzu/velero v1.16.0
+	github.com/vmware-tanzu/velero v1.16.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
