@@ -8,6 +8,11 @@ VERSION ?= 4.14.0
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
+# Konflux catalog configuration
+PACKAGE_NAME_KONFLUX = lifecycle-agent
+CATALOG_TEMPLATE_KONFLUX = .konflux/catalog/catalog-template.in.yaml
+CATALOG_KONFLUX = .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
+
 # By default we build the same architecture we are running
 # Override this by specifying a different GOARCH in your environment
 HOST_ARCH ?= $(shell uname -m)
@@ -162,13 +167,6 @@ check-coverage: install-go-test-coverage
 .PHONY: ci-job
 ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
 
-.PHONY: konflux-update
-konflux-update: konflux-task-manifest-updates
-
-.PHONY: konflux-task-manifest-updates
-konflux-task-manifest-updates:
-	hack/konflux_update_task_refs.sh .tekton/build-pipeline.yaml
-
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
 
@@ -265,7 +263,7 @@ bundle-clean: # Uninstall bundle on cluster using operator sdk.
 	oc delete ns openshift-lifecycle-agent
 
 .PHONY: opm
-OPM = ./bin/opm
+OPM ?= ./bin/opm
 opm: ## Download opm locally if necessary.
 ifeq (,$(wildcard $(OPM)))
 ifeq (,$(shell which opm 2>/dev/null))
@@ -273,7 +271,7 @@ ifeq (,$(shell which opm 2>/dev/null))
 	set -e ;\
 	mkdir -p $(dir $(OPM)) ;\
 	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.28.0/$${OS}-$${ARCH}-opm ;\
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.54.0/$${OS}-$${ARCH}-opm ;\
 	chmod +x $(OPM) ;\
 	}
 else
@@ -336,6 +334,60 @@ markdownlint: markdownlint-image  ## run the markdown linter
 		--env PULL_BASE_SHA=$(PULL_BASE_SHA) \
 		-v $$(pwd):/workdir:Z \
 		$(IMAGE_NAME)-markdownlint:latest
+
+
+##@ Konflux
+
+.PHONY: yq
+YQ ?= ./bin/yq
+yq: ## download yq if not in the path
+ifeq (,$(wildcard $(YQ)))
+ifeq (,$(shell which yq 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(YQ)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(YQ) https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_$${OS}_$${ARCH} ;\
+	chmod +x $(YQ) ;\
+	}
+else
+YQ = $(shell which yq)
+endif
+endif
+
+.PHONY: konflux-update-task-refs ## update task images
+konflux-update-task-refs: yq
+	hack/konflux-update-task-refs.sh .tekton/$(PACKAGE_NAME_KONFLUX)-4-19-build.yaml
+
+.PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
+konflux-validate-catalog-template-bundle: yq operator-sdk
+	@{ \
+	set -e ;\
+	bundle=$(shell $(YQ) ".entries[-1].image" $(CATALOG_TEMPLATE_KONFLUX)) ;\
+	echo "validating the last bundle entry: $${bundle} on catalog template: $(CATALOG_TEMPLATE_KONFLUX)" ;\
+	$(OPERATOR_SDK) bundle validate $${bundle} ;\
+	}
+
+.PHONY: konflux-validate-catalog
+konflux-validate-catalog: opm ## validate the current catalog file
+	@echo "validating catalog: .konflux/catalog/$(PACKAGE_NAME_KONFLUX)"
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+
+.PHONY: konflux-generate-catalog ## generate a quay.io catalog
+konflux-generate-catalog: yq opm
+	hack/konflux-update-catalog-template.sh --set-catalog-template-file $(CATALOG_TEMPLATE_KONFLUX) --set-bundle-builds-file .konflux/catalog/bundle.builds.in.yaml
+        # CAVEAT: for < ocp 4.17, use this opm render instead:
+        # (OPM) alpha render-template basic --output yaml ./konflux/catalog/catalog-template.yaml > .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
+	$(OPM) alpha render-template basic --output yaml --migrate-level bundle-object-to-csv-metadata $(CATALOG_TEMPLATE_KONFLUX) > $(CATALOG_KONFLUX)
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+
+.PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
+konflux-generate-catalog-production: konflux-generate-catalog
+        # overlay the bundle image for production
+	sed -i 's|quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-bundle-4-16|registry.redhat.io/openshift4/$(PACKAGE_NAME_KONFLUX)-operator-bundle|g' $(CATALOG_KONFLUX)
+        # From now on, all the related images must reference production (registry.redhat.io) exclusively
+	./hack/konflux-validate-related-images-production.sh --set-catalog-file $(CATALOG_KONFLUX)
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
 help:   ## Shows this message.
 	@echo "Available targets:"
