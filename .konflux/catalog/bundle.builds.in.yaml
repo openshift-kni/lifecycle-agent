@@ -1,2 +1,3 @@
 ---
-quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-bundle-4-18@sha256:e07e5352324a7b312f96c71dfa09be137afd38237c7c9fbfd671f545ce79f152
+# When we are ready to ship the first Konflux release, replace this with the nudge to the quay build
+quay: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:64dd601286275ccd4d8c7c633df587931f6f912bcabe39e56575cd4da5c84ec7
