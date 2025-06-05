@@ -9,6 +9,13 @@ schema: olm.package
 entries:
 - name: lifecycle-agent.v4.17.0
   skipRange: '>=4.9.0 <4.17.0'
+name: "4.17"
+package: lifecycle-agent
+schema: olm.channel
+---
+entries:
+- name: lifecycle-agent.v4.17.0
+  skipRange: '>=4.9.0 <4.17.0'
 name: stable
 package: lifecycle-agent
 schema: olm.channel
