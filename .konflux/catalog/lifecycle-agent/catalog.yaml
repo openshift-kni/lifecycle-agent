@@ -18,6 +18,22 @@ entries:
 - name: lifecycle-agent.v4.16.3
   replaces: lifecycle-agent.v4.16.2
   skipRange: '>=4.9.0 <4.16.3'
+name: "4.16"
+package: lifecycle-agent
+schema: olm.channel
+---
+entries:
+- name: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.0'
+- name: lifecycle-agent.v4.16.1
+  replaces: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.1'
+- name: lifecycle-agent.v4.16.2
+  replaces: lifecycle-agent.v4.16.1
+  skipRange: '>=4.9.0 <4.16.2'
+- name: lifecycle-agent.v4.16.3
+  replaces: lifecycle-agent.v4.16.2
+  skipRange: '>=4.9.0 <4.16.3'
 name: stable
 package: lifecycle-agent
 schema: olm.channel
