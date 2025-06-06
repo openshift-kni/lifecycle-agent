@@ -30,7 +30,7 @@ entries:
     package: lifecycle-agent
     schema: olm.channel
   # v4.18.0 bundle
-  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:64dd601286275ccd4d8c7c633df587931f6f912bcabe39e56575cd4da5c84ec7
+  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1d67bf321a84edd246a4348458369c674b6791492f519388a9008a513e8d836d
     schema: olm.bundle
 # The url for this last entry (which is for the next release) is updated by hack/konflux-update-catalog-template.sh automatically
 # It takes the input data from bundle.builds.in.yaml
