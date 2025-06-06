@@ -1,0 +1,1029 @@
+---
+defaultChannel: stable
+icon:
+  base64data: PHN2ZyBpZD0iTGF5ZXJfMSIgZGF0YS1uYW1lPSJMYXllciAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOTIgMTQ1Ij48ZGVmcz48c3R5bGU+LmNscy0xe2ZpbGw6I2UwMDt9PC9zdHlsZT48L2RlZnM+PHRpdGxlPlJlZEhhdC1Mb2dvLUhhdC1Db2xvcjwvdGl0bGU+PHBhdGggZD0iTTE1Ny43Nyw2Mi42MWExNCwxNCwwLDAsMSwuMzEsMy40MmMwLDE0Ljg4LTE4LjEsMTcuNDYtMzAuNjEsMTcuNDZDNzguODMsODMuNDksNDIuNTMsNTMuMjYsNDIuNTMsNDRhNi40Myw2LjQzLDAsMCwxLC4yMi0xLjk0bC0zLjY2LDkuMDZhMTguNDUsMTguNDUsMCwwLDAtMS41MSw3LjMzYzAsMTguMTEsNDEsNDUuNDgsODcuNzQsNDUuNDgsMjAuNjksMCwzNi40My03Ljc2LDM2LjQzLTIxLjc3LDAtMS4wOCwwLTEuOTQtMS43My0xMC4xM1oiLz48cGF0aCBjbGFzcz0iY2xzLTEiIGQ9Ik0xMjcuNDcsODMuNDljMTIuNTEsMCwzMC42MS0yLjU4LDMwLjYxLTE3LjQ2YTE0LDE0LDAsMCwwLS4zMS0zLjQybC03LjQ1LTMyLjM2Yy0xLjcyLTcuMTItMy4yMy0xMC4zNS0xNS43My0xNi42QzEyNC44OSw4LjY5LDEwMy43Ni41LDk3LjUxLjUsOTEuNjkuNSw5MCw4LDgzLjA2LDhjLTYuNjgsMC0xMS42NC01LjYtMTcuODktNS42LTYsMC05LjkxLDQuMDktMTIuOTMsMTIuNSwwLDAtOC40MSwyMy43Mi05LjQ5LDI3LjE2QTYuNDMsNi40MywwLDAsMCw0Mi41Myw0NGMwLDkuMjIsMzYuMywzOS40NSw4NC45NCwzOS40NU0xNjAsNzIuMDdjMS43Myw4LjE5LDEuNzMsOS4wNSwxLjczLDEwLjEzLDAsMTQtMTUuNzQsMjEuNzctMzYuNDMsMjEuNzdDNzguNTQsMTA0LDM3LjU4LDc2LjYsMzcuNTgsNTguNDlhMTguNDUsMTguNDUsMCwwLDEsMS41MS03LjMzQzIyLjI3LDUyLC41LDU1LC41LDc0LjIyYzAsMzEuNDgsNzQuNTksNzAuMjgsMTMzLjY1LDcwLjI4LDQ1LjI4LDAsNTYuNy0yMC40OCw1Ni43LTM2LjY1LDAtMTIuNzItMTEtMjcuMTYtMzAuODMtMzUuNzgiLz48L3N2Zz4=
+  mediatype: image/svg+xml
+name: lifecycle-agent
+schema: olm.package
+---
+entries:
+- name: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.0'
+- name: lifecycle-agent.v4.16.1
+  replaces: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.1'
+- name: lifecycle-agent.v4.16.2
+  replaces: lifecycle-agent.v4.16.1
+  skipRange: '>=4.9.0 <4.16.2'
+- name: lifecycle-agent.v4.16.3
+  replaces: lifecycle-agent.v4.16.2
+  skipRange: '>=4.9.0 <4.16.3'
+name: "4.16"
+package: lifecycle-agent
+schema: olm.channel
+---
+entries:
+- name: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.0'
+- name: lifecycle-agent.v4.16.1
+  replaces: lifecycle-agent.v4.16.0
+  skipRange: '>=4.9.0 <4.16.1'
+- name: lifecycle-agent.v4.16.2
+  replaces: lifecycle-agent.v4.16.1
+  skipRange: '>=4.9.0 <4.16.2'
+- name: lifecycle-agent.v4.16.3
+  replaces: lifecycle-agent.v4.16.2
+  skipRange: '>=4.9.0 <4.16.3'
+name: stable
+package: lifecycle-agent
+schema: olm.channel
+---
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9aa74eaa2441f73d0776744a62f6d796f1b40a9e8b1303ed25a6307b5a38863b
+name: lifecycle-agent.v4.16.0
+package: lifecycle-agent
+properties:
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: ImageBasedUpgrade
+    version: v1
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: SeedGenerator
+    version: v1
+- type: olm.package
+  value:
+    packageName: lifecycle-agent
+    version: 4.16.0
+- type: olm.csv.metadata
+  value:
+    annotations:
+      alm-examples: |-
+        [
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "ImageBasedUpgrade",
+            "metadata": {
+              "name": "upgrade"
+            },
+            "spec": {
+              "autoRollbackOnFailure": {},
+              "extraManifests": [
+                {
+                  "name": "sno-extramanifests",
+                  "namespace": "openshift-lifecycle-agent"
+                }
+              ],
+              "oadpContent": [
+                {
+                  "name": "oadp-cm-sno-backup",
+                  "namespace": "openshift-adp"
+                }
+              ],
+              "seedImageRef": {
+                "image": "quay.io/xyz",
+                "version": "4.16.0"
+              },
+              "stage": "Idle"
+            }
+          },
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "SeedGenerator",
+            "metadata": {
+              "name": "seedimage"
+            },
+            "spec": {
+              "seedImage": "quay.io/xyz"
+            }
+          }
+        ]
+      capabilities: Basic Install
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:2e1bd26cf45eb601fb2827afd5a22a837e22227473260f0f510246b015d9bc3d
+      description: The Lifecycle Agent for OpenShift provides local lifecycle management
+        services for Single Node Openshift (SNO) clusters.
+      features.operators.openshift.io/cnf: "false"
+      features.operators.openshift.io/cni: "false"
+      features.operators.openshift.io/csi: "false"
+      features.operators.openshift.io/disconnected: "true"
+      features.operators.openshift.io/fips-compliant: "true"
+      features.operators.openshift.io/proxy-aware: "true"
+      features.operators.openshift.io/tls-profiles: "false"
+      features.operators.openshift.io/token-auth-aws: "false"
+      features.operators.openshift.io/token-auth-azure: "false"
+      features.operators.openshift.io/token-auth-gcp: "false"
+      olm.skipRange: '>=4.9.0 <4.16.0'
+      operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+      operatorframework.io/suggested-namespace-template: |-
+        {
+          "apiVersion": "v1",
+          "kind": "Namespace",
+          "metadata": {
+            "name": "openshift-lifecycle-agent",
+            "annotations": {
+              "workload.openshift.io/allowed": "management"
+            }
+          }
+        }
+      operators.openshift.io/infrastructure-features: '["disconnected"]'
+      operators.openshift.io/valid-subscription: |-
+        [
+          "OpenShift Container Platform",
+          "OpenShift Platform Plus"
+        ]
+      operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
+      operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
+      provider: Red Hat
+      repository: https://github.com/openshift-kni/lifecycle-agent
+      support: Red Hat
+    apiServiceDefinitions: {}
+    crdDescriptions:
+      owned:
+      - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
+        displayName: Image-based Cluster Upgrade
+        kind: ImageBasedUpgrade
+        name: imagebasedupgrades.lca.openshift.io
+        resources:
+        - kind: Deployment
+          name: ""
+          version: apps/v1
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - displayName: Auto Rollback On Failure
+          path: autoRollbackOnFailure
+        - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
+            If not defined or set to 0, the default value of 1800 seconds (30 minutes)
+            is used.
+          displayName: Init Monitor Timeout Seconds
+          path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:number
+        - description: ExtraManifests defines the list of ConfigMap resources that
+            contain the user-specific extra manifests to be applied during the upgrade
+            post-pivot stage. Users can also add their custom catalog sources that
+            may want to retain after the upgrade.
+          displayName: Extra Manifests
+          path: extraManifests
+        - displayName: Name
+          path: extraManifests[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: extraManifests[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: OADPContent defines the list of ConfigMap resources that contain
+            the OADP Backup and Restore CRs.
+          displayName: OADP Content
+          path: oadpContent
+        - displayName: Name
+          path: oadpContent[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: oadpContent[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Seed Image Reference
+          path: seedImageRef
+        - description: Image defines the full pull-spec of the seed container image
+            to use.
+          displayName: Image
+          path: seedImageRef.image
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: PullSecretRef defines the reference to a secret with credentials
+            to pull container images.
+          displayName: Pull Secret Reference
+          path: seedImageRef.pullSecretRef
+        - displayName: Name
+          path: seedImageRef.pullSecretRef.name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: Version defines the target platform version. The value must
+            match the version of the seed image.
+          displayName: Version
+          path: seedImageRef.version
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Stage
+          path: stage
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Valid Next Stage
+          path: validNextStages
+        version: v1
+      - description: SeedGenerator is the Schema for the seedgenerators API
+        displayName: Seed Generator
+        kind: SeedGenerator
+        name: seedgenerators.lca.openshift.io
+        resources:
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - description: RecertImage defines the full pull-spec of the recert container
+            image to use.
+          displayName: Recert Image
+          path: recertImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: SeedImage defines the full pull-spec of the seed container
+            image to be created.
+          displayName: Seed Image
+          path: seedImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Status
+          path: observedGeneration
+        version: v1
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    displayName: Lifecycle Agent
+    installModes:
+    - supported: true
+      type: OwnNamespace
+    - supported: false
+      type: SingleNamespace
+    - supported: false
+      type: MultiNamespace
+    - supported: false
+      type: AllNamespaces
+    keywords:
+    - upgrade
+    labels:
+      operatorframework.io/arch.amd64: supported
+    links:
+    - name: Lifecycle Agent
+      url: https://lifecycle-agent.domain
+    maturity: alpha
+    provider:
+      name: Red Hat
+relatedImages:
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9aa74eaa2441f73d0776744a62f6d796f1b40a9e8b1303ed25a6307b5a38863b
+  name: ""
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:2e1bd26cf45eb601fb2827afd5a22a837e22227473260f0f510246b015d9bc3d
+  name: lifecycle-agent-rhel9-operator-2e1bd26cf45eb601fb2827afd5a22a837e22227473260f0f510246b015d9bc3d-annotation
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:2e1bd26cf45eb601fb2827afd5a22a837e22227473260f0f510246b015d9bc3d
+  name: manager
+- image: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:98ab407561a066a9638b8e3d774a89ceadfb98e15029e4019559eb2a7b59fe02
+  name: kube-rbac-proxy
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:35eed1827b2a8a528e9accd28363da4c87a58258c2e82102f2f2174ab7e3477b
+  name: recert_image
+schema: olm.bundle
+---
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:4be6d1ec2deda0790c6a0a0da94830cea5ccd72ab6e023f3cee7e9dbaa0028a4
+name: lifecycle-agent.v4.16.1
+package: lifecycle-agent
+properties:
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: ImageBasedUpgrade
+    version: v1
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: SeedGenerator
+    version: v1
+- type: olm.package
+  value:
+    packageName: lifecycle-agent
+    version: 4.16.1
+- type: olm.csv.metadata
+  value:
+    annotations:
+      alm-examples: |-
+        [
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "ImageBasedUpgrade",
+            "metadata": {
+              "name": "upgrade"
+            },
+            "spec": {
+              "autoRollbackOnFailure": {},
+              "extraManifests": [
+                {
+                  "name": "sno-extramanifests",
+                  "namespace": "openshift-lifecycle-agent"
+                }
+              ],
+              "oadpContent": [
+                {
+                  "name": "oadp-cm-sno-backup",
+                  "namespace": "openshift-adp"
+                }
+              ],
+              "seedImageRef": {
+                "image": "quay.io/xyz",
+                "version": "4.16.0"
+              },
+              "stage": "Idle"
+            }
+          },
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "SeedGenerator",
+            "metadata": {
+              "name": "seedimage"
+            },
+            "spec": {
+              "seedImage": "quay.io/xyz"
+            }
+          }
+        ]
+      capabilities: Basic Install
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:9e907b35db259e5110a074a25a3802ca38239757c064a5a9d00738f6bb54ec8f
+      description: The Lifecycle Agent for OpenShift provides local lifecycle management
+        services for Single Node Openshift (SNO) clusters.
+      features.operators.openshift.io/cnf: "false"
+      features.operators.openshift.io/cni: "false"
+      features.operators.openshift.io/csi: "false"
+      features.operators.openshift.io/disconnected: "true"
+      features.operators.openshift.io/fips-compliant: "true"
+      features.operators.openshift.io/proxy-aware: "true"
+      features.operators.openshift.io/tls-profiles: "false"
+      features.operators.openshift.io/token-auth-aws: "false"
+      features.operators.openshift.io/token-auth-azure: "false"
+      features.operators.openshift.io/token-auth-gcp: "false"
+      olm.skipRange: '>=4.9.0 <4.16.1'
+      operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+      operatorframework.io/suggested-namespace-template: |-
+        {
+          "apiVersion": "v1",
+          "kind": "Namespace",
+          "metadata": {
+            "name": "openshift-lifecycle-agent",
+            "annotations": {
+              "workload.openshift.io/allowed": "management"
+            }
+          }
+        }
+      operators.openshift.io/infrastructure-features: '["disconnected"]'
+      operators.openshift.io/valid-subscription: |-
+        [
+          "OpenShift Container Platform",
+          "OpenShift Platform Plus"
+        ]
+      operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
+      operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
+      provider: Red Hat
+      repository: https://github.com/openshift-kni/lifecycle-agent
+      support: Red Hat
+    apiServiceDefinitions: {}
+    crdDescriptions:
+      owned:
+      - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
+        displayName: Image-based Cluster Upgrade
+        kind: ImageBasedUpgrade
+        name: imagebasedupgrades.lca.openshift.io
+        resources:
+        - kind: Deployment
+          name: ""
+          version: apps/v1
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - displayName: Auto Rollback On Failure
+          path: autoRollbackOnFailure
+        - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
+            If not defined or set to 0, the default value of 1800 seconds (30 minutes)
+            is used.
+          displayName: Init Monitor Timeout Seconds
+          path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:number
+        - description: ExtraManifests defines the list of ConfigMap resources that
+            contain the user-specific extra manifests to be applied during the upgrade
+            post-pivot stage. Users can also add their custom catalog sources that
+            may want to retain after the upgrade.
+          displayName: Extra Manifests
+          path: extraManifests
+        - displayName: Name
+          path: extraManifests[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: extraManifests[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: OADPContent defines the list of ConfigMap resources that contain
+            the OADP Backup and Restore CRs.
+          displayName: OADP Content
+          path: oadpContent
+        - displayName: Name
+          path: oadpContent[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: oadpContent[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Seed Image Reference
+          path: seedImageRef
+        - description: Image defines the full pull-spec of the seed container image
+            to use.
+          displayName: Image
+          path: seedImageRef.image
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: PullSecretRef defines the reference to a secret with credentials
+            to pull container images.
+          displayName: Pull Secret Reference
+          path: seedImageRef.pullSecretRef
+        - displayName: Name
+          path: seedImageRef.pullSecretRef.name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: Version defines the target platform version. The value must
+            match the version of the seed image.
+          displayName: Version
+          path: seedImageRef.version
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Stage
+          path: stage
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Valid Next Stage
+          path: validNextStages
+        version: v1
+      - description: SeedGenerator is the Schema for the seedgenerators API
+        displayName: Seed Generator
+        kind: SeedGenerator
+        name: seedgenerators.lca.openshift.io
+        resources:
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - description: RecertImage defines the full pull-spec of the recert container
+            image to use.
+          displayName: Recert Image
+          path: recertImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: SeedImage defines the full pull-spec of the seed container
+            image to be created.
+          displayName: Seed Image
+          path: seedImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Status
+          path: observedGeneration
+        version: v1
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    displayName: Lifecycle Agent
+    installModes:
+    - supported: true
+      type: OwnNamespace
+    - supported: false
+      type: SingleNamespace
+    - supported: false
+      type: MultiNamespace
+    - supported: false
+      type: AllNamespaces
+    keywords:
+    - upgrade
+    labels:
+      operatorframework.io/arch.amd64: supported
+    links:
+    - name: Lifecycle Agent
+      url: https://lifecycle-agent.domain
+    maturity: alpha
+    provider:
+      name: Red Hat
+relatedImages:
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:4be6d1ec2deda0790c6a0a0da94830cea5ccd72ab6e023f3cee7e9dbaa0028a4
+  name: ""
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:9e907b35db259e5110a074a25a3802ca38239757c064a5a9d00738f6bb54ec8f
+  name: lifecycle-agent-rhel9-operator-9e907b35db259e5110a074a25a3802ca38239757c064a5a9d00738f6bb54ec8f-annotation
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:9e907b35db259e5110a074a25a3802ca38239757c064a5a9d00738f6bb54ec8f
+  name: manager
+- image: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:59335acaca515fceed5f0350c46cfcfd6037475f0cf35ae8ab41d37333039e2e
+  name: kube-rbac-proxy
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:e156aa86bfb2661e1bde06eaf4be309fad66f96a3fff652771c7546f250032f6
+  name: recert_image
+schema: olm.bundle
+---
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9ce5414fac063e4f7680d1e057966a9516ebc386f72ce483259866181f858a63
+name: lifecycle-agent.v4.16.2
+package: lifecycle-agent
+properties:
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: ImageBasedUpgrade
+    version: v1
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: SeedGenerator
+    version: v1
+- type: olm.package
+  value:
+    packageName: lifecycle-agent
+    version: 4.16.2
+- type: olm.csv.metadata
+  value:
+    annotations:
+      alm-examples: |-
+        [
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "ImageBasedUpgrade",
+            "metadata": {
+              "name": "upgrade"
+            },
+            "spec": {
+              "autoRollbackOnFailure": {},
+              "extraManifests": [
+                {
+                  "name": "sno-extramanifests",
+                  "namespace": "openshift-lifecycle-agent"
+                }
+              ],
+              "oadpContent": [
+                {
+                  "name": "oadp-cm-sno-backup",
+                  "namespace": "openshift-adp"
+                }
+              ],
+              "seedImageRef": {
+                "image": "quay.io/xyz",
+                "version": "4.16.0"
+              },
+              "stage": "Idle"
+            }
+          },
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "SeedGenerator",
+            "metadata": {
+              "name": "seedimage"
+            },
+            "spec": {
+              "seedImage": "quay.io/xyz"
+            }
+          }
+        ]
+      capabilities: Basic Install
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:b820d72018e9168381ad73b1cd8707fd4a8f37b65b5a79cf3768365d41e73fb2
+      description: The Lifecycle Agent for OpenShift provides local lifecycle management
+        services for Single Node Openshift (SNO) clusters.
+      features.operators.openshift.io/cnf: "false"
+      features.operators.openshift.io/cni: "false"
+      features.operators.openshift.io/csi: "false"
+      features.operators.openshift.io/disconnected: "true"
+      features.operators.openshift.io/fips-compliant: "true"
+      features.operators.openshift.io/proxy-aware: "true"
+      features.operators.openshift.io/tls-profiles: "false"
+      features.operators.openshift.io/token-auth-aws: "false"
+      features.operators.openshift.io/token-auth-azure: "false"
+      features.operators.openshift.io/token-auth-gcp: "false"
+      olm.skipRange: '>=4.9.0 <4.16.2'
+      operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+      operatorframework.io/suggested-namespace-template: |-
+        {
+          "apiVersion": "v1",
+          "kind": "Namespace",
+          "metadata": {
+            "name": "openshift-lifecycle-agent",
+            "annotations": {
+              "workload.openshift.io/allowed": "management"
+            }
+          }
+        }
+      operators.openshift.io/infrastructure-features: '["disconnected"]'
+      operators.openshift.io/valid-subscription: |-
+        [
+          "OpenShift Container Platform",
+          "OpenShift Platform Plus"
+        ]
+      operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
+      operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
+      provider: Red Hat
+      repository: https://github.com/openshift-kni/lifecycle-agent
+      support: Red Hat
+    apiServiceDefinitions: {}
+    crdDescriptions:
+      owned:
+      - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
+        displayName: Image-based Cluster Upgrade
+        kind: ImageBasedUpgrade
+        name: imagebasedupgrades.lca.openshift.io
+        resources:
+        - kind: Deployment
+          name: ""
+          version: apps/v1
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - displayName: Auto Rollback On Failure
+          path: autoRollbackOnFailure
+        - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
+            If not defined or set to 0, the default value of 1800 seconds (30 minutes)
+            is used.
+          displayName: Init Monitor Timeout Seconds
+          path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:number
+        - description: ExtraManifests defines the list of ConfigMap resources that
+            contain the user-specific extra manifests to be applied during the upgrade
+            post-pivot stage. Users can also add their custom catalog sources that
+            may want to retain after the upgrade.
+          displayName: Extra Manifests
+          path: extraManifests
+        - displayName: Name
+          path: extraManifests[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: extraManifests[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: OADPContent defines the list of ConfigMap resources that contain
+            the OADP Backup and Restore CRs.
+          displayName: OADP Content
+          path: oadpContent
+        - displayName: Name
+          path: oadpContent[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: oadpContent[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Seed Image Reference
+          path: seedImageRef
+        - description: Image defines the full pull-spec of the seed container image
+            to use.
+          displayName: Image
+          path: seedImageRef.image
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: PullSecretRef defines the reference to a secret with credentials
+            to pull container images.
+          displayName: Pull Secret Reference
+          path: seedImageRef.pullSecretRef
+        - displayName: Name
+          path: seedImageRef.pullSecretRef.name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: Version defines the target platform version. The value must
+            match the version of the seed image.
+          displayName: Version
+          path: seedImageRef.version
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Stage
+          path: stage
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Valid Next Stage
+          path: validNextStages
+        version: v1
+      - description: SeedGenerator is the Schema for the seedgenerators API
+        displayName: Seed Generator
+        kind: SeedGenerator
+        name: seedgenerators.lca.openshift.io
+        resources:
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - description: RecertImage defines the full pull-spec of the recert container
+            image to use.
+          displayName: Recert Image
+          path: recertImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: SeedImage defines the full pull-spec of the seed container
+            image to be created.
+          displayName: Seed Image
+          path: seedImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Status
+          path: observedGeneration
+        version: v1
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    displayName: Lifecycle Agent
+    installModes:
+    - supported: true
+      type: OwnNamespace
+    - supported: false
+      type: SingleNamespace
+    - supported: false
+      type: MultiNamespace
+    - supported: false
+      type: AllNamespaces
+    keywords:
+    - upgrade
+    labels:
+      operatorframework.io/arch.amd64: supported
+    links:
+    - name: Lifecycle Agent
+      url: https://lifecycle-agent.domain
+    maturity: alpha
+    minKubeVersion: 1.29.0
+    provider:
+      name: Red Hat
+relatedImages:
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9ce5414fac063e4f7680d1e057966a9516ebc386f72ce483259866181f858a63
+  name: ""
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:b820d72018e9168381ad73b1cd8707fd4a8f37b65b5a79cf3768365d41e73fb2
+  name: lifecycle-agent-rhel9-operator-b820d72018e9168381ad73b1cd8707fd4a8f37b65b5a79cf3768365d41e73fb2-annotation
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:b820d72018e9168381ad73b1cd8707fd4a8f37b65b5a79cf3768365d41e73fb2
+  name: manager
+- image: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:aeff839e3f0b38f77c4f773afe770fffc95f572ffe7a5319696f1dee9896795b
+  name: kube-rbac-proxy
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:7e3811dab489c3336677c23cd912ae0adc60ce2240e3f2984bdd1a46b6dd4f2e
+  name: recert_image
+schema: olm.bundle
+---
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:2efe4748feb094580a7a56500a1b67940d300559a46201e9f9b24d44075400e5
+name: lifecycle-agent.v4.16.3
+package: lifecycle-agent
+properties:
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: ImageBasedUpgrade
+    version: v1
+- type: olm.gvk
+  value:
+    group: lca.openshift.io
+    kind: SeedGenerator
+    version: v1
+- type: olm.package
+  value:
+    packageName: lifecycle-agent
+    version: 4.16.3
+- type: olm.csv.metadata
+  value:
+    annotations:
+      alm-examples: |-
+        [
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "ImageBasedUpgrade",
+            "metadata": {
+              "name": "upgrade"
+            },
+            "spec": {
+              "autoRollbackOnFailure": {},
+              "extraManifests": [
+                {
+                  "name": "sno-extramanifests",
+                  "namespace": "openshift-lifecycle-agent"
+                }
+              ],
+              "oadpContent": [
+                {
+                  "name": "oadp-cm-sno-backup",
+                  "namespace": "openshift-adp"
+                }
+              ],
+              "seedImageRef": {
+                "image": "quay.io/xyz",
+                "version": "4.16.0"
+              },
+              "stage": "Idle"
+            }
+          },
+          {
+            "apiVersion": "lca.openshift.io/v1",
+            "kind": "SeedGenerator",
+            "metadata": {
+              "name": "seedimage"
+            },
+            "spec": {
+              "seedImage": "quay.io/xyz"
+            }
+          }
+        ]
+      capabilities: Basic Install
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:6c603c89401823086d7a02d7ad221da44d8c84000ba63dd30675ae0cbcacc95f
+      description: The Lifecycle Agent for OpenShift provides local lifecycle management
+        services for Single Node Openshift (SNO) clusters.
+      features.operators.openshift.io/cnf: "false"
+      features.operators.openshift.io/cni: "false"
+      features.operators.openshift.io/csi: "false"
+      features.operators.openshift.io/disconnected: "true"
+      features.operators.openshift.io/fips-compliant: "true"
+      features.operators.openshift.io/proxy-aware: "true"
+      features.operators.openshift.io/tls-profiles: "false"
+      features.operators.openshift.io/token-auth-aws: "false"
+      features.operators.openshift.io/token-auth-azure: "false"
+      features.operators.openshift.io/token-auth-gcp: "false"
+      olm.skipRange: '>=4.9.0 <4.16.3'
+      operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+      operatorframework.io/suggested-namespace-template: |-
+        {
+          "apiVersion": "v1",
+          "kind": "Namespace",
+          "metadata": {
+            "name": "openshift-lifecycle-agent",
+            "annotations": {
+              "workload.openshift.io/allowed": "management"
+            }
+          }
+        }
+      operators.openshift.io/infrastructure-features: '["disconnected"]'
+      operators.openshift.io/valid-subscription: |-
+        [
+          "OpenShift Container Platform",
+          "OpenShift Platform Plus"
+        ]
+      operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
+      operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
+      provider: Red Hat
+      repository: https://github.com/openshift-kni/lifecycle-agent
+      support: Red Hat
+    apiServiceDefinitions: {}
+    crdDescriptions:
+      owned:
+      - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
+        displayName: Image-based Cluster Upgrade
+        kind: ImageBasedUpgrade
+        name: imagebasedupgrades.lca.openshift.io
+        resources:
+        - kind: Deployment
+          name: ""
+          version: apps/v1
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - displayName: Auto Rollback On Failure
+          path: autoRollbackOnFailure
+        - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
+            If not defined or set to 0, the default value of 1800 seconds (30 minutes)
+            is used.
+          displayName: Init Monitor Timeout Seconds
+          path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:number
+        - description: ExtraManifests defines the list of ConfigMap resources that
+            contain the user-specific extra manifests to be applied during the upgrade
+            post-pivot stage. Users can also add their custom catalog sources that
+            may want to retain after the upgrade.
+          displayName: Extra Manifests
+          path: extraManifests
+        - displayName: Name
+          path: extraManifests[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: extraManifests[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: OADPContent defines the list of ConfigMap resources that contain
+            the OADP Backup and Restore CRs.
+          displayName: OADP Content
+          path: oadpContent
+        - displayName: Name
+          path: oadpContent[0].name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Namespace
+          path: oadpContent[0].namespace
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Seed Image Reference
+          path: seedImageRef
+        - description: Image defines the full pull-spec of the seed container image
+            to use.
+          displayName: Image
+          path: seedImageRef.image
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: PullSecretRef defines the reference to a secret with credentials
+            to pull container images.
+          displayName: Pull Secret Reference
+          path: seedImageRef.pullSecretRef
+        - displayName: Name
+          path: seedImageRef.pullSecretRef.name
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: Version defines the target platform version. The value must
+            match the version of the seed image.
+          displayName: Version
+          path: seedImageRef.version
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - displayName: Stage
+          path: stage
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Valid Next Stage
+          path: validNextStages
+        version: v1
+      - description: SeedGenerator is the Schema for the seedgenerators API
+        displayName: Seed Generator
+        kind: SeedGenerator
+        name: seedgenerators.lca.openshift.io
+        resources:
+        - kind: Namespace
+          name: ""
+          version: v1
+        specDescriptors:
+        - description: RecertImage defines the full pull-spec of the recert container
+            image to use.
+          displayName: Recert Image
+          path: recertImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        - description: SeedImage defines the full pull-spec of the seed container
+            image to be created.
+          displayName: Seed Image
+          path: seedImage
+          x-descriptors:
+          - urn:alm:descriptor:com.tectonic.ui:text
+        statusDescriptors:
+        - displayName: Conditions
+          path: conditions
+          x-descriptors:
+          - urn:alm:descriptor:io.kubernetes.conditions
+        - displayName: Status
+          path: observedGeneration
+        version: v1
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    displayName: Lifecycle Agent
+    installModes:
+    - supported: true
+      type: OwnNamespace
+    - supported: false
+      type: SingleNamespace
+    - supported: false
+      type: MultiNamespace
+    - supported: false
+      type: AllNamespaces
+    keywords:
+    - upgrade
+    labels:
+      operatorframework.io/arch.amd64: supported
+    links:
+    - name: Lifecycle Agent
+      url: https://lifecycle-agent.domain
+    maturity: alpha
+    minKubeVersion: 1.29.0
+    provider:
+      name: Red Hat
+relatedImages:
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:2efe4748feb094580a7a56500a1b67940d300559a46201e9f9b24d44075400e5
+  name: ""
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:6c603c89401823086d7a02d7ad221da44d8c84000ba63dd30675ae0cbcacc95f
+  name: lifecycle-agent-rhel9-operator-6c603c89401823086d7a02d7ad221da44d8c84000ba63dd30675ae0cbcacc95f-annotation
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:6c603c89401823086d7a02d7ad221da44d8c84000ba63dd30675ae0cbcacc95f
+  name: manager
+- image: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:d646427f21f61e65037a5e45df73f73832370bb079252767ca1c02a8088d2abf
+  name: kube-rbac-proxy
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:c91def5d3da4e777d2555c354e39bf021d9f499993f86614969dee5ecc00fc49
+  name: recert_image
+schema: olm.bundle
