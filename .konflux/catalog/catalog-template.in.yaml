@@ -33,5 +33,5 @@ entries:
   # - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:placeholder-update-me-after-release
   #   schema: olm.bundle
   # The url for this last entry is updated by hack/konflux-update-catalog-template.sh automatically
-  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:3f0f966c55213480ff58c5f0e34a015e0b785391110ee065135733e5992998ef 
+  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:3f0f966c55213480ff58c5f0e34a015e0b785391110ee065135733e5992998ef
     schema: olm.bundle
