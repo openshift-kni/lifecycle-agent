@@ -10,26 +10,28 @@ entries:
     schema: olm.package
   # Channel entries for next release
   - entries:
-      - name: lifecycle-agent.v4.19.1
-        skipRange: '>=4.9.0 <4.19.1'
-        replaces: 'lifecycle-agent.v4.19.0'
+      # After 4.19.0 is released, add 4.19.1 back using the quay nudged bundle
+      # - name: lifecycle-agent.v4.19.1
+      #   skipRange: '>=4.9.0 <4.19.1'
+      #   replaces: 'lifecycle-agent.v4.19.0'
       - name: lifecycle-agent.v4.19.0
         skipRange: '>=4.9.0 <4.19.0'
     name: stable
     package: lifecycle-agent
     schema: olm.channel
   - entries:
-      - name: lifecycle-agent.v4.19.1
-        skipRange: '>=4.9.0 <4.19.1'
-        replaces: 'lifecycle-agent.v4.19.0'
+      # After 4.19.0 is released, add 4.19.1 back using the quay nudged bundle
+      # - name: lifecycle-agent.v4.19.1
+      #   skipRange: '>=4.9.0 <4.19.1'
+      #   replaces: 'lifecycle-agent.v4.19.0'
       - name: lifecycle-agent.v4.19.0
         skipRange: '>=4.9.0 <4.19.0'
     name: "4.19"
     package: lifecycle-agent
     schema: olm.channel
   # v4.19.0 bundle
-  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:64dd601286275ccd4d8c7c633df587931f6f912bcabe39e56575cd4da5c84ec7
-    schema: olm.bundle
+  # - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:placeholder-update-me-after-release
+  #   schema: olm.bundle
   # The url for this last entry is updated by hack/konflux-update-catalog-template.sh automatically
-  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-bundle-4-18@sha256:04063befc2b24ec09b88683c8e948b51b8602c59b69aa2551ae0015dc1c336fc
+  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19@sha256:b68be78cd14f00c305be2401c121942bc2be1836d310a40f0b82c5fd4e67804e 
     schema: olm.bundle
