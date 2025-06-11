@@ -30,8 +30,21 @@ ifndef GOARCH
 	GOARCH=$(HOST_ARCH)
 endif
 
-# Path to go binary in local
-GOBIN ?= $$(go env GOPATH)/bin
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# This is a requirement for 'setup-envtest.sh' in the test target.
+# Options are set to exit when a recipe line exits non-zero or a piped command fails.
+export PATH  := $(PATH):$(PWD)/bin
+GOFLAGS := -mod=mod
+SHELL = /usr/bin/env GOFLAGS=$(GOFLAGS) bash -o pipefail
+
+.SHELLFLAGS = -ec
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -271,7 +284,7 @@ ifeq (,$(shell which opm 2>/dev/null))
 	set -e ;\
 	mkdir -p $(dir $(OPM)) ;\
 	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.54.0/$${OS}-$${ARCH}-opm ;\
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.52.0/$${OS}-$${ARCH}-opm ;\
 	chmod +x $(OPM) ;\
 	}
 else
@@ -376,9 +389,7 @@ konflux-validate-catalog: opm ## validate the current catalog file
 .PHONY: konflux-generate-catalog ## generate a quay.io catalog
 konflux-generate-catalog: yq opm
 	hack/konflux-update-catalog-template.sh --set-catalog-template-file $(CATALOG_TEMPLATE_KONFLUX) --set-bundle-builds-file .konflux/catalog/bundle.builds.in.yaml
-        # CAVEAT: for < ocp 4.17, use this opm render instead:
-        # (OPM) alpha render-template basic --output yaml ./konflux/catalog/catalog-template.yaml > .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
-	$(OPM) alpha render-template basic --output yaml --migrate-level bundle-object-to-csv-metadata $(CATALOG_TEMPLATE_KONFLUX) > $(CATALOG_KONFLUX)
+	$(OPM) alpha render-template basic --output yaml $(CATALOG_TEMPLATE_KONFLUX) > .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
 	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
 .PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
