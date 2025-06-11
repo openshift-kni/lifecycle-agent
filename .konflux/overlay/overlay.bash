@@ -268,14 +268,17 @@ overlay_release()
 {
     echo "Overlaying release..."
 
-    local display_name="lifecycle-agent-operator"
-    local description="lifecycle-agent-operator"
+    local display_name="Lifecycle Agent"
+    local description="# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
     local version="4.18.1"
-    local name="lifecycle-agent-operator"
+    local name="lifecycle-agent"
     local name_version="$name.v$version"
     local manager="lifecycle-agent-operator"
     local skip_range=">=4.9.0 <4.18.1"
-    local replaces="lifecycle-agent-operator.v4.18.0"
+    local replaces="lifecycle-agent.v4.18.0"
     # min_kube_version should match ocp
     # https://access.redhat.com/solutions/4870701
     export min_kube_version="1.31"
