@@ -4,7 +4,7 @@
   target: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-17@sha256:9acbcda9e71ccfe36327228eaf94e4f75ccd4bdbced80258c3d852ffa61768df
 #
 # Recert
-- key: recert
+- key: recert_image
   source: quay.io/edge-infrastructure/recert:v0
   target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-17@sha256:074e491445de98b1023c1224205c0ce946884c74f0ef129b7aa9cb16e14ec571
 #
