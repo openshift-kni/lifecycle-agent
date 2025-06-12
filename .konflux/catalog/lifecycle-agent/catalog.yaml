@@ -20,8 +20,8 @@ name: stable
 package: lifecycle-agent
 schema: olm.channel
 ---
-image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:3f0f966c55213480ff58c5f0e34a015e0b785391110ee065135733e5992998ef
-name: lifecycle-agent-operator.v4.20.0
+image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
+name: lifecycle-agent.v4.20.0
 package: lifecycle-agent
 properties:
 - type: olm.gvk
@@ -82,7 +82,7 @@ properties:
           }
         ]
       capabilities: Basic Install
-      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:7ad45debe07dddf55b93cc7418219a25786e2a54c3967e0dfa6b87d91f70a92e
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:8a7355eea102cdfa6425b950c7b0a9b499a113385715fd75556058247bbb4c4a
       description: The Lifecycle Agent for OpenShift provides local lifecycle management
         services for Single Node Openshift (SNO) clusters.
       features.operators.openshift.io/cnf: "false"
@@ -227,8 +227,11 @@ properties:
         - displayName: Status
           path: observedGeneration
         version: v1
-    description: lifecycle-agent-operator
-    displayName: lifecycle-agent-operator
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift\n
+      \     provides local lifecycle management services \nfor Single Node Openshift
+      (SNO)\n      clusters.\n\n## Where to find more information\nYou can find additional
+      guidance\n      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    displayName: Lifecycle Agent
     installModes:
     - supported: true
       type: OwnNamespace
@@ -250,10 +253,10 @@ properties:
     provider:
       name: Red Hat
 relatedImages:
-- image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:3f0f966c55213480ff58c5f0e34a015e0b785391110ee065135733e5992998ef
+- image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
   name: ""
-- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:7ad45debe07dddf55b93cc7418219a25786e2a54c3967e0dfa6b87d91f70a92e
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:8a7355eea102cdfa6425b950c7b0a9b499a113385715fd75556058247bbb4c4a
   name: manager
-- image: registry.redhat.io/openshift4/recert-rhel9@sha256:f4befd26baa433dd7bb1b2cef23f0693b65114b96062c6f55581627380723710
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:643a2c1c76bba53722de8a356dbec232e9bd91a2efdae79c5df1e83926b35921
   name: recert
 schema: olm.bundle
