@@ -20,7 +20,7 @@ name: stable
 package: lifecycle-agent
 schema: olm.channel
 ---
-image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9eb1a01cce587c2cb2d82da436f80eda98a8069514b03347b695469510c44781
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1c6a6b6787a3d5da9cab56806a6ba921df81994d9966a5251644536a869d0781
 name: lifecycle-agent.v4.19.0
 package: lifecycle-agent
 properties:
@@ -253,10 +253,10 @@ properties:
     provider:
       name: Red Hat
 relatedImages:
-- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9eb1a01cce587c2cb2d82da436f80eda98a8069514b03347b695469510c44781
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1c6a6b6787a3d5da9cab56806a6ba921df81994d9966a5251644536a869d0781
   name: ""
 - image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:c15305470364b465df1817dda9849380b69eb6ec88f224e9287ebbab70b00d21
   name: manager
 - image: registry.redhat.io/openshift4/recert-rhel9@sha256:5d90520913d433a72531bc59c948ca1baa3a8530242ea5653ff56ba2daf4b57f
-  name: recert
+  name: recert_image
 schema: olm.bundle
