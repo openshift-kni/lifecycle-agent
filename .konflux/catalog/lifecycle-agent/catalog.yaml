@@ -20,7 +20,7 @@ name: stable
 package: lifecycle-agent
 schema: olm.channel
 ---
-image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
 name: lifecycle-agent.v4.20.0
 package: lifecycle-agent
 properties:
@@ -253,7 +253,7 @@ properties:
     provider:
       name: Red Hat
 relatedImages:
-- image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:8f02ca4c651aef2bdf436c7fb3cef1b7d5c92c699497ef35da2c3873a6d91e2f
   name: ""
 - image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:8a7355eea102cdfa6425b950c7b0a9b499a113385715fd75556058247bbb4c4a
   name: manager
