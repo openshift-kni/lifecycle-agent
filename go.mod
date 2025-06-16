@@ -6,7 +6,7 @@ require (
 	github.com/containers/image/v5 v5.34.3
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.21.0
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.5.0
 	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
