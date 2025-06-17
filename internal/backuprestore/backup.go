@@ -565,8 +565,11 @@ func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []v
 
 func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) error {
 	if err := h.waitForDeleteBackupRequests(ctx, backups); err != nil {
-		h.Log.Error(err, "Failed to delete backups")
-		return NewBRFailedError("backup", fmt.Sprintf("failed to delete backups: %s", err.Error()))
+		if errors.Is(err, context.DeadlineExceeded) {
+			return NewBRFailedError("backup", "timed out on waiting for DeleteBackupRequests to be processed and deleted.")
+		} else {
+			return NewBRFailedError("backup", fmt.Sprintf("failed to delete backups: %s.", err.Error()))
+		}
 	}
 
 	for _, backup := range backups {
