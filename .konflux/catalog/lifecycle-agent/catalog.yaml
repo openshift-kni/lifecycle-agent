@@ -20,7 +20,7 @@ name: stable
 package: lifecycle-agent
 schema: olm.channel
 ---
-image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1c6a6b6787a3d5da9cab56806a6ba921df81994d9966a5251644536a869d0781
+image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:0ae3d823f3abc25d6a706278d114677616e210038d037a560d83088dfb3906b0
 name: lifecycle-agent.v4.19.0
 package: lifecycle-agent
 properties:
@@ -82,7 +82,7 @@ properties:
           }
         ]
       capabilities: Basic Install
-      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:c15305470364b465df1817dda9849380b69eb6ec88f224e9287ebbab70b00d21
+      containerImage: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:fc6a86a98080d6e7bde1039cd4a9679f89dd1a4b50def88d2b73348e2f7ff03b
       description: The Lifecycle Agent for OpenShift provides local lifecycle management
         services for Single Node Openshift (SNO) clusters.
       features.operators.openshift.io/cnf: "false"
@@ -109,8 +109,11 @@ properties:
           }
         }
       operators.openshift.io/infrastructure-features: '["disconnected"]'
-      operators.openshift.io/valid-subscription: '["OpenShift Container Platform",
-        "OpenShift Platform Plus"]'
+      operators.openshift.io/valid-subscription: |-
+        [
+          "OpenShift Container Platform",
+          "OpenShift Platform Plus"
+        ]
       operators.operatorframework.io/builder: operator-sdk-v1.28.0-ocp
       operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
       provider: Red Hat
@@ -227,10 +230,10 @@ properties:
         - displayName: Status
           path: observedGeneration
         version: v1
-    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift\n
-      \     provides local lifecycle management services \nfor Single Node Openshift
-      (SNO)\n      clusters.\n\n## Where to find more information\nYou can find additional
-      guidance\n      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
+    description: "# Lifecycle Agent for OpenShift\nThe Lifecycle Agent for OpenShift
+      provides local lifecycle management services \nfor Single Node Openshift (SNO)
+      clusters.\n\n## Where to find more information\nYou can find additional guidance
+      in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
     displayName: Lifecycle Agent
     installModes:
     - supported: true
@@ -253,10 +256,12 @@ properties:
     provider:
       name: Red Hat
 relatedImages:
-- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1c6a6b6787a3d5da9cab56806a6ba921df81994d9966a5251644536a869d0781
+- image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:0ae3d823f3abc25d6a706278d114677616e210038d037a560d83088dfb3906b0
   name: ""
-- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:c15305470364b465df1817dda9849380b69eb6ec88f224e9287ebbab70b00d21
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:fc6a86a98080d6e7bde1039cd4a9679f89dd1a4b50def88d2b73348e2f7ff03b
+  name: lifecycle-agent-rhel9-operator-fc6a86a98080d6e7bde1039cd4a9679f89dd1a4b50def88d2b73348e2f7ff03b-annotation
+- image: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:fc6a86a98080d6e7bde1039cd4a9679f89dd1a4b50def88d2b73348e2f7ff03b
   name: manager
-- image: registry.redhat.io/openshift4/recert-rhel9@sha256:5d90520913d433a72531bc59c948ca1baa3a8530242ea5653ff56ba2daf4b57f
+- image: registry.redhat.io/openshift4/recert-rhel9@sha256:3c0d5a3a0d94def07fb3902e14adbf47d483ef81f06e3cfa2e9cb8678abcc0c7
   name: recert_image
 schema: olm.bundle
