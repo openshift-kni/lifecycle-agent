@@ -273,11 +273,11 @@ overlay_release()
       provides local lifecycle management services \nfor Single Node Openshift (SNO)
       clusters.\n\n## Where to find more information\nYou can find additional guidance
       in the [agent repository](https://github.com/openshift-kni/lifecycle-agent).\n"
-    local version="4.19.0"
+    local version="4.19.1"
     local name="lifecycle-agent"
     local name_version="$name.v$version"
     local manager="lifecycle-agent-operator"
-    local skip_range=">=4.9.0 <4.19.0"
+    local skip_range=">=4.9.0 <4.19.1"
     local replaces="lifecycle-agent.v4.19.0"
     # min_kube_version should match ocp
     # https://access.redhat.com/solutions/4870701
@@ -292,10 +292,10 @@ overlay_release()
     yq e -i ".spec.minKubeVersion = \"$min_kube_version\"" $ARG_CSV_FILE
 
     # dont need 'replaces' for first release in a new channel (4.19.0)
-    yq e -i "del(.spec.replaces)" $ARG_CSV_FILE
+    # yq e -i "del(.spec.replaces)" $ARG_CSV_FILE
 
     # use this from 4.19.1 onwards
-    # yq e -i ".spec.replaces = \"$replaces\"" $ARG_CSV_FILE
+    yq e -i ".spec.replaces = \"$replaces\"" $ARG_CSV_FILE
 
     # Special LCA considerations for the recert container
     yq e -i ".spec.install.spec.deployments[0].spec.template.spec.containers[0].env[3].name = \"RELATED_IMAGE_RECERT_IMAGE\"" $ARG_CSV_FILE
