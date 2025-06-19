@@ -40,15 +40,7 @@ spec:
     matchLabels:
       control-plane: controller-manager
   egress:
-    - ports:
-      - protocol: TCP
-        port: %s
-      - protocol: TCP
-        port: 53
-      - protocol: UDP
-        port: 53
-      - protocol: TCP
-        port: 443
+    - {}
   ingress:
     - ports:
       - protocol: TCP
@@ -69,15 +61,7 @@ spec:
     matchLabels:
       job-name: %[1]s
   egress:
-    - ports:
-      - protocol: TCP
-        port: %[3]s
-      - protocol: TCP
-        port: 53
-      - protocol: UDP
-        port: 53
-      - protocol: TCP
-        port: 443
+    - {}
   policyTypes:
     - Egress
 `
@@ -98,9 +82,9 @@ func parsePolicy(template string, args ...any) (*networkingv1.NetworkPolicy, err
 }
 
 func (p *Policy) InstallPolicies(cfg *rest.Config) (string, error) {
-	p0, err0 := parsePolicy(controllerTmpl, p.Namespace, parsePort(cfg.Host), parsePort(p.MetricAddr))
-	p1, err2 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace, parsePort(cfg.Host))
-	p2, err3 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace, parsePort(cfg.Host))
+	p0, err0 := parsePolicy(controllerTmpl, p.Namespace, parsePort(p.MetricAddr))
+	p1, err2 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace)
+	p2, err3 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace)
 	p3, err1 := parsePolicy(defaultDenyTmpl, p.Namespace)
 	if err := cmp.Or(err0, err1, err2, err3); err != nil {
 		return "", fmt.Errorf("failed to create NetworkPolicy from template: %w", err)
