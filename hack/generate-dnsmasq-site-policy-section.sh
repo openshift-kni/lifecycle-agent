@@ -178,6 +178,7 @@ longopts_str=$(IFS=,; echo "${longopts[*]}")
 
 if ! OPTS=$(getopt -o "hn:d:i:mw:" --long "${longopts_str}" --name "$0" -- "$@"); then
     usage
+    # shellcheck disable=SC2317
     exit 1
 fi
 

@@ -319,6 +319,7 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 				case k8serrors.IsInvalid(err), k8serrors.IsBadRequest(err): // Capture both invalid syntax and webhook validation errors
 					warnings = append(warnings, fmt.Sprintf("%s[%s] - dryrun failed in namespace %s: %s", mKind, mName, mNamespace, err.Error()))
 				default: // Capture unknown runtime error
+					// nolint: staticcheck
 					return validationWarn, fmt.Errorf(fmt.Sprintf("failed to validate manifest with dryrun: %v", err.Error()))
 				}
 			}
@@ -524,6 +525,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 				if errors.As(err, &groupDiscoveryErr) || meta.IsNoMatchError(err) {
 					return NewEMFailedError(errMsg)
 				}
+				// nolint: staticcheck
 				return fmt.Errorf(errMsg)
 			}
 

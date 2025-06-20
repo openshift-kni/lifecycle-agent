@@ -8,8 +8,43 @@ VERSION ?= 4.14.0
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
-# Path to go binary in local
-GOBIN ?= $$(go env GOPATH)/bin
+# Konflux catalog configuration
+PACKAGE_NAME_KONFLUX = lifecycle-agent
+CATALOG_TEMPLATE_KONFLUX = .konflux/catalog/catalog-template.in.yaml
+CATALOG_KONFLUX = .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
+
+# By default we build the same architecture we are running
+# Override this by specifying a different GOARCH in your environment
+HOST_ARCH ?= $(shell uname -m)
+
+# Convert from uname format to GOARCH format
+ifeq ($(HOST_ARCH),aarch64)
+	HOST_ARCH=arm64
+endif
+ifeq ($(HOST_ARCH),x86_64)
+	HOST_ARCH=amd64
+endif
+
+# Define GOARCH as HOST_ARCH if not otherwise defined
+ifndef GOARCH
+	GOARCH=$(HOST_ARCH)
+endif
+
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# This is a requirement for 'setup-envtest.sh' in the test target.
+# Options are set to exit when a recipe line exits non-zero or a piped command fails.
+export PATH  := $(PATH):$(PWD)/bin
+GOFLAGS := -mod=mod
+SHELL = /usr/bin/env GOFLAGS=$(GOFLAGS) bash -o pipefail
+
+.SHELLFLAGS = -ec
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -55,7 +90,7 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(VERSION)
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-OPERATOR_SDK = $(shell pwd)/bin/x86_64/operator-sdk
+OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 MOCK_GEN = $(shell pwd)/bin/mockgen
@@ -119,6 +154,11 @@ bashate: ## Run bashate.
 	@echo "Running bashate"
 	hack/bashate.sh
 
+.PHONY: yamllint
+yamllint: ## Run yamllint
+	@echo "Running yamllint"
+	hack/yamllint.sh
+
 .PHONY: scorecard
 scorecard: operator-sdk ## Run scorecard tests against bundle
 ifeq ($(KUBECONFIG),)
@@ -138,7 +178,7 @@ check-coverage: install-go-test-coverage
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate bundle-check
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
@@ -147,7 +187,11 @@ OPERATOR_SDK_VERSION = $(shell $(OPERATOR_SDK) version 2>/dev/null | sed 's/^ope
 OPERATOR_SDK_VERSION_REQ = v1.28.0-ocp
 operator-sdk: ## Download operator-sdk locally if necessary.
 ifneq ($(OPERATOR_SDK_VERSION_REQ),$(OPERATOR_SDK_VERSION))
-	curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-linux-x86_64.tar.gz | tar -xz -C bin/
+	@{ \
+	set -e ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell arch) && if [ $${ARCH} == "arm64" ]; then ARCH=aarch64; fi; \
+	curl -Lv https://mirror.openshift.com/pub/openshift-v4/$${ARCH}/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-$${OS}-$${ARCH}.tar.gz | tar --strip-components 2 -xz -C bin/ ;\
+	}
 endif
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
@@ -177,7 +221,7 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
-	${ENGINE} build -t ${IMG} -f Dockerfile .
+	${ENGINE} build --arch ${GOARCH} --build-arg GOARCH=${GOARCH} -t ${IMG} -f Dockerfile .
 
 docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}
@@ -232,7 +276,7 @@ bundle-clean: # Uninstall bundle on cluster using operator sdk.
 	oc delete ns openshift-lifecycle-agent
 
 .PHONY: opm
-OPM = ./bin/opm
+OPM ?= ./bin/opm
 opm: ## Download opm locally if necessary.
 ifeq (,$(wildcard $(OPM)))
 ifeq (,$(shell which opm 2>/dev/null))
@@ -240,7 +284,7 @@ ifeq (,$(shell which opm 2>/dev/null))
 	set -e ;\
 	mkdir -p $(dir $(OPM)) ;\
 	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.28.0/$${OS}-$${ARCH}-opm ;\
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.52.0/$${OS}-$${ARCH}-opm ;\
 	chmod +x $(OPM) ;\
 	}
 else
@@ -304,6 +348,62 @@ markdownlint: markdownlint-image  ## run the markdown linter
 		-v $$(pwd):/workdir:Z \
 		$(IMAGE_NAME)-markdownlint:latest
 
+
+##@ Konflux
+
+.PHONY: yq
+YQ ?= ./bin/yq
+yq: ## download yq if not in the path
+ifeq (,$(wildcard $(YQ)))
+ifeq (,$(shell which yq 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(YQ)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(YQ) https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_$${OS}_$${ARCH} ;\
+	chmod +x $(YQ) ;\
+	}
+else
+YQ = $(shell which yq)
+endif
+endif
+
+.PHONY: konflux-update-task-refs ## update task images
+konflux-update-task-refs: yq
+	hack/konflux-update-task-refs.sh .tekton/build-pipeline.yaml
+	hack/konflux-update-task-refs.sh .tekton/fbc-pipeline.yaml
+
+.PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
+konflux-validate-catalog-template-bundle: yq operator-sdk
+	@{ \
+	set -e ;\
+	bundle=$(shell $(YQ) ".entries[-1].image" $(CATALOG_TEMPLATE_KONFLUX)) ;\
+	echo "validating the last bundle entry: $${bundle} on catalog template: $(CATALOG_TEMPLATE_KONFLUX)" ;\
+	$(OPERATOR_SDK) bundle validate $${bundle} ;\
+	}
+
+.PHONY: konflux-validate-catalog
+konflux-validate-catalog: opm ## validate the current catalog file
+	@echo "validating catalog: .konflux/catalog/$(PACKAGE_NAME_KONFLUX)"
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+
+.PHONY: konflux-generate-catalog ## generate a quay.io catalog
+konflux-generate-catalog: yq opm
+	hack/konflux-update-catalog-template.sh --set-catalog-template-file $(CATALOG_TEMPLATE_KONFLUX) --set-bundle-builds-file .konflux/catalog/bundle.builds.in.yaml
+	$(OPM) alpha render-template basic --output yaml $(CATALOG_TEMPLATE_KONFLUX) > .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+
+.PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
+konflux-generate-catalog-production: konflux-generate-catalog
+        # overlay the bundle image for production
+	sed -i 's|quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-operator-bundle-4-14|registry.redhat.io/openshift4/$(PACKAGE_NAME_KONFLUX)-operator-bundle|g' $(CATALOG_KONFLUX)
+        # From now on, all the related images must reference production (registry.redhat.io) exclusively
+	./hack/konflux-validate-related-images-production.sh --set-catalog-file $(CATALOG_KONFLUX)
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+
 help:   ## Shows this message.
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+clean:
+	rm -rf bin/

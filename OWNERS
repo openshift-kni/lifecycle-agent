@@ -1,34 +1,14 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 
+component: "Telco Edge"
+subcomponent: "LCA"
+
 filters:
   ".*":
     reviewers:
-    - browsell
-    - donpenney
-    - eranco74
-    - imiller0
-    - jc-rh
-    - oourfali
-    - romfreiman
-    - sakhoury
-    - sudomakeinstall2
-    - Missxiaoguo
-    - pixelsoccupied
-    - tsorya
-    - javipolo
-    - leo8a
-    - omertuc
-    - mresvanis
+      - lifecycle-agent-reviewers
     approvers:
-    - browsell
-    - donpenney
-    - eranco74
-    - omertuc
-    - imiller0
-    - jc-rh
-    - oourfali
-    - romfreiman
-    - tsorya
+      - lifecycle-agent-approvers
   ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed

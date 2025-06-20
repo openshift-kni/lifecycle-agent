@@ -1,6 +1,24 @@
 #####################################################################################################
+# Build arguments
+ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.21
+ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
+# Although this is the 4.14 release, we need a rhel9 binary and that is only available in 4.16+
+ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:v4.16
+
+# Assume x86 unless otherwise specified
+ARG GOARCH="amd64"
+
 # Build the binaries
-FROM registry.access.redhat.com/ubi9/go-toolset:1.21 as builder
+FROM --platform=linux/${GOARCH} ${BUILDER_IMAGE} as builder
+
+# Pass GOARCH into builder
+ARG GOARCH
+
+# Default Konflux to false
+ARG KONFLUX="false"
+
+# Explicitly set the working directory
+WORKDIR /opt/app-root
 
 # Bring in the go dependencies before anything else so we can take
 # advantage of caching these layers in future builds.
@@ -18,15 +36,30 @@ COPY internal internal
 COPY main main
 COPY utils utils
 
-# Build the binaries
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ib-cli main/ib-cli/main.go
+# For Konflux, compile with FIPS enabled
+# Otherwise compile normally
+RUN if [[ "${KONFLUX}" == "true" ]]; then \
+        echo "Compiling with fips" && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -o build/manager main/main.go && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/lca-cli main/lca-cli/main.go && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/ib-cli main/ib-cli/main.go; \
+    else \
+        echo "Compiling without fips" && \
+        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go && \
+        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go && \
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o build/ib-cli main/ib-cli/main.go; \
+    fi
 
 #####################################################################################################
 # Build the operator image
-FROM quay.io/openshift/origin-cli-artifacts:4.14 AS origincli
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM --platform=linux/${GOARCH} ${OPENSHIFT_CLI_IMAGE} AS openshift-cli
+FROM --platform=linux/${GOARCH} ${RUNTIME_IMAGE} as runtime-image
+
+# Pass GOARCH into runtime
+ARG GOARCH
+
+# Explicitly set the working directory
+WORKDIR /
 
 RUN if [[ ! -f /bin/nsenter ]]; then \
         microdnf -y install util-linux-core && \
@@ -37,14 +70,14 @@ RUN if [[ ! -f /bin/nsenter ]]; then \
     fi
 
 COPY --from=builder \
-    /opt/app-root/src/build/manager \
-    /opt/app-root/src/build/lca-cli \
-    /opt/app-root/src/build/ib-cli \
+    /opt/app-root/build/manager \
+    /opt/app-root/build/lca-cli \
+    /opt/app-root/build/ib-cli \
     /usr/local/bin/
 
 COPY lca-cli/installation_configuration_files/ /usr/local/installation_configuration_files/
 
-COPY --from=origincli /usr/share/openshift/linux_amd64/oc /usr/bin/oc
+COPY --from=openshift-cli /usr/bin/oc /usr/bin/oc
 
 COPY must-gather/collection-scripts/ /usr/bin/
 
