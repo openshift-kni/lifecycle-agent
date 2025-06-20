@@ -131,6 +131,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 	execPrecacheArgs := fmt.Sprintf("nice -n %d ionice -c %d -n %d lca-cli ibu-precache-workload",
 		nicePriority, ioNiceClass, ioNicePriority)
 
+	// nolint: gocritic
 	precacheEnvVars := append(config.EnvVars, []corev1.EnvVar{
 		{
 			Name:  EnvPrecacheSpecFile,

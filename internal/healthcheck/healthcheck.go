@@ -102,6 +102,7 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 
 	if len(failures) > 0 {
 		l.Info("One or more health checks failed")
+		// nolint: staticcheck
 		return fmt.Errorf(strings.Join(append([]string{"one or more health checks failed"}, failures...), "\n  - "))
 	}
 
@@ -140,6 +141,7 @@ func IsDataProtectionApplicationReconciled(ctx context.Context, c client.Reader,
 
 	msg := "dataProtectionApplication not reconciled"
 	l.Info(msg)
+	// nolint: staticcheck
 	return false, fmt.Errorf(msg)
 }
 
@@ -152,6 +154,7 @@ func AreBackupStorageLocationsAvailable(ctx context.Context, c client.Reader, l 
 	if len(backupStorageLocationList.Items) == 0 {
 		msg := "backupsStorageLocations not yet created"
 		l.Info(msg)
+		// nolint: staticcheck
 		return fmt.Errorf(msg)
 	}
 
@@ -159,6 +162,7 @@ func AreBackupStorageLocationsAvailable(ctx context.Context, c client.Reader, l 
 		if bsl.Status.Phase != velerov1.BackupStorageLocationPhaseAvailable {
 			msg := fmt.Sprintf("backupStorageLocation %s not available", bsl.Name)
 			l.Info(msg)
+			// nolint: staticcheck
 			return fmt.Errorf(msg)
 		}
 	}
@@ -207,6 +211,7 @@ func IsClusterVersionReady(ctx context.Context, c client.Reader, l logr.Logger) 
 		if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
 			msg := fmt.Sprintf("clusterVersion %s not ready", co.Name)
 			l.Info(msg)
+			// nolint: staticcheck
 			return fmt.Errorf(msg)
 		}
 	}
@@ -247,6 +252,7 @@ func AreClusterOperatorsReady(ctx context.Context, c client.Reader, l logr.Logge
 
 	var notready []string
 	for _, co := range clusterOperatorList.Items {
+		// nolint: gocritic
 		if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
 			notready = append(notready, co.Name)
 			l.Info(fmt.Sprintf("co not ready: %s", co.Name))
@@ -301,12 +307,14 @@ func IsNodeReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 		if !getNodeStatusCondition(node.Status.Conditions, corev1.NodeReady) {
 			msg := fmt.Sprintf("node is not yet ready: %s", node.Name)
 			l.Info(msg)
+			// nolint: staticcheck
 			return fmt.Errorf(msg)
 		}
 
 		if getNodeStatusCondition(node.Status.Conditions, corev1.NodeNetworkUnavailable) {
 			msg := fmt.Sprintf("node network unavailable: %s", node.Name)
 			l.Info(msg)
+			// nolint: staticcheck
 			return fmt.Errorf(msg)
 		}
 
@@ -317,6 +325,7 @@ func IsNodeReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 			if _, found := labels[label]; !found {
 				msg := fmt.Sprintf("node missing %s label: %s", label, node.Name)
 				l.Info(msg)
+				// nolint: staticcheck
 				return fmt.Errorf(msg)
 			}
 		}
@@ -354,6 +363,7 @@ func IsSriovNetworkNodeReady(ctx context.Context, c client.Reader, l logr.Logger
 	}
 
 	if len(nodeStates.Items) == 0 {
+		// nolint: staticcheck
 		return fmt.Errorf(SriovNetworkNodeStateNotPresentMsg)
 	}
 
