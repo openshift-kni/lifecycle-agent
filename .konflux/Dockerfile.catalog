@@ -1,6 +1,5 @@
 # The opm image is expected to contain /bin/opm (with a serve subcommand) and /bin/grpc_health_probe
-# Although this is the 4.14 release, we need a rhel9 image and that is only available in 4.15+
-ARG OPM_IMAGE=registry.redhat.io/openshift4/ose-operator-registry-rhel9:v4.15
+ARG OPM_IMAGE=registry.redhat.io/openshift4/ose-operator-registry:v4.14
 ARG BUILDER_IMAGE=brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_golang_1.21
 
 # build the catalog
