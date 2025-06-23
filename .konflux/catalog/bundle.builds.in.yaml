@@ -1,3 +1,2 @@
 ---
-# When we are ready to ship the first Konflux release, replace this with the nudge to the quay build
-quay: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:4cc4d37f0d9595ed36fd49e0fa41c883eba1762e231233bc666f693bda1252a9
+quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-15:9da5b01b41e175e8b8e5ac3dea184a7aaf26bc6d 
