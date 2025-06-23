@@ -86,6 +86,7 @@ func (c *ImageMgmtClient) CheckDiskUsageAgainstThreshold(thresholdPercent int) (
 	}
 
 	// Get disk usage percentage
+	// nolint: gosec
 	usedpct := int(((stat.Blocks - stat.Bavail) * 100) / stat.Blocks)
 	c.Log.Info(fmt.Sprintf("DEBUG: Disk usage of %s is currently %d%%", c.StoragePath, usedpct))
 	return (usedpct > thresholdPercent), nil
