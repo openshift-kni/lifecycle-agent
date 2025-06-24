@@ -10,6 +10,6 @@
 #
 # Kube RBAC proxy
 - key: kube_rbac
-  staging: registry.stage.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
-  production: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
+  staging: registry.stage.redhat.io/openshift4/ose-kube-rbac-proxy
+  production: registry.redhat.io/openshift4/ose-kube-rbac-proxy
 #
