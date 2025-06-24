@@ -1,5 +1,2 @@
 ---
-# After fbc migration, enabling nudging here
-# quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19@sha256:1c6a6b6787a3d5da9cab56806a6ba921df81994d9966a5251644536a869d0781
-# For now, pin to released 4.19.0 bundle
-quay: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:0ae3d823f3abc25d6a706278d114677616e210038d037a560d83088dfb3906b0
+quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19@sha256:327cc56bb622dd6eef0062e660910a8fb819074ef9dfb5629740a434c3e5cc9e 
