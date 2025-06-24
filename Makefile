@@ -369,7 +369,8 @@ endif
 
 .PHONY: konflux-update-task-refs ## update task images
 konflux-update-task-refs: yq
-	hack/konflux-update-task-refs.sh .tekton/$(PACKAGE_NAME_KONFLUX)-4-19-build.yaml
+	hack/konflux-update-task-refs.sh .tekton/build-pipeline.yaml
+	hack/konflux-update-task-refs.sh .tekton/fbc-pipeline.yaml
 
 .PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
 konflux-validate-catalog-template-bundle: yq operator-sdk
@@ -388,6 +389,7 @@ konflux-validate-catalog: opm ## validate the current catalog file
 .PHONY: konflux-generate-catalog ## generate a quay.io catalog
 konflux-generate-catalog: yq opm
 	hack/konflux-update-catalog-template.sh --set-catalog-template-file $(CATALOG_TEMPLATE_KONFLUX) --set-bundle-builds-file .konflux/catalog/bundle.builds.in.yaml
+	touch $(CATALOG_KONFLUX)
 	$(OPM) alpha render-template basic --output yaml --migrate-level bundle-object-to-csv-metadata $(CATALOG_TEMPLATE_KONFLUX) > $(CATALOG_KONFLUX)
 	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
@@ -402,3 +404,6 @@ konflux-generate-catalog-production: konflux-generate-catalog
 help:   ## Shows this message.
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+clean:
+	rm -rf bin/
