@@ -1,2 +1,2 @@
 ---
-quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-15:9da5b01b41e175e8b8e5ac3dea184a7aaf26bc6d 
+quay: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-15@sha256:723c83f921846f24891872b46cba9a0cb25acffbea7eeb2d27e85e152e852bd7
