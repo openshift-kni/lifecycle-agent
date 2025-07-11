@@ -221,7 +221,7 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
-	${ENGINE} build --arch ${GOARCH} --build-arg GOARCH=${GOARCH} -t ${IMG} -f Dockerfile .
+	${ENGINE} build --platform=linux/${GOARCH} -t ${IMG} -f Dockerfile .
 
 docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}

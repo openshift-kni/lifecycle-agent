@@ -39,6 +39,7 @@ spec:
       value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20:on-pr-{{revision}}
     - name: image-expires-after
       value: 5d
+    # Bundles are explicitly not allowed to be multi arch, so we only build x86_64
     - name: build-platforms
       value:
         - linux/x86_64

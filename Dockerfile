@@ -4,14 +4,8 @@ ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.23
 ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
 ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:latest
 
-# Assume x86 unless otherwise specified
-ARG GOARCH="amd64"
-
 # Build the binaries
-FROM --platform=linux/${GOARCH} ${BUILDER_IMAGE} as builder
-
-# Pass GOARCH into builder
-ARG GOARCH
+FROM ${BUILDER_IMAGE} as builder
 
 # Default Konflux to false
 ARG KONFLUX="false"
@@ -38,21 +32,18 @@ COPY utils utils
 # Otherwise compile normally
 RUN if [[ "${KONFLUX}" == "true" ]]; then \
         echo "Compiling with fips" && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -o build/manager main/main.go && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/lca-cli main/lca-cli/main.go; \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -o build/manager main/main.go && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/lca-cli main/lca-cli/main.go; \
     else \
         echo "Compiling without fips" && \
-        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go && \
-        CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go; \
+        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go && \
+        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go; \
     fi
 
 #####################################################################################################
 # Build the operator image
-FROM --platform=linux/${GOARCH} ${OPENSHIFT_CLI_IMAGE} AS openshift-cli
-FROM --platform=linux/${GOARCH} ${RUNTIME_IMAGE} as runtime-image
-
-# Pass GOARCH into runtime
-ARG GOARCH
+FROM ${OPENSHIFT_CLI_IMAGE} AS openshift-cli
+FROM ${RUNTIME_IMAGE} as runtime-image
 
 # Explicitly set the working directory
 WORKDIR /

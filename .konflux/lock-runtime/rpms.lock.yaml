@@ -2,6 +2,31 @@
 lockfileVersion: 1
 lockfileVendor: redhat
 arches:
+- arch: aarch64
+  packages:
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/r/rsync-3.2.3-19.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 405826
+    checksum: sha256:2836c96b161dff16224516e22a55e9ad2fbe1278e482caec1332cbc19812419e
+    name: rsync
+    evr: 3.2.3-19.el9
+    sourcerpm: rsync-3.2.3-19.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 900224
+    checksum: sha256:f2b65a333b9de17af1f71e27c7540fa23d85cbe98774a246eb70547d028027da
+    name: tar
+    evr: 2:1.34-6.el9_4.1
+    sourcerpm: tar-1.34-6.el9_4.1.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 477963
+    checksum: sha256:16dfccafa090ff446a374e81e11224e396f44b9c20eba9144cfb48d46a71f3e1
+    name: util-linux-core
+    evr: 2.37.4-18.el9
+    sourcerpm: util-linux-2.37.4-18.el9.src.rpm
+  source: []
+  module_metadata: []
 - arch: x86_64
   packages:
   - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/r/rsync-3.2.3-19.el9.x86_64.rpm
