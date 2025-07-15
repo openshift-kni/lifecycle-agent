@@ -33,10 +33,12 @@ spec:
     value: '{{revision}}'
   - name: output-image
     value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-fbc-4-20:{{revision}}
-    # FBCs are explicitly not allowed to be multi arch, so we only build x86_64
+    # FBCs are not required to be multi arch because IIB will generate multi arch images on release.
+    # However we still need to build multi arch images for QE to test pre-release.
   - name: build-platforms
     value:
     - linux/x86_64
+    - linux/arm64
   - name: dockerfile
     value: .konflux/Dockerfile.catalog
   - name: build-args-file
