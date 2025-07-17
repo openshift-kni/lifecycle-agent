@@ -8,6 +8,15 @@ VERSION ?= 4.20.0
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
+# OPERATOR_SDK_VERSION defines the operator-sdk version to download from GitHub releases.
+OPERATOR_SDK_VERSION ?= 1.40.0
+
+# YQ_VERSION defines the yq version to download from GitHub releases.
+YQ_VERSION ?= v4.45.4
+
+# OPM_VERSION defines the opm version to download from GitHub releases.
+OPM_VERSION ?= v1.52.0
+
 # Konflux catalog configuration
 PACKAGE_NAME_KONFLUX = lifecycle-agent
 CATALOG_TEMPLATE_KONFLUX = .konflux/catalog/catalog-template.in.yaml
@@ -191,13 +200,9 @@ kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
 
 operator-sdk: ## Download operator-sdk locally if necessary.
-	@if ! command -v operator-sdk >/dev/null 2>&1; then \
-		if [ ! -x "$(PROJECT_DIR)/bin/operator-sdk" ]; then \
-			echo "Downloading operator-sdk..."; \
-			OPENSHIFT_VERSION=4.18 $(PROJECT_DIR)/telco5g-konflux/scripts/download/download-operator-sdk.sh --install-dir $(PROJECT_DIR)/bin; \
-		fi; \
-	fi
-# Note: Using OpenShift 4.18 instead of 4.20 because 4.20 is not yet available on the OpenShift mirror
+	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-operator-sdk \
+		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_OPERATOR_SDK_VERSION=$(OPERATOR_SDK_VERSION)
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(firstword $(MAKEFILE_LIST))))
@@ -282,12 +287,9 @@ bundle-clean: # Uninstall bundle on cluster using operator sdk.
 
 .PHONY: opm
 opm: ## Download opm locally if necessary.
-	@if ! command -v opm >/dev/null 2>&1; then \
-		if [ ! -x "$(PROJECT_DIR)/bin/opm" ]; then \
-			echo "Downloading opm..."; \
-			$(PROJECT_DIR)/telco5g-konflux/scripts/download/download-opm.sh --install-dir $(PROJECT_DIR)/bin v1.52.0; \
-		fi; \
-	fi
+	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-opm \
+		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_OPM_VERSION=$(OPM_VERSION)
 
 # A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
 # These images MUST exist in a registry and be pull-able.
@@ -349,26 +351,23 @@ markdownlint: markdownlint-image  ## run the markdown linter
 
 .PHONY: yq
 yq: ## Download yq locally if necessary.
-	@if ! command -v yq >/dev/null 2>&1; then \
-		if [ ! -x "$(PROJECT_DIR)/bin/yq" ]; then \
-			echo "Downloading yq..."; \
-			$(PROJECT_DIR)/telco5g-konflux/scripts/download/download-yq.sh --install-dir $(PROJECT_DIR)/bin v4.45.4; \
-		fi; \
-	fi
+	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yq \
+		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_YQ_VERSION=$(YQ_VERSION)
 
 .PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
 konflux-validate-catalog-template-bundle: yq operator-sdk
-	@{ \
-	set -e ;\
-	bundle=$(shell $(YQ) ".entries[-1].image" $(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX)) ;\
-	echo "validating the last bundle entry: $${bundle} on catalog template: $(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX)" ;\
-	$(OPERATOR_SDK) bundle validate $${bundle} ;\
-	}
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog-template-bundle \
+		CATALOG_TEMPLATE_KONFLUX=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX) \
+		YQ=$(YQ) \
+		OPERATOR_SDK=$(OPERATOR_SDK) \
+		ENGINE=$(ENGINE)
 
 .PHONY: konflux-validate-catalog
 konflux-validate-catalog: opm ## validate the current catalog file
-	@echo "validating catalog: .konflux/catalog/$(PACKAGE_NAME_KONFLUX)"
-	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog \
+		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
+		OPM=$(OPM)
 
 .PHONY: konflux-generate-catalog ## generate a quay.io catalog
 konflux-generate-catalog: yq opm
@@ -377,8 +376,9 @@ konflux-generate-catalog: yq opm
 		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
 		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
 		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
-		OPM=$$(which opm) \
-		YQ=$$(which yq)
+		OPM=$(OPM) \
+		YQ=$(YQ)
+	$(MAKE) konflux-validate-catalog
 
 .PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
 konflux-generate-catalog-production: opm
@@ -389,8 +389,9 @@ konflux-generate-catalog-production: opm
 		BUNDLE_NAME_SUFFIX=$(BUNDLE_NAME_SUFFIX) \
 		PRODUCTION_BUNDLE_NAME=$(PRODUCTION_BUNDLE_NAME) \
 		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
-		OPM=$$(which opm) \
-		YQ=$$(which yq)
+		OPM=$(OPM) \
+		YQ=$(YQ)
+	$(MAKE) konflux-validate-catalog
 
 .PHONY: konflux-filter-unused-redhat-repos
 konflux-filter-unused-redhat-repos: ## Filter unused repositories from redhat.repo files in runtime lock folder
