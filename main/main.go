@@ -158,9 +158,8 @@ func main() {
 	cfg := ctrl.GetConfigOrDie()
 	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
 
-	// Until OLM supports NetworkPolicies, the operator is installing them
-	// TODO: remove once OLM supports NetworkPolicies
-	// TODO: reduce rbac to only List NetworkPolicies
+	// OLM installs the default-deny, operator API egress NetworkPolicies
+	// Operator installs policies for the jobs, for metrics
 	np := networkpolicies.Policy{
 		Namespace:  common.LcaNamespace,
 		MetricAddr: metricsAddr,
