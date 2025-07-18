@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lifecycle-agent-controller-manager
+spec:
+  egress:
+  - {}
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+  policyTypes:
+  - Egress

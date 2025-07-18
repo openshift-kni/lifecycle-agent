@@ -1,3 +1,20 @@
+/*
+ * Copyright 2025 Red Hat, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this inputFilePath except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Package networkpolicies handles the creation and management of NetworkPolicies.
 package networkpolicies
 
 import (
@@ -16,37 +33,21 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const defaultDenyTmpl = `
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: default-deny
-  namespace: %s
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
-`
-
 const controllerTmpl = `
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: controller-manager
+  name: controller-manager-metrics
   namespace: %s
 spec:
   podSelector:
     matchLabels:
       control-plane: controller-manager
-  egress:
-    - {}
   ingress:
     - ports:
       - protocol: TCP
         port: %s
   policyTypes:
-    - Egress
     - Ingress
 `
 
@@ -83,13 +84,12 @@ func parsePolicy(template string, args ...any) (*networkingv1.NetworkPolicy, err
 
 func (p *Policy) InstallPolicies(cfg *rest.Config) (string, error) {
 	p0, err0 := parsePolicy(controllerTmpl, p.Namespace, parsePort(p.MetricAddr))
-	p1, err2 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace)
-	p2, err3 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace)
-	p3, err1 := parsePolicy(defaultDenyTmpl, p.Namespace)
-	if err := cmp.Or(err0, err1, err2, err3); err != nil {
+	p1, err1 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace)
+	p2, err2 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace)
+	if err := cmp.Or(err0, err1, err2); err != nil {
 		return "", fmt.Errorf("failed to create NetworkPolicy from template: %w", err)
 	}
-	policies := []*networkingv1.NetworkPolicy{p0, p1, p2, p3}
+	policies := []*networkingv1.NetworkPolicy{p0, p1, p2}
 
 	c, err := client.New(cfg, client.Options{})
 	if err != nil {
