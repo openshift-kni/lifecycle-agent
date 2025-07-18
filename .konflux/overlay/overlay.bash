@@ -280,7 +280,7 @@ overlay_release()
     local skip_range=">=4.9.0 <4.14.5"
     local replaces="lifecycle-agent.v4.14.3"
     # min_kube_version should match ocp
-    export min_kube_version="1.28"
+    export min_kube_version="1.28.0"
 
     yq e -i ".metadata.annotations[\"containerImage\"] = \"${IMAGE_TO_TARGET[$MANAGER_KEY]}\"" $ARG_CSV_FILE
     yq e -i ".spec.displayName = \"$display_name\"" $ARG_CSV_FILE
