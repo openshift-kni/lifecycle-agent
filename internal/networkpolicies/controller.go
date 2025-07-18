@@ -22,12 +22,15 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -83,6 +86,11 @@ func parsePolicy(template string, args ...any) (*networkingv1.NetworkPolicy, err
 }
 
 func (p *Policy) InstallPolicies(cfg *rest.Config) (string, error) {
+	c, err := client.New(cfg, client.Options{})
+	if err != nil {
+		return "", fmt.Errorf("failed to create direct client: %w", err)
+	}
+
 	p0, err0 := parsePolicy(controllerTmpl, p.Namespace, parsePort(p.MetricAddr))
 	p1, err1 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace)
 	p2, err2 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace)
@@ -91,15 +99,12 @@ func (p *Policy) InstallPolicies(cfg *rest.Config) (string, error) {
 	}
 	policies := []*networkingv1.NetworkPolicy{p0, p1, p2}
 
-	c, err := client.New(cfg, client.Options{})
-	if err != nil {
-		return "", fmt.Errorf("failed to create direct client: %w", err)
-	}
+	ownerRefs := getOwnerReference(c, p.Namespace)
 
-	ctx := context.Background()
 	result := []string{}
 	for _, p := range policies {
-		if err := c.Create(ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
+		p.OwnerReferences = ownerRefs
+		if err := c.Create(context.Background(), p); err != nil && !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("failed to create NetworkPolicy: %w", err)
 		}
 		result = append(result, p.GetName())
@@ -128,6 +133,26 @@ func Check(cfg *rest.Config, ns string) string {
 	}
 
 	return ""
+}
+
+func getOwnerReference(c client.Client, ns string) []metav1.OwnerReference {
+	podName := cmp.Or(os.Getenv("POD_NAME"), os.Getenv("HOSTNAME"))
+	if podName == "" {
+		return []metav1.OwnerReference{}
+	}
+
+	pod := &corev1.Pod{}
+	if err := c.Get(context.Background(), client.ObjectKey{Name: podName, Namespace: ns}, pod); err != nil {
+		return []metav1.OwnerReference{}
+	}
+
+	if len(pod.OwnerReferences) == 0 {
+		return []metav1.OwnerReference{}
+	}
+
+	ownerRef := pod.OwnerReferences[0].DeepCopy()
+	ownerRef.BlockOwnerDeletion = nil
+	return []metav1.OwnerReference{*ownerRef}
 }
 
 func parsePort(address string) string {
