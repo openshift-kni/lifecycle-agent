@@ -38,6 +38,11 @@ type SeedClusterInfo struct {
 	// cluster.
 	NodeIP string `json:"node_ip,omitempty"`
 
+	// NodeIPs is the list of IP addresses for the SNO node in dual-stack clusters.
+	// For dual-stack support, use this field instead of NodeIP.
+	// +optional
+	NodeIPs []string `json:"node_ips,omitempty"`
+
 	// The container registry used to host the release image of the seed cluster.
 	// TODO: Document what this is for
 	// TODO: Is this really necessary? Find a way to get rid of this
@@ -94,6 +99,11 @@ type SeedClusterInfo struct {
 	// the correct ingress private key, because it looks for strict equality in
 	// the certificate's Subject.CN.
 	IngressCertificateCN string `json:"ingress_certificate_cn,omitempty"`
+
+	// MachineNetworks is the list of subnets for dual-stack ocp clusters.
+	// For dual-stack support, this field contains the machine networks used by the seed cluster.
+	// +optional
+	MachineNetworks []string `json:"machine_networks,omitempty"`
 }
 
 type AdditionalTrustBundle struct {
@@ -118,6 +128,7 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		BaseDomain:               clusterInfo.BaseDomain,
 		ClusterName:              clusterInfo.ClusterName,
 		NodeIP:                   clusterInfo.NodeIP,
+		NodeIPs:                  clusterInfo.NodeIPs,
 		ReleaseRegistry:          clusterInfo.ReleaseRegistry,
 		SNOHostname:              clusterInfo.Hostname,
 		MirrorRegistryConfigured: clusterInfo.MirrorRegistryConfigured,
@@ -125,6 +136,9 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		HasProxy:                 hasProxy,
 		HasFIPS:                  hasFIPS,
 		AdditionalTrustBundle:    additionalTrustBundle,
+		ClusterNetworks:          clusterInfo.ClusterNetworks,
+		ServiceNetworks:          clusterInfo.ServiceNetworks,
+		MachineNetworks:          clusterInfo.MachineNetworks,
 
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 

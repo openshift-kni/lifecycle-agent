@@ -6,24 +6,29 @@ PROG=$(basename "$0")
 declare CLUSTER_NAME=
 declare CLUSTER_BASE_DOMAIN=
 declare CLUSTER_IP=
+declare CLUSTER_IPS=()
 declare GENERATE="site-config"
 declare -i ZTP_DEPLOY_WAVE=0
 
 function usage {
     cat <<EOF
 Usage: ${PROG} --name <cluster> --domain <domain> --ip <addr> [ --mc ] [ --wave <1-100> ]
+       ${PROG} --name <cluster> --domain <domain> --ips <addr1,addr2,...> [ --mc ] [ --wave <1-100> ]
 Options:
     --name       - Cluster name
     --domain     - Cluster baseDomain
-    --ip         - Node IP
+    --ip         - Node IP (for single-stack)
+    --ips        - Node IPs comma-separated (for dual-stack, e.g., "192.168.1.10,2001:db8::10")
     --mc         - Generate machine-config (default is site-policy)
     --wave       - Add ztp-deploy-wave annotation with specified value to site-policy
 
 Summary:
     Generates a subsection of site-policy to include dnsmasq config for an SNO.
+    Supports both single-stack and dual-stack networking.
 
-Example:
-    ${PROG} --name mysno --domain sno.cluster-domain.com --ip 10.20.30.5
+Examples:
+    Single-stack: ${PROG} --name mysno --domain sno.cluster-domain.com --ip 10.20.30.5
+    Dual-stack:   ${PROG} --name mysno --domain sno.cluster-domain.com --ips 10.20.30.5,2001:db8::10
 EOF
     exit 1
 }
@@ -35,19 +40,33 @@ function generate_dnsmasq_content {
 # In order to override cluster domain please provide this file with the following params:
 # SNO_CLUSTER_NAME_OVERRIDE=<new cluster name>
 # SNO_BASE_DOMAIN_OVERRIDE=<your new base domain>
-# SNO_DNSMASQ_IP_OVERRIDE=<new ip>
+# SNO_DNSMASQ_IP_OVERRIDE=<new ip or comma-separated ips>
 source /etc/default/sno_dnsmasq_configuration_overrides
 
-HOST_IP=\${SNO_DNSMASQ_IP_OVERRIDE:-"${CLUSTER_IP}"}
+# Parse multiple IPs for dual-stack support
+HOST_IP_OVERRIDE=\${SNO_DNSMASQ_IP_OVERRIDE:-"${CLUSTER_IP}"}
 CLUSTER_NAME=\${SNO_CLUSTER_NAME_OVERRIDE:-"${CLUSTER_NAME}"}
 BASE_DOMAIN=\${SNO_BASE_DOMAIN_OVERRIDE:-"${CLUSTER_BASE_DOMAIN}"}
 CLUSTER_FULL_DOMAIN="\${CLUSTER_NAME}.\${BASE_DOMAIN}"
 
+# Convert comma-separated IPs to array
+IFS=',' read -ra HOST_IPS <<< "\$HOST_IP_OVERRIDE"
+
+# Generate dnsmasq configuration for all IPs
 cat << EOF > /etc/dnsmasq.d/single-node.conf
-address=/apps.\${CLUSTER_FULL_DOMAIN}/\${HOST_IP}
-address=/api-int.\${CLUSTER_FULL_DOMAIN}/\${HOST_IP}
-address=/api.\${CLUSTER_FULL_DOMAIN}/\${HOST_IP}
 EOF
+
+for ip in "\${HOST_IPS[@]}"; do
+    # Trim whitespace
+    ip=\$(echo "\$ip" | xargs)
+    if [[ -n "\$ip" ]]; then
+        cat << EOF >> /etc/dnsmasq.d/single-node.conf
+address=/apps.\${CLUSTER_FULL_DOMAIN}/\$ip
+address=/api-int.\${CLUSTER_FULL_DOMAIN}/\$ip
+address=/api.\${CLUSTER_FULL_DOMAIN}/\$ip
+EOF
+    fi
+done
 EOSCRIPT
 }
 
@@ -58,13 +77,17 @@ function generate_forcedns {
 # In order to override cluster domain please provide this file with the following params:
 # SNO_CLUSTER_NAME_OVERRIDE=<new cluster name>
 # SNO_BASE_DOMAIN_OVERRIDE=<your new base domain>
-# SNO_DNSMASQ_IP_OVERRIDE=<new ip>
+# SNO_DNSMASQ_IP_OVERRIDE=<new ip or comma-separated ips>
 source /etc/default/sno_dnsmasq_configuration_overrides
 
-HOST_IP=\${SNO_DNSMASQ_IP_OVERRIDE:-"${CLUSTER_IP}"}
+# Parse multiple IPs for dual-stack support
+HOST_IP_OVERRIDE=\${SNO_DNSMASQ_IP_OVERRIDE:-"${CLUSTER_IP}"}
 CLUSTER_NAME=\${SNO_CLUSTER_NAME_OVERRIDE:-"${CLUSTER_NAME}"}
 BASE_DOMAIN=\${SNO_BASE_DOMAIN_OVERRIDE:-"${CLUSTER_BASE_DOMAIN}"}
 CLUSTER_FULL_DOMAIN="\${CLUSTER_NAME}.\${BASE_DOMAIN}"
+
+# Convert comma-separated IPs to array
+IFS=',' read -ra HOST_IPS <<< "\$HOST_IP_OVERRIDE"
 
 export BASE_RESOLV_CONF=/run/NetworkManager/resolv.conf
 if [ "\$2" = "dhcp4-change" ] || [ "\$2" = "dhcp6-change" ] || [ "\$2" = "up" ] || [ "\$2" = "connectivity-change" ]; then
@@ -72,8 +95,17 @@ if [ "\$2" = "dhcp4-change" ] || [ "\$2" = "dhcp6-change" ] || [ "\$2" = "up" ] 
     cp  \$BASE_RESOLV_CONF \$TMP_FILE
     chmod --reference=\$BASE_RESOLV_CONF \$TMP_FILE
     sed -i -e "s/\${CLUSTER_FULL_DOMAIN}//" \
-        -e "s/search /& \${CLUSTER_FULL_DOMAIN} /" \
-        -e "0,/nameserver/s/nameserver/& \$HOST_IP\n&/" \$TMP_FILE
+        -e "s/search /& \${CLUSTER_FULL_DOMAIN} /" \$TMP_FILE
+    
+    # Add nameserver entries for all IPs (primary IP first)
+    for ip in "\${HOST_IPS[@]}"; do
+        # Trim whitespace
+        ip=\$(echo "\$ip" | xargs)
+        if [[ -n "\$ip" ]]; then
+            sed -i -e "0,/nameserver/s/nameserver/& \$ip\n&/" \$TMP_FILE
+        fi
+    done
+    
     mv \$TMP_FILE /etc/resolv.conf
 fi
 EOF
@@ -170,6 +202,7 @@ longopts=(
     "name:"
     "domain:"
     "ip:"
+    "ips:"
     "mc"
     "wave:"
 )
@@ -198,6 +231,10 @@ while :; do
             CLUSTER_IP="${2}"
             shift 2
             ;;
+        --ips)
+            IFS=',' read -ra CLUSTER_IPS <<< "${2}"
+            shift 2
+            ;;
         -m|--mc)
             GENERATE="machine-config"
             shift
@@ -219,8 +256,22 @@ while :; do
     esac
 done
 
-if [ -z "${CLUSTER_NAME}" ] || [ -z "${CLUSTER_BASE_DOMAIN}" ] || [ -z "${CLUSTER_IP}" ]; then
+if [ -z "${CLUSTER_NAME}" ] || [ -z "${CLUSTER_BASE_DOMAIN}" ]; then
     usage
+fi
+
+if [ -z "${CLUSTER_IP}" ] && [ ${#CLUSTER_IPS[@]} -eq 0 ]; then
+    usage
+fi
+
+# Convert single IP to multi-IP format for consistency
+if [ -n "${CLUSTER_IP}" ] && [ ${#CLUSTER_IPS[@]} -eq 0 ]; then
+    CLUSTER_IPS=("${CLUSTER_IP}")
+fi
+
+# Join IPs with commas for the override variable
+if [ ${#CLUSTER_IPS[@]} -gt 0 ]; then
+    CLUSTER_IP=$(IFS=','; echo "${CLUSTER_IPS[*]}")
 fi
 
 case "${GENERATE}" in

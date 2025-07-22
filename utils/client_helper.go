@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -75,19 +74,27 @@ func GetClusterBaseDomain(ctx context.Context, client runtimeclient.Client) (str
 }
 
 type ClusterInfo struct {
-	OCPVersion               string
-	BaseDomain               string
-	ClusterName              string
-	ClusterID                string
-	NodeIP                   string
+	BaseDomain  string
+	ClusterName string
+	ClusterID   string
+	OCPVersion  string
+	NodeIP      string
+	// NodeIPs is the list of IP addresses for the SNO node in dual-stack clusters.
+	// For dual-stack support, use this field instead of NodeIP.
+	// +optional
+	NodeIPs                  []string
 	ReleaseRegistry          string
 	Hostname                 string
 	MirrorRegistryConfigured bool
 	ClusterNetworks          []string
 	ServiceNetworks          []string
 	MachineNetwork           string
-	NodeLabels               map[string]string
-	IngressCertificateCN     string
+	// MachineNetworks is the list of subnets for dual-stack ocp clusters.
+	// For dual-stack support, use this field instead of MachineNetwork.
+	// +optional
+	MachineNetworks      []string
+	NodeLabels           map[string]string
+	IngressCertificateCN string
 }
 
 func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterInfo, error) {
@@ -110,13 +117,15 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SNOMasterNode: %w", err)
 	}
-	ip, err := getNodeInternalIP(*node)
+
+	ips, err := getNodeInternalIPs(*node)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get node ips: %w", err)
 	}
-	machineNetwork, err := getMachineNetwork(ctx, client, ip)
+
+	machineNetworks, err := getMachineNetworks(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get machine networks: %w", err)
 	}
 
 	hostname, err := getNodeHostname(*node)
@@ -146,56 +155,68 @@ func GetClusterInfo(ctx context.Context, client runtimeclient.Client) (*ClusterI
 		return nil, err
 	}
 
+	// For backward compatibility, use first IP and first machine network
+	var primaryNodeIP string
+	if len(ips) > 0 {
+		primaryNodeIP = ips[0]
+	}
+
+	var primaryMachineNetwork string
+	if len(machineNetworks) > 0 {
+		primaryMachineNetwork = machineNetworks[0]
+	}
+
 	return &ClusterInfo{
 		ClusterName:              clusterName,
 		BaseDomain:               clusterBaseDomain,
 		OCPVersion:               clusterVersion.Status.Desired.Version,
 		ClusterID:                string(clusterVersion.Spec.ClusterID),
-		NodeIP:                   ip,
+		NodeIP:                   primaryNodeIP,
+		NodeIPs:                  ips,
 		ReleaseRegistry:          releaseRegistry,
 		Hostname:                 hostname,
 		MirrorRegistryConfigured: len(mirrorRegistrySources) > 0,
 		ClusterNetworks:          clusterNetworks,
 		ServiceNetworks:          serviceNetworks,
-		MachineNetwork:           machineNetwork,
+		MachineNetwork:           primaryMachineNetwork,
+		MachineNetworks:          machineNetworks,
 		NodeLabels:               nodeLabels,
 		IngressCertificateCN:     ingressCN,
 	}, nil
 }
 
-// TODO: add dual stuck support
-func getNodeInternalIP(node corev1.Node) (string, error) {
+// getNodeInternalIPs returns all internal IP addresses for dual-stack support
+func getNodeInternalIPs(node corev1.Node) ([]string, error) {
+	var ips []string
 	for _, addr := range node.Status.Addresses {
 		if addr.Type == corev1.NodeInternalIP {
-			return addr.Address, nil
+			ips = append(ips, addr.Address)
 		}
 	}
-	return "", fmt.Errorf("failed to find node internal ip address")
+
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("failed to find node internal ip addresses")
+	}
+
+	return ips, nil
 }
 
-func getMachineNetwork(ctx context.Context, client runtimeclient.Client, nodeIp string) (string, error) {
+// getMachineNetworks returns all machine networks from the install config
+func getMachineNetworks(ctx context.Context, client runtimeclient.Client) ([]string, error) {
 	installConfig, err := getInstallConfig(ctx, client)
 	if err != nil {
-		return "", fmt.Errorf("failed to get install config: %w", err)
+		return nil, fmt.Errorf("failed to get install config: %w", err)
 	}
 
+	var machineNetworks []string
 	for _, mn := range installConfig.Networking.MachineNetwork {
 		if _, _, err := net.ParseCIDR(mn.CIDR); err != nil {
-			return "", fmt.Errorf("machineNetwork has an invalid CIDR: %s", mn.CIDR)
+			return nil, fmt.Errorf("machineNetwork has an invalid CIDR: %s", mn.CIDR)
 		}
-		if _, ipnet, err := net.ParseCIDR(mn.CIDR); err == nil && ipnet.Contains(net.ParseIP(nodeIp)) {
-			return mn.CIDR, nil
-		}
+		machineNetworks = append(machineNetworks, mn.CIDR)
 	}
 
-	log.Warnf("failed to find machine network in <%s> for node ip: %s. Returning empty string",
-		installConfig.Networking.MachineNetwork, nodeIp)
-
-	// retuning empty string if no match found in order to be backward compatible as there is a possibility that
-	// that we upgrade cluster that was previously upgraded with lca-agent version that didn't set new machineNetwork
-	// in install config (or full install config)
-	// in all other cases we should find the match
-	return "", nil
+	return machineNetworks, nil
 }
 
 func getNodeHostname(node corev1.Node) (string, error) {
