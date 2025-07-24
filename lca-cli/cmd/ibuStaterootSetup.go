@@ -119,7 +119,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			// we consider all the steps after image pull as critical and must be allowed to proceed until SIGKILL arrives. The time between SIGTERM and SIGKILL is controlled with StaterootSetupTerminationGracePeriodSeconds
 			if seedImageExists, _ := opsClient.ImageExists(seedImage); seedImageExists {
 				sigkillArrivesIn := time.Duration(prep.StaterootSetupTerminationGracePeriodSeconds) * time.Second
-				logger.Error(fmt.Errorf("seed image exists. prepare to shut down in at most %s", sigkillArrivesIn), "")
+				logger.Error(fmt.Errorf("seed image exists. prepare to shut down in at most %s", sigkillArrivesIn.String()), "")
 				time.Sleep(sigkillArrivesIn) // likely anything beyond this point won't be executed since job should be done before this wakes up
 			}
 
@@ -127,7 +127,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			os.Exit(1)
 		default:
 			// nolint: staticcheck
-			logger.Error(fmt.Errorf(s.String()), "Unknown signal") // this is not expected to be hit
+			logger.Error(fmt.Errorf("unknown signal: %s", s.String()), "Unknown signal") // this is not expected to be hit
 		}
 	}()
 }

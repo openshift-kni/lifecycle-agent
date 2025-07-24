@@ -129,7 +129,7 @@ type ObjMetadata struct {
 }
 
 func (e *BRStatusError) Error() string {
-	return fmt.Sprintf(e.ErrMessage)
+	return e.ErrMessage
 }
 
 func NewBRFailedError(brType, msg string) *BRStatusError {
