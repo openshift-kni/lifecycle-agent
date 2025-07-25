@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -87,7 +88,8 @@ const (
 	nmService      = "NetworkManager.service"
 	dnsmasqService = "dnsmasq.service"
 
-	localhost = "localhost"
+	localhost         = "localhost"
+	kubeletConfigFile = "/etc/systemd/system/kubelet.service.d/20-nodenet.conf"
 )
 
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
@@ -337,11 +339,15 @@ func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedR
 		fmt.Sprintf("api-int.%s.%s", seedReconfig.ClusterName, seedReconfig.BaseDomain),
 	)
 
-	if seedReconfig.MachineNetwork == "" {
-		return fmt.Errorf("machineNetwork is empty, must be provided in case of proxy")
-
+	machineNetworks := getMachineNetworksFromSeedReconfig(seedReconfig)
+	if len(machineNetworks) == 0 {
+		return fmt.Errorf("machineNetworks is empty, must be provided in case of proxy")
 	}
-	set.Insert(seedReconfig.MachineNetwork)
+
+	for _, machineNetwork := range machineNetworks {
+		set.Insert(machineNetwork)
+	}
+
 	for _, nss := range append(seedClusterInfo.ServiceNetworks, seedClusterInfo.ClusterNetworks...) {
 		set.Insert(nss)
 	}
@@ -663,10 +669,21 @@ func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Cl
 func (p *PostPivot) setDnsMasqConfiguration(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
 	dnsmasqOverridesFiles string) error {
 	p.log.Info("Setting new dnsmasq and forcedns dispatcher script configuration")
+
+	// Handle backward compatibility: use NodeIPs if available, otherwise fall back to NodeIP
+	var nodeIPsOverride string
+	if len(seedReconfiguration.NodeIPs) > 0 {
+		// Join multiple IPs with commas for dual-stack support
+		nodeIPsOverride = strings.Join(seedReconfiguration.NodeIPs, ",")
+	} else if seedReconfiguration.NodeIP != "" {
+		// Fallback to legacy single IP field
+		nodeIPsOverride = seedReconfiguration.NodeIP
+	}
+
 	config := []string{
 		fmt.Sprintf("SNO_CLUSTER_NAME_OVERRIDE=%s", seedReconfiguration.ClusterName),
 		fmt.Sprintf("SNO_BASE_DOMAIN_OVERRIDE=%s", seedReconfiguration.BaseDomain),
-		fmt.Sprintf("SNO_DNSMASQ_IP_OVERRIDE=%s", seedReconfiguration.NodeIP),
+		fmt.Sprintf("SNO_DNSMASQ_IP_OVERRIDE=%s", nodeIPsOverride),
 	}
 
 	if err := os.WriteFile(dnsmasqOverridesFiles, []byte(strings.Join(config, "\n")), 0o600); err != nil {
@@ -677,13 +694,16 @@ func (p *PostPivot) setDnsMasqConfiguration(seedReconfiguration *clusterconfig_a
 }
 
 // setNodeIPIfNotProvided will run nodeip configuration service on demand in case seedReconfiguration node ip is empty
-// nodeip-configuration service in on charge of setting kubelet and crio ip, this ip we will take as NodeIP
+// nodeip-configuration service is in charge of setting kubelet and crio ip, this ip we will take as NodeIP
 func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 	seedReconfiguration *clusterconfig_api.SeedReconfiguration, ipFile string) error {
-	if seedReconfiguration.NodeIP != "" {
+	if len(seedReconfiguration.NodeIPs) != 0 {
 		return nil
 	}
 
+	// Check if kubelet config file exists, if not run the nodeip-configuration service.
+	// nodeIP file is created by nodeip-configuration service during the IP selection process.
+	// If the file exists, it means that the service already ran and we can skip it.
 	if _, err := os.Stat(ipFile); err != nil {
 		_, err := p.ops.SystemctlAction("start", "nodeip-configuration")
 		if err != nil {
@@ -699,17 +719,67 @@ func (p *PostPivot) setNodeIPIfNotProvided(ctx context.Context,
 		})
 	}
 
-	b, err := os.ReadFile(ipFile)
+	// The IPs should be written to this file before they are written to nodeIP file.
+	// The reason we are waiting for nodeIP instead is that this file might
+	// be created before the IPs are written to it, and we don't want to read it every interval.
+	// https://github.com/openshift/baremetal-runtimecfg/blob/e898adc576b343a214aff860e349f9bba3a125d4/cmd/runtimecfg/node-ip.go#L148
+	b, err := os.ReadFile(kubeletConfigFile)
 	if err != nil {
-		return fmt.Errorf("failed to read ip from %s, err: %w", ipFile, err)
-	}
-	ip := net.ParseIP(string(b))
-	if ip == nil {
-		return fmt.Errorf("failed to parse ip %s from %s", string(b), ipFile)
+		return fmt.Errorf("failed to read kubelet config from %s, err: %w", kubeletConfigFile, err)
 	}
 
-	seedReconfiguration.NodeIP = ip.String()
+	content := string(b)
+	_, nodeIPs, err := parseKubeletNodeIPs(content)
+	if err != nil {
+		return fmt.Errorf("failed to parse node IPs from kubelet config: %w", err)
+	}
+
+	seedReconfiguration.NodeIPs = nodeIPs
+
 	return nil
+}
+
+// parseKubeletNodeIPs parses KUBELET_NODE_IP and KUBELET_NODE_IPS from kubelet service config
+func parseKubeletNodeIPs(content string) (string, []string, error) {
+	var nodeIP string
+	var nodeIPs []string
+
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Environment=") {
+			// Parse environment variables from the line
+			// Format: Environment="KUBELET_NODE_IP=192.168.127.172" "KUBELET_NODE_IPS=192.168.127.172,1001:db9::3c"
+
+			if match := regexp.MustCompile(`"KUBELET_NODE_IP=([^"]+)"`).FindStringSubmatch(line); len(match) > 1 {
+				nodeIP = match[1]
+			}
+
+			if match := regexp.MustCompile(`"KUBELET_NODE_IPS=([^"]+)"`).FindStringSubmatch(line); len(match) > 1 {
+				nodeIPsStr := match[1]
+				nodeIPs = strings.Split(nodeIPsStr, ",")
+				for i, ip := range nodeIPs {
+					nodeIPs[i] = strings.TrimSpace(ip)
+				}
+			}
+		}
+	}
+
+	if nodeIP == "" && len(nodeIPs) == 0 {
+		return "", nil, fmt.Errorf("no KUBELET_NODE_IP or KUBELET_NODE_IPS found in kubelet config")
+	}
+
+	// If nodeIP is empty but we have nodeIPs, use the first one
+	if nodeIP == "" && len(nodeIPs) > 0 {
+		nodeIP = nodeIPs[0]
+	}
+
+	// If nodeIPs is empty but we have nodeIP, create a slice with the single IP
+	if len(nodeIPs) == 0 && nodeIP != "" {
+		nodeIPs = []string{nodeIP}
+	}
+
+	return nodeIP, nodeIPs, nil
 }
 
 // setSSHKey  sets ssh public key provided by user in 2 operations:
@@ -900,20 +970,32 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
-// setNodeIpHint writes provided subnet to nodeIPHintFile
-func (p *PostPivot) setNodeIpHint(machineNetwork string) error {
-	if machineNetwork == "" {
+// setNodeIpHint writes provided subnets to nodeIPHintFile
+func (p *PostPivot) setNodeIpHint(machineNetworks []string) error {
+	if len(machineNetworks) == 0 {
 		p.log.Infof("No machine network was provided, skipping setting node ip hint")
 		return nil
 	}
 
-	ip, _, err := net.ParseCIDR(machineNetwork)
-	if err != nil {
-		return fmt.Errorf("failed to parse machine network %s, err: %w", machineNetwork, err)
+	var ips []string
+	for _, machineNetwork := range machineNetworks {
+		ip, _, err := net.ParseCIDR(machineNetwork)
+		if err != nil {
+			return fmt.Errorf("failed to parse machine network %s, err: %w", machineNetwork, err)
+		}
+		ips = append(ips, ip.String())
 	}
-	p.log.Infof("Writing machine network cidr %s into %s", ip, nodeIPHintFile)
-	if err := os.WriteFile(nodeIPHintFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip)), 0o600); err != nil {
-		return fmt.Errorf("failed to write machine network cidr %s to %s, err %w", machineNetwork, nodeIPHintFile, err)
+
+	// Join IPs with spaces for dual-stack support: "KUBELET_NODEIP_HINT=<ip1> <ip2>"
+	// This is used as an argument in
+	// https://github.com/openshift/machine-config-operator/blob/5a97a9a29a99e93f15b55242fefb7b41da4a4a82/templates/common/_base/units/nodeip-configuration.service.yaml#L34
+	// which is later used in
+	// https://github.com/openshift/baremetal-runtimecfg/blob/e898adc576b343a214aff860e349f9bba3a125d4/cmd/runtimecfg/node-ip.go#L112
+	ipsHint := strings.Join(ips, " ")
+	p.log.Infof("Writing machine network IPs %s into %s", ipsHint, nodeIPHintFile)
+
+	if err := os.WriteFile(nodeIPHintFile, []byte(fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ipsHint)), 0o600); err != nil {
+		return fmt.Errorf("failed to write machine network IPs %s to %s, err %w", ipsHint, nodeIPHintFile, err)
 	}
 	return nil
 }
@@ -947,7 +1029,7 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := p.setNodeIpHint(seedReconfiguration.MachineNetwork); err != nil {
+	if err := p.setNodeIpHint(getMachineNetworksFromSeedReconfig(seedReconfiguration)); err != nil {
 		return err
 	}
 
@@ -1014,4 +1096,17 @@ func (p *PostPivot) setNodeLabels(ctx context.Context, client runtimeclient.Clie
 		return fmt.Errorf("failed to patch node with new labels %w", err)
 	}
 	return nil
+}
+
+// getMachineNetworksFromSeedReconfig returns machine networks with backward compatibility
+func getMachineNetworksFromSeedReconfig(seedReconfig *clusterconfig_api.SeedReconfiguration) []string {
+	// Prefer the new list field if it's populated
+	if len(seedReconfig.MachineNetworks) > 0 {
+		return seedReconfig.MachineNetworks
+	}
+	// Fall back to the old single field for backward compatibility
+	if seedReconfig.MachineNetwork != "" {
+		return []string{seedReconfig.MachineNetwork}
+	}
+	return []string{}
 }
