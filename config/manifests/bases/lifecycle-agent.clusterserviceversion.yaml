@@ -58,17 +58,17 @@ spec:
       specDescriptors:
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
-      - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
-          If not defined or set to 0, the default value of 1800 seconds (30 minutes)
-          is used.
+      - description: |-
+          InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0, the default value of
+          1800 seconds (30 minutes) is used.
         displayName: Init Monitor Timeout Seconds
         path: autoRollbackOnFailure.initMonitorTimeoutSeconds
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
-      - description: ExtraManifests defines the list of ConfigMap resources that contain
-          the user-specific extra manifests to be applied during the upgrade post-pivot
-          stage. Users can also add their custom catalog sources that may want to
-          retain after the upgrade.
+      - description: |-
+          ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
+          applied during the upgrade post-pivot stage.
+          Users can also add their custom catalog sources that may want to retain after the upgrade.
         displayName: Extra Manifests
         path: extraManifests
       - displayName: Name
