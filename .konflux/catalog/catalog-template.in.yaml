@@ -1,5 +1,4 @@
 ---
-schema: olm.template.basic
 entries:
   # Default data
   - defaultChannel: stable
@@ -39,3 +38,4 @@ entries:
   # The url for this last entry is updated by telco5g-konflux/scripts/catalog/konflux-update-catalog-template.sh automatically
   - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19@sha256:327cc56bb622dd6eef0062e660910a8fb819074ef9dfb5629740a434c3e5cc9e
     schema: olm.bundle
+schema: olm.template.basic
