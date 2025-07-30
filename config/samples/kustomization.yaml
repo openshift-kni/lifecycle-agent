@@ -1,5 +1,5 @@
 ## Append samples you want in your CSV to this file as resources ##
 resources:
-- lca_v1_imagebasedupgrade.yaml
-- lca_v1_seedgenerator.yaml
-#+kubebuilder:scaffold:manifestskustomizesamples
+  - lca_v1_imagebasedupgrade.yaml
+  - lca_v1_seedgenerator.yaml
+  #+kubebuilder:scaffold:manifestskustomizesamples
