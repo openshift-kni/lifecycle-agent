@@ -1,4 +1,3 @@
----
 # (mandatory)
 # Path to coverprofile file (output of `go test -coverprofile` command).
 #
@@ -6,16 +5,26 @@
 # unit tests and integration tests separately, you can combine all those
 # profiles into one. In this case, the profile should have a comma-separated list
 # of profile files, e.g., 'cover_unit.out,cover_integration.out'.
-# Holds regexp rules which will exclude matched files or packages
-# from coverage statistics
-exclude:
-  # Exclude files or packages matching their paths
-  paths:
-    - \.pb\.go$  # excludes all protobuf generated files
-    - ^pkg/bar  # exclude package `pkg/bar`
+profile: cover.out
+
 # (optional; but recommended to set)
 # When specified reported file paths will not contain local prefix in the output
 local-prefix: "github.com/openshift-kni/lifecycle-agent"
+
+# Holds coverage thresholds percentages, values should be in range [0-100]
+threshold:
+  # (optional; default 0)
+  # The minimum coverage that each file should have
+  file: 0
+
+  # (optional; default 0)
+  # The minimum coverage that each package should have
+  package: 0
+
+  # (optional; default 0)
+  # The minimum total coverage project should have
+  total: 30
+
 # Holds regexp rules which will override thresholds for matched files or packages
 # using their paths.
 #
@@ -25,20 +34,17 @@ local-prefix: "github.com/openshift-kni/lifecycle-agent"
 override:
   # Increase coverage threshold to 100% for `foo` package
   # (default is 80, as configured above in this example)
-  - path: ^pkg/lib/foo$
-    threshold: 100
-profile: cover.out
-# Holds coverage thresholds percentages, values should be in range [0-100]
-threshold:
-  # (optional; default 0)
-  # The minimum coverage that each file should have
-  file: 0
-  # (optional; default 0)
-  # The minimum coverage that each package should have
-  package: 0
-  # (optional; default 0)
-  # The minimum total coverage project should have
-  total: 30
+  - threshold: 100
+    path: ^pkg/lib/foo$
+
+# Holds regexp rules which will exclude matched files or packages
+# from coverage statistics
+exclude:
+  # Exclude files or packages matching their paths
+  paths:
+    - \.pb\.go$    # excludes all protobuf generated files
+    - ^pkg/bar     # exclude package `pkg/bar`
+
 # NOTES:
 # - symbol `/` in all path regexps will be replaced by current OS file path separator
 #   to properly work on Windows
