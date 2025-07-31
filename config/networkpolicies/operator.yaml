@@ -4,10 +4,10 @@ kind: NetworkPolicy
 metadata:
   name: controller-manager
 spec:
+  egress:
+    - {} # Allow egress to all destinations and ports
   podSelector:
     matchLabels:
       control-plane: controller-manager
-  egress:
-     - {} # Allow egress to all destinations and ports
   policyTypes:
     - Egress
