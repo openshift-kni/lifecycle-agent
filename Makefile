@@ -131,7 +131,7 @@ generate-code: ## Generate code containing Clientset, Informers, Listers
 	hack/update-codegen.sh
 
 controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.13.0)
+	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0)
 
 mock-gen: ## Download mockgen locally if necessary.
 	$(call go-get-tool,$(MOCK_GEN),go.uber.org/mock/mockgen@v0.3.0)
