@@ -1,17 +1,19 @@
 # This file is for teaching kustomize how to substitute name and namespace reference in CRD
 nameReference:
-  - fieldSpecs:
-      - group: apiextensions.k8s.io
-        kind: CustomResourceDefinition
-        path: spec/conversion/webhook/clientConfig/service/name
-        version: v1
-    kind: Service
+- kind: Service
+  version: v1
+  fieldSpecs:
+  - kind: CustomResourceDefinition
     version: v1
-namespace:
-  - create: false
     group: apiextensions.k8s.io
-    kind: CustomResourceDefinition
-    path: spec/conversion/webhook/clientConfig/service/namespace
-    version: v1
+    path: spec/conversion/webhook/clientConfig/service/name
+
+namespace:
+- kind: CustomResourceDefinition
+  version: v1
+  group: apiextensions.k8s.io
+  path: spec/conversion/webhook/clientConfig/service/namespace
+  create: false
+
 varReference:
-  - path: metadata/annotations
+- path: metadata/annotations
