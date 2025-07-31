@@ -1,4 +1,5 @@
 ---
+schema: olm.template.basic
 entries:
   # Default data
   - defaultChannel: stable
@@ -35,7 +36,6 @@ entries:
   - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:0ae3d823f3abc25d6a706278d114677616e210038d037a560d83088dfb3906b0
     schema: olm.bundle
   # v4.19.1 bundle
-  # The url for this last entry is updated by telco5g-konflux/scripts/catalog/konflux-update-catalog-template.sh automatically
+  # The url for this last entry is updated by hack/konflux-update-catalog-template.sh automatically
   - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-19@sha256:327cc56bb622dd6eef0062e660910a8fb819074ef9dfb5629740a434c3e5cc9e
     schema: olm.bundle
-schema: olm.template.basic
