@@ -8,23 +8,10 @@ VERSION ?= 4.17.0
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
-# OPERATOR_SDK_VERSION defines the operator-sdk version to download from GitHub releases.
-OPERATOR_SDK_VERSION ?= 1.28.0
-
-# YQ_VERSION defines the yq version to download from GitHub releases.
-YQ_VERSION ?= v4.45.4
-
-# OPM_VERSION defines the opm version to download from GitHub releases.
-OPM_VERSION ?= v1.52.0
-
 # Konflux catalog configuration
 PACKAGE_NAME_KONFLUX = lifecycle-agent
 CATALOG_TEMPLATE_KONFLUX = .konflux/catalog/catalog-template.in.yaml
 CATALOG_KONFLUX = .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.yaml
-
-# Konflux bundle image configuration
-BUNDLE_NAME_SUFFIX = operator-bundle-4-17
-PRODUCTION_BUNDLE_NAME = operator-bundle
 
 # By default we build the same architecture we are running
 # Override this by specifying a different GOARCH in your environment
@@ -103,13 +90,10 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(VERSION)
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-GOTESTSUM = $(shell pwd)/bin/gotestsum
+OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
 KUSTOMIZE = $(shell pwd)/bin/kustomize
+GOTESTSUM = $(shell pwd)/bin/gotestsum
 MOCK_GEN = $(shell pwd)/bin/mockgen
-OPERATOR_SDK = $(shell which operator-sdk 2>/dev/null || echo "$(shell pwd)/bin/operator-sdk")
-OPM = $(shell which opm 2>/dev/null || echo "$(shell pwd)/bin/opm")
-YQ = $(shell which yq 2>/dev/null || echo "$(shell pwd)/bin/yq")
-
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
@@ -131,7 +115,7 @@ generate-code: ## Generate code containing Clientset, Informers, Listers
 	hack/update-codegen.sh
 
 controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0)
+	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.13.0)
 
 mock-gen: ## Download mockgen locally if necessary.
 	$(call go-get-tool,$(MOCK_GEN),go.uber.org/mock/mockgen@v0.3.0)
@@ -140,6 +124,11 @@ mock-gen: ## Download mockgen locally if necessary.
 fmt: ## Run go fmt against code.
 	@echo "Running go fmt"
 	go fmt ./...
+
+.PHONY: golangci-lint
+golangci-lint: ## Run golangci-lint against code.
+	@echo "Running golangci-lint"
+	hack/golangci-lint.sh
 
 .PHONY: vet
 vet: ## Run go vet against code.
@@ -154,6 +143,21 @@ unittest:
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
 	go mod tidy
+
+.PHONY: shellcheck
+shellcheck: ## Run shellcheck.
+	@echo "Running shellcheck"
+	hack/shellcheck.sh
+
+.PHONY: bashate
+bashate: ## Run bashate.
+	@echo "Running bashate"
+	hack/bashate.sh
+
+.PHONY: yamllint
+yamllint: ## Run yamllint
+	@echo "Running yamllint"
+	hack/yamllint.sh
 
 .PHONY: scorecard
 scorecard: operator-sdk ## Run scorecard tests against bundle
@@ -178,6 +182,17 @@ ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck ba
 
 kustomize: ## Download kustomize locally if necessary.
 	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
+
+OPERATOR_SDK_VERSION = $(shell $(OPERATOR_SDK) version 2>/dev/null | sed 's/^operator-sdk version: "\([^"]*\).*/\1/')
+OPERATOR_SDK_VERSION_REQ = v1.28.0-ocp
+operator-sdk: ## Download operator-sdk locally if necessary.
+ifneq ($(OPERATOR_SDK_VERSION_REQ),$(OPERATOR_SDK_VERSION))
+	@{ \
+	set -e ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell arch) && if [ $${ARCH} == "arm64" ]; then ARCH=aarch64; fi; \
+	curl -Lv https://mirror.openshift.com/pub/openshift-v4/$${ARCH}/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-$${OS}-$${ARCH}.tar.gz | tar --strip-components 2 -xz -C bin/ ;\
+	}
+endif
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(firstword $(MAKEFILE_LIST))))
@@ -232,11 +247,7 @@ bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metada
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG) && PRECACHE_WORKLOAD_IMG=$(IMG) envsubst < related-images/in.yaml > related-images/patch.yaml
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	$(OPERATOR_SDK) bundle validate ./bundle
-	if [ "$$(uname)" = "Darwin" ]; then \
-		sed -i '' '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml; \
-	else \
-		sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml; \
-	fi
+	sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml
 
 .PHONY: bundle-build
 bundle-build: bundle docker-push ## Build the bundle image.
@@ -263,6 +274,23 @@ bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
 bundle-clean: # Uninstall bundle on cluster using operator sdk.
 	$(OPERATOR_SDK) cleanup lifecycle-agent -n openshift-lifecycle-agent
 	oc delete ns openshift-lifecycle-agent
+
+.PHONY: opm
+OPM ?= ./bin/opm
+opm: ## Download opm locally if necessary.
+ifeq (,$(wildcard $(OPM)))
+ifeq (,$(shell which opm 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(OPM)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.52.0/$${OS}-$${ARCH}-opm ;\
+	chmod +x $(OPM) ;\
+	}
+else
+OPM = $(shell which opm)
+endif
+endif
 
 # A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
 # These images MUST exist in a registry and be pull-able.
@@ -302,40 +330,6 @@ TEST_FORMAT ?= standard-verbose
 GOTEST_FLAGS = --format=$(TEST_FORMAT)
 GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 
-##@ Tools and Linting
-
-.PHONY: lint
-lint: bashate golangci-lint shellcheck yamllint markdownlint yq-sort-and-format
-
-.PHONY: tools
-tools: opm operator-sdk yq
-
-.PHONY: bashate
-bashate: ## Download bashate and lint bash files in the repository
-	@echo "Downloading bashate..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-bashate DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin
-	@echo "Bashate downloaded successfully."
-	@echo "Running bashate on repository bash files..."
-	find . -name '*.sh' \
-		-not -path './vendor/*' \
-		-not -path './*/vendor/*' \
-		-not -path './git/*' \
-		-not -path './bin/*' \
-		-not -path './testbin/*' \
-		-not -path './telco5g-konflux/*' \
-		-print0 \
-		| xargs -0 --no-run-if-empty bashate -v -e 'E*' -i E006
-	@echo "Bashate linting completed successfully."
-
-.PHONY: golangci-lint
-golangci-lint: ## Run golangci-lint against code.
-	@echo "Downloading golangci-lint..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-golangci-lint DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin
-	@echo "Golangci-lint downloaded successfully."
-	@echo "Running golangci-lint on repository go files..."
-	golangci-lint run -v
-	@echo "Golangci-lint linting completed successfully."
-
 # markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
 .PHONY: markdownlint-image
 markdownlint-image:  ## Build local container markdownlint-image
@@ -354,135 +348,63 @@ markdownlint: markdownlint-image  ## run the markdown linter
 		-v $$(pwd):/workdir:Z \
 		$(IMAGE_NAME)-markdownlint:latest
 
-operator-sdk: ## Download operator-sdk locally if necessary.
-	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-operator-sdk \
-		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
-		DOWNLOAD_OPERATOR_SDK_VERSION=$(OPERATOR_SDK_VERSION)
-	@echo "Operator sdk downloaded successfully."
-
-.PHONY: opm
-opm: ## Download opm locally if necessary.
-	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-opm \
-		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
-		DOWNLOAD_OPM_VERSION=$(OPM_VERSION)
-	@echo "Opm downloaded successfully."
-
-.PHONY: shellcheck
-shellcheck: ## Download shellcheck and lint bash files in the repository
-	@echo "Downloading shellcheck..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-shellcheck DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin
-	@echo "Shellcheck downloaded successfully."
-	@echo "Running shellcheck on repository bash files..."
-	find . -name '*.sh' \
-		-not -path './vendor/*' \
-		-not -path './*/vendor/*' \
-		-not -path './git/*' \
-		-not -path './bin/*' \
-		-not -path './testbin/*' \
-		-not -path './telco5g-konflux/*' \
-		-print0 \
-		| xargs -0 --no-run-if-empty shellcheck -x
-	@echo "Shellcheck linting completed successfully."
-
-.PHONY: yamllint
-yamllint: ## Download yamllint and lint YAML files in the repository
-	@echo "Downloading yamllint..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yamllint DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin
-	@echo "Yamllint downloaded successfully."
-	@echo "Running yamllint on repository YAML files..."
-	find . -name "*.yaml" -o -name "*.yml" \
-		-not -path './vendor/*' \
-		-not -path './*/vendor/*' \
-		-not -path './git/*' \
-		-not -path './bin/*' \
-		-not -path './testbin/*' \
-		-not -path './telco5g-konflux/*' \
-		-print0 \
-		| xargs -0 --no-run-if-empty yamllint -c .yamllint.yaml
-	@echo "Yamllint linting completed successfully."
-
-.PHONY: yq
-yq: ## Download yq
-	@echo "Downloading yq..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yq DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin
-	@echo "Yq downloaded successfully."
-
-.PHONY: yq-sort-and-format
-yq-sort-and-format: yq ## Sort keys/reformat all YAML files in the repository
-	@echo "Sorting keys and reformatting YAML files..."
-	@find . -name "*.yaml" -o -name "*.yml" | grep -v -E "(telco5g-konflux/|target/|vendor/|bin/|\.git/)" | while read file; do \
-		echo "Processing $$file..."; \
-		yq -i '.. |= sort_keys(.)' "$$file"; \
-	done
-	@echo "YAML sorting and formatting completed successfully."
 
 ##@ Konflux
 
+.PHONY: yq
+YQ ?= ./bin/yq
+yq: ## download yq if not in the path
+ifeq (,$(wildcard $(YQ)))
+ifeq (,$(shell which yq 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(YQ)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(YQ) https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_$${OS}_$${ARCH} ;\
+	chmod +x $(YQ) ;\
+	}
+else
+YQ = $(shell which yq)
+endif
+endif
+
+.PHONY: konflux-update-task-refs ## update task images
+konflux-update-task-refs: yq
+	hack/konflux-update-task-refs.sh .tekton/build-pipeline.yaml
+	hack/konflux-update-task-refs.sh .tekton/fbc-pipeline.yaml
+
 .PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
 konflux-validate-catalog-template-bundle: yq operator-sdk
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog-template-bundle \
-		CATALOG_TEMPLATE_KONFLUX=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX) \
-		YQ=$(YQ) \
-		OPERATOR_SDK=$(OPERATOR_SDK) \
-		ENGINE=$(ENGINE)
+	@{ \
+	set -e ;\
+	bundle=$(shell $(YQ) ".entries[-1].image" $(CATALOG_TEMPLATE_KONFLUX)) ;\
+	echo "validating the last bundle entry: $${bundle} on catalog template: $(CATALOG_TEMPLATE_KONFLUX)" ;\
+	$(OPERATOR_SDK) bundle validate $${bundle} ;\
+	}
 
 .PHONY: konflux-validate-catalog
 konflux-validate-catalog: opm ## validate the current catalog file
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog \
-		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
-		OPM=$(OPM)
+	@echo "validating catalog: .konflux/catalog/$(PACKAGE_NAME_KONFLUX)"
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
 .PHONY: konflux-generate-catalog ## generate a quay.io catalog
 konflux-generate-catalog: yq opm
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog \
-		CATALOG_TEMPLATE_KONFLUX=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX) \
-		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
-		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
-		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
-		OPM=$(OPM) \
-		YQ=$(YQ)
-	$(MAKE) konflux-validate-catalog
+	hack/konflux-update-catalog-template.sh --set-catalog-template-file $(CATALOG_TEMPLATE_KONFLUX) --set-bundle-builds-file .konflux/catalog/bundle.builds.in.yaml
+	touch $(CATALOG_KONFLUX)
+	$(OPM) alpha render-template basic --output yaml --migrate-level bundle-object-to-csv-metadata $(CATALOG_TEMPLATE_KONFLUX) > $(CATALOG_KONFLUX)
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
 .PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
-konflux-generate-catalog-production: yq opm
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog-production \
-		CATALOG_TEMPLATE_KONFLUX=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX) \
-		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
-		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
-		BUNDLE_NAME_SUFFIX=$(BUNDLE_NAME_SUFFIX) \
-		PRODUCTION_BUNDLE_NAME=$(PRODUCTION_BUNDLE_NAME) \
-		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
-		OPM=$(OPM) \
-		YQ=$(YQ)
-	$(MAKE) konflux-validate-catalog
-
-.PHONY: konflux-filter-unused-redhat-repos
-konflux-filter-unused-redhat-repos: ## Filter unused repositories from redhat.repo files in runtime lock folder
-	@echo "Filtering unused repositories from runtime lock folder..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock filter-unused-repos REPO_FILE=$(PROJECT_DIR)/.konflux/lock-runtime/redhat.repo
-	@echo "Filtering completed for runtime lock folder."
-
-.PHONY: konflux-update-tekton-task-refs
-konflux-update-tekton-task-refs: ## Update task references in Tekton pipeline files
-	@echo "Updating task references in Tekton pipeline files..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/tekton update-task-refs PIPELINE_FILES="$(shell find $(PROJECT_DIR)/.tekton -name '*.yaml' -not -name 'OWNERS' | tr '\n' ' ')"
-	@echo "Task references updated successfully."
-
-.PHONY: konflux-compare-catalog
-konflux-compare-catalog: ## Compare generated catalog with upstream FBC image
-	@echo "Comparing generated catalog with upstream FBC image..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-compare-catalog \
-		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
-		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
-		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-4-17:latest
-
-.PHONY: konflux-all
-konflux-all: konflux-filter-unused-redhat-repos konflux-update-tekton-task-refs konflux-generate-catalog-production konflux-validate-catalog ## Run all Konflux-related targets
-	@echo "All Konflux targets completed successfully."
+konflux-generate-catalog-production: konflux-generate-catalog
+        # overlay the bundle image for production
+	sed -i 's|quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-operator-bundle-4-17|registry.redhat.io/openshift4/$(PACKAGE_NAME_KONFLUX)-operator-bundle|g' $(CATALOG_KONFLUX)
+        # From now on, all the related images must reference production (registry.redhat.io) exclusively
+	./hack/konflux-validate-related-images-production.sh --set-catalog-file $(CATALOG_KONFLUX)
+	$(OPM) validate .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/
 
 help:   ## Shows this message.
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 clean:
-	rm -rf $(PROJECT_DIR)/bin/
+	rm -rf bin/
