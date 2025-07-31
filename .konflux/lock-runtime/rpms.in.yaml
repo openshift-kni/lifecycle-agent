@@ -1,14 +1,17 @@
-arches:
-  - x86_64
 contentOrigin:
   repofiles:
-    # rhel9 rpm repos
-    - ./redhat.repo
-context:
-  containerfile:
-    file: ../Dockerfile
-    stageName: runtime-image
+     # rhel9 rpm repos
+     - ./redhat.repo
+
 packages:
   - util-linux-core
   - rsync
   - tar
+
+arches:
+  - x86_64
+
+context:
+    containerfile:
+      file: ../Dockerfile
+      stageName: runtime-image
