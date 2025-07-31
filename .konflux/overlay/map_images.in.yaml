@@ -1,15 +1,15 @@
 # Manager
 - key: manager
-  production: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
   staging: registry.stage.redhat.io/openshift4/lifecycle-agent-rhel9-operator
+  production: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
 #
 # Recert
 - key: recert_image
-  production: registry.redhat.io/openshift4/recert-rhel9
   staging: registry.stage.redhat.io/openshift4/recert-rhel9
+  production: registry.redhat.io/openshift4/recert-rhel9
 #
 # Kube RBAC proxy
 - key: kube_rbac
-  production: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
   staging: registry.stage.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
+  production: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
 #
