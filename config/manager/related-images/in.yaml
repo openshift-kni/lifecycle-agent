@@ -7,7 +7,7 @@ spec:
   template:
     spec:
       containers:
-        - name: manager
-          env:
-          - name: PRECACHE_WORKLOAD_IMG
-            value: $PRECACHE_WORKLOAD_IMG
+        - env:
+            - name: PRECACHE_WORKLOAD_IMG
+              value: $PRECACHE_WORKLOAD_IMG
+          name: manager
