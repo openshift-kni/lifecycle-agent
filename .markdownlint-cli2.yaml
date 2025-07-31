@@ -2,11 +2,12 @@
 # and https://github.com/DavidAnson/markdownlint-cli2
 
 config:
-  emphasis-style: true
   line-length:
-    code_blocks: false
     line_length: 300
-  no-blanks-blockquote: false
-  no-space-in-emphasis: true
-  strong-style: true
+    code_blocks: false
+
   ul-style: consistent
+  emphasis-style: true
+  strong-style: true
+  no-space-in-emphasis: true
+  no-blanks-blockquote: false

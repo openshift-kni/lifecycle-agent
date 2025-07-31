@@ -3,14 +3,14 @@ kind: ImageBasedUpgrade
 metadata:
   name: upgrade
 spec:
+  stage: Idle
+  seedImageRef:
+    version: 4.14.0
+    image: quay.io/xyz
   autoRollbackOnFailure: {}
   extraManifests:
-    - name: sno-extramanifests
-      namespace: openshift-lifecycle-agent
+  - name: sno-extramanifests
+    namespace: openshift-lifecycle-agent
   oadpContent:
     - name: oadp-cm-sno-backup
       namespace: openshift-adp
-  seedImageRef:
-    image: quay.io/xyz
-    version: 4.14.0
-  stage: Idle
