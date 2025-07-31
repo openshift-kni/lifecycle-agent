@@ -4,17 +4,17 @@ kind: ClusterRole
 metadata:
   name: ImageBasedUpgrade-viewer-role
 rules:
-- apiGroups:
-  - lca.openshift.io
-  resources:
-  - ImageBasedUpgrades
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - lca.openshift.io
-  resources:
-  - ImageBasedUpgrades/status
-  verbs:
-  - get
+  - apiGroups:
+      - lca.openshift.io
+    resources:
+      - ImageBasedUpgrades
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - lca.openshift.io
+    resources:
+      - ImageBasedUpgrades/status
+    verbs:
+      - get
