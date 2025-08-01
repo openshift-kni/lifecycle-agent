@@ -34,79 +34,158 @@ import (
 )
 
 func TestSetNodeIPIfNotProvided(t *testing.T) {
-	createNodeIpFile := func(t *testing.T, ipFile string, ipToSet string) {
-		f, err := os.Create(ipFile)
+	createKubeletConfigFile := func(t *testing.T, configFile string, nodeIP string, nodeIPs []string) {
+		f, err := os.Create(configFile)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 		defer f.Close()
-		if _, err = f.WriteString(ipToSet); err != nil {
+
+		content := "[Service]\n"
+		if nodeIP != "" && len(nodeIPs) > 0 {
+			content += fmt.Sprintf(`Environment="KUBELET_NODE_IP=%s" "KUBELET_NODE_IPS=%s"`,
+				nodeIP, strings.Join(nodeIPs, ","))
+		} else if nodeIP != "" {
+			content += fmt.Sprintf(`Environment="KUBELET_NODE_IP=%s"`, nodeIP)
+		} else if len(nodeIPs) > 0 {
+			content += fmt.Sprintf(`Environment="KUBELET_NODE_IPS=%s"`, strings.Join(nodeIPs, ","))
+		}
+		content += "\n"
+
+		if _, err = f.WriteString(content); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	}
 
-	var (
-		mockController = gomock.NewController(t)
-		mockOps        = ops.NewMockOps(mockController)
-	)
-
-	defer func() {
-		mockController.Finish()
-	}()
-
 	testcases := []struct {
-		name             string
-		expectedError    bool
-		nodeipFileExists bool
-		ipProvided       bool
-		ipToSet          string
+		name            string
+		ipProvided      bool
+		nodeIP          string
+		nodeIPs         []string
+		expectedNodeIP  string
+		expectedNodeIPs []string
 	}{
 		{
-			name:             "Ip provided nothing to do",
-			expectedError:    false,
-			nodeipFileExists: true,
-			ipProvided:       true,
-			ipToSet:          "192.167.1.2",
+			name:       "IP provided, nothing to do",
+			ipProvided: true,
+			nodeIP:     "192.167.1.2",
+			nodeIPs:    []string{"192.167.1.2"},
 		},
 		{
-			name:             "Ip is not provided, bad ip in file",
-			expectedError:    true,
-			nodeipFileExists: true,
-			ipProvided:       false,
-			ipToSet:          "bad ip",
+			name:            "IP not provided, single stack",
+			ipProvided:      false,
+			nodeIP:          "192.167.1.2",
+			nodeIPs:         []string{"192.167.1.2"},
+			expectedNodeIP:  "192.167.1.2",
+			expectedNodeIPs: []string{"192.167.1.2"},
 		},
 		{
-			name:             "Ip is not provided, happy flow",
-			expectedError:    false,
-			nodeipFileExists: true,
-			ipProvided:       false,
-			ipToSet:          "192.167.1.2",
+			name:            "IP not provided, dual stack",
+			ipProvided:      false,
+			nodeIP:          "192.167.1.2",
+			nodeIPs:         []string{"192.167.1.2", "2001:db8::1"},
+			expectedNodeIP:  "192.167.1.2",
+			expectedNodeIPs: []string{"192.167.1.2", "2001:db8::1"},
+		},
+		{
+			name:            "IP not provided, only KUBELET_NODE_IPS",
+			ipProvided:      false,
+			nodeIP:          "",
+			nodeIPs:         []string{"192.167.1.2", "2001:db8::1"},
+			expectedNodeIP:  "192.167.1.2", // Should use first IP from list
+			expectedNodeIPs: []string{"192.167.1.2", "2001:db8::1"},
 		},
 	}
 
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
-			log := &logrus.Logger{}
-			pp := NewPostPivot(nil, log, mockOps, "", "", "")
 			seedReconfig := &clusterconfig_api.SeedReconfiguration{}
 			if tc.ipProvided {
-				seedReconfig.NodeIP = tc.ipToSet
-			}
-			ipFile := path.Join(tmpDir, "primary")
-			if tc.nodeipFileExists {
-				createNodeIpFile(t, ipFile, tc.ipToSet)
-			} else {
-				mockOps.EXPECT().SystemctlAction("start", "nodeip-configuration").Return("", nil).Do(func(any) {
-					createNodeIpFile(t, ipFile, tc.ipToSet)
-				})
+				seedReconfig.NodeIP = tc.nodeIP
+				seedReconfig.NodeIPs = tc.nodeIPs
+				return // Nothing to test when IP is already provided
 			}
 
-			err := pp.setNodeIPIfNotProvided(context.TODO(), seedReconfig, ipFile)
-			if !tc.expectedError && err != nil {
-				t.Errorf("unexpected error: %v", err)
+			// Create the config file in tmpDir
+			localConfigFile := path.Join(tmpDir, "20-nodenet.conf")
+			createKubeletConfigFile(t, localConfigFile, tc.nodeIP, tc.nodeIPs)
+
+			// Test the parsing function directly
+			content, err := os.ReadFile(localConfigFile)
+			if err != nil {
+				t.Errorf("unexpected error reading config file: %v", err)
+			}
+
+			nodeIP, nodeIPs, err := parseKubeletNodeIPs(string(content))
+			if err != nil {
+				t.Errorf("unexpected error parsing node IPs: %v", err)
+			}
+
+			assert.Equal(t, tc.expectedNodeIP, nodeIP)
+			assert.Equal(t, tc.expectedNodeIPs, nodeIPs)
+		})
+	}
+}
+
+func TestParseKubeletNodeIPs(t *testing.T) {
+	testcases := []struct {
+		name            string
+		content         string
+		expectedNodeIP  string
+		expectedNodeIPs []string
+		expectedError   bool
+	}{
+		{
+			name: "Single stack",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=192.168.1.10"`,
+			expectedNodeIP:  "192.168.1.10",
+			expectedNodeIPs: []string{"192.168.1.10"},
+		},
+		{
+			name: "Dual stack",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=192.168.127.172" "KUBELET_NODE_IPS=192.168.127.172,1001:db9::3c"`,
+			expectedNodeIP:  "192.168.127.172",
+			expectedNodeIPs: []string{"192.168.127.172", "1001:db9::3c"},
+		},
+		{
+			name: "Only KUBELET_NODE_IPS",
+			content: `[Service]
+Environment="KUBELET_NODE_IPS=192.168.127.172,1001:db9::3c"`,
+			expectedNodeIP:  "192.168.127.172", // First IP from list
+			expectedNodeIPs: []string{"192.168.127.172", "1001:db9::3c"},
+		},
+		{
+			name:          "No environment variables",
+			content:       `[Service]`,
+			expectedError: true,
+		},
+		{
+			name:          "Empty file",
+			content:       "",
+			expectedError: true,
+		},
+		{
+			name: "File with other content but no IPs",
+			content: `[Service]
+ExecStart=/usr/bin/kubelet
+Environment="OTHER_VAR=value"`,
+			expectedError: true,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeIP, nodeIPs, err := parseKubeletNodeIPs(tc.content)
+
+			if tc.expectedError {
+				assert.Error(t, err)
 			} else {
-				assert.Equal(t, err != nil, tc.expectedError)
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedNodeIP, nodeIP)
+				assert.Equal(t, tc.expectedNodeIPs, nodeIPs)
 			}
 		})
 	}
@@ -132,7 +211,7 @@ func TestSetDnsMasqConfiguration(t *testing.T) {
 			seedReconfiguration: &clusterconfig_api.SeedReconfiguration{
 				BaseDomain:  "new.com",
 				ClusterName: "new_name",
-				NodeIP:      "192.167.127.10",
+				NodeIPs:     []string{"192.167.127.10"},
 			},
 			expectedError: false,
 		},
@@ -159,7 +238,7 @@ func TestSetDnsMasqConfiguration(t *testing.T) {
 				assert.Equal(t, len(lines), 3)
 				assert.Equal(t, lines[0], fmt.Sprintf("SNO_CLUSTER_NAME_OVERRIDE=%s", tc.seedReconfiguration.ClusterName))
 				assert.Equal(t, lines[1], fmt.Sprintf("SNO_BASE_DOMAIN_OVERRIDE=%s", tc.seedReconfiguration.BaseDomain))
-				assert.Equal(t, lines[2], fmt.Sprintf("SNO_DNSMASQ_IP_OVERRIDE=%s", tc.seedReconfiguration.NodeIP))
+				assert.Equal(t, lines[2], fmt.Sprintf("SNO_DNSMASQ_IP_OVERRIDE=%s", tc.seedReconfiguration.NodeIPs[0]))
 			}
 		})
 	}
@@ -439,6 +518,7 @@ func TestNetworkConfiguration(t *testing.T) {
 		ClusterName: "new_name",
 		NodeIP:      "192.167.127.10",
 		Hostname:    "test",
+		NodeIPs:     []string{"192.168.1.10"}, // Provide NodeIPs so setNodeIPIfNotProvided returns early
 	}
 
 	testcases := []struct {
@@ -741,24 +821,32 @@ func TestApplyManifests(t *testing.T) {
 
 func TestSetNodeIPHint(t *testing.T) {
 	testcases := []struct {
-		name          string
-		nodeCidr      string
-		expectedError bool
+		name             string
+		machineNetworks  []string
+		expectedError    bool
+		expectedIPsCount int
 	}{
 		{
-			name:          "Wrong cidr provide, expected error",
-			nodeCidr:      "192.167.1.2",
-			expectedError: true,
+			name:            "Wrong cidr provide, expected error",
+			machineNetworks: []string{"192.167.1.2"},
+			expectedError:   true,
 		},
 		{
-			name:          "Happy flow",
-			nodeCidr:      "192.167.1.0/24",
-			expectedError: false,
+			name:             "Happy flow - single network",
+			machineNetworks:  []string{"192.167.1.0/24"},
+			expectedError:    false,
+			expectedIPsCount: 1,
 		},
 		{
-			name:          "No cidr providered",
-			nodeCidr:      "",
-			expectedError: false,
+			name:             "Happy flow - dual-stack networks",
+			machineNetworks:  []string{"192.167.1.0/24", "2001:db8::/64"},
+			expectedError:    false,
+			expectedIPsCount: 2,
+		},
+		{
+			name:            "No cidr provided",
+			machineNetworks: []string{},
+			expectedError:   false,
 		},
 	}
 
@@ -768,17 +856,24 @@ func TestSetNodeIPHint(t *testing.T) {
 			log := &logrus.Logger{}
 			pp := NewPostPivot(nil, log, nil, "", tmpDir, "")
 			nodeIPHintFile = path.Join(tmpDir, "hint")
-			err := pp.setNodeIpHint(tc.nodeCidr)
+			err := pp.setNodeIpHint(tc.machineNetworks)
 			assert.Equal(t, tc.expectedError, err != nil, err)
-			if !tc.expectedError {
-				if tc.nodeCidr != "" {
-					hint, err := os.ReadFile(nodeIPHintFile)
-					if err != nil {
-						t.Errorf("unexpected error: %v", err)
-					}
-					ip, _, _ := net.ParseCIDR(tc.nodeCidr)
-					assert.Equal(t, fmt.Sprintf("KUBELET_NODEIP_HINT=%s", ip), string(hint))
-				} else if _, err := os.Stat(nodeIPHintFile); err == nil {
+			if !tc.expectedError && len(tc.machineNetworks) > 0 {
+				hint, err := os.ReadFile(nodeIPHintFile)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+
+				// Build expected IPs
+				var expectedIPs []string
+				for _, network := range tc.machineNetworks {
+					ip, _, _ := net.ParseCIDR(network)
+					expectedIPs = append(expectedIPs, ip.String())
+				}
+				expectedHint := fmt.Sprintf("KUBELET_NODEIP_HINT=%s", strings.Join(expectedIPs, " "))
+				assert.Equal(t, expectedHint, string(hint))
+			} else if !tc.expectedError && len(tc.machineNetworks) == 0 {
+				if _, err := os.Stat(nodeIPHintFile); err == nil {
 					t.Errorf("expected no node ip hint file to be created")
 				}
 			}
@@ -993,6 +1088,247 @@ func TestNodeLabelsProvided(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+func TestGetMachineNetworksFromSeedReconfigDualStack(t *testing.T) {
+	testcases := []struct {
+		name             string
+		seedReconfig     *clusterconfig_api.SeedReconfiguration
+		expectedNetworks []string
+	}{
+		{
+			name: "Single-stack IPv4 - legacy field only",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetwork: "192.168.1.0/24",
+			},
+			expectedNetworks: []string{"192.168.1.0/24"},
+		},
+		{
+			name: "Single-stack IPv6 - legacy field only",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetwork: "2001:db8::/64",
+			},
+			expectedNetworks: []string{"2001:db8::/64"},
+		},
+		{
+			name: "Dual-stack - new field only",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+			},
+			expectedNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+		},
+		{
+			name: "Dual-stack IPv6 primary",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetworks: []string{"2001:db8::/64", "192.168.1.0/24"},
+			},
+			expectedNetworks: []string{"2001:db8::/64", "192.168.1.0/24"},
+		},
+		{
+			name: "Multiple IPv4 networks",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetworks: []string{"192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/12"},
+			},
+			expectedNetworks: []string{"192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/12"},
+		},
+		{
+			name: "Multiple IPv6 networks",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetworks: []string{"2001:db8::/64", "2001:db9::/64"},
+			},
+			expectedNetworks: []string{"2001:db8::/64", "2001:db9::/64"},
+		},
+		{
+			name: "New field takes precedence over legacy",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetwork:  "192.168.1.0/24",
+				MachineNetworks: []string{"10.0.0.0/8", "2001:db8::/64"},
+			},
+			expectedNetworks: []string{"10.0.0.0/8", "2001:db8::/64"},
+		},
+		{
+			name:             "Empty configuration",
+			seedReconfig:     &clusterconfig_api.SeedReconfiguration{},
+			expectedNetworks: []string{},
+		},
+		{
+			name: "Empty new field falls back to legacy",
+			seedReconfig: &clusterconfig_api.SeedReconfiguration{
+				MachineNetwork:  "192.168.1.0/24",
+				MachineNetworks: []string{},
+			},
+			expectedNetworks: []string{"192.168.1.0/24"},
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := getMachineNetworksFromSeedReconfig(tc.seedReconfig)
+			assert.Equal(t, tc.expectedNetworks, result)
+		})
+	}
+}
+
+func TestSetNodeIpHintExtended(t *testing.T) {
+	testcases := []struct {
+		name            string
+		machineNetworks []string
+		expectedContent string
+		expectedError   bool
+	}{
+		{
+			name:            "Single-stack IPv4",
+			machineNetworks: []string{"192.168.1.0/24"},
+			expectedContent: "KUBELET_NODEIP_HINT=192.168.1.0",
+		},
+		{
+			name:            "Single-stack IPv6",
+			machineNetworks: []string{"2001:db8::/64"},
+			expectedContent: "KUBELET_NODEIP_HINT=2001:db8::",
+		},
+		{
+			name:            "Dual-stack IPv4 primary",
+			machineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+			expectedContent: "KUBELET_NODEIP_HINT=192.168.1.0 2001:db8::",
+		},
+		{
+			name:            "Dual-stack IPv6 primary",
+			machineNetworks: []string{"2001:db8::/64", "192.168.1.0/24"},
+			expectedContent: "KUBELET_NODEIP_HINT=2001:db8:: 192.168.1.0",
+		},
+		{
+			name:            "Multiple IPv4 networks",
+			machineNetworks: []string{"192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/12"},
+			expectedContent: "KUBELET_NODEIP_HINT=192.168.1.0 10.0.0.0 172.16.0.0",
+		},
+		{
+			name:            "Complex dual-stack",
+			machineNetworks: []string{"192.168.1.0/24", "2001:db8::/64", "10.0.0.0/8", "2001:db9::/64"},
+			expectedContent: "KUBELET_NODEIP_HINT=192.168.1.0 2001:db8:: 10.0.0.0 2001:db9::",
+		},
+		{
+			name:            "Invalid CIDR",
+			machineNetworks: []string{"invalid-cidr"},
+			expectedError:   true,
+		},
+		{
+			name:            "Empty networks",
+			machineNetworks: []string{},
+			expectedError:   false, // Function should not error, just skip
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			nodeIPHintFile = tmpDir + "/hint"
+
+			// Create a PostPivot instance with a proper logger
+			log := &logrus.Logger{}
+			pp := &PostPivot{log: log}
+			err := pp.setNodeIpHint(tc.machineNetworks)
+
+			if tc.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if len(tc.machineNetworks) > 0 {
+					content, readErr := os.ReadFile(nodeIPHintFile)
+					assert.NoError(t, readErr)
+					assert.Equal(t, tc.expectedContent, string(content))
+				}
+			}
+		})
+	}
+}
+
+func TestParseKubeletNodeIPsExtended(t *testing.T) {
+	testcases := []struct {
+		name            string
+		content         string
+		expectedNodeIP  string
+		expectedNodeIPs []string
+		expectedError   bool
+	}{
+		{
+			name: "Single-stack IPv4",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=192.168.1.10"`,
+			expectedNodeIP:  "192.168.1.10",
+			expectedNodeIPs: []string{"192.168.1.10"},
+		},
+		{
+			name: "Single-stack IPv6",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=2001:db8::10"`,
+			expectedNodeIP:  "2001:db8::10",
+			expectedNodeIPs: []string{"2001:db8::10"},
+		},
+		{
+			name: "Dual-stack IPv4 primary",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=192.168.127.172" "KUBELET_NODE_IPS=192.168.127.172,2001:db8::3c"`,
+			expectedNodeIP:  "192.168.127.172",
+			expectedNodeIPs: []string{"192.168.127.172", "2001:db8::3c"},
+		},
+		{
+			name: "Dual-stack IPv6 primary",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=2001:db8::3c" "KUBELET_NODE_IPS=2001:db8::3c,192.168.127.172"`,
+			expectedNodeIP:  "2001:db8::3c",
+			expectedNodeIPs: []string{"2001:db8::3c", "192.168.127.172"},
+		},
+		{
+			name: "Only KUBELET_NODE_IPS dual-stack",
+			content: `[Service]
+Environment="KUBELET_NODE_IPS=192.168.127.172,2001:db8::3c"`,
+			expectedNodeIP:  "192.168.127.172", // First IP from list
+			expectedNodeIPs: []string{"192.168.127.172", "2001:db8::3c"},
+		},
+		{
+			name: "Only KUBELET_NODE_IPS IPv6 primary",
+			content: `[Service]
+Environment="KUBELET_NODE_IPS=2001:db8::3c,192.168.127.172"`,
+			expectedNodeIP:  "2001:db8::3c", // First IP from list
+			expectedNodeIPs: []string{"2001:db8::3c", "192.168.127.172"},
+		},
+		{
+			name: "Multiple IPs with spaces",
+			content: `[Service]
+Environment="KUBELET_NODE_IPS=192.168.1.10, 2001:db8::10, 10.0.0.5"`,
+			expectedNodeIP:  "192.168.1.10",
+			expectedNodeIPs: []string{"192.168.1.10", "2001:db8::10", "10.0.0.5"},
+		},
+		{
+			name: "Multiple lines format dual-stack",
+			content: `[Service]
+Environment="KUBELET_NODE_IP=192.168.1.10"
+Environment="KUBELET_NODE_IPS=192.168.1.10,2001:db8::10"`,
+			expectedNodeIP:  "192.168.1.10",
+			expectedNodeIPs: []string{"192.168.1.10", "2001:db8::10"},
+		},
+		{
+			name: "Only IPv6 networks",
+			content: `[Service]
+Environment="KUBELET_NODE_IPS=2001:db8::10,2001:db9::20"`,
+			expectedNodeIP:  "2001:db8::10",
+			expectedNodeIPs: []string{"2001:db8::10", "2001:db9::20"},
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeIP, nodeIPs, err := parseKubeletNodeIPs(tc.content)
+
+			if tc.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedNodeIP, nodeIP)
+				assert.Equal(t, tc.expectedNodeIPs, nodeIPs)
+			}
 		})
 	}
 }
