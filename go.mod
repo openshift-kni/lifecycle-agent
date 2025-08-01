@@ -3,7 +3,7 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.23.6
 
 require (
-	github.com/containers/image/v5 v5.34.3
+	github.com/containers/image/v5 v5.36.0
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.22.0
 	github.com/go-logr/logr v1.4.3
@@ -39,12 +39,12 @@ require (
 
 require (
 	cel.dev/expr v0.20.0 // indirect
-	github.com/BurntSushi/toml v1.4.0 // indirect
+	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/cavaliercoder/go-cpio v0.0.0-20180626203310-925f9528c45e // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/containers/storage v1.57.2 // indirect
+	github.com/containers/storage v1.59.0 // indirect
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
@@ -56,13 +56,12 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.22.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
-	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
-	github.com/moby/sys/user v0.3.0 // indirect
+	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.1.0 // indirect
-	github.com/opencontainers/runtime-spec v1.2.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/opencontainers/runtime-spec v1.2.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
@@ -140,8 +139,8 @@ require (
 	github.com/openshift/machine-config-operator v0.0.1-0.20231024085435-7e1fb719c1ba // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.20.5 // indirect
-	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/client_golang v1.22.0 // indirect
+	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rh-ecosystem-edge/preinstall-utils v0.0.0-20241120105227-a01c7fe6b461
