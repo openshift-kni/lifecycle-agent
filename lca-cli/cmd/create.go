@@ -117,7 +117,7 @@ func create() error {
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
 	if err = seedCreator.CreateSeedImage(); err != nil {
 		err = fmt.Errorf("failed to create seed image: %w", err)
-		log.Errorf(err.Error())
+		log.Error(err)
 		return err
 	}
 
