@@ -52,6 +52,12 @@ else
     fi
 fi
 
-find . -name '*.sh' -not -path './vendor/*' -not -path './*/vendor/*' -not -path './git/*' \
-    -not -path './bin/*' -not -path './testbin/*' -print0 \
+find . -name '*.sh' \
+    -not -path './*/vendor/*' \
+    -not -path './bin/*' \
+    -not -path './git/*' \
+    -not -path './testbin/*' \
+    -not -path './vendor/*' \
+    -not -path './telco5g-konflux/*' \
+    -print0 \
     | xargs -0 --no-run-if-empty ${shellcheck} -x
