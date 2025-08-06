@@ -83,7 +83,7 @@ type EMStatusError struct {
 }
 
 func (e *EMStatusError) Error() string {
-	return fmt.Sprintf(e.ErrMessage)
+	return e.ErrMessage
 }
 
 func NewEMFailedError(msg string) *EMStatusError {
@@ -320,7 +320,7 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 					warnings = append(warnings, fmt.Sprintf("%s[%s] - dryrun failed in namespace %s: %s", mKind, mName, mNamespace, err.Error()))
 				default: // Capture unknown runtime error
 					// nolint: staticcheck
-					return validationWarn, fmt.Errorf(fmt.Sprintf("failed to validate manifest with dryrun: %v", err.Error()))
+					return validationWarn, fmt.Errorf("failed to validate manifest with dryrun: %w", err)
 				}
 			}
 		}
@@ -526,7 +526,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 					return NewEMFailedError(errMsg)
 				}
 				// nolint: staticcheck
-				return fmt.Errorf(errMsg)
+				return fmt.Errorf("failed to apply manifest: %w", err)
 			}
 
 			h.Log.Info("Applied manifest", "name", manifest.GetName(), "namespace", manifest.GetNamespace())
