@@ -1,3 +1,4 @@
+---
 # We use this IDMS in the Conforma tests to check for fips compliance.
 # https://github.com/konflux-ci/build-definitions/tree/main/task/fbc-fips-check-oci-ta/0.1
 apiVersion: operator.openshift.io/v1
@@ -6,12 +7,12 @@ metadata:
   name: lifecycle-agent-digest-mirror-set
 spec:
   imageDigestMirrors:
-  - mirrors:
-    - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20
-    source: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
-  - mirrors:
-    - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20
-    source: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle
-  - mirrors:
-    - quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-20
-    source: registry.redhat.io/openshift4/recert-rhel9
+    - mirrors:
+        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20
+      source: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
+    - mirrors:
+        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20
+      source: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle
+    - mirrors:
+        - quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-20
+      source: registry.redhat.io/openshift4/recert-rhel9

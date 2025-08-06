@@ -1,3 +1,4 @@
+---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -27,33 +28,33 @@ metadata:
   namespace: telco-5g-tenant
 spec:
   params:
-  - name: git-url
-    value: '{{source_url}}'
-  - name: revision
-    value: '{{revision}}'
-  - name: output-image
-    value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-fbc-4-20:{{revision}}
-    # FBCs are not required to be multi arch because IIB will generate multi arch images on release.
-    # However we still need to build multi arch images for QE to test pre-release.
-  - name: build-platforms
-    value:
-    - linux/x86_64
-    - linux/arm64
-  - name: dockerfile
-    value: .konflux/Dockerfile.catalog
-  - name: build-args-file
-    value: .konflux/container_build_args.conf
-  - name: additional-tags
-    value: ["latest"]
-  # We have configured an fbc exception for hermetic builds on the release repo.
-  - name: hermetic
-    value: "false"
+    - name: git-url
+      value: '{{source_url}}'
+    - name: revision
+      value: '{{revision}}'
+    - name: output-image
+      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-fbc-4-20:{{revision}}
+      # FBCs are not required to be multi arch because IIB will generate multi arch images on release.
+      # However we still need to build multi arch images for QE to test pre-release.
+    - name: build-platforms
+      value:
+        - linux/x86_64
+        - linux/arm64
+    - name: dockerfile
+      value: .konflux/Dockerfile.catalog
+    - name: build-args-file
+      value: .konflux/container_build_args.conf
+    - name: additional-tags
+      value: ["latest"]
+    # We have configured an fbc exception for hermetic builds on the release repo.
+    - name: hermetic
+      value: "false"
   pipelineRef:
     name: fbc-pipeline
   taskRunTemplate:
     serviceAccountName: build-pipeline-lifecycle-agent-fbc-4-20
   workspaces:
-  - name: git-auth
-    secret:
-      secretName: '{{ git_auth_secret }}'
+    - name: git-auth
+      secret:
+        secretName: '{{ git_auth_secret }}'
 status: {}

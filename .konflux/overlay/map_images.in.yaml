@@ -1,10 +1,11 @@
+---
 # Manager
 - key: manager
-  staging: registry.stage.redhat.io/openshift4/lifecycle-agent-rhel9-operator
   production: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
+  staging: registry.stage.redhat.io/openshift4/lifecycle-agent-rhel9-operator
 #
 # Recert
 - key: recert_image
-  staging: registry.stage.redhat.io/openshift4/recert-rhel9
   production: registry.redhat.io/openshift4/recert-rhel9
+  staging: registry.stage.redhat.io/openshift4/recert-rhel9
 #
