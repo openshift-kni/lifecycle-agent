@@ -9,9 +9,9 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.5.0
-	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
+	github.com/openshift/api v0.0.0-20250710004639-926605d3338b
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
-	github.com/openshift/library-go v0.0.0-20240422143640-fad649cbbd63
+	github.com/openshift/library-go v0.0.0-20250729191057-91376e1b394e
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.31.0
@@ -47,7 +47,6 @@ require (
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
-	github.com/evanphx/json-patch v5.9.0+incompatible // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -86,7 +85,7 @@ require (
 	k8s.io/apiserver v0.33.3 // indirect
 	k8s.io/component-base v0.33.3 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250207200755-1244d31929d7 // indirect
-	k8s.io/kube-aggregator v0.31.3 // indirect
+	k8s.io/kube-aggregator v0.33.2 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.6-0.20230721195810-5c8923c5ff96 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
@@ -133,7 +132,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/selinux v1.12.0
-	github.com/openshift/client-go v0.0.0-20240422164335-6c851f4919dd // indirect
+	github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee // indirect
 	github.com/openshift/machine-config-operator v0.0.1-0.20231024085435-7e1fb719c1ba // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -165,8 +164,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
-	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect
-	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
+	k8s.io/utils v0.0.0-20241210054802-24370beab758 // indirect
+	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.6.0 // indirect
 )
 
