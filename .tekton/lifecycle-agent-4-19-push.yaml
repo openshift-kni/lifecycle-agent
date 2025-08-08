@@ -1,3 +1,4 @@
+---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -12,23 +13,23 @@ metadata:
       event == "push" &&
       target_branch == "release-4.19" &&
       (
-        '.tekton/build-pipeline.yaml'.pathChanged() ||
         '.konflux/container_build_args.conf'.pathChanged() ||
+        '.tekton/build-pipeline.yaml'.pathChanged() ||
+        '.tekton/lifecycle-agent-4-19-push.yaml'.pathChanged() ||
         'api/***'.pathChanged() ||
         'config/***'.pathChanged() ||
         'controllers/***'.pathChanged() ||
-        'lca-cli'.pathChanged() ||
+        'Dockerfile'.pathChanged() ||
+        'go.mod'.pathChanged() ||
+        'go.sum'.pathChanged() ||
         'hack/***'.pathChanged() ||
         'internal/***'.pathChanged() ||
+        'lca-cli'.pathChanged() ||
         'main/***'.pathChanged() ||
         'must-gather/***'.pathChanged() ||
         'pkg/***'.pathChanged() ||
         'utils/***'.pathChanged() ||
-        'vendor/***'.pathChanged() ||
-        'go.mod'.pathChanged() ||
-        'go.sum'.pathChanged() ||
-        '.tekton/lifecycle-agent-4-19-push.yaml'.pathChanged() ||
-        'Dockerfile'.pathChanged()
+        'vendor/***'.pathChanged()
       )
   creationTimestamp: null
   labels:

@@ -1,3 +1,4 @@
+---
 # To get started with Dependabot version updates, you'll need to specify which
 # package ecosystems to update and where the package manifests are located.
 # Please see the documentation for all configuration options:
@@ -5,20 +6,17 @@
 
 version: 2
 updates:
-- package-ecosystem: "gomod" # See documentation for possible values
-  directory: "/" # Location of package manifests
-  schedule:
-    interval: "daily"
-  open-pull-requests-limit: 5
-  groups:
-    k8s:
-      patterns: [ "k8s.io/*", "sig.k8s.io/*" ]
-      update-types: [ "major", "minor", "patch" ]
-    ginkgo:
-      patterns: ["github.com/onsi/gomega", "github.com/onsi/ginkgo/v2"]
-      update-types: [ "major", "minor" ]
-    ocm:
-      patterns: ["open-cluster-management.io/*"]      
-#  ignore:
-    # - dependency-name: "*"
-    #   update-types: ["version-update:semver-patch"]
+  - package-ecosystem: "gomod"  # See documentation for possible values
+    directory: "/"  # Location of package manifests
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    groups:
+      k8s:
+        patterns: ["k8s.io/*", "sig.k8s.io/*"]
+        update-types: ["major", "minor", "patch"]
+      ginkgo:
+        patterns: ["github.com/onsi/gomega", "github.com/onsi/ginkgo/v2"]
+        update-types: ["major", "minor"]
+      ocm:
+        patterns: ["open-cluster-management.io/*"]
