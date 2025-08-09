@@ -285,8 +285,8 @@ github.com/ulikunitz/xz v0.5.12/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0o
 github.com/vincent-petithory/dataurl v0.0.0-20160330182126-9a301d65acbb/go.mod h1:FHafX5vmDzyP+1CQATJn7WFKc9CvnvxyvZy6I1MrG/U=
 github.com/vincent-petithory/dataurl v1.0.0 h1:cXw+kPto8NLuJtlMsI152irrVw9fRDX8AbShPRpg2CI=
 github.com/vincent-petithory/dataurl v1.0.0/go.mod h1:FHafX5vmDzyP+1CQATJn7WFKc9CvnvxyvZy6I1MrG/U=
-github.com/vmware-tanzu/velero v1.16.1 h1:T9Jdt/6Jl1x+nT+OCCyOBtiakCdInHZAB3qU/jH6yGg=
-github.com/vmware-tanzu/velero v1.16.1/go.mod h1:+wInt9pLqlRiUZAWsO5eSxLZK9Q3jSV9MFaUrBfvGN0=
+github.com/vmware-tanzu/velero v1.16.2 h1:Zhve1mKtX4n0oVhHwbEOsgB9fjKKwm96HJK4WaV/28o=
+github.com/vmware-tanzu/velero v1.16.2/go.mod h1:rGIxqbeVHne/47AMtA8vV0ebeQOzyF7VEullayyTEto=
 github.com/vmware/vmw-guestinfo v0.0.0-20170707015358-25eff159a728/go.mod h1:x9oS4Wk2s2u4tS29nEaDLdzvuHdB19CvSGJjPgkZJNk=
 github.com/vmware/vmw-ovflib v0.0.0-20170608004843-1f217b9dc714/go.mod h1:jiPk45kn7klhByRvUq5i2vo1RtHKBHj+iWGFpxbXuuI=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
