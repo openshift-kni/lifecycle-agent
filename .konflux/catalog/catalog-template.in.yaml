@@ -25,6 +25,6 @@ entries:
     package: lifecycle-agent
     schema: olm.channel
   # v4.20.0 bundle
-  # The url for this last entry is updated by hack/konflux-update-catalog-template.sh automatically
-  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20@sha256:148f7cddc744531bfc46a837f310b901d66f4485f797fcf296f04855d70f3d9b
+  # The url for this last entry is updated by telco5g-konflux/scripts/catalog/update-catalog-template.sh automatically
+  - image: placeholder.will.be.updated.by.telco5g-konflux.scripts.catalog.update-catalog-template.sh
     schema: olm.bundle
