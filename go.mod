@@ -1,6 +1,6 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.23.6
+go 1.24.0
 
 require (
 	github.com/containers/image/v5 v5.36.0
@@ -21,7 +21,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	github.com/vmware-tanzu/velero v1.16.1
+	github.com/vmware-tanzu/velero v1.16.2
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
