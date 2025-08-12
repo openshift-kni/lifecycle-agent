@@ -102,7 +102,20 @@ var (
 		},
 	}
 
-	seedManifestData = seedreconfig.SeedReconfiguration{BaseDomain: "seed.com", ClusterName: "seed", NodeIP: "192.168.127.10", Hostname: "seed"}
+	validDualStackMasterNode = &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{"node-role.kubernetes.io/master": "", "test": "test"},
+		},
+		Status: corev1.NodeStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "192.168.121.10"},
+				{Type: corev1.NodeInternalIP, Address: "2001:db8::10"},
+				{Type: corev1.NodeHostName, Address: "seed"},
+			},
+		},
+	}
+
+	seedManifestData = seedreconfig.SeedReconfiguration{BaseDomain: "seed.com", ClusterName: "seed", NodeIPs: []string{"192.168.127.10"}, Hostname: "seed"}
 
 	testIngressCrt = &x509.Certificate{
 		Subject: pkix.Name{
@@ -321,7 +334,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
 				assert.Equal(t, "test-infra-cluster", seedReconfig.ClusterName)
 				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
-				assert.Equal(t, "192.168.121.10", seedReconfig.NodeIP)
+				assert.Equal(t, []string{"192.168.121.10"}, seedReconfig.NodeIPs)
 				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
@@ -369,7 +382,7 @@ func TestClusterConfig(t *testing.T) {
 				assert.Equal(t, "ssh-key", seedReconfig.SSHKey)
 				assert.Equal(t, "test-infra-cluster", seedReconfig.ClusterName)
 				assert.Equal(t, "redhat.com", seedReconfig.BaseDomain)
-				assert.Equal(t, "192.168.121.10", seedReconfig.NodeIP)
+				assert.Equal(t, []string{"192.168.121.10"}, seedReconfig.NodeIPs)
 				assert.Equal(t, "mirror.redhat.com:5005", seedReconfig.ReleaseRegistry)
 				assert.Equal(t, "some-http-proxy", seedReconfig.Proxy.HTTPProxy)
 				assert.Equal(t, "some-http-proxy-status", seedReconfig.StatusProxy.HTTPProxy)
@@ -672,6 +685,53 @@ func TestNetworkConfig(t *testing.T) {
 			tc.validateFunc(t, tmpDir, err, tc.filesToCreate, unc)
 		})
 	}
+}
+
+func TestSeedReconfigurationFromClusterInfo_DualStack(t *testing.T) {
+	// Test that SeedReconfigurationFromClusterInfo properly handles the new dual-stack fields
+	clusterInfo := &utils.ClusterInfo{
+		BaseDomain:           "example.com",
+		ClusterName:          "test-cluster",
+		ClusterID:            "test-cluster-id",
+		OCPVersion:           "4.14.0",
+		NodeIPs:              []string{"192.168.1.10", "2001:db8::10"},
+		ReleaseRegistry:      "quay.io/openshift-release-dev",
+		Hostname:             "test-node",
+		ClusterNetworks:      []string{"10.128.0.0/14", "fd01::/48"},
+		ServiceNetworks:      []string{"172.30.0.0/16", "fd02::/112"},
+		MachineNetworks:      []string{"192.168.1.0/24", "2001:db8::/64"},
+		NodeLabels:           map[string]string{"test": "label"},
+		IngressCertificateCN: "ingress-operator@123456",
+	}
+
+	kubeconfigCryptoRetention := &seedreconfig.KubeConfigCryptoRetention{}
+	additionalTrustBundle := &AdditionalTrustBundle{}
+
+	result := SeedReconfigurationFromClusterInfo(
+		clusterInfo,
+		kubeconfigCryptoRetention,
+		"test-ssh-key",
+		"test-infra-id",
+		"test-pull-secret",
+		"test-password-hash",
+		nil, // proxy
+		nil, // statusProxy
+		"test-install-config",
+		"test-chrony-config",
+		additionalTrustBundle,
+		[]ServerSSHKey{},
+	)
+
+	// Verify dual-stack specific fields
+	assert.Equal(t, []string{"192.168.1.10", "2001:db8::10"}, result.NodeIPs)
+	assert.Equal(t, []string{"192.168.1.0/24", "2001:db8::/64"}, result.MachineNetworks)
+
+	// Verify other standard fields
+	assert.Equal(t, clusterInfo.BaseDomain, result.BaseDomain)
+	assert.Equal(t, clusterInfo.ClusterName, result.ClusterName)
+	assert.Equal(t, clusterInfo.ClusterID, result.ClusterID)
+	assert.Equal(t, clusterInfo.Hostname, result.Hostname)
+	assert.Equal(t, clusterInfo.ReleaseRegistry, result.ReleaseRegistry)
 }
 
 // genSelfSignedKeyPair generates a key and a self-signed certificate from the provided Certificate.
