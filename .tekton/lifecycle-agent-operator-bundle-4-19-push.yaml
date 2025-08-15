@@ -21,7 +21,7 @@ metadata:
         'bundle/***'.pathChanged() ||
         'config/***'.pathChanged() ||
         'hack/***'.pathChanged() ||
-        'manifests/***'.pathChanged() ||
+        'manifests/***'.pathChanged()
       )
   creationTimestamp: null
   labels:
