@@ -1,20 +1,40 @@
+---
 # See the OWNERS docs at https://go.k8s.io/owners
 
 component: "Telco Edge"
-subcomponent: "LCA"
-
 filters:
   ".*":
-    reviewers:
-      - lifecycle-agent-reviewers
     approvers:
       - lifecycle-agent-approvers
+    reviewers:
+      - lifecycle-agent-reviewers
+  ".konflux/*":
+    approvers:
+      - konflux-approvers
+    reviewers:
+      - konflux-reviewers
+  ".tekton/*":
+    approvers:
+      - konflux-approvers
+    reviewers:
+      - konflux-reviewers
+  ^Dockerfile:
+    reviewers:
+      - rauhersu
   ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed
-  ^Dockerfile:
-    reviewers:
-    - rauhersu
   ^bundle/manifests/lifecycle-agent.clusterserviceversion.yaml:
     reviewers:
-    - rauhersu
+      - rauhersu
+  "renovate.json":
+    approvers:
+      - konflux-approvers
+    reviewers:
+      - konflux-reviewers
+  "telco5g-konflux/":
+    approvers:
+      - konflux-approvers
+    reviewers:
+      - konflux-reviewers
+subcomponent: "LCA"
