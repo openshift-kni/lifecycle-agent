@@ -35,7 +35,7 @@ entries:
   - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1d67bf321a84edd246a4348458369c674b6791492f519388a9008a513e8d836d
     schema: olm.bundle
   # v4.18.1 bundle
-  # The url for this last entry is updated by hack/konflux-update-catalog-template.sh automatically
-  - image: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-18@sha256:beb7886b219b80d049c98089aa7bd87471117f1a6942a4f3bcecb2e94a22880b
+  # The url for this last entry is updated by telco5g-konflux/scripts/catalog/update-catalog-template.sh automatically
+  - image: placeholder.will.be.updated.by.telco5g-konflux.scripts.catalog.update-catalog-template.sh
     schema: olm.bundle
 schema: olm.template.basic
