@@ -21,6 +21,7 @@ aliases:
     - jc-rh
     - romfreiman
     - tsorya
+    - danmanor
   lifecycle-agent-reviewers:
     - browsell
     - donpenney
@@ -39,3 +40,4 @@ aliases:
     - mresvanis
     - rauhersu
     - fontivan
+    - danmanor
