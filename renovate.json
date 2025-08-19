@@ -97,9 +97,6 @@
         "managerFilePatterns": [
             "/\\.yaml$/",
             "/\\.yml$/"
-        ],
-        "schedule": [
-            "at any time"
         ]
     }
 }
