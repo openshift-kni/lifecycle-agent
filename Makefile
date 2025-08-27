@@ -9,10 +9,10 @@ VERSION ?= 4.17.0
 BASHATE_VERSION ?= 2.1.1
 
 # CONTROLLER_GEN_VERSION defines the controller-gen version to download from go modules.
-CONTROLLER_GEN_VERSION ?= v0.14.0
+CONTROLLER_GEN_VERSION ?= v0.13.0
 
 # GOLANGCI_LINT_VERSION defines the golangci-lint version to download from GitHub releases.
-GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_VERSION ?= v1.52.0
 
 # KUSTOMIZE_VERSION defines the kustomize version to download from go modules.
 KUSTOMIZE_VERSION ?= v5@v5.1.1
