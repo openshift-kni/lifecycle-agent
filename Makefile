@@ -5,6 +5,14 @@
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
 VERSION ?= 4.19.0
 
+# RHEL9_ACTIVATION_KEY defines the activation key to use for the rpm lock file for the runtime
+# This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
+RHEL9_ACTIVATION_KEY ?= 1234567890
+
+# RHEL9_ORG_ID defines the organization to use for the rpm lock file for the runtime
+# This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
+RHEL9_ORG_ID ?= placeholder
+
 # BASHATE_VERSION defines the bashate version to download from GitHub releases.
 BASHATE_VERSION ?= 2.1.1
 
@@ -37,6 +45,12 @@ YQ_VERSION ?= v4.45.4
 
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
+
+# The registry auth file is mounted into the container to allow for private registry pulls.
+# This is automatically detected and mounted into the container if it exists on the host.
+# If it does not exist, a warning is printed and the registry pulls may fail if not public.
+# This can be set from the command line if the default is not correct for your environment.
+REGISTRY_AUTH_FILE ?= $(shell echo $${XDG_RUNTIME_DIR:-/run/user/$$(shell id -u)})/containers/auth.json
 
 # Konflux catalog configuration
 PACKAGE_NAME_KONFLUX = lifecycle-agent
@@ -91,6 +105,13 @@ GOFLAGS := -mod=mod
 SHELL = /usr/bin/env GOFLAGS=$(GOFLAGS) bash -o pipefail
 
 .SHELLFLAGS = -ec
+
+# RHEL9_RELEASE defines the RHEL9 release version to update the rpm lock file for the runtime
+# This is automatically extracted from the RUNTIME_IMAGE in `.konflux/container_build_args.conf`
+RHEL9_RELEASE ?= $(shell awk -F'=' '/^RUNTIME_IMAGE=/ {split($$2, parts, /[:|@]/); print parts[2]}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
+
+# Use make's built-in substitution function to replace the dot with a dash
+RHEL9_RELEASE_DASHED := $(subst .,-,$(RHEL9_RELEASE))
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -522,6 +543,19 @@ konflux-generate-catalog-production: sync-git-submodules yq opm ## generate a re
 		OPM=$(OPM) \
 		YQ=$(YQ)
 	$(MAKE) konflux-validate-catalog
+
+.PHONY: konflux-update-rpm-lock-runtime
+konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file for the runtime
+	@echo "Updating rpm lock file for the runtime..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
+		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime \
+		RHEL9_RELEASE=$(RHEL9_RELEASE) \
+		RHEL9_ACTIVATION_KEY=$(RHEL9_ACTIVATION_KEY) \
+		RHEL9_ORG_ID=$(RHEL9_ORG_ID) \
+		RHEL9_EXECUTION_IMAGE=registry.redhat.io/rhel$(RHEL9_RELEASE_DASHED)-els/rhel:$(RHEL9_RELEASE) \
+		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
+	@echo "Rpm lock file updated successfully."
+	$(MAKE) konflux-filter-unused-redhat-repos
 
 .PHONY: konflux-filter-unused-redhat-repos
 konflux-filter-unused-redhat-repos: sync-git-submodules ## Filter unused repositories from redhat.repo files in runtime lock folder
