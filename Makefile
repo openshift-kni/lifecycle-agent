@@ -165,7 +165,7 @@ generate: controller-gen mock-gen # generate-code
 
 generate-code: ## Generate code containing Clientset, Informers, Listers
 	@echo "Running generate-code"
-	hack/update-codegen.sh
+	$(PROJECT_DIR)/hack/update-codegen.sh
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -283,7 +283,7 @@ bundle-push: bundle-build ## Push the bundle image.
 
 .PHONY: bundle-check
 bundle-check: bundle
-	hack/check-git-tree.sh
+	$(PROJECT_DIR)/hack/check-git-tree.sh
 
 .PHONY: bundle-run
 bundle-run: # Install bundle on cluster using operator sdk.
@@ -379,7 +379,7 @@ golangci-lint: sync-git-submodules $(LOCALBIN) ## Run golangci-lint against code
 # markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
 .PHONY: markdownlint-image
 markdownlint-image:  ## Build local container markdownlint-image
-	$(ENGINE) image build -f ./hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest ./hack
+	$(ENGINE) image build -f $(PROJECT_DIR)/hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest $(PROJECT_DIR)/hack
 
 .PHONY: markdownlint-image-clean
 markdownlint-image-clean:  ## Remove locally cached markdownlint-image
