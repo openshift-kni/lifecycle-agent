@@ -471,8 +471,8 @@ sync-git-submodules:
 		echo "Skipping submodule sync"; \
 	fi
 
-.PHONY: konflux-validate-catalog-template-bundle ## validate the last bundle entry on the catalog template file
-konflux-validate-catalog-template-bundle: yq operator-sdk
+.PHONY: konflux-validate-catalog-template-bundle
+konflux-validate-catalog-template-bundle: yq operator-sdk sync-git-submodules ## validate the last bundle entry on the catalog template file
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog-template-bundle \
 		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
 		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
@@ -481,13 +481,13 @@ konflux-validate-catalog-template-bundle: yq operator-sdk
 		ENGINE=$(ENGINE)
 
 .PHONY: konflux-validate-catalog
-konflux-validate-catalog: opm ## validate the current catalog file
+konflux-validate-catalog: opm sync-git-submodules ## validate the current catalog file
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog \
 		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
 		OPM=$(OPM)
 
-.PHONY: konflux-generate-catalog ## generate a quay.io catalog
-konflux-generate-catalog: yq opm
+.PHONY: konflux-generate-catalog
+konflux-generate-catalog: yq opm sync-git-submodules ## generate a quay.io catalog
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog-legacy \
 		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
 		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
@@ -498,8 +498,8 @@ konflux-generate-catalog: yq opm
 		YQ=$(YQ)
 	$(MAKE) konflux-validate-catalog
 
-.PHONY: konflux-generate-catalog-production ## generate a registry.redhat.io catalog
-konflux-generate-catalog-production: yq opm
+.PHONY: konflux-generate-catalog-production
+konflux-generate-catalog-production: yq opm sync-git-submodules ## generate a registry.redhat.io catalog
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog-production-legacy \
 		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
 		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
@@ -513,7 +513,7 @@ konflux-generate-catalog-production: yq opm
 	$(MAKE) konflux-validate-catalog
 
 .PHONY: konflux-filter-unused-redhat-repos
-konflux-filter-unused-redhat-repos: ## Filter unused repositories from redhat.repo files in runtime lock folder
+konflux-filter-unused-redhat-repos: sync-git-submodules ## Filter unused repositories from redhat.repo files in runtime lock folder
 	@echo "Filtering unused repositories from runtime lock folder..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock filter-unused-repos REPO_FILE=$(PROJECT_DIR)/.konflux/lock-runtime/redhat.repo
 	@echo "Filtering completed for runtime lock folder."
@@ -526,7 +526,7 @@ konflux-update-tekton-task-refs: sync-git-submodules ## Update task references i
 	@echo "Task references updated successfully."
 
 .PHONY: konflux-compare-catalog
-konflux-compare-catalog: ## Compare generated catalog with upstream FBC image
+konflux-compare-catalog: sync-git-submodules ## Compare generated catalog with upstream FBC image
 	@echo "Comparing generated catalog with upstream FBC image..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-compare-catalog \
 		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
