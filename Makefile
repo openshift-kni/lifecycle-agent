@@ -7,11 +7,11 @@ VERSION ?= 4.14.0
 
 # RHEL9_ACTIVATION_KEY defines the activation key to use for the rpm lock file for the runtime
 # This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
-RHEL9_ACTIVATION_KEY ?= 1234567890
+RHEL9_ACTIVATION_KEY ?= ""
 
 # RHEL9_ORG_ID defines the organization to use for the rpm lock file for the runtime
 # This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
-RHEL9_ORG_ID ?= placeholder
+RHEL9_ORG_ID ?= ""
 
 # BASHATE_VERSION defines the bashate version to download from GitHub releases.
 BASHATE_VERSION ?= 2.1.1
@@ -548,21 +548,27 @@ konflux-generate-catalog-production: sync-git-submodules yq opm ## generate a re
 .PHONY: konflux-update-rpm-lock-runtime
 konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file for the runtime
 	@echo "Updating rpm lock file for the runtime..."
+	@echo "Creating modified Dockerfile in lock-runtime directory..."
+	cp $(PROJECT_DIR)/Dockerfile $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile
+	@echo "Updating RUNTIME_IMAGE value in copied Dockerfile..."
+	RUNTIME_IMAGE_VALUE=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf); \
+	sed -i.bak -e "s|ARG RUNTIME_IMAGE=.*|ARG RUNTIME_IMAGE=$$RUNTIME_IMAGE_VALUE|" -e "s|FROM \$${RUNTIME_IMAGE}|FROM $$RUNTIME_IMAGE_VALUE|" $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
+	rm -f $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile.bak
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
 		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime \
 		RHEL9_RELEASE=$(RHEL9_RELEASE) \
 		RHEL9_ACTIVATION_KEY=$(RHEL9_ACTIVATION_KEY) \
 		RHEL9_ORG_ID=$(RHEL9_ORG_ID) \
 		RHEL9_EXECUTION_IMAGE=registry.redhat.io/rhel$(RHEL9_RELEASE_DASHED)-els/rhel:$(RHEL9_RELEASE) \
-		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
+		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf); \
+	result=$$?; \
+	echo "Cleaning up copied Dockerfile..."; \
+	rm -f $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
+	if [ $$result -ne 0 ]; then \
+		echo "rpm lock file update failed."; \
+		exit $$result; \
+	fi
 	@echo "Rpm lock file updated successfully."
-	$(MAKE) konflux-filter-unused-redhat-repos
-
-.PHONY: konflux-filter-unused-redhat-repos
-konflux-filter-unused-redhat-repos: sync-git-submodules ## Filter unused repositories from redhat.repo files in runtime lock folder
-	@echo "Filtering unused repositories from runtime lock folder..."
-	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock filter-unused-repos REPO_FILE=$(PROJECT_DIR)/.konflux/lock-runtime/redhat.repo
-	@echo "Filtering completed for runtime lock folder."
 
 .PHONY: konflux-update-tekton-task-refs
 konflux-update-tekton-task-refs: sync-git-submodules ## Update task references in Tekton pipeline files
