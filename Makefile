@@ -404,14 +404,14 @@ markdownlint: markdownlint-image  ## run the markdown linter
 
 operator-sdk: sync-git-submodules $(LOCALBIN) ## Download operator-sdk locally if necessary.
 	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-operator-sdk \
-		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
 		DOWNLOAD_OPERATOR_SDK_VERSION=$(OPERATOR_SDK_VERSION)
 	@echo "Operator sdk downloaded successfully."
 
 .PHONY: opm
 opm: sync-git-submodules $(LOCALBIN) ## Download opm locally if necessary.
 	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-opm \
-		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
 		DOWNLOAD_OPM_VERSION=$(OPM_VERSION)
 	@echo "Opm downloaded successfully."
 
@@ -457,7 +457,7 @@ yamllint: yamllint-download $(YAMLLINT) ## Lint YAML files in the repository
 yq: sync-git-submodules $(LOCALBIN) ## Download yq
 	@echo "Downloading yq..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yq \
-		DOWNLOAD_INSTALL_DIR=$(PROJECT_DIR)/bin \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
 		DOWNLOAD_YQ_VERSION=$(YQ_VERSION)
 	@echo "Yq downloaded successfully."
 
@@ -554,4 +554,4 @@ help:   ## Shows this message.
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 clean:
-	rm -rf $(PROJECT_DIR)/bin/
+	rm -rf $(LOCALBIN)
