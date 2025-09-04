@@ -2,7 +2,7 @@
 # Manager
 - key: manager
   source: quay.io/openshift-kni/lifecycle-agent-operator:4.20.0
-  target: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20@sha256:19b6829c251fb2e878c2dd2b007f931c73614ce7ce705adc0c48926ef162ee29
+  target: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20@sha256:3124da61d2be59a7fbc25697b4f0cfea7b108ad5593a79a5e815be4214c8f014
 #
 # Recert
 - key: recert_image
