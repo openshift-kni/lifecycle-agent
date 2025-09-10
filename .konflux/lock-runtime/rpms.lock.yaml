@@ -1,54 +1,54 @@
 ---
-arches:
-  - arch: aarch64
-    module_metadata: []
-    packages:
-      - checksum: sha256:2836c96b161dff16224516e22a55e9ad2fbe1278e482caec1332cbc19812419e
-        evr: 3.2.3-19.el9
-        name: rsync
-        repoid: rhel-9-for-aarch64-baseos-rpms
-        size: 405826
-        sourcerpm: rsync-3.2.3-19.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/r/rsync-3.2.3-19.el9.aarch64.rpm
-      - checksum: sha256:f2b65a333b9de17af1f71e27c7540fa23d85cbe98774a246eb70547d028027da
-        evr: 2:1.34-6.el9_4.1
-        name: tar
-        repoid: rhel-9-for-aarch64-baseos-rpms
-        size: 900224
-        sourcerpm: tar-1.34-6.el9_4.1.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.aarch64.rpm
-      - checksum: sha256:16dfccafa090ff446a374e81e11224e396f44b9c20eba9144cfb48d46a71f3e1
-        evr: 2.37.4-18.el9
-        name: util-linux-core
-        repoid: rhel-9-for-aarch64-baseos-rpms
-        size: 477963
-        sourcerpm: util-linux-2.37.4-18.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.aarch64.rpm
-    source: []
-  - arch: x86_64
-    module_metadata: []
-    packages:
-      - checksum: sha256:ee29f2138b7f732ba3e552281c4bdf56c71112a17c19dd941135aa56c22cb2c8
-        evr: 3.2.3-19.el9
-        name: rsync
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 411313
-        sourcerpm: rsync-3.2.3-19.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/r/rsync-3.2.3-19.el9.x86_64.rpm
-      - checksum: sha256:76f2f5fd1f37153d51a697659db31bd2a672a1a4536b42ce020cf9602ea3cde7
-        evr: 2:1.34-6.el9_4.1
-        name: tar
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 910343
-        sourcerpm: tar-1.34-6.el9_4.1.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.x86_64.rpm
-      - checksum: sha256:f344470b51f9cfdbc499b134c6d5d399f4011cec5250525f233de2d4199bf25e
-        evr: 2.37.4-18.el9
-        name: util-linux-core
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 480160
-        sourcerpm: util-linux-2.37.4-18.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.x86_64.rpm
-    source: []
-lockfileVendor: redhat
 lockfileVersion: 1
+lockfileVendor: redhat
+arches:
+- arch: aarch64
+  packages:
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/r/rsync-3.2.3-19.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 405826
+    checksum: sha256:2836c96b161dff16224516e22a55e9ad2fbe1278e482caec1332cbc19812419e
+    name: rsync
+    evr: 3.2.3-19.el9
+    sourcerpm: rsync-3.2.3-19.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 900224
+    checksum: sha256:f2b65a333b9de17af1f71e27c7540fa23d85cbe98774a246eb70547d028027da
+    name: tar
+    evr: 2:1.34-6.el9_4.1
+    sourcerpm: tar-1.34-6.el9_4.1.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/aarch64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-rpms
+    size: 477963
+    checksum: sha256:16dfccafa090ff446a374e81e11224e396f44b9c20eba9144cfb48d46a71f3e1
+    name: util-linux-core
+    evr: 2.37.4-18.el9
+    sourcerpm: util-linux-2.37.4-18.el9.src.rpm
+  source: []
+  module_metadata: []
+- arch: x86_64
+  packages:
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/r/rsync-3.2.3-19.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 411313
+    checksum: sha256:ee29f2138b7f732ba3e552281c4bdf56c71112a17c19dd941135aa56c22cb2c8
+    name: rsync
+    evr: 3.2.3-19.el9
+    sourcerpm: rsync-3.2.3-19.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 910343
+    checksum: sha256:76f2f5fd1f37153d51a697659db31bd2a672a1a4536b42ce020cf9602ea3cde7
+    name: tar
+    evr: 2:1.34-6.el9_4.1
+    sourcerpm: tar-1.34-6.el9_4.1.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 480160
+    checksum: sha256:f344470b51f9cfdbc499b134c6d5d399f4011cec5250525f233de2d4199bf25e
+    name: util-linux-core
+    evr: 2.37.4-18.el9
+    sourcerpm: util-linux-2.37.4-18.el9.src.rpm
+  source: []
+  module_metadata: []
