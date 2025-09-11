@@ -40,8 +40,8 @@ func GetStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logger)
 	return job, nil
 }
 
-func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
-	job, err := constructJobForStaterootSetup(ctx, c, ibu, scheme, log)
+func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger, useBootc bool) (*batchv1.Job, error) {
+	job, err := constructJobForStaterootSetup(ctx, c, ibu, scheme, log, useBootc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render job: %w", err)
 	}
@@ -56,7 +56,7 @@ func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.Im
 	return job, nil
 }
 
-func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
+func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger, useBootc bool) (*batchv1.Job, error) {
 	log.Info("Getting lca deployment to configure stateroot setup job")
 	lcaDeployment := appsv1.Deployment{}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: common.LcaNamespace, Name: "lifecycle-agent-controller-manager"}, &lcaDeployment); err != nil {
@@ -67,6 +67,11 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 	manager, ok := getManagerContainer(lcaDeployment)
 	if !ok {
 		return nil, fmt.Errorf("no 'manager' container found in deployment")
+	}
+
+	command := []string{"lca-cli", "ibu-stateroot-setup"}
+	if useBootc {
+		command = append(command, "--use-bootc")
 	}
 
 	var backoffLimit int32 = 0
@@ -92,7 +97,7 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 							Name:            StaterootSetupJobName,
 							Image:           manager.Image,
 							ImagePullPolicy: manager.ImagePullPolicy,
-							Command:         []string{"lca-cli", "ibu-stateroot-setup"},
+							Command:         command,
 							Env:             manager.Env,
 							EnvFrom:         manager.EnvFrom,
 							SecurityContext: manager.SecurityContext, // this is needed for podman
