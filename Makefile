@@ -551,7 +551,11 @@ konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file
 	cp $(PROJECT_DIR)/Dockerfile $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile
 	@echo "Updating RUNTIME_IMAGE value in copied Dockerfile..."
 	RUNTIME_IMAGE_VALUE=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf); \
-	sed -i.bak -e "s|ARG RUNTIME_IMAGE=.*|ARG RUNTIME_IMAGE=$$RUNTIME_IMAGE_VALUE|" -e "s|FROM \$${RUNTIME_IMAGE}|FROM $$RUNTIME_IMAGE_VALUE|" $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
+	sed -i.bak \
+		-e "s|ARG RUNTIME_IMAGE=.*|ARG RUNTIME_IMAGE=$$RUNTIME_IMAGE_VALUE|g" \
+		-e "s|FROM \$${RUNTIME_IMAGE}|FROM $$RUNTIME_IMAGE_VALUE|g" \
+		-e "s|FROM --platform=linux/\$${GOARCH} \$${RUNTIME_IMAGE}|FROM --platform=linux/\$${GOARCH} $$RUNTIME_IMAGE_VALUE|g" \
+		$(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
 	rm -f $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile.bak
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
 		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime \
