@@ -1,29 +1,29 @@
 ---
-arches:
-  - arch: x86_64
-    module_metadata: []
-    packages:
-      - checksum: sha256:ee29f2138b7f732ba3e552281c4bdf56c71112a17c19dd941135aa56c22cb2c8
-        evr: 3.2.3-19.el9
-        name: rsync
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 411313
-        sourcerpm: rsync-3.2.3-19.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/r/rsync-3.2.3-19.el9.x86_64.rpm
-      - checksum: sha256:76f2f5fd1f37153d51a697659db31bd2a672a1a4536b42ce020cf9602ea3cde7
-        evr: 2:1.34-6.el9_4.1
-        name: tar
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 910343
-        sourcerpm: tar-1.34-6.el9_4.1.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.x86_64.rpm
-      - checksum: sha256:f344470b51f9cfdbc499b134c6d5d399f4011cec5250525f233de2d4199bf25e
-        evr: 2.37.4-18.el9
-        name: util-linux-core
-        repoid: rhel-9-for-x86_64-baseos-rpms
-        size: 480160
-        sourcerpm: util-linux-2.37.4-18.el9.src.rpm
-        url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.x86_64.rpm
-    source: []
-lockfileVendor: redhat
 lockfileVersion: 1
+lockfileVendor: redhat
+arches:
+- arch: x86_64
+  packages:
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/r/rsync-3.2.3-19.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 411313
+    checksum: sha256:ee29f2138b7f732ba3e552281c4bdf56c71112a17c19dd941135aa56c22cb2c8
+    name: rsync
+    evr: 3.2.3-19.el9
+    sourcerpm: rsync-3.2.3-19.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/t/tar-1.34-6.el9_4.1.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 910343
+    checksum: sha256:76f2f5fd1f37153d51a697659db31bd2a672a1a4536b42ce020cf9602ea3cde7
+    name: tar
+    evr: 2:1.34-6.el9_4.1
+    sourcerpm: tar-1.34-6.el9_4.1.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9.4/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-18.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-rpms
+    size: 480160
+    checksum: sha256:f344470b51f9cfdbc499b134c6d5d399f4011cec5250525f233de2d4199bf25e
+    name: util-linux-core
+    evr: 2.37.4-18.el9
+    sourcerpm: util-linux-2.37.4-18.el9.src.rpm
+  source: []
+  module_metadata: []
