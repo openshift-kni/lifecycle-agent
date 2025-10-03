@@ -68,6 +68,9 @@ spec:
       value: "true"
     - name: additional-tags
       value: ["latest"]
+    - name: additional-labels
+      value:
+        - name=openshift4/lifecycle-agent-rhel9-operator
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
