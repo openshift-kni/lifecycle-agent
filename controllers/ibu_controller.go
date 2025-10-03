@@ -145,7 +145,7 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if nextReconcile.RequeueAfter > 0 {
 			r.Log.Info("Finish reconciling IBU", "name", req.NamespacedName, "requeueAfter", nextReconcile.RequeueAfter.Seconds())
 		} else {
-			r.Log.Info("Finish reconciling IBU", "name", req.NamespacedName, "requeueRightAway", nextReconcile.Requeue)
+			r.Log.Info("Finish reconciling IBU", "name", req.NamespacedName, "requeueRightAway", true)
 		}
 	}()
 
