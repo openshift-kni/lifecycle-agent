@@ -61,6 +61,11 @@ spec:
       value: "false"
     - name: skip-sast-coverity
       value: "true"
+    - name: additional-tags
+      value: ["latest"]
+    - name: additional-labels
+      value:
+        - name=openshift4/lifecycle-agent-rhel9-operator-bundle
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
