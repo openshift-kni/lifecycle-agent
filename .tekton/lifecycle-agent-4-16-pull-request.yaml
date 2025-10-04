@@ -28,6 +28,8 @@ metadata:
         'main/***'.pathChanged() ||
         'must-gather/***'.pathChanged() ||
         'pkg/***'.pathChanged() ||
+        'telco5g-konflux'.pathChanged() ||
+        'telco5g-konflux/***'.pathChanged() ||
         'utils/***'.pathChanged() ||
         'vendor/***'.pathChanged()
       )
@@ -67,6 +69,9 @@ spec:
       value: "true"
     - name: additional-tags
       value: []
+    - name: additional-labels
+      value:
+        - name=openshift4/lifecycle-agent-rhel9-operator
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
