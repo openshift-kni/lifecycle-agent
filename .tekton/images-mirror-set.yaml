@@ -8,11 +8,11 @@ metadata:
 spec:
   imageDigestMirrors:
     - mirrors:
-        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-20
+        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-21
       source: registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator
     - mirrors:
-        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-20
+        - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-21
       source: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle
     - mirrors:
-        - quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-20
+        - quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-21
       source: registry.redhat.io/openshift4/recert-rhel9
