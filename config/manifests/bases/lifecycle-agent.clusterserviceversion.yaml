@@ -17,7 +17,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.20.0'
+    olm.skipRange: '>=4.14.0 <4.21.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
     operatorframework.io/suggested-namespace-template: |-
       {
@@ -38,7 +38,7 @@ metadata:
     support: Red Hat
   labels:
     operatorframework.io/arch.amd64: supported
-  name: lifecycle-agent.v4.20.0
+  name: lifecycle-agent.v4.21.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
