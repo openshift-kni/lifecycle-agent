@@ -58,6 +58,7 @@ metadata:
     features.operators.openshift.io/token-auth-gcp: "false"
     olm.skipRange: '>=4.14.0 <4.21.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
+    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.21.0
     operatorframework.io/suggested-namespace-template: |-
       {
         "apiVersion": "v1",
