@@ -6,3 +6,4 @@ exclude:
 version: v1.25.0
 ignore: {}
 patch: {}
+severity-threshold: high
