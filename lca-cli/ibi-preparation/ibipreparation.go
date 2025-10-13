@@ -66,7 +66,7 @@ func (i *IBIPrepare) Run() error {
 	common.OstreeDeployPathPrefix = "/mnt/"
 	// Setup state root
 	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
-		i.config.SeedImage, i.config.SeedVersion, true); err != nil {
+		i.config.SeedImage, i.config.SeedVersion, true, false); err != nil {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 

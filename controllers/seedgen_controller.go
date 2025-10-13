@@ -466,6 +466,12 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 		r.Log.Info(fmt.Sprintf("Skipping recert validation because %s=%s", EnvSkipRecert, skipRecertEnvValue))
 	}
 
+	useBootc := false
+	if val, ok := seedgen.Annotations[common.UnsupportedExperimentalUseBootcAnnotation]; ok && val == common.UnsupportedExperimentalUseBootcValue {
+		useBootc = true
+		r.Log.Info("Using bootc for seed image generation")
+	}
+
 	imagerCmdArgs := []string{
 		"podman", "run", "--privileged", "--pid=host",
 		fmt.Sprintf("--name=%s", imagerContainerName),
@@ -486,6 +492,10 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 
 	if skipRecert {
 		imagerCmdArgs = append(imagerCmdArgs, "--skip-recert-validation")
+	}
+
+	if useBootc {
+		imagerCmdArgs = append(imagerCmdArgs, "--use-bootc")
 	}
 
 	// In order to have the imager container both survive the LCA pod shutdown and have continued network access
