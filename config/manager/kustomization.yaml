@@ -13,6 +13,6 @@ configMapGenerator:
 images:
 - name: controller
   newName: quay.io/openshift-kni/lifecycle-agent-operator
-  newTag: 4.20.0
+  newTag: 4.21.0
 patches:
 - path: related-images/patch.yaml
