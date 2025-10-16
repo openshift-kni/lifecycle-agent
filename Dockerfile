@@ -1,7 +1,7 @@
 #####################################################################################################
 # Build arguments
 ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.21
-ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.4
+ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:9.6
 # Although this is the 4.14 release, we need a rhel9 binary and that is only available in 4.16+
 ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:v4.16
 
