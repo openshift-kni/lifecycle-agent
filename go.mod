@@ -3,7 +3,7 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.24.0
 
 require (
-	github.com/containers/image/v5 v5.36.1
+	github.com/containers/image/v5 v5.36.2
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.23.0
 	github.com/go-logr/logr v1.4.3

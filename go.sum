@@ -31,8 +31,8 @@ github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UF
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/clarketm/json v1.17.1 h1:U1IxjqJkJ7bRK4L6dyphmoO840P6bdhPdbbLySourqI=
 github.com/clarketm/json v1.17.1/go.mod h1:ynr2LRfb0fQU34l07csRNBTcivjySLLiY1YzQqKVfdo=
-github.com/containers/image/v5 v5.36.1 h1:6zpXBqR59UcAzoKpa/By5XekeqFV+htWYfr65+Cgjqo=
-github.com/containers/image/v5 v5.36.1/go.mod h1:b4GMKH2z/5t6/09utbse2ZiLK/c72GuGLFdp7K69eA4=
+github.com/containers/image/v5 v5.36.2 h1:GcxYQyAHRF/pLqR4p4RpvKllnNL8mOBn0eZnqJbfTwk=
+github.com/containers/image/v5 v5.36.2/go.mod h1:b4GMKH2z/5t6/09utbse2ZiLK/c72GuGLFdp7K69eA4=
 github.com/containers/storage v1.59.1 h1:11Zu68MXsEQGBBd+GadPrHPpWeqjKS8hJDGiAHgIqDs=
 github.com/containers/storage v1.59.1/go.mod h1:KoAYHnAjP3/cTsRS+mmWZGkufSY2GACiKQ4V3ZLQnR0=
 github.com/coreos/fcct v0.5.0 h1:f/z+MCoR2vULes+MyoPEApQ6iluy/JbXoRi6dahPItQ=
