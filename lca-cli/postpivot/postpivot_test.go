@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
-	"k8s.io/client-go/kubernetes/scheme"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -31,16 +30,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
-// Note: TestSetNodeIPIfNotProvided_LegacyTest was removed because the function
-// now uses hardcoded file paths that make unit testing difficult. The functionality
-// is better tested through integration tests.
-
 func TestSetNodeIPsIfNotProvided_DualStack(t *testing.T) {
-	// Note: This test is simplified to only test the cases where NodeIPs are already provided
-	// since the function now uses hardcoded file paths and service dependencies that make
-	// comprehensive unit testing difficult. The parseKubeletNodeIPs function is tested
-	// separately below.
-
 	testcases := []struct {
 		name            string
 		expectedError   bool
@@ -202,7 +192,17 @@ func TestSetDnsMasqConfiguration(t *testing.T) {
 			expectedIP:    "192.167.127.10",
 		},
 		{
-			name: "Dual stack - IPv4 preferred",
+			name: "IPv6 only",
+			seedReconfiguration: &clusterconfig_api.SeedReconfiguration{
+				BaseDomain:  "new.com",
+				ClusterName: "new_name",
+				NodeIPs:     []string{"2001:db8::10"},
+			},
+			expectedError: false,
+			expectedIP:    "2001:db8::10",
+		},
+		{
+			name: "Dual stack primary IPv4",
 			seedReconfiguration: &clusterconfig_api.SeedReconfiguration{
 				BaseDomain:  "new.com",
 				ClusterName: "new_name",
@@ -212,21 +212,11 @@ func TestSetDnsMasqConfiguration(t *testing.T) {
 			expectedIP:    "192.167.127.10",
 		},
 		{
-			name: "Dual stack - IPv6 first, IPv4 second",
+			name: "Dual stack primary IPv6",
 			seedReconfiguration: &clusterconfig_api.SeedReconfiguration{
 				BaseDomain:  "new.com",
 				ClusterName: "new_name",
 				NodeIPs:     []string{"2001:db8::10", "192.167.127.10"},
-			},
-			expectedError: false,
-			expectedIP:    "192.167.127.10", // IPv4 should be preferred
-		},
-		{
-			name: "IPv6 only",
-			seedReconfiguration: &clusterconfig_api.SeedReconfiguration{
-				BaseDomain:  "new.com",
-				ClusterName: "new_name",
-				NodeIPs:     []string{"2001:db8::10"},
 			},
 			expectedError: false,
 			expectedIP:    "2001:db8::10",
@@ -422,6 +412,191 @@ func TestSeedReconfigurationNodeIPs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := seedReconfigurationNodeIPs(tt.seedReconfiguration)
 			assert.Equal(t, tt.expectedNodeIPs, result)
+		})
+	}
+}
+
+func TestValidateIPAndMachineNetworkConsistency(t *testing.T) {
+	tests := []struct {
+		name          string
+		seedInfo      *seedclusterinfo.SeedClusterInfo
+		reconfig      *clusterconfig_api.SeedReconfiguration
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "single-stack ipv4 success without seed machine networks",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs:         []string{"192.168.1.10"},
+				MachineNetworks: []string{},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   false,
+			errorContains: "",
+		},
+		{
+			name: "dual-stack success with seed machine networks",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs:         []string{"192.168.1.10", "2001:db8::10"},
+				MachineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2", "2001:db8::2"},
+				MachineNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
+			},
+			expectError:   false,
+			errorContains: "",
+		},
+		{
+			name: "error when seed node IPs empty",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "node IPs must be provided",
+		},
+		{
+			name: "error when reconfig node IPs empty",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"192.168.1.10"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "node IPs must be provided",
+		},
+		{
+			name: "error node IP count mismatch",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"192.168.1.10", "2001:db8::10"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "node IPs count mismatch",
+		},
+		{
+			name: "error node IP family mismatch at index",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"192.168.1.10", "2001:db8::10"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"2001:db8::2", "10.0.0.2"},
+				MachineNetworks: []string{"2001:db8::/64", "10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "node IP family mismatch",
+		},
+		{
+			name: "error when machine networks count differs from node IPs",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"192.168.1.10", "2001:db8::10"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2", "2001:db8::2"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "machineNetworks count",
+		},
+		{
+			name: "error when machine networks family mismatches node IP family",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"192.168.1.10", "2001:db8::10"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2", "2001:db8::2"},
+				MachineNetworks: []string{"2001:db8::/64", "10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "machineNetwork family at index",
+		},
+		{
+			name: "error when seed machine networks count mismatches reconfig",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs:         []string{"192.168.1.10", "2001:db8::10"},
+				MachineNetworks: []string{"192.168.1.0/24"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2", "2001:db8::2"},
+				MachineNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
+			},
+			expectError:   true,
+			errorContains: "seed machineNetworks count",
+		},
+		{
+			name: "error when seed machine networks family mismatches reconfig",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs:         []string{"192.168.1.10", "2001:db8::10"},
+				MachineNetworks: []string{"2001:db8::/64", "192.168.1.0/24"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2", "2001:db8::2"},
+				MachineNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
+			},
+			expectError:   true,
+			errorContains: "machineNetwork family mismatch",
+		},
+		{
+			name: "error invalid seed IP",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"not-an-ip"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "invalid seed node IP",
+		},
+		{
+			name: "error invalid reconfiguration IP",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"10.0.0.1"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"bad-ip"},
+				MachineNetworks: []string{"10.0.0.0/24"},
+			},
+			expectError:   true,
+			errorContains: "invalid reconfiguration node IP",
+		},
+		{
+			name: "error invalid machine network cidr",
+			seedInfo: &seedclusterinfo.SeedClusterInfo{
+				NodeIPs: []string{"10.0.0.1"},
+			},
+			reconfig: &clusterconfig_api.SeedReconfiguration{
+				NodeIPs:         []string{"10.0.0.2"},
+				MachineNetworks: []string{"badcidr"},
+			},
+			expectError:   true,
+			errorContains: "invalid reconfiguration machineNetwork",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateIPAndMachineNetworkConsistency(tt.seedInfo, tt.reconfig)
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }
@@ -846,7 +1021,7 @@ func TestApplyManifestsWithMultipleResources(t *testing.T) {
 		mockController.Finish()
 	}()
 
-	testscheme := scheme.Scheme
+	testscheme := clientgoscheme.Scheme
 	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
 		&operatorv1alpha1.ImageContentSourcePolicyList{})
 
@@ -912,7 +1087,7 @@ func TestApplyManifests(t *testing.T) {
 		mockController.Finish()
 	}()
 
-	testscheme := scheme.Scheme
+	testscheme := clientgoscheme.Scheme
 	testscheme.AddKnownTypes(operatorv1alpha1.GroupVersion,
 		&operatorv1alpha1.ImageContentSourcePolicyList{})
 
