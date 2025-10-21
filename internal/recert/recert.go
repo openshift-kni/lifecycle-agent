@@ -3,6 +3,7 @@ package recert
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,6 +113,10 @@ func SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(recertConfig *
 // that will run recert command with them
 func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder string) error {
 	config := createBaseRecertConfig()
+
+	if err := validateMachineNetworksAndIPs(seedReconfig, seedClusterInfo); err != nil {
+		return fmt.Errorf("machine networks and IPs validation failed: %w", err)
+	}
 
 	config.ClusterRename = fmt.Sprintf("%s:%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
 	if seedReconfig.InfraID != "" {
@@ -283,4 +288,95 @@ func getIngressKeyPath(certsFolder string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("failed to find ingress key file")
+}
+
+// validateMachineNetworksAndIPs validates consistency between machine networks and node IPs.
+func validateMachineNetworksAndIPs(seedReconfig *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	oldIPs := seedClusterInfo.NodeIPs
+	newIPs := seedReconfig.NodeIPs
+	effectiveNewNets := effectiveMachineNetworksFromReconfig(seedReconfig)
+
+	if len(newIPs) != len(effectiveNewNets) {
+		return fmt.Errorf("number of new IPs (%d) must equal number of new machine networks (%d)", len(newIPs), len(effectiveNewNets))
+	}
+
+	if len(oldIPs) > 0 && len(effectiveNewNets) > 0 {
+		oldIPFamilies, err := ipFamiliesFromIPs(oldIPs)
+		if err != nil {
+			return fmt.Errorf("failed to determine old IP families: %w", err)
+		}
+		newNetFamilies, err := ipFamiliesFromCIDRs(effectiveNewNets)
+		if err != nil {
+			return fmt.Errorf("failed to determine new machine network families: %w", err)
+		}
+		if !slices.Equal(oldIPFamilies, newNetFamilies) {
+			return fmt.Errorf("IP family order mismatch between old IPs (%v) and new machine networks (%v)", oldIPFamilies, newNetFamilies)
+		}
+	}
+
+	if len(oldIPs) != len(newIPs) {
+		return fmt.Errorf("number of old IPs (%d) must equal number of new IPs (%d)", len(oldIPs), len(newIPs))
+	}
+
+	if len(oldIPs) > 0 && len(newIPs) > 0 {
+		oldIPFamilies, err := ipFamiliesFromIPs(oldIPs)
+		if err != nil {
+			return fmt.Errorf("failed to determine old IP families: %w", err)
+		}
+		newIPFamilies, err := ipFamiliesFromIPs(newIPs)
+		if err != nil {
+			return fmt.Errorf("failed to determine new IP families: %w", err)
+		}
+		if !slices.Equal(oldIPFamilies, newIPFamilies) {
+			return fmt.Errorf("IP family order mismatch between old IPs (%v) and new IPs (%v)", oldIPFamilies, newIPFamilies)
+		}
+	}
+
+	return nil
+}
+
+func effectiveMachineNetworksFromReconfig(seedReconfig *seedreconfig.SeedReconfiguration) []string {
+	if len(seedReconfig.MachineNetworks) > 0 {
+		return seedReconfig.MachineNetworks
+	}
+
+	if seedReconfig.MachineNetwork != "" { // backward compatibility
+		return []string{seedReconfig.MachineNetwork}
+	}
+
+	return []string{}
+}
+
+// ipFamiliesFromIPs converts a list of IPs to their families (4 or 6) in order.
+func ipFamiliesFromIPs(ips []string) ([]int, error) {
+	families := make([]int, 0, len(ips))
+	for _, ipStr := range ips {
+		ip := net.ParseIP(strings.TrimSpace(ipStr))
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP: %q", ipStr)
+		}
+		if ip.To4() != nil {
+			families = append(families, 4)
+		} else {
+			families = append(families, 6)
+		}
+	}
+	return families, nil
+}
+
+// ipFamiliesFromCIDRs converts a list of CIDRs to their IP families (4 or 6) in order.
+func ipFamiliesFromCIDRs(cidrs []string) ([]int, error) {
+	families := make([]int, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		ip, _, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil || ip == nil {
+			return nil, fmt.Errorf("invalid CIDR: %q", cidr)
+		}
+		if ip.To4() != nil {
+			families = append(families, 4)
+		} else {
+			families = append(families, 6)
+		}
+	}
+	return families, nil
 }
