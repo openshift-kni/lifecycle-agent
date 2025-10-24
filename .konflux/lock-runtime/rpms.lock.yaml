@@ -4,22 +4,22 @@ lockfileVendor: redhat
 arches:
 - arch: x86_64
   packages:
-  - url: https://cdn.redhat.com/content/dist/rhel9/9.6/x86_64/baseos/os/Packages/r/rsync-3.2.5-3.el9.x86_64.rpm
-    repoid: rhel-9-for-x86_64-baseos-rpms
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/r/rsync-3.2.5-3.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-baseos-rpms
     size: 421930
     checksum: sha256:b1d90c38b613f2d66dfe0c7c3d067a3ce429f7b2ec5224e560f326fc2fd8d1e5
     name: rsync
     evr: 3.2.5-3.el9
     sourcerpm: rsync-3.2.5-3.el9.src.rpm
-  - url: https://cdn.redhat.com/content/dist/rhel9/9.6/x86_64/baseos/os/Packages/t/tar-1.34-7.el9.x86_64.rpm
-    repoid: rhel-9-for-x86_64-baseos-rpms
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/t/tar-1.34-7.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-baseos-rpms
     size: 910235
     checksum: sha256:17f2e592a2c04c050b690afeb9042e02521a0b5ee3288dad837463f4acf542c3
     name: tar
     evr: 2:1.34-7.el9
     sourcerpm: tar-1.34-7.el9.src.rpm
-  - url: https://cdn.redhat.com/content/dist/rhel9/9.6/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-21.el9.x86_64.rpm
-    repoid: rhel-9-for-x86_64-baseos-rpms
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/u/util-linux-core-2.37.4-21.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-baseos-rpms
     size: 480619
     checksum: sha256:36389814fcec56d9b9d4bd1a4a63efb1cefa00bc8bacab73f89ef8f8be04b1cd
     name: util-linux-core
