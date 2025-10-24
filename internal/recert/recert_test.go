@@ -1,9 +1,13 @@
 package recert
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -140,4 +144,145 @@ func TestCreateBaseRecertConfig(t *testing.T) {
 	assert.Equal(t, cryptoFiles, config.CryptoFiles)
 	assert.Equal(t, clusterCustomizationDirs, config.ClusterCustomizationDirs)
 	assert.Equal(t, clusterCustomizationFiles, config.ClusterCustomizationFiles)
+}
+
+func TestValidateMachineNetworksAndIPs_SingleStackIPv4_OK(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"192.168.1.20"},
+		MachineNetworks: []string{"192.168.1.0/24"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.NoError(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_SingleStackIPv6_OK(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"2001:db8::10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"2001:db8::20"},
+		MachineNetworks: []string{"2001:db8::/64"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.NoError(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_DualStack_OK(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10", "2001:db8::10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"192.168.1.20", "2001:db8::20"},
+		MachineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.NoError(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_CountMismatch_NewIPsVsNewNets(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"192.168.1.20", "2001:db8::20"},
+		MachineNetworks: []string{"192.168.1.0/24"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_OrderMismatch_OldIPsVsNewNets(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"2001:db8::10", "192.168.1.10"}} // v6, v4
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"2001:db8::20", "192.168.1.20"},
+		MachineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"}, // v4, v6
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_CountMismatch_OldIPsVsNewIPs(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10", "2001:db8::10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"192.168.1.20"},
+		MachineNetworks: []string{"192.168.1.0/24"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_OrderMismatch_OldIPsVsNewIPs(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10", "2001:db8::10"}} // v4, v6
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"2001:db8::20", "192.168.1.20"}, // v6, v4
+		MachineNetworks: []string{"2001:db8::/64", "192.168.1.0/24"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_InvalidIP(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"not-an-ip"},
+		MachineNetworks: []string{"192.168.1.0/24"},
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestValidateMachineNetworksAndIPs_InvalidCIDR(t *testing.T) {
+	seed := &seedclusterinfo.SeedClusterInfo{NodeIPs: []string{"192.168.1.10"}}
+	reconfig := &seedreconfig.SeedReconfiguration{
+		NodeIPs:         []string{"192.168.1.20"},
+		MachineNetworks: []string{"192.168.1.0/33"}, // invalid prefix
+	}
+	err := validateMachineNetworksAndIPs(reconfig, seed)
+	assert.Error(t, err)
+}
+
+func TestCreateRecertConfigFile_EndToEnd(t *testing.T) {
+	cryptoDir := t.TempDir()
+	recertFolder := t.TempDir()
+
+	// Provide an ingress key file so getIngressKeyPath() can find it
+	ingressFile := "ingresskey-ingress-operator.key"
+	err := os.WriteFile(filepath.Join(cryptoDir, ingressFile), []byte("dummy"), 0o600)
+	assert.NoError(t, err)
+
+	seed := &seedclusterinfo.SeedClusterInfo{
+		BaseDomain:           "old.example.com",
+		ClusterName:          "old-cluster",
+		SNOHostname:          "old-host",
+		NodeIPs:              []string{"192.168.1.10", "2001:db8::10"},
+		IngressCertificateCN: "ingress-operator@1700000000",
+		MachineNetworks:      []string{"10.0.0.0/24", "fd00::/64"},
+	}
+
+	reconfig := &seedreconfig.SeedReconfiguration{
+		BaseDomain:      "new.example.com",
+		ClusterName:     "new-cluster",
+		Hostname:        "new-host",
+		NodeIPs:         []string{"192.168.1.20", "2001:db8::20"},
+		MachineNetworks: []string{"192.168.1.0/24", "2001:db8::/64"},
+	}
+
+	// Should succeed and write recert_config.json
+	err = CreateRecertConfigFile(reconfig, seed, cryptoDir, recertFolder)
+	assert.NoError(t, err)
+
+	bytes, err := os.ReadFile(filepath.Join(recertFolder, RecertConfigFile))
+	assert.NoError(t, err)
+
+	var cfg RecertConfig
+	err = json.Unmarshal(bytes, &cfg)
+	assert.NoError(t, err)
+
+	// Key assertions
+	assert.Equal(t, []string{"192.168.1.20", "2001:db8::20"}, cfg.IP)
+	assert.Equal(t, "new-cluster:new.example.com", cfg.ClusterRename)
+	assert.Equal(t, "new-host", cfg.Hostname)
+	assert.Equal(t, []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}, cfg.UseCertRules)
+	if assert.Len(t, cfg.UseKeyRules, 4) {
+		assert.Equal(t, seed.IngressCertificateCN+" "+filepath.Join(cryptoDir, ingressFile), cfg.UseKeyRules[3])
+	}
+	// When machine networks differ, we copy the seed's machine networks to the config
+	assert.Equal(t, []string{"10.0.0.0/24", "fd00::/64"}, cfg.MachineNetworkCidr)
+	assert.Equal(t, EtcSSHMount, cfg.RegenerateServerSSHKeys)
+	assert.Equal(t, SummaryFile, cfg.SummaryFileClean)
 }
