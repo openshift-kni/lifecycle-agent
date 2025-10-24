@@ -63,7 +63,7 @@ spec:
     - name: dev-package-managers
       value: "true"
     - name: prefetch-input
-      value: '[{"type": "rpm", "path": ".konflux/lock-runtime"}, {"type": "gomod", "path": "."}]'
+      value: '[{"type": "rpm", "path": ".konflux/lock-runtime/"}, {"type": "gomod", "path": "."}]'
     - name: build-source-image
       value: "true"
     - name: skip-sast-coverity
