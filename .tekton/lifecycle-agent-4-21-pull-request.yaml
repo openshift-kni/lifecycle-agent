@@ -13,13 +13,12 @@ metadata:
       event == "pull_request" &&
       target_branch == "main" &&
       (
-        '.konflux/container_build_args.conf'.pathChanged() ||
+        '.konflux/Dockerfile'.pathChanged() ||
         '.tekton/build-pipeline.yaml'.pathChanged() ||
         '.tekton/lifecycle-agent-4-21-pull-request.yaml'.pathChanged() ||
         'api/***'.pathChanged() ||
         'config/***'.pathChanged() ||
         'controllers/***'.pathChanged() ||
-        'Dockerfile'.pathChanged() ||
         'go.mod'.pathChanged() ||
         'go.sum'.pathChanged() ||
         'hack/***'.pathChanged() ||
@@ -55,15 +54,13 @@ spec:
         - linux/x86_64
         - linux/arm64
     - name: dockerfile
-      value: Dockerfile
-    - name: build-args-file
-      value: .konflux/container_build_args.conf
+      value: .konflux/Dockerfile
     - name: hermetic
       value: "true"
     - name: dev-package-managers
       value: "true"
     - name: prefetch-input
-      value: '[{"type": "rpm", "path": ".konflux/lock-runtime"}, {"type": "gomod", "path": "."}]'
+      value: '[{"type": "rpm", "path": ".konflux/"}, {"type": "gomod", "path": "."}]'
     - name: build-source-image
       value: "true"
     - name: skip-sast-coverity
