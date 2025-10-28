@@ -189,7 +189,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	}
 
 	if !slices.Equal(seedReconfig.MachineNetworks, seedClusterInfo.MachineNetworks) {
-		config.MachineNetworkCidr = seedClusterInfo.MachineNetworks
+		config.MachineNetworkCidr = seedReconfig.MachineNetworks
 	}
 
 	p := filepath.Join(recertConfigFolder, RecertConfigFile)
