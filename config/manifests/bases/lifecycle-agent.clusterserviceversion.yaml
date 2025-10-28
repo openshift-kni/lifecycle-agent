@@ -31,7 +31,7 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
-    operators.openshift.io/must-gather-image: ""
+    operators.openshift.io/must-gather-image: $(PRECACHE_WORKLOAD_IMG)
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
     provider: Red Hat
