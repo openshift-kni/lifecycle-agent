@@ -5,3 +5,14 @@ resources:
 - ../default
 - ../samples
 - ../scorecard
+
+replacements:
+- source:
+    kind: Deployment
+    name: controller-manager
+    fieldPath: spec.template.spec.containers.[name=manager].env.[name=PRECACHE_WORKLOAD_IMG].value
+  targets:
+  - select:
+      kind: ClusterServiceVersion
+    fieldPaths:
+    - metadata.annotations.[operators.openshift.io/must-gather-image]
