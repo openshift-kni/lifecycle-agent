@@ -70,6 +70,7 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
+    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.20.0
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
