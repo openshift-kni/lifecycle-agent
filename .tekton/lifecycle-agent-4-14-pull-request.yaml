@@ -76,6 +76,15 @@ spec:
     name: build-pipeline
   taskRunTemplate:
     serviceAccountName: build-pipeline-lifecycle-agent-4-14
+  taskRunSpecs:
+    - pipelineTaskName: validate-fbc
+      stepSpecs:
+        - name: extract-and-validate
+          computeResources:
+            requests:
+              memory: 10Gi
+            limits:
+              memory: 10Gi
   workspaces:
     - name: git-auth
       secret:
