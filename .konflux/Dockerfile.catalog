@@ -35,7 +35,7 @@ ENV REGISTRY_AUTH_FILE=$HOME/.docker/config.json
 RUN SKIP_SUBMODULE_SYNC=yes make konflux-generate-catalog-production && \
     rm -f $HOME/.docker/config.json
 
-# run the catalog
+# Run the catalog
 FROM ${OPM_IMAGE}
 
 ENTRYPOINT ["/bin/opm"]
