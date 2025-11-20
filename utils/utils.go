@@ -434,3 +434,13 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 
 	return sortedManifests, nil
 }
+
+func RemoveListOfFiles(log *logrus.Logger, files []string) error {
+	for _, file := range files {
+		log.Infof("Removing %s file", file)
+		if err := os.RemoveAll(file); err != nil {
+			return fmt.Errorf("failed to remove %s file: %w", file, err)
+		}
+	}
+	return nil
+}
