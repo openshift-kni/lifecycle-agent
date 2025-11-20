@@ -14,6 +14,7 @@ metadata:
       target_branch == "release-4.19" &&
       (
         '.konflux/container_build_args.conf'.pathChanged() ||
+        '.konflux/lock-runtime/***'.pathChanged() ||
         '.tekton/build-pipeline.yaml'.pathChanged() ||
         '.tekton/lifecycle-agent-4-19-push.yaml'.pathChanged() ||
         'api/***'.pathChanged() ||
@@ -60,7 +61,7 @@ spec:
     - name: dev-package-managers
       value: "true"
     - name: prefetch-input
-      value: '[{"type": "rpm", "path": ".konflux/lock-runtime"}, {"type": "gomod", "path": "."}]'
+      value: '[{"type": "rpm", "path": ".konflux/lock-runtime/"}, {"type": "gomod", "path": "."}]'
     - name: build-source-image
       value: "true"
     - name: skip-sast-coverity

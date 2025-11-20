@@ -5,14 +5,6 @@
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
 VERSION ?= 4.19.0
 
-# RHEL9_ACTIVATION_KEY defines the activation key to use for the rpm lock file for the runtime
-# This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
-RHEL9_ACTIVATION_KEY ?= ""
-
-# RHEL9_ORG_ID defines the organization to use for the rpm lock file for the runtime
-# This should be set in your environment prior to running the `konflux-update-rpm-lock-runtime` target
-RHEL9_ORG_ID ?= ""
-
 # BASHATE_VERSION defines the bashate version to download from GitHub releases.
 BASHATE_VERSION ?= 2.1.1
 
@@ -105,13 +97,6 @@ GOFLAGS := -mod=mod
 SHELL = /usr/bin/env GOFLAGS=$(GOFLAGS) bash -o pipefail
 
 .SHELLFLAGS = -ec
-
-# RHEL9_RELEASE defines the RHEL9 release version to update the rpm lock file for the runtime
-# This is automatically extracted from the RUNTIME_IMAGE in `.konflux/container_build_args.conf`
-RHEL9_RELEASE ?= $(shell awk -F'=' '/^RUNTIME_IMAGE=/ {split($$2, parts, /[:|@]/); print parts[2]}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
-
-# Use make's built-in substitution function to replace the dot with a dash
-RHEL9_RELEASE_DASHED := $(subst .,-,$(RHEL9_RELEASE))
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -546,32 +531,20 @@ konflux-generate-catalog-production: sync-git-submodules yq opm ## generate a re
 
 .PHONY: konflux-update-rpm-lock-runtime
 konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file for the runtime
+	@echo "Creating lock-runtime/tmp/ directory..."
+	mkdir -p $(PROJECT_DIR)/.konflux/lock-runtime/tmp/
+	@echo "Copying rpms.in.yaml to lock-runtime directory..."
+	cp $(PROJECT_DIR)/.konflux/lock-runtime/rpms.in.yaml $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
+	@cat $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
 	@echo "Updating rpm lock file for the runtime..."
-	@echo "Creating modified Dockerfile in lock-runtime directory..."
-	cp $(PROJECT_DIR)/Dockerfile $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile
-	@echo "Updating RUNTIME_IMAGE value in copied Dockerfile..."
-	RUNTIME_IMAGE_VALUE=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf); \
-	sed -i.bak \
-		-e "s|ARG RUNTIME_IMAGE=.*|ARG RUNTIME_IMAGE=$$RUNTIME_IMAGE_VALUE|g" \
-		-e "s|FROM \$${RUNTIME_IMAGE}|FROM $$RUNTIME_IMAGE_VALUE|g" \
-		-e "s|FROM --platform=linux/\$${GOARCH} \$${RUNTIME_IMAGE}|FROM --platform=linux/\$${GOARCH} $$RUNTIME_IMAGE_VALUE|g" \
-		$(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
-	rm -f $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile.bak
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
-		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime \
-		RHEL9_RELEASE=$(RHEL9_RELEASE) \
-		RHEL9_ACTIVATION_KEY=$(RHEL9_ACTIVATION_KEY) \
-		RHEL9_ORG_ID=$(RHEL9_ORG_ID) \
-		RHEL9_EXECUTION_IMAGE=registry.redhat.io/rhel$(RHEL9_RELEASE_DASHED)-els/rhel:$(RHEL9_RELEASE) \
-		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf); \
-	result=$$?; \
-	echo "Cleaning up copied Dockerfile..."; \
-	rm -f $(PROJECT_DIR)/.konflux/lock-runtime/Dockerfile; \
-	if [ $$result -ne 0 ]; then \
-		echo "rpm lock file update failed."; \
-		exit $$result; \
-	fi
-	@echo "Rpm lock file updated successfully."
+		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime/tmp/ \
+		RHEL9_EXECUTION_IMAGE=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf | sed 's|ubi-minimal|ubi|g' | sed 's|@.*||') \
+		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
+	@echo "Update rpms.lock.yaml with new contents..."
+	cp $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.lock.yaml $(PROJECT_DIR)/.konflux/lock-runtime/rpms.lock.yaml
+	# intentionally keep lock-runtime/tmp/ directory for debugging purposes
+	@echo "RPM lock file updated successfully."
 
 .PHONY: konflux-update-tekton-task-refs
 konflux-update-tekton-task-refs: sync-git-submodules ## Update task references in Tekton pipeline files
