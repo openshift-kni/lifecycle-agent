@@ -31,7 +31,7 @@ type InitMonitor struct {
 func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExecutor ops.Execute, ops ops.Ops, component string) *InitMonitor {
 	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
-	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
+	rebootClient := reboot.NewIBURebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
 	return &InitMonitor{
 		scheme:               scheme,
 		log:                  log,
@@ -45,7 +45,7 @@ func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExec
 }
 
 func (m *InitMonitor) RunInitMonitor() error {
-	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -84,7 +84,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 }
 
 func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
-	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false

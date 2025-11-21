@@ -85,6 +85,14 @@ func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Pro
 	)
 }
 
+// FormatRecertProxyFromIPConfig formats proxy values from IPConfig (spec and status) to a single recert proxy string.
+func FormatRecertProxyFromIPConfig(specHTTP, specHTTPS, specNo, statusHTTP, statusHTTPS, statusNo string) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		specHTTP, specHTTPS, specNo,
+		statusHTTP, statusHTTPS, statusNo,
+	)
+}
+
 func SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(recertConfig *RecertConfig, additionalTrustBundle seedreconfig.AdditionalTrustBundle) error {
 	if additionalTrustBundle.UserCaBundle != "" {
 		recertConfig.UserCaBundle = additionalTrustBundle.UserCaBundle
@@ -189,7 +197,7 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	}
 
 	if !slices.Equal(seedReconfig.MachineNetworks, seedClusterInfo.MachineNetworks) {
-		config.MachineNetworkCidr = seedReconfig.MachineNetworks
+		config.MachineNetworkCidr = seedClusterInfo.MachineNetworks
 	}
 
 	p := filepath.Join(recertConfigFolder, RecertConfigFile)
@@ -268,6 +276,73 @@ func createBaseRecertConfig() RecertConfig {
 		ClusterCustomizationDirs:  clusterCustomizationDirs,
 		ClusterCustomizationFiles: clusterCustomizationFiles,
 	}
+}
+
+// CreateRecertConfigFileForIPConfig creates a recert config file for IP configuration changes
+func CreateRecertConfigFileForIPConfig(
+	oldIPs []string,
+	newIPs []string,
+	newMachineNetworks []string,
+	installConfig string,
+	cryptoDir string,
+	ingressCertificateCN string,
+	recertConfigFolder string,
+	specHTTPProxy string,
+	specHTTPSProxy string,
+	specNoProxy string,
+	statusHTTPProxy string,
+	statusHTTPSProxy string,
+	statusNoProxy string,
+) error {
+	if len(oldIPs) != len(newIPs) {
+		return fmt.Errorf("oldIPs and newIPs must have the same length")
+	}
+
+	config := createBaseRecertConfig()
+	config.IP = newIPs
+	config.MachineNetworkCidr = newMachineNetworks
+	config.ExtendExpiration = true
+	config.InstallConfig = installConfig
+	config.SummaryFileClean = "/var/tmp/recert-summary.yaml"
+
+	if specHTTPProxy != "" &&
+		specHTTPSProxy != "" &&
+		specNoProxy != "" &&
+		statusHTTPProxy != "" &&
+		statusHTTPSProxy != "" &&
+		statusNoProxy != "" {
+		config.Proxy = FormatRecertProxyFromIPConfig(
+			specHTTPProxy, specHTTPSProxy, specNoProxy,
+			statusHTTPProxy, statusHTTPSProxy, statusNoProxy,
+		)
+	}
+
+	for i := range newIPs {
+		config.CNSanReplaceRules = append(
+			config.CNSanReplaceRules, fmt.Sprintf("%s,%s", oldIPs[i], newIPs[i]),
+		)
+	}
+
+	if _, err := os.Stat(cryptoDir); err == nil {
+		ingressKeyFile, err := getIngressKeyPath(cryptoDir)
+		if err != nil {
+			return err
+		}
+		config.UseKeyRules = []string{
+			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", cryptoDir),
+			fmt.Sprintf("%s %s/%s", ingressCertificateCN, cryptoDir, ingressKeyFile),
+		}
+		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
+	}
+
+	p := filepath.Join(recertConfigFolder, RecertConfigFile)
+	if err := utils.MarshalToFile(config, p); err != nil {
+		return fmt.Errorf("failed to marshal recert config file to %s: %w", p, err)
+	}
+
+	return nil
 }
 
 func getIngressKeyPath(certsFolder string) (string, error) {
