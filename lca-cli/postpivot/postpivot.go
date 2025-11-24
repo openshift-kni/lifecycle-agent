@@ -178,6 +178,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
 	}
 
+	if err := p.restartChronydService(seedReconfiguration.ChronyConfig); err != nil {
+		return fmt.Errorf("failed to restart chronyd service: %w", err)
+	}
+
 	if err := p.applyServerSSHKeys(seedReconfiguration.ServerSSHKeys); err != nil {
 		return fmt.Errorf("failed to apply server ssh keys: %w", err)
 	}
@@ -409,7 +413,18 @@ func (p *PostPivot) postRecertCommands() error {
 	if err != nil {
 		return fmt.Errorf("failed to run update-ca-trust after recert: %w", err)
 	}
+	return nil
+}
 
+func (p *PostPivot) restartChronydService(chronyConfig string) error {
+	if chronyConfig == "" {
+		p.log.Info("Chrony config is empty, skipping restart of chronyd service")
+		return nil
+	}
+	p.log.Info("Restarting chronyd service")
+	if _, err := p.ops.SystemctlAction("restart", "chronyd"); err != nil {
+		return fmt.Errorf("failed to restart chronyd: %w", err)
+	}
 	return nil
 }
 
