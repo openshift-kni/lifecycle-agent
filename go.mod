@@ -9,9 +9,9 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.6.0
-	github.com/openshift/api v0.0.0-20251127005036-0e3c378fdedc
+	github.com/openshift/api v0.0.0-20251125174858-5cf710f68a92
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
-	github.com/openshift/library-go v0.0.0-20250922131550-42e91dd47fe3
+	github.com/openshift/library-go v0.0.0-20251120164824-14a789e09884
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
 	github.com/operator-framework/api v0.31.0
@@ -90,7 +90,7 @@ require (
 	k8s.io/apiserver v0.34.1 // indirect
 	k8s.io/component-base v0.34.1 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250604051438-85fd79dbfd9f // indirect
-	k8s.io/kube-aggregator v0.33.3 // indirect
+	k8s.io/kube-aggregator v0.34.1 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.6-0.20230721195810-5c8923c5ff96 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
