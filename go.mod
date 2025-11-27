@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.6.0
-	github.com/openshift/api v0.0.0-20250710004639-926605d3338b
+	github.com/openshift/api v0.0.0-20251127005036-0e3c378fdedc
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
 	github.com/openshift/library-go v0.0.0-20250922131550-42e91dd47fe3
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
