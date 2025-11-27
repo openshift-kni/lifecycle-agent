@@ -2,17 +2,17 @@
 
 package v1alpha1
 
+// InternalReleaseImageListerExpansion allows custom methods to be added to
+// InternalReleaseImageLister.
+type InternalReleaseImageListerExpansion interface{}
+
 // MachineConfigNodeListerExpansion allows custom methods to be added to
 // MachineConfigNodeLister.
 type MachineConfigNodeListerExpansion interface{}
 
-// MachineOSBuildListerExpansion allows custom methods to be added to
-// MachineOSBuildLister.
-type MachineOSBuildListerExpansion interface{}
-
-// MachineOSConfigListerExpansion allows custom methods to be added to
-// MachineOSConfigLister.
-type MachineOSConfigListerExpansion interface{}
+// OSImageStreamListerExpansion allows custom methods to be added to
+// OSImageStreamLister.
+type OSImageStreamListerExpansion interface{}
 
 // PinnedImageSetListerExpansion allows custom methods to be added to
 // PinnedImageSetLister.
