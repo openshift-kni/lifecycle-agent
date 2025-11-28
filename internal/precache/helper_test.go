@@ -281,7 +281,7 @@ func TestRenderJob(t *testing.T) {
 				assert.True(t, reflect.DeepEqual(expectedJob.Spec, renderedJob.Spec), "Job specs are not equivalent")
 				// Compare the two Job specs for equivalence
 				if !reflect.DeepEqual(expectedJob.Spec, renderedJob.Spec) {
-					diff := diff.ObjectDiff(expectedJob.Spec, renderedJob.Spec)
+					diff := diff.Diff(expectedJob.Spec, renderedJob.Spec)
 					t.Errorf("Job specs are not equivalent. Difference:\n%s", diff)
 				}
 			}

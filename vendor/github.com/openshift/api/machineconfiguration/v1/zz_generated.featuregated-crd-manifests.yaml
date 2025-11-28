@@ -28,15 +28,19 @@ controllerconfigs.machineconfiguration.openshift.io:
   Capability: ""
   Category: ""
   FeatureGates:
-  - AWSClusterHostedDNS
+  - AWSClusterHostedDNSInstall
+  - AWSDualStackInstall
+  - AzureClusterHostedDNSInstall
+  - AzureDualStackInstall
   - DualReplica
   - DyanmicServiceEndpointIBMCloud
-  - GCPClusterHostedDNS
-  - GCPCustomAPIEndpoints
-  - GCPLabelsTags
+  - GCPClusterHostedDNSInstall
+  - GCPCustomAPIEndpointsInstall
   - HighlyAvailableArbiter
   - HighlyAvailableArbiter+DualReplica
   - NutanixMultiSubnets
+  - OnPremDNSRecords
+  - VSphereHostVMGroupZonal
   - VSphereMultiNetworks
   FilenameOperatorName: machine-config
   FilenameOperatorOrdering: "01"
@@ -117,7 +121,10 @@ machineconfignodes.machineconfiguration.openshift.io:
   Capability: ""
   Category: ""
   FeatureGates:
+  - ImageModeStatusReporting
+  - IrreconcilableMachineConfig
   - MachineConfigNodes
+  - NoRegistryClusterInstall
   FilenameOperatorName: machine-config
   FilenameOperatorOrdering: "01"
   FilenameRunLevel: "0000_80"
@@ -140,6 +147,9 @@ machineconfignodes.machineconfiguration.openshift.io:
   - jsonPath: .status.conditions[?(@.type=="Updated")].status
     name: Updated
     type: string
+  - jsonPath: .metadata.creationTimestamp
+    name: Age
+    type: date
   - jsonPath: .status.conditions[?(@.type=="UpdatePrepared")].status
     name: UpdatePrepared
     priority: 1
@@ -193,6 +203,7 @@ machineconfigpools.machineconfiguration.openshift.io:
   Capability: ""
   Category: ""
   FeatureGates:
+  - OSStreams
   - PinnedImages
   FilenameOperatorName: machine-config
   FilenameOperatorOrdering: "01"
@@ -254,8 +265,7 @@ machineosbuilds.machineconfiguration.openshift.io:
   CRDName: machineosbuilds.machineconfiguration.openshift.io
   Capability: ""
   Category: ""
-  FeatureGates:
-  - OnClusterBuild
+  FeatureGates: []
   FilenameOperatorName: machine-config
   FilenameOperatorOrdering: "01"
   FilenameRunLevel: "0000_80"
@@ -286,8 +296,7 @@ machineosbuilds.machineconfiguration.openshift.io:
     type: date
   Scope: Cluster
   ShortNames: null
-  TopLevelFeatureGates:
-  - OnClusterBuild
+  TopLevelFeatureGates: []
   Version: v1
 
 machineosconfigs.machineconfiguration.openshift.io:
@@ -296,8 +305,7 @@ machineosconfigs.machineconfiguration.openshift.io:
   CRDName: machineosconfigs.machineconfiguration.openshift.io
   Capability: ""
   Category: ""
-  FeatureGates:
-  - OnClusterBuild
+  FeatureGates: []
   FilenameOperatorName: machine-config
   FilenameOperatorOrdering: "01"
   FilenameRunLevel: "0000_80"
@@ -310,8 +318,7 @@ machineosconfigs.machineconfiguration.openshift.io:
   PrinterColumns: []
   Scope: Cluster
   ShortNames: null
-  TopLevelFeatureGates:
-  - OnClusterBuild
+  TopLevelFeatureGates: []
   Version: v1
 
 pinnedimagesets.machineconfiguration.openshift.io:

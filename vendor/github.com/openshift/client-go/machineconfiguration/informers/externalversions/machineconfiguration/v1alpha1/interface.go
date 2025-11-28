@@ -8,12 +8,12 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
+	// InternalReleaseImages returns a InternalReleaseImageInformer.
+	InternalReleaseImages() InternalReleaseImageInformer
 	// MachineConfigNodes returns a MachineConfigNodeInformer.
 	MachineConfigNodes() MachineConfigNodeInformer
-	// MachineOSBuilds returns a MachineOSBuildInformer.
-	MachineOSBuilds() MachineOSBuildInformer
-	// MachineOSConfigs returns a MachineOSConfigInformer.
-	MachineOSConfigs() MachineOSConfigInformer
+	// OSImageStreams returns a OSImageStreamInformer.
+	OSImageStreams() OSImageStreamInformer
 	// PinnedImageSets returns a PinnedImageSetInformer.
 	PinnedImageSets() PinnedImageSetInformer
 }
@@ -29,19 +29,19 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
+// InternalReleaseImages returns a InternalReleaseImageInformer.
+func (v *version) InternalReleaseImages() InternalReleaseImageInformer {
+	return &internalReleaseImageInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
 // MachineConfigNodes returns a MachineConfigNodeInformer.
 func (v *version) MachineConfigNodes() MachineConfigNodeInformer {
 	return &machineConfigNodeInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
-// MachineOSBuilds returns a MachineOSBuildInformer.
-func (v *version) MachineOSBuilds() MachineOSBuildInformer {
-	return &machineOSBuildInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
-}
-
-// MachineOSConfigs returns a MachineOSConfigInformer.
-func (v *version) MachineOSConfigs() MachineOSConfigInformer {
-	return &machineOSConfigInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+// OSImageStreams returns a OSImageStreamInformer.
+func (v *version) OSImageStreams() OSImageStreamInformer {
+	return &oSImageStreamInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // PinnedImageSets returns a PinnedImageSetInformer.

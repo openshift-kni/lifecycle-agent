@@ -210,6 +210,7 @@ spec:
           - ""
           resources:
           - configmaps
+          - secrets
           verbs:
           - create
           - delete
@@ -239,13 +240,6 @@ spec:
           - ""
           resources:
           - nodes
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - ""
-          resources:
           - pods
           verbs:
           - get
@@ -254,21 +248,18 @@ spec:
         - apiGroups:
           - ""
           resources:
-          - pods/log
+          - persistentvolumes
           verbs:
           - get
+          - list
+          - update
+          - watch
         - apiGroups:
           - ""
           resources:
-          - secrets
+          - pods/log
           verbs:
-          - create
-          - delete
           - get
-          - list
-          - patch
-          - update
-          - watch
         - apiGroups:
           - apiextensions.k8s.io
           resources:
@@ -335,80 +326,18 @@ spec:
           - config.openshift.io
           resources:
           - clusterversions
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
           - imagedigestmirrorsets
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
           - infrastructures
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
           - networks
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
           - proxies
           verbs:
           - get
           - list
           - watch
         - apiGroups:
-          - ""
-          resources:
-          - persistentvolumes
-          verbs:
-          - get
-          - list
-          - update
-          - watch
-        - apiGroups:
           - lca.openshift.io
           resources:
           - imagebasedupgrades
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - lca.openshift.io
-          resources:
-          - imagebasedupgrades/finalizers
-          verbs:
-          - update
-        - apiGroups:
-          - lca.openshift.io
-          resources:
-          - imagebasedupgrades/status
-          verbs:
-          - get
-          - patch
-          - update
-        - apiGroups:
-          - lca.openshift.io
-          resources:
           - seedgenerators
           verbs:
           - create
@@ -421,12 +350,14 @@ spec:
         - apiGroups:
           - lca.openshift.io
           resources:
+          - imagebasedupgrades/finalizers
           - seedgenerators/finalizers
           verbs:
           - update
         - apiGroups:
           - lca.openshift.io
           resources:
+          - imagebasedupgrades/status
           - seedgenerators/status
           verbs:
           - get
@@ -468,17 +399,6 @@ spec:
           - monitoring.coreos.com
           resources:
           - prometheusrules
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - monitoring.coreos.com
-          resources:
           - servicemonitors
           verbs:
           - create
@@ -516,14 +436,6 @@ spec:
           - operators.coreos.com
           resources:
           - clusterserviceversions
-          verbs:
-          - delete
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - operators.coreos.com
-          resources:
           - subscriptions
           verbs:
           - delete
@@ -542,11 +454,6 @@ spec:
           - rbac.authorization.k8s.io
           resources:
           - clusterrolebindings
-          verbs:
-          - delete
-        - apiGroups:
-          - rbac.authorization.k8s.io
-          resources:
           - clusterroles
           verbs:
           - delete
@@ -578,6 +485,8 @@ spec:
           - velero.io
           resources:
           - backups
+          - deletebackuprequests
+          - restores
           verbs:
           - create
           - delete
@@ -592,28 +501,6 @@ spec:
           verbs:
           - get
           - list
-          - watch
-        - apiGroups:
-          - velero.io
-          resources:
-          - deletebackuprequests
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - update
-          - watch
-        - apiGroups:
-          - velero.io
-          resources:
-          - restores
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - update
           - watch
         serviceAccountName: lifecycle-agent-controller-manager
       deployments:
