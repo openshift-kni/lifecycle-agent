@@ -29,6 +29,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/clusterconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/imagemgmt"
+	"github.com/openshift-kni/lifecycle-agent/internal/networkpolicies"
 	kbatchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -84,6 +85,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups="security.openshift.io",resources=securitycontextconstraints,resourceNames=privileged,verbs=use
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs="*"
 
 var (
 	scheme   = runtime.NewScheme()
@@ -155,6 +157,24 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
+
+	// OLM installs the default-deny, operator API egress NetworkPolicies
+	// Operator installs policies for the jobs, for metrics
+	np := networkpolicies.Policy{
+		Namespace:  common.LcaNamespace,
+		MetricAddr: metricsAddr,
+	}
+	msg, err := np.InstallPolicies(cfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create network policy:")
+		os.Exit(1)
+	}
+	setupLog.Info(msg)
+
+	if msg := networkpolicies.Check(cfg, common.LcaNamespace); msg != "" {
+		setupLog.Info("NetworkPolicies", "msg", msg)
+	}
+
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                        scheme,
 		HealthProbeBindAddress:        probeAddr,

@@ -3,10 +3,57 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 4.20.0
+VERSION ?= 4.21.0
+
+# BASHATE_VERSION defines the bashate version to download from GitHub releases.
+BASHATE_VERSION ?= 2.1.1
+
+# CONTROLLER_GEN_VERSION defines the controller-gen version to download from go modules.
+CONTROLLER_GEN_VERSION ?= v0.19.0
+
+# GOLANGCI_LINT_VERSION defines the golangci-lint version to download from GitHub releases.
+GOLANGCI_LINT_VERSION ?= v1.64.8
+
+# KUSTOMIZE_VERSION defines the kustomize version to download from go modules.
+KUSTOMIZE_VERSION ?= v5@v5.1.1
+
+# MOCK_GEN_VERSION defines the mockgen version to download from go modules.
+MOCK_GEN_VERSION ?= v0.3.0
+
+# OPERATOR_SDK_VERSION defines the operator-sdk version to download from GitHub releases.
+OPERATOR_SDK_VERSION ?= 1.40.0
+
+# OPM_VERSION defines the opm version to download from GitHub releases.
+OPM_VERSION ?= v1.52.0
+
+# SHELLCHECK_VERSION defines the shellcheck version to download from GitHub releases.
+SHELLCHECK_VERSION ?= v0.11.0
+
+# YAMLLINT_VERSION defines the yamllint version to download from GitHub releases.
+YAMLLINT_VERSION ?= 1.37.1
+
+# YQ_VERSION defines the yq version to download from GitHub releases.
+YQ_VERSION ?= v4.45.4
 
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
+
+# The registry auth file is mounted into the container to allow for private registry pulls.
+# This is automatically detected and mounted into the container if it exists on the host.
+# If it does not exist, a warning is printed and the registry pulls may fail if not public.
+# This can be set from the command line if the default is not correct for your environment.
+REGISTRY_AUTH_FILE ?= $(shell echo $${XDG_RUNTIME_DIR:-/run/user/$$(shell id -u)})/containers/auth.json
+
+# Konflux catalog configuration
+PACKAGE_NAME_KONFLUX = lifecycle-agent
+CATALOG_TEMPLATE_KONFLUX_INPUT = .konflux/catalog/catalog-template.in.yaml
+CATALOG_TEMPLATE_KONFLUX_OUTPUT = .konflux/catalog/catalog-template.out.yaml
+CATALOG_OUTPUT_FORMAT = json
+CATALOG_KONFLUX = .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.$(CATALOG_OUTPUT_FORMAT)
+
+# Konflux bundle image configuration
+BUNDLE_NAME_SUFFIX = operator-bundle-4-21
+PRODUCTION_BUNDLE_NAME = operator-bundle
 
 # By default we build the same architecture we are running
 # Override this by specifying a different GOARCH in your environment
@@ -25,8 +72,32 @@ ifndef GOARCH
 	GOARCH=$(HOST_ARCH)
 endif
 
-# Path to go binary in local
-GOBIN ?= $$(go env GOPATH)/bin
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
+# Get the directory of the current makefile
+# Trim any trailing slash from the directory path as we will add if when necessary later
+PROJECT_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+
+## Location to install dependencies to
+# If you are setting this externally then you must use an absolute path
+LOCALBIN ?= $(PROJECT_DIR)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# This is a requirement for 'setup-envtest.sh' in the test target.
+# Options are set to exit when a recipe line exits non-zero or a piped command fails.
+# Prefer binaries in the local bin directory over system binaries.
+export PATH := $(abspath $(LOCALBIN)):$(PATH)
+GOFLAGS := -mod=mod
+SHELL = /usr/bin/env GOFLAGS=$(GOFLAGS) bash -o pipefail
+
+.SHELLFLAGS = -ec
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -71,11 +142,18 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(VERSION)
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
-CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-OPERATOR_SDK = $(shell pwd)/bin/operator-sdk
-KUSTOMIZE = $(shell pwd)/bin/kustomize
-GOTESTSUM = $(shell pwd)/bin/gotestsum
-MOCK_GEN = $(shell pwd)/bin/mockgen
+# Set the paths to the binaries in the local bin directory
+BASHATE = $(LOCALBIN)/bashate
+CONTROLLER_GEN = $(LOCALBIN)/controller-gen
+GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+KUSTOMIZE = $(LOCALBIN)/kustomize
+MOCK_GEN = $(LOCALBIN)/mockgen
+OPERATOR_SDK = $(LOCALBIN)/operator-sdk
+OPM = $(LOCALBIN)/opm
+SHELLCHECK = $(LOCALBIN)/shellcheck
+YAMLLINT = $(LOCALBIN)/yamllint
+YQ = $(LOCALBIN)/yq
+
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
 
@@ -94,23 +172,12 @@ generate: controller-gen mock-gen # generate-code
 
 generate-code: ## Generate code containing Clientset, Informers, Listers
 	@echo "Running generate-code"
-	hack/update-codegen.sh
-
-controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0)
-
-mock-gen: ## Download mockgen locally if necessary.
-	$(call go-get-tool,$(MOCK_GEN),go.uber.org/mock/mockgen@v0.3.0)
+	$(PROJECT_DIR)/hack/update-codegen.sh
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	@echo "Running go fmt"
 	go fmt ./...
-
-.PHONY: golangci-lint
-golangci-lint: ## Run golangci-lint against code.
-	@echo "Running golangci-lint"
-	hack/golangci-lint.sh
 
 .PHONY: vet
 vet: ## Run go vet against code.
@@ -125,21 +192,6 @@ unittest:
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
 	go mod tidy
-
-.PHONY: shellcheck
-shellcheck: ## Run shellcheck.
-	@echo "Running shellcheck"
-	hack/shellcheck.sh
-
-.PHONY: bashate
-bashate: ## Run bashate.
-	@echo "Running bashate"
-	hack/bashate.sh
-
-.PHONY: yamllint
-yamllint: ## Run yamllint
-	@echo "Running yamllint"
-	hack/yamllint.sh
 
 .PHONY: scorecard
 scorecard: operator-sdk ## Run scorecard tests against bundle
@@ -162,41 +214,27 @@ check-coverage: install-go-test-coverage
 .PHONY: ci-job
 ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
 
-.PHONY: konflux-update
-konflux-update: konflux-task-manifest-updates
+# Download go tools
+.PHONY: controller-gen
+controller-gen: sync-git-submodules $(LOCALBIN) ## Download controller-gen locally if necessary.
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
+		TOOL_NAME=controller-gen \
+		GO_MODULE=sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 
-.PHONY: konflux-task-manifest-updates
-konflux-task-manifest-updates:
-	hack/konflux_update_task_refs.sh .tekton/build-pipeline.yaml
+.PHONY: kustomize
+kustomize: sync-git-submodules $(LOCALBIN) ## Download kustomize locally if necessary.
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
+		TOOL_NAME=kustomize \
+		GO_MODULE=sigs.k8s.io/kustomize/kustomize/$(KUSTOMIZE_VERSION) \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 
-kustomize: ## Download kustomize locally if necessary.
-	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5@v5.1.1)
-
-OPERATOR_SDK_VERSION = $(shell $(OPERATOR_SDK) version 2>/dev/null | sed 's/^operator-sdk version: "\([^"]*\).*/\1/')
-OPERATOR_SDK_VERSION_REQ = v1.28.0-ocp
-operator-sdk: ## Download operator-sdk locally if necessary.
-ifneq ($(OPERATOR_SDK_VERSION_REQ),$(OPERATOR_SDK_VERSION))
-	@{ \
-	set -e ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell arch) && if [ $${ARCH} == "arm64" ]; then ARCH=aarch64; fi; \
-	curl -Lv https://mirror.openshift.com/pub/openshift-v4/$${ARCH}/clients/operator-sdk/4.13.11/operator-sdk-v1.28.0-ocp-$${OS}-$${ARCH}.tar.gz | tar --strip-components 2 -xz -C bin/ ;\
-	}
-endif
-
-# go-get-tool will 'go get' any package $2 and install it to $1.
-PROJECT_DIR := $(shell dirname $(abspath $(firstword $(MAKEFILE_LIST))))
-define go-get-tool
-@[ -f $(1) ] || { \
-set -e ;\
-TMP_DIR=$$(mktemp -d) ;\
-cd $$TMP_DIR ;\
-go mod init tmp ;\
-echo "Downloading $(2)" ;\
-GOBIN=$(PROJECT_DIR)/bin GOFLAGS=-mod=mod go install $(2) ;\
-go mod tidy ;\
-rm -rf $$TMP_DIR ;\
-}
-endef
+.PHONY: mock-gen
+mock-gen: sync-git-submodules $(LOCALBIN) ## Download mockgen locally if necessary.
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
+		TOOL_NAME=mockgen \
+		GO_MODULE=go.uber.org/mock/mockgen@$(MOCK_GEN_VERSION) \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 
 ##@ Build
 
@@ -210,7 +248,7 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
-	${ENGINE} build --arch ${GOARCH} --build-arg GOARCH=${GOARCH} -t ${IMG} -f Dockerfile .
+	${ENGINE} build --platform=linux/${GOARCH} -t ${IMG} -f Dockerfile .
 
 docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}
@@ -236,7 +274,11 @@ bundle: operator-sdk manifests kustomize ## Generate bundle manifests and metada
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG) && PRECACHE_WORKLOAD_IMG=$(IMG) envsubst < related-images/in.yaml > related-images/patch.yaml
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	$(OPERATOR_SDK) bundle validate ./bundle
-	sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml
+	if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml; \
+	else \
+		sed -i '/^[[:space:]]*createdAt:/d' bundle/manifests/lifecycle-agent.clusterserviceversion.yaml; \
+	fi
 
 .PHONY: bundle-build
 bundle-build: bundle docker-push ## Build the bundle image.
@@ -248,7 +290,7 @@ bundle-push: bundle-build ## Push the bundle image.
 
 .PHONY: bundle-check
 bundle-check: bundle
-	hack/check-git-tree.sh
+	$(PROJECT_DIR)/hack/check-git-tree.sh
 
 .PHONY: bundle-run
 bundle-run: # Install bundle on cluster using operator sdk.
@@ -263,23 +305,6 @@ bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
 bundle-clean: # Uninstall bundle on cluster using operator sdk.
 	$(OPERATOR_SDK) cleanup lifecycle-agent -n openshift-lifecycle-agent
 	oc delete ns openshift-lifecycle-agent
-
-.PHONY: opm
-OPM = ./bin/opm
-opm: ## Download opm locally if necessary.
-ifeq (,$(wildcard $(OPM)))
-ifeq (,$(shell which opm 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(OPM)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.28.0/$${OS}-$${ARCH}-opm ;\
-	chmod +x $(OPM) ;\
-	}
-else
-OPM = $(shell which opm)
-endif
-endif
 
 # A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
 # These images MUST exist in a registry and be pull-able.
@@ -318,10 +343,57 @@ TEST_FORMAT ?= standard-verbose
 GOTEST_FLAGS = --format=$(TEST_FORMAT)
 GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 
+##@ Tools and Linting
+
+.PHONY: lint
+lint: bashate golangci-lint shellcheck yamllint markdownlint
+
+.PHONY: tools
+tools: opm operator-sdk yq
+
+.PHONY: bashate-download
+bashate-download: sync-git-submodules $(LOCALBIN) ## Download bashate locally if necessary and run against bash files. If wrong version is installed, it will be removed before downloading.
+	@echo "Downloading bashate..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
+		download-bashate \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_BASHATE_VERSION=$(BASHATE_VERSION)
+	@echo "Bashate downloaded successfully."
+
+.PHONY: bashate
+bashate: bashate-download $(BASHATE) ## Lint bash files in the repository
+	@echo "Running bashate on repository bash files..."
+	find $(PROJECT_DIR) -name '*.sh' \
+		-not -path '$(PROJECT_DIR)/vendor/*' \
+		-not -path '$(PROJECT_DIR)/*/vendor/*' \
+		-not -path '$(PROJECT_DIR)/git/*' \
+		-not -path '$(LOCALBIN)/*' \
+		-not -path '$(PROJECT_DIR)/testbin/*' \
+		-not -path '$(PROJECT_DIR)/telco5g-konflux/*' \
+		-print0 \
+		| xargs -0 --no-run-if-empty $(BASHATE) -v -e 'E*' -i E006
+	@echo "Bashate linting completed successfully."
+
+.PHONY: golangci-lint-download
+golangci-lint-download: sync-git-submodules $(LOCALBIN) ## Download golangci-lint locally if necessary. If wrong version is installed, it will be removed before downloading.
+	@echo "Downloading golangci-lint..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
+		download-go-tool \
+		TOOL_NAME=golangci-lint \
+		GO_MODULE=github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
+	@echo "Golangci-lint downloaded successfully."
+
+.PHONY: golangci-lint
+golangci-lint: golangci-lint-download $(GOLANGCI_LINT) ## Run golangci-lint against code.
+	@echo "Running golangci-lint on repository go files..."
+	$(GOLANGCI_LINT) run -v
+	@echo "Golangci-lint linting completed successfully."
+
 # markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
 .PHONY: markdownlint-image
 markdownlint-image:  ## Build local container markdownlint-image
-	$(ENGINE) image build -f ./hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest ./hack
+	$(ENGINE) image build -f $(PROJECT_DIR)/hack/Dockerfile.markdownlint --tag $(IMAGE_NAME)-markdownlint:latest $(PROJECT_DIR)/hack
 
 .PHONY: markdownlint-image-clean
 markdownlint-image-clean:  ## Remove locally cached markdownlint-image
@@ -336,6 +408,169 @@ markdownlint: markdownlint-image  ## run the markdown linter
 		-v $$(pwd):/workdir:Z \
 		$(IMAGE_NAME)-markdownlint:latest
 
+operator-sdk: sync-git-submodules $(LOCALBIN) ## Download operator-sdk locally if necessary.
+	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-operator-sdk \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_OPERATOR_SDK_VERSION=$(OPERATOR_SDK_VERSION)
+	@echo "Operator sdk downloaded successfully."
+
+.PHONY: opm
+opm: sync-git-submodules $(LOCALBIN) ## Download opm locally if necessary.
+	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-opm \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_OPM_VERSION=$(OPM_VERSION)
+	@echo "Opm downloaded successfully."
+
+.PHONY: shellcheck-download
+shellcheck-download: sync-git-submodules $(LOCALBIN) ## Download shellcheck locally if necessary. If wrong version is installed, it will be removed before downloading.
+	@echo "Downloading shellcheck..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
+		download-shellcheck \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_SHELLCHECK_VERSION=$(SHELLCHECK_VERSION)
+	@echo "Shellcheck downloaded successfully."
+
+.PHONY: shellcheck
+shellcheck: shellcheck-download $(SHELLCHECK) ## Lint bash files in the repository
+	@echo "Running shellcheck on repository bash files..."
+	find $(PROJECT_DIR) -name '*.sh' \
+		-not -path '$(PROJECT_DIR)/vendor/*' \
+		-not -path '$(PROJECT_DIR)/*/vendor/*' \
+		-not -path '$(PROJECT_DIR)/git/*' \
+		-not -path '$(LOCALBIN)/*' \
+		-not -path '$(PROJECT_DIR)/testbin/*' \
+		-not -path '$(PROJECT_DIR)/telco5g-konflux/*' \
+		-print0 \
+		| xargs -0 --no-run-if-empty $(SHELLCHECK) -x
+	@echo "Shellcheck linting completed successfully."
+
+.PHONY: yamllint-download
+yamllint-download: sync-git-submodules $(LOCALBIN) ## Download yamllint locally if necessary and run against yaml files. If wrong version is installed, it will be removed before downloading.
+	@echo "Downloading yamllint..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
+		download-yamllint \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_YAMLLINT_VERSION=$(YAMLLINT_VERSION)
+	@echo "Yamllint downloaded successfully."
+
+.PHONY: yamllint
+yamllint: yamllint-download $(YAMLLINT) ## Lint YAML files in the repository
+	@echo "Running yamllint on repository YAML files..."
+	$(YAMLLINT) -c $(PROJECT_DIR)/.yamllint.yaml $(PROJECT_DIR)
+	@echo "YAML linting completed successfully."
+
+.PHONY: yq
+yq: sync-git-submodules $(LOCALBIN) ## Download yq
+	@echo "Downloading yq..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yq \
+		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
+		DOWNLOAD_YQ_VERSION=$(YQ_VERSION)
+	@echo "Yq downloaded successfully."
+
+.PHONY: yq-sort-and-format
+yq-sort-and-format: yq ## Sort keys/reformat all YAML files in the repository
+	@echo "Sorting keys and reformatting YAML files..."
+	@find . -name "*.yaml" -o -name "*.yml" | grep -v -E "(telco5g-konflux/|target/|vendor/|bin/|\.git/)" | while read file; do \
+		echo "Processing $$file..."; \
+		$(YQ) -i '.. |= sort_keys(.)' "$$file"; \
+	done
+	@echo "YAML sorting and formatting completed successfully."
+
+##@ Konflux
+
+.PHONY: sync-git-submodules
+sync-git-submodules:
+	@echo "Checking git submodules"
+	@if [ "$(SKIP_SUBMODULE_SYNC)" != "yes" ]; then \
+		echo "Syncing git submodules"; \
+		git submodule sync --recursive; \
+		git submodule update --init --recursive; \
+	else \
+		echo "Skipping submodule sync"; \
+	fi
+
+.PHONY: konflux-validate-catalog-template-bundle
+konflux-validate-catalog-template-bundle: sync-git-submodules yq operator-sdk ## validate the last bundle entry on the catalog template file
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog-template-bundle \
+		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
+		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
+		YQ=$(YQ) \
+		OPERATOR_SDK=$(OPERATOR_SDK) \
+		ENGINE=$(ENGINE)
+
+.PHONY: konflux-validate-catalog
+konflux-validate-catalog: sync-git-submodules opm ## validate the current catalog file
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-validate-catalog \
+		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
+		OPM=$(OPM)
+
+.PHONY: konflux-generate-catalog
+konflux-generate-catalog: sync-git-submodules yq opm ## generate a quay.io catalog
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog \
+		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
+		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
+		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
+		CATALOG_OUTPUT_FORMAT=$(CATALOG_OUTPUT_FORMAT) \
+		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
+		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
+		OPM=$(OPM) \
+		YQ=$(YQ)
+	$(MAKE) konflux-validate-catalog
+
+.PHONY: konflux-generate-catalog-production
+konflux-generate-catalog-production: sync-git-submodules yq opm ## generate a registry.redhat.io catalog
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-generate-catalog-production \
+		CATALOG_TEMPLATE_KONFLUX_INPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_INPUT) \
+		CATALOG_TEMPLATE_KONFLUX_OUTPUT=$(PROJECT_DIR)/$(CATALOG_TEMPLATE_KONFLUX_OUTPUT) \
+		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
+		CATALOG_OUTPUT_FORMAT=$(CATALOG_OUTPUT_FORMAT) \
+		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
+		BUNDLE_NAME_SUFFIX=$(BUNDLE_NAME_SUFFIX) \
+		PRODUCTION_BUNDLE_NAME=$(PRODUCTION_BUNDLE_NAME) \
+		BUNDLE_BUILDS_FILE=$(PROJECT_DIR)/.konflux/catalog/bundle.builds.in.yaml \
+		OPM=$(OPM) \
+		YQ=$(YQ)
+	$(MAKE) konflux-validate-catalog
+
+.PHONY: konflux-update-rpm-lock-runtime
+konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file for the runtime
+	@echo "Creating lock-runtime/tmp/ directory..."
+	mkdir -p $(PROJECT_DIR)/.konflux/lock-runtime/tmp/
+	@echo "Copying rpms.in.yaml to lock-runtime directory..."
+	cp $(PROJECT_DIR)/.konflux/lock-runtime/rpms.in.yaml $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
+	@cat $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
+	@echo "Updating rpm lock file for the runtime..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
+		LOCK_SCRIPT_TARGET_DIR=$(PROJECT_DIR)/.konflux/lock-runtime/tmp/ \
+		RHEL9_EXECUTION_IMAGE=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf | sed 's|ubi-minimal|ubi|g' | sed 's|@.*||') \
+		RHEL9_IMAGE_TO_LOCK=$$(awk -F'=' '/^RUNTIME_IMAGE=/ {print $$2}' $(PROJECT_DIR)/.konflux/container_build_args.conf)
+	@echo "Update rpms.lock.yaml with new contents..."
+	cp $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.lock.yaml $(PROJECT_DIR)/.konflux/lock-runtime/rpms.lock.yaml
+	# intentionally keep lock-runtime/tmp/ directory for debugging purposes
+	@echo "RPM lock file updated successfully."
+
+.PHONY: konflux-update-tekton-task-refs
+konflux-update-tekton-task-refs: sync-git-submodules ## Update task references in Tekton pipeline files
+	@echo "Updating task references in Tekton pipeline files..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/tekton update-task-refs \
+		PIPELINE_FILES="$$(find $(PROJECT_DIR)/.tekton -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 | xargs -0 -r printf '%s ')"
+	@echo "Task references updated successfully."
+
+.PHONY: konflux-compare-catalog
+konflux-compare-catalog: sync-git-submodules ## Compare generated catalog with upstream FBC image
+	@echo "Comparing generated catalog with upstream FBC image..."
+	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-compare-catalog \
+		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
+		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
+		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-4-21:latest
+
+.PHONY: konflux-all
+konflux-all: konflux-filter-unused-redhat-repos konflux-update-tekton-task-refs konflux-generate-catalog-production konflux-validate-catalog ## Run all Konflux-related targets
+	@echo "All Konflux targets completed successfully."
+
 help:   ## Shows this message.
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+clean:
+	rm -rf $(LOCALBIN)

@@ -8,6 +8,7 @@ rules:
   - ""
   resources:
   - configmaps
+  - secrets
   verbs:
   - create
   - delete
@@ -37,13 +38,6 @@ rules:
   - ""
   resources:
   - nodes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - pods
   verbs:
   - get
@@ -52,21 +46,18 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods/log
+  - persistentvolumes
   verbs:
   - get
+  - list
+  - update
+  - watch
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - pods/log
   verbs:
-  - create
-  - delete
   - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - apiextensions.k8s.io
   resources:
@@ -133,80 +124,18 @@ rules:
   - config.openshift.io
   resources:
   - clusterversions
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
   - imagedigestmirrorsets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
   - infrastructures
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
   - networks
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
   - proxies
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - persistentvolumes
-  verbs:
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
   - lca.openshift.io
   resources:
   - imagebasedupgrades
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - lca.openshift.io
-  resources:
-  - imagebasedupgrades/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - lca.openshift.io
-  resources:
-  - imagebasedupgrades/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - lca.openshift.io
-  resources:
   - seedgenerators
   verbs:
   - create
@@ -219,12 +148,14 @@ rules:
 - apiGroups:
   - lca.openshift.io
   resources:
+  - imagebasedupgrades/finalizers
   - seedgenerators/finalizers
   verbs:
   - update
 - apiGroups:
   - lca.openshift.io
   resources:
+  - imagebasedupgrades/status
   - seedgenerators/status
   verbs:
   - get
@@ -266,17 +197,6 @@ rules:
   - monitoring.coreos.com
   resources:
   - prometheusrules
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - monitoring.coreos.com
-  resources:
   - servicemonitors
   verbs:
   - create
@@ -286,6 +206,12 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - '*'
 - apiGroups:
   - oadp.openshift.io
   resources:
@@ -308,14 +234,6 @@ rules:
   - operators.coreos.com
   resources:
   - clusterserviceversions
-  verbs:
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
-  - operators.coreos.com
-  resources:
   - subscriptions
   verbs:
   - delete
@@ -334,11 +252,6 @@ rules:
   - rbac.authorization.k8s.io
   resources:
   - clusterrolebindings
-  verbs:
-  - delete
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
   - clusterroles
   verbs:
   - delete
@@ -370,6 +283,8 @@ rules:
   - velero.io
   resources:
   - backups
+  - deletebackuprequests
+  - restores
   verbs:
   - create
   - delete
@@ -384,26 +299,4 @@ rules:
   verbs:
   - get
   - list
-  - watch
-- apiGroups:
-  - velero.io
-  resources:
-  - deletebackuprequests
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
-  - velero.io
-  resources:
-  - restores
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
   - watch

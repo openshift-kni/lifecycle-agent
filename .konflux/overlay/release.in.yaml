@@ -1,0 +1,17 @@
+---
+variables:
+  # PLACEHOLDER_ variables will be substituted by ad-hoc overlay logic
+  containerImage: PLACEHOLDER_CONTAINER_IMAGE
+  description: |
+      Lifecycle Agent for OpenShift
+      The Lifecycle Agent for OpenShift provides local lifecycle management services
+      for Single Node Openshift (SNO) clusters.
+
+      You can find additional guidance in the upstream repository: https://github.com/openshift-kni/lifecycle-agent
+  display_name: "Lifecycle Agent"
+  manager_version: "lifecycle-agent.v4.21.0"
+  # min_kube_version should match ocp
+  # https://access.redhat.com/solutions/4870701
+  min_kube_version: "1.32.0"
+  recert_image: PLACEHOLDER_RECERT_IMAGE
+  version: "4.21.0"

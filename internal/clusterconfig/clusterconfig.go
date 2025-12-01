@@ -308,7 +308,7 @@ func SeedReconfigurationFromClusterInfo(
 		ClusterName:               clusterInfo.ClusterName,
 		ClusterID:                 clusterInfo.ClusterID,
 		InfraID:                   infraID,
-		NodeIP:                    clusterInfo.NodeIP,
+		NodeIPs:                   clusterInfo.NodeIPs,
 		ReleaseRegistry:           clusterInfo.ReleaseRegistry,
 		Hostname:                  clusterInfo.Hostname,
 		KubeconfigCryptoRetention: *kubeconfigCryptoRetention,
@@ -319,7 +319,7 @@ func SeedReconfigurationFromClusterInfo(
 		Proxy:                     proxy,
 		StatusProxy:               statusProxy,
 		InstallConfig:             installConfig,
-		MachineNetwork:            clusterInfo.MachineNetwork,
+		MachineNetworks:           clusterInfo.MachineNetworks,
 		ChronyConfig:              chronyConfig,
 		AdditionalTrustBundle: seedreconfig.AdditionalTrustBundle{
 			UserCaBundle:         additionalTrustBundle.UserCaBundle,

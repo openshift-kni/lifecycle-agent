@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
@@ -38,17 +39,17 @@ var (
 )
 
 type RecertConfig struct {
-	DryRun               bool   `json:"dry_run,omitempty"`
-	ExtendExpiration     bool   `json:"extend_expiration,omitempty"`
-	ForceExpire          bool   `json:"force_expire,omitempty"`
-	EtcdEndpoint         string `json:"etcd_endpoint,omitempty"`
-	ClusterRename        string `json:"cluster_rename,omitempty"`
-	Hostname             string `json:"hostname,omitempty"`
-	IP                   string `json:"ip,omitempty"`
-	Proxy                string `json:"proxy,omitempty"`
-	InstallConfig        string `json:"install_config,omitempty"`
-	UserCaBundle         string `json:"user_ca_bundle,omitempty"`
-	ProxyTrustedCaBundle string `json:"proxy_trusted_ca_bundle,omitempty"`
+	DryRun               bool     `json:"dry_run,omitempty"`
+	ExtendExpiration     bool     `json:"extend_expiration,omitempty"`
+	ForceExpire          bool     `json:"force_expire,omitempty"`
+	EtcdEndpoint         string   `json:"etcd_endpoint,omitempty"`
+	ClusterRename        string   `json:"cluster_rename,omitempty"`
+	Hostname             string   `json:"hostname,omitempty"`
+	IP                   []string `json:"ip,omitempty"`
+	Proxy                string   `json:"proxy,omitempty"`
+	InstallConfig        string   `json:"install_config,omitempty"`
+	UserCaBundle         string   `json:"user_ca_bundle,omitempty"`
+	ProxyTrustedCaBundle string   `json:"proxy_trusted_ca_bundle,omitempty"`
 
 	// We intentionally don't omitEmpty this field because an empty string here
 	// means "delete the kubeadmin password secret" while a complete omission
@@ -69,8 +70,8 @@ type RecertConfig struct {
 	PullSecret                string   `json:"pull_secret,omitempty"`
 	ChronyConfig              string   `json:"chrony_config,omitempty"`
 	RegenerateServerSSHKeys   string   `json:"regenerate_server_ssh_keys,omitempty"`
-
-	EtcdDefrag bool `json:"etcd_defrag,omitempty"`
+	MachineNetworkCidr        []string `json:"machine_network_cidr,omitempty"`
+	EtcdDefrag                bool     `json:"etcd_defrag,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -121,8 +122,9 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 		config.Hostname = seedReconfig.Hostname
 	}
 
-	if seedReconfig.NodeIP != seedClusterInfo.NodeIP {
-		config.IP = seedReconfig.NodeIP
+	ipsChanged := !slices.Equal(seedClusterInfo.NodeIPs, seedReconfig.NodeIPs)
+	if ipsChanged && len(seedReconfig.NodeIPs) > 0 {
+		config.IP = seedReconfig.NodeIPs
 	}
 
 	config.Proxy = FormatRecertProxyFromSeedReconfigProxy(seedReconfig.Proxy, seedReconfig.StatusProxy)
@@ -168,15 +170,26 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 	config.CNSanReplaceRules = []string{
 		fmt.Sprintf("system:node:%s,system:node:%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
 		fmt.Sprintf("%s,%s", seedClusterInfo.SNOHostname, seedReconfig.Hostname),
-		fmt.Sprintf("%s,%s", seedClusterInfo.NodeIP, seedReconfig.NodeIP),
 		fmt.Sprintf("api.%s,api.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("api-int.%s,api-int.%s", seedFullDomain, clusterFullDomain),
 		fmt.Sprintf("*.apps.%s,*.apps.%s", seedFullDomain, clusterFullDomain),
 	}
-	// check if there is an ingress CN provided for backwards compatibility
+
+	if len(seedClusterInfo.NodeIPs) == len(seedReconfig.NodeIPs) {
+		for i := range seedClusterInfo.NodeIPs {
+			config.CNSanReplaceRules = append(
+				config.CNSanReplaceRules, fmt.Sprintf("%s,%s", seedClusterInfo.NodeIPs[i], seedReconfig.NodeIPs[i]),
+			)
+		}
+	}
+
 	if seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN != "" {
 		config.CNSanReplaceRules = append(config.CNSanReplaceRules,
 			fmt.Sprintf("%s,%s", seedClusterInfo.IngressCertificateCN, seedReconfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN))
+	}
+
+	if !slices.Equal(seedReconfig.MachineNetworks, seedClusterInfo.MachineNetworks) {
+		config.MachineNetworkCidr = seedReconfig.MachineNetworks
 	}
 
 	p := filepath.Join(recertConfigFolder, RecertConfigFile)

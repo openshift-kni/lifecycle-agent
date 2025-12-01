@@ -17,7 +17,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.20.0'
+    olm.skipRange: '>=4.14.0 <4.21.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
     operatorframework.io/suggested-namespace-template: |-
       {
@@ -31,6 +31,7 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
+    operators.openshift.io/must-gather-image: $(PRECACHE_WORKLOAD_IMG)
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
     provider: Red Hat
@@ -38,7 +39,7 @@ metadata:
     support: Red Hat
   labels:
     operatorframework.io/arch.amd64: supported
-  name: lifecycle-agent.v4.20.0
+  name: lifecycle-agent.v4.21.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
@@ -58,17 +59,17 @@ spec:
       specDescriptors:
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
-      - description: InitMonitorTimeoutSeconds defines the time frame in seconds.
-          If not defined or set to 0, the default value of 1800 seconds (30 minutes)
-          is used.
+      - description: |-
+          InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0, the default value of
+          1800 seconds (30 minutes) is used.
         displayName: Init Monitor Timeout Seconds
         path: autoRollbackOnFailure.initMonitorTimeoutSeconds
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
-      - description: ExtraManifests defines the list of ConfigMap resources that contain
-          the user-specific extra manifests to be applied during the upgrade post-pivot
-          stage. Users can also add their custom catalog sources that may want to
-          retain after the upgrade.
+      - description: |-
+          ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
+          applied during the upgrade post-pivot stage.
+          Users can also add their custom catalog sources that may want to retain after the upgrade.
         displayName: Extra Manifests
         path: extraManifests
       - displayName: Name

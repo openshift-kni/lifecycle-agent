@@ -1,9 +1,4 @@
 ---
-run:
-  concurrency: 6
-  deadline: 5m
-  skip-files:
-    - ".*_test\\.go"
 linters:
   disable-all: true
   enable:
@@ -27,27 +22,40 @@ linters:
     - gosec
     - wrapcheck
 linters-settings:
-  revive:
+  depguard:
+    # Rules to apply.
+    #
+    # Variables:
+    # - File Variables
+    #   you can still use and exclamation mark ! in front of a variable to say not to use it.
+    #   Example !$test will match any file that is not a go test file.
+    #
+    #   `$all` - matches all go files
+    #   `$test` - matches all go test files
+    #
+    # - Package Variables
+    #
+    #  `$gostd` - matches all of go's standard library (Pulled from `GOROOT`)
+    #
+    # Default: Only allow $gostd in all files.
     rules:
-      - name: if-return
-        severity: warning
-        disabled: true
-      - name: string-format
-        severity: warning
-        disabled: false
-        arguments:
-          - - 'core.WriteError[1].Message'
-            - '/^([^A-Z]|$)/'
-            - must not start with a capital letter
-          - - 'fmt.Errorf[0]'
-            - '/^([^A-Z]|$)/'
-            - must not start with a capital letter
-          - - 'fmt.Errorf[0]'
-            - '/(^|[^\.!?])$/'
-            - must not end in punctuation
-          - - panic
-            - '/^[^\n]*$/'
-            - must not contain line breaks
+      # Name of a rule.
+      main:
+        # List of allowed packages.
+        # allow:
+        #  - $gostd
+        # Packages that are not allowed where the value is a suggestion.
+        deny:
+          - desc: Should be replaced by standard lib errors package
+            pkg: "github.com/pkg/errors"
+        # List of file globs that will match this list of settings to compare against.
+        # Default: $all
+        files:
+          - $all
+        # Used to determine the package matching priority.
+        # There are three different modes: `original`, `strict`, and `lax`.
+        # Default: "original"
+        list-mode: lax
   gocritic:
     enabled-checks:
       # Diagnostic
@@ -69,13 +77,11 @@ linters-settings:
       - weakCond
       - octalLiteral
       - sloppyReassign
-
       # Performance
       - equalFold
       - indexAlloc
       - rangeExprCopy
       - appendCombine
-
       # Style
       - assignOp
       - boolExprSimplify
@@ -103,7 +109,6 @@ linters-settings:
       - valSwap
       - yodaStyleExpr
       - wrapperFunc
-
       # Opinionated
       - initClause
       - nestingReduce
@@ -111,40 +116,27 @@ linters-settings:
       - typeUnparen
       - unnecessaryBlock
       - paramTypeCombine
-  depguard:
-    # Rules to apply.
-    #
-    # Variables:
-    # - File Variables
-    #   you can still use and exclamation mark ! in front of a variable to say not to use it.
-    #   Example !$test will match any file that is not a go test file.
-    #
-    #   `$all` - matches all go files
-    #   `$test` - matches all go test files
-    #
-    # - Package Variables
-    #
-    #  `$gostd` - matches all of go's standard library (Pulled from `GOROOT`)
-    #
-    # Default: Only allow $gostd in all files.
+  revive:
     rules:
-      # Name of a rule.
-      main:
-        # Used to determine the package matching priority.
-        # There are three different modes: `original`, `strict`, and `lax`.
-        # Default: "original"
-        list-mode: lax
-        # List of file globs that will match this list of settings to compare against.
-        # Default: $all
-        files:
-          - $all
-        # List of allowed packages.
-        #allow:
-        #  - $gostd
-        # Packages that are not allowed where the value is a suggestion.
-        deny:
-          - pkg: "github.com/pkg/errors"
-            desc: Should be replaced by standard lib errors package
+      - disabled: true
+        name: if-return
+        severity: warning
+      - arguments:
+          - - 'core.WriteError[1].Message'
+            - '/^([^A-Z]|$)/'
+            - must not start with a capital letter
+          - - 'fmt.Errorf[0]'
+            - '/^([^A-Z]|$)/'
+            - must not start with a capital letter
+          - - 'fmt.Errorf[0]'
+            - '/(^|[^\.!?])$/'
+            - must not end in punctuation
+          - - panic
+            - '/^[^\n]*$/'
+            - must not contain line breaks
+        disabled: false
+        name: string-format
+        severity: warning
   wrapcheck:
     ignoreSigs:
       # defaults
@@ -158,3 +150,8 @@ linters-settings:
       - .WithStack(
       # from kyaml's errors package
       - .WrapPrefixf(
+run:
+  concurrency: 6
+  deadline: 5m
+  skip-files:
+    - ".*_test\\.go"

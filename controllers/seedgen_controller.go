@@ -957,7 +957,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if nextReconcile.RequeueAfter > 0 {
 			r.Log.Info("Finish reconciling SeedGen", "name", req.NamespacedName, "requeueAfter", nextReconcile.RequeueAfter.Seconds())
 		} else {
-			r.Log.Info("Finish reconciling SeedGen", "name", req.NamespacedName, "requeueRightAway", nextReconcile.Requeue)
+			r.Log.Info("Finish reconciling SeedGen", "name", req.NamespacedName, "requeueRightAway", true)
 		}
 	}()
 

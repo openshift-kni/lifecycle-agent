@@ -1,6 +1,27 @@
+---
 # See the OWNERS docs at https://go.k8s.io/owners
 
 aliases:
+  konflux-approvers:
+    - abraham2512
+    - fontivan
+    - rauhersu
+    - sabbir-47
+    - shajmakh
+    - yanirq
+  konflux-reviewers:
+    - fontivan
+    - rauhersu
+  lifecycle-agent-approvers:
+    - browsell
+    - donpenney
+    - eranco74
+    - omertuc
+    - imiller0
+    - jc-rh
+    - romfreiman
+    - tsorya
+    - danmanor
   lifecycle-agent-reviewers:
     - browsell
     - donpenney
@@ -19,15 +40,4 @@ aliases:
     - mresvanis
     - rauhersu
     - fontivan
-  lifecycle-agent-approvers:
-    - browsell
-    - donpenney
-    - eranco74
-    - omertuc
-    - imiller0
-    - jc-rh
-    - romfreiman
-    - tsorya
-  konflux-approvers:
-    - rauhersu
-    - fontivan
+    - danmanor

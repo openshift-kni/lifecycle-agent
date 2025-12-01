@@ -43,3 +43,4 @@ resources:
 - ../rbac
 - ../manager
 - ../prometheus
+#- ../networkpolicies
