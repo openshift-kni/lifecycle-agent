@@ -153,6 +153,7 @@ OPM = $(LOCALBIN)/opm
 SHELLCHECK = $(LOCALBIN)/shellcheck
 YAMLLINT = $(LOCALBIN)/yamllint
 YQ = $(LOCALBIN)/yq
+COVERALLS = $(LOCALBIN)/coveralls
 
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd"
@@ -187,7 +188,7 @@ vet: ## Run go vet against code.
 .PHONY: unittest
 unittest:
 	@echo "Running unit tests"
-	go test -v ./...
+	go test -coverprofile=coverage.out -v ./...
 
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
@@ -475,6 +476,28 @@ yq-sort-and-format: yq ## Sort keys/reformat all YAML files in the repository
 		$(YQ) -i '.. |= sort_keys(.)' "$$file"; \
 	done
 	@echo "YAML sorting and formatting completed successfully."
+
+.PHONY: coveralls-download
+coveralls-download: $(LOCALBIN) ## Download coveralls binary locally if necessary.
+	@if [ ! -f "$(COVERALLS)" ]; then \
+		echo "Downloading coveralls..."; \
+		ARCH=$$(uname -m); \
+		if [ "$$ARCH" = "x86_64" ]; then \
+			BINARY="coveralls-linux-x86_64"; \
+		elif [ "$$ARCH" = "aarch64" ]; then \
+			BINARY="coveralls-linux-aarch64"; \
+		else \
+			echo "Error: Unsupported architecture $$ARCH"; \
+			exit 1; \
+		fi; \
+		URL="https://github.com/coverallsapp/coverage-reporter/releases/latest/download/$$BINARY"; \
+		echo "Downloading from $$URL"; \
+		curl -sSL "$$URL" -o $(COVERALLS); \
+		chmod +x $(COVERALLS); \
+		echo "Coveralls downloaded successfully."; \
+	else \
+		echo "Coveralls is already installed at $(COVERALLS)"; \
+	fi
 
 ##@ Konflux
 
