@@ -213,7 +213,7 @@ check-coverage: install-go-test-coverage
 	${GOBIN}/go-test-coverage --config=./.testcoverage.yml
 
 .PHONY: ci-job
-ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint bundle-check
+ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck bashate yamllint test-kustomize bundle-check
 
 # Download go tools
 .PHONY: controller-gen
@@ -347,10 +347,16 @@ GINKGO_FLAGS = -ginkgo.focus="$(FOCUS)" -ginkgo.v -ginkgo.skip="$(SKIP)"
 ##@ Tools and Linting
 
 .PHONY: lint
-lint: bashate golangci-lint shellcheck yamllint markdownlint
+lint: bashate golangci-lint shellcheck yamllint markdownlint test-kustomize
 
 .PHONY: tools
 tools: opm operator-sdk yq
+
+.PHONY: test-kustomize
+test-kustomize: kustomize ## Validate all kustomization.yaml files can build successfully
+	@echo "Running kustomize validation on all kustomization.yaml files..."
+	@$(PROJECT_DIR)/hack/test-kustomize.sh
+	@echo "Kustomize validation completed successfully."
 
 .PHONY: bashate-download
 bashate-download: sync-git-submodules $(LOCALBIN) ## Download bashate locally if necessary and run against bash files. If wrong version is installed, it will be removed before downloading.
