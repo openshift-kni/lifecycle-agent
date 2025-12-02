@@ -61,7 +61,7 @@ func postPivot() {
 	opsClient := ops.NewOps(log, hostCommandsExecutor)
 	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
-	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, opsClient)
+	rebootClient := reboot.NewIBURebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, opsClient)
 
 	postPivotRunner := postpivot.NewPostPivot(scheme, log, opsClient,
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
