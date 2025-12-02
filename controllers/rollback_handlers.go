@@ -174,7 +174,7 @@ func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *ibuv1.ImageBasedUpgrad
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
-	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu.Spec.SeedImageRef.Version)
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
