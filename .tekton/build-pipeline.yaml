@@ -264,7 +264,7 @@ spec:
             - distribution-scope=public
             - io.k8s.description=lifecycle-agent
             - release=4.17
-            - cpe="cpe:/a:redhat:openshift:4.17::el9"
+            - cpe=cpe:/a:redhat:openshift:4.17::el9
             - url=https://github.com/openshift-kni/lifecycle-agent
             - vendor=Red Hat, Inc.
             - io.k8s.display-name=lifecycle-agent
