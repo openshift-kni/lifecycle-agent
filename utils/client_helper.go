@@ -461,3 +461,91 @@ func getClusterNetworks(ctx context.Context, client runtimeclient.Client) ([]str
 
 	return clusterNetworks, network.Status.ServiceNetwork, nil
 }
+
+func GetInstallConfig(ctx context.Context, client runtimeclient.Reader) (string, error) {
+	if client == nil {
+		return "", fmt.Errorf("runtime client not available")
+	}
+
+	configMap := &corev1.ConfigMap{}
+	err := client.Get(ctx, runtimeclient.ObjectKey{Name: "cluster-config-v1", Namespace: "kube-system"}, configMap)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch cluster-config-v1 ConfigMap: %w", err)
+	}
+
+	installConfig, exists := configMap.Data["install-config"]
+	if !exists {
+		return "", fmt.Errorf("install-config not found in cluster-config-v1 ConfigMap")
+	}
+
+	return installConfig, nil
+}
+
+// getLocalNodeName returns the current node's name from the hostname.
+func GetLocalNodeName(ctx context.Context, client client.Reader) (string, error) {
+	nodeList := &corev1.NodeList{}
+	if err := client.List(ctx, nodeList); err != nil {
+		return "", fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	if len(nodeList.Items) != 1 {
+		return "", fmt.Errorf("expected exactly one node, got %d", len(nodeList.Items))
+	}
+
+	return nodeList.Items[0].Name, nil
+}
+
+func GetNodeInternalIPs(ctx context.Context, client client.Reader) ([]string, error) {
+	nodeName, err := GetLocalNodeName(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+
+	node := &corev1.Node{}
+	if err := client.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	var ips []string
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP {
+			ips = append(ips, addr.Address)
+		}
+	}
+
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("failed to find node internal ip addresses")
+	}
+
+	return ips, nil
+}
+
+// installConfigSubset captures only the fields we need from install-config
+type installConfigSubset struct {
+	Networking struct {
+		MachineNetwork []struct {
+			CIDR string `yaml:"cidr"`
+		} `yaml:"machineNetwork"`
+	} `yaml:"networking"`
+}
+
+func GetMachineNetworks(ctx context.Context, client runtimeclient.Reader) ([]string, error) {
+	installConfig, err := GetInstallConfig(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get install config: %w", err)
+	}
+
+	var ic installConfigSubset
+	if err := yaml.Unmarshal([]byte(installConfig), &ic); err != nil {
+		return nil, fmt.Errorf("failed to parse install-config yaml: %w", err)
+	}
+
+	var machineNetworks []string
+	for _, mn := range ic.Networking.MachineNetwork {
+		if mn.CIDR != "" {
+			machineNetworks = append(machineNetworks, mn.CIDR)
+		}
+	}
+
+	return machineNetworks, nil
+}

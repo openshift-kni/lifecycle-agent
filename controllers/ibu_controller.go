@@ -54,6 +54,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -181,6 +182,21 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Make sure "next stage" list is initialized
 	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+
+	if ibu.Spec.Stage != ibuv1.Stages.Idle && isTransitionRequested(ibu) {
+		ipc := &ipcv1.IPConfig{}
+		if getErr := r.NoncachedClient.Get(ctx, client.ObjectKey{Name: common.IPConfigName}, ipc); getErr != nil {
+			r.Log.Error(getErr, "failed to get IPConfig for gating")
+			return requeueWithShortInterval(), nil
+		}
+
+		if !(ipc.Spec.Stage == ipcv1.IPStages.Idle && utils.IsIdleConditionTrue(ipc.Status.Conditions)) {
+			r.Log.Info(
+				"Blocking IBU start: IPConfig not Idle",
+				"ipcStage", ipc.Spec.Stage)
+			return doNotRequeue(), nil
+		}
+	}
 
 	if isTransitionRequested(ibu) {
 		if validateStageTransition(ibu, isAfterPivot) {

@@ -1,15 +1,23 @@
 package utils
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestIsIpv6(t *testing.T) {
@@ -214,4 +222,127 @@ func TestReadSeedReconfigurationFromFile(t *testing.T) {
 	assert.Equal(t, seedReconfig.BaseDomain, "test.com")
 	assert.Equal(t, seedReconfig.ClusterName, "test-cluster")
 	assert.Equal(t, len(seedReconfig.NodeLabels), 0)
+}
+
+func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
+	testcases := []struct {
+		name   string
+		data   string
+		expect []string
+	}{
+		{
+			name: "multiple args",
+			data: `{"spec":{"kernelArguments":[    "tsc=nowatchdog",
+			"nosoftlockup",                                                                                                                     
+            "cgroup_no_v1=\"all\"",
+			"nmi_watchdog=0",                                                                                                                   
+			"mce=off",                                                                                                                          
+			"rcutree.kthread_prio=11",
+			"default_hugepagesz=1G",                                        
+			"hugepagesz=1G",
+			"hugepages=32",
+			"rcupdate.rcu_normal_after_boot=0",                                                                                                 
+			"efi=runtime",                                                                                                                      
+			"vfio_pci.enable_sriov=1",                                                                                                          
+			"vfio_pci.disable_idle_d3=1",                                                                                                       
+			"module_blacklist=irdma",                                                                                                           
+			"intel_pstate=disable"         ]}}`,
+			expect: []string{
+				"--karg-append", "\"tsc=nowatchdog\"",
+				"--karg-append", "\"nosoftlockup\"",
+				"--karg-append", "\"cgroup_no_v1=\\\"all\\\"\"",
+				"--karg-append", "\"nmi_watchdog=0\"",
+				"--karg-append", "\"mce=off\"",
+				"--karg-append", "\"rcutree.kthread_prio=11\"",
+				"--karg-append", "\"default_hugepagesz=1G\"",
+				"--karg-append", "\"hugepagesz=1G\"",
+				"--karg-append", "\"hugepages=32\"",
+				"--karg-append", "\"rcupdate.rcu_normal_after_boot=0\"",
+				"--karg-append", "\"efi=runtime\"",
+				"--karg-append", "\"vfio_pci.enable_sriov=1\"",
+				"--karg-append", "\"vfio_pci.disable_idle_d3=1\"",
+				"--karg-append", "\"module_blacklist=irdma\"",
+				"--karg-append", "\"intel_pstate=disable\"",
+			},
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			// create fixture
+			f, err := os.CreateTemp("", "tmp")
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer os.Remove(f.Name())
+			if _, err := f.Write([]byte(tc.data)); err != nil {
+				log.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				log.Fatal(err)
+			}
+
+			res, err := BuildKernelArgumentsFromMCOFile(f.Name())
+			assert.Equal(t, tc.expect, res)
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func newFakeIPConfigClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
+
+	sch := scheme.Scheme
+	// Register IPConfig type into the scheme used by the fake client.
+	assert.NoError(t, ipcv1.AddToScheme(sch))
+
+	return fake.NewClientBuilder().
+		WithScheme(sch).
+		WithObjects(objs...).
+		WithStatusSubresource(&ipcv1.IPConfig{}).
+		Build()
+}
+
+func TestInitIPConfig_CreatesWhenNotExists(t *testing.T) {
+	t.Setenv("PATH_OUTSIDE_CHROOT", "/") // ensure PathOutsideChroot works in tests, if env is used
+
+	ctx := context.Background()
+	log := &logr.Logger{}
+
+	cl := newFakeIPConfigClient(t)
+
+	err := InitIPConfig(ctx, cl, log)
+	assert.NoError(t, err)
+
+	// IPConfig singleton should be created with the expected name and Idle stage
+	ipc := &ipcv1.IPConfig{}
+	getErr := cl.Get(ctx, client.ObjectKey{Name: common.IPConfigName}, ipc)
+	assert.NoError(t, getErr)
+	assert.Equal(t, common.IPConfigName, ipc.Name)
+	assert.Equal(t, ipcv1.IPStages.Idle, ipc.Spec.Stage)
+}
+
+func TestInitIPConfig_AlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	log := &logr.Logger{}
+
+	existing := &ipcv1.IPConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: common.IPConfigName,
+		},
+		Spec: ipcv1.IPConfigSpec{
+			Stage: ipcv1.IPStages.Config,
+		},
+	}
+
+	cl := newFakeIPConfigClient(t, existing)
+
+	err := InitIPConfig(ctx, cl, log)
+	// Should not be an error even if the resource already exists
+	assert.NoError(t, err)
+
+	// Object should remain in the cluster with the same name
+	ipc := &ipcv1.IPConfig{}
+	getErr := cl.Get(ctx, client.ObjectKey{Name: common.IPConfigName}, ipc)
+	assert.NoError(t, getErr)
+	assert.Equal(t, ipcv1.IPStages.Config, ipc.Spec.Stage)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	ipconfigcmd "github.com/openshift-kni/lifecycle-agent/lca-cli/cmd/ipconfig"
 )
 
 // Create logger
@@ -55,6 +56,9 @@ func addCommonFlags(cmd *cobra.Command) {
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Display verbose logs")
 	rootCmd.PersistentFlags().BoolVarP(&noColor, "no-color", "c", false, "Control colored output")
+
+	// Register grouped ip-config command and its subcommands
+	rootCmd.AddCommand(ipconfigcmd.NewIPConfigCmd(log))
 }
 
 var (
