@@ -56,7 +56,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.21.0'
+    olm.skipRange: '>=4.14.0 <4.22.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
     operatorframework.io/suggested-namespace-template: |-
       {
@@ -70,7 +70,7 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
-    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.21.0
+    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
@@ -80,7 +80,7 @@ metadata:
     support: Red Hat
   labels:
     operatorframework.io/arch.amd64: supported
-  name: lifecycle-agent.v4.21.0
+  name: lifecycle-agent.v4.22.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
@@ -536,7 +536,7 @@ spec:
                 - /usr/local/bin/manager
                 env:
                 - name: PRECACHE_WORKLOAD_IMG
-                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.21.0
+                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
                 - name: MY_POD_NAME
                   valueFrom:
                     fieldRef:
@@ -545,7 +545,7 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.namespace
-                image: quay.io/openshift-kni/lifecycle-agent-operator:4.21.0
+                image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -641,4 +641,4 @@ spec:
   provider:
     name: Red Hat
   replaces: lifecycle-agent.v0.0.0
-  version: 4.21.0
+  version: 4.22.0
