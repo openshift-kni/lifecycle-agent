@@ -9,9 +9,9 @@ variables:
 
     You can find additional guidance in the upstream repository: https://github.com/openshift-kni/lifecycle-agent
   display_name: "Lifecycle Agent"
-  manager_version: "lifecycle-agent.v4.17.1"
+  manager_version: "lifecycle-agent.v4.17.2"
   # min_kube_version should match ocp
   # https://access.redhat.com/solutions/4870701
   min_kube_version: "1.30.0"
   recert_image: PLACEHOLDER_RECERT_IMAGE
-  version: "4.17.1"
+  version: "4.17.2"
