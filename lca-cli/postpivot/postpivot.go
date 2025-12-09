@@ -69,7 +69,7 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authF
 }
 
 var (
-	dnsmasqOverrides   = "/etc/default/sno_dnsmasq_configuration_overrides"
+	dnsmasqOverrides   = common.DnsmasqOverrides
 	nmConnectionFolder = common.NMConnectionFolder
 	nodePrimaryIPFile  = "/run/nodeip-configuration/primary-ip"
 	nodeIPHintFile     = "/etc/default/nodeip-configuration"
@@ -685,7 +685,7 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 func (p *PostPivot) cleanup() error {
 	p.log.Info("Cleaning up")
 	listOfDirs := []string{p.workingDir, common.SeedDataDir}
-	if err := utils.RemoveListOfFolders(p.log, listOfDirs); err != nil {
+	if err := utils.RemoveListOfFiles(p.log, listOfDirs); err != nil {
 		return fmt.Errorf("failed to cleanup in postpivot %s: %w", listOfDirs, err)
 	}
 	return nil

@@ -62,12 +62,16 @@ Usage:
   lca-cli [command]
 
 Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  create      Create OCI image and push it to a container registry.
-  help        Help about any command
-  ibi         prepare ibi
-  post-pivot  post pivot configuration
-  restore     Restore seed cluster configurations
+  completion          Generate the autocompletion script for the specified shell
+  create              Create OCI image and push it to a container registry.
+  help                Help about any command
+  ibi                 prepare ibi
+  ibuPrecacheWorkload Start precache during IBU
+  ibuStaterootSetup   Setup a new stateroot during IBU
+  init-monitor        LCA Init Monitor
+  ip-config           IP configuration commands
+  post-pivot          post pivot configuration
+  restore             Restore seed cluster configurations
 
 Flags:
   -h, --help       help for lca-cli

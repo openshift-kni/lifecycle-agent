@@ -30,6 +30,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/imagemgmt"
 	"github.com/openshift-kni/lifecycle-agent/internal/networkpolicies"
+	configv1 "github.com/openshift/api/config/v1"
 	kbatchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -48,7 +49,6 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
-	configv1 "github.com/openshift/api/config/v1"
 	ocpV1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -215,12 +215,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	executor := ops.NewChrootExecutor(newLogger, true, common.Host)
-	op := ops.NewOps(newLogger, executor)
-	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", executor)
-	ostreeClient := ostreeclient.NewClient(executor, false)
-	rebootClient := reboot.NewRebootClient(&log, executor, rpmOstreeClient, ostreeClient, op)
-	imageMgmtClient := imagemgmt.NewImageMgmtClient(&log, executor, common.PathOutsideChroot(common.ContainerStoragePath))
+	chrootExecutor := ops.NewChrootExecutor(newLogger, true, common.Host)
+	chrootOp := ops.NewOps(newLogger, chrootExecutor)
+	rpmOstreeClient := rpmostreeclient.NewClient("ibu-controller", chrootExecutor)
+	ostreeClient := ostreeclient.NewClient(chrootExecutor, false)
+	ibuRebootClient := reboot.NewIBURebootClient(&log, chrootExecutor, rpmOstreeClient, ostreeClient, chrootOp)
+	imageMgmtClient := imagemgmt.NewImageMgmtClient(&log, chrootExecutor, common.PathOutsideChroot(common.ContainerStoragePath))
 
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
@@ -243,7 +243,7 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
-	containerStorageMountpointTarget, err := op.GetContainerStorageTarget()
+	containerStorageMountpointTarget, err := chrootOp.GetContainerStorageTarget()
 	if err != nil {
 		setupLog.Error(err, "unable to get container storage mountpoint target")
 		os.Exit(1)
@@ -272,10 +272,10 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		Precache:        &precache.PHandler{Client: mgr.GetClient(), Log: log.WithName("Precache"), Scheme: mgr.GetScheme()},
 		RPMOstreeClient: rpmOstreeClient,
-		Executor:        executor,
+		Executor:        chrootExecutor,
 		OstreeClient:    ostreeClient,
-		Ops:             op,
-		RebootClient:    rebootClient,
+		Ops:             chrootOp,
+		RebootClient:    ibuRebootClient,
 		BackupRestore:   backupRestore,
 		ExtraManifest:   extraManifest,
 		UpgradeHandler: &controllers.UpgHandler{
@@ -285,12 +285,12 @@ func main() {
 			BackupRestore:   backupRestore,
 			ExtraManifest:   extraManifest,
 			ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
-			Executor:        executor,
-			Ops:             op,
+			Executor:        chrootExecutor,
+			Ops:             chrootOp,
 			Recorder:        mgr.GetEventRecorderFor("ImageBasedUpgrade"),
 			RPMOstreeClient: rpmOstreeClient,
 			OstreeClient:    ostreeClient,
-			RebootClient:    rebootClient,
+			RebootClient:    ibuRebootClient,
 		},
 		Mux:       mux,
 		Clientset: clientset,
@@ -312,7 +312,7 @@ func main() {
 		Log:             seedgenLog,
 		Scheme:          mgr.GetScheme(),
 		BackupRestore:   backupRestore,
-		Executor:        executor,
+		Executor:        chrootExecutor,
 		Mux:             mux,
 
 		// Cluster data retrieved once during init
@@ -321,7 +321,6 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "SeedGenerator")
 		os.Exit(1)
 	}
-	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

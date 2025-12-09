@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/go-logr/logr"
 )
+
+const ipConfigMode = "ipconfig"
 
 type InitMonitor struct {
 	scheme               *runtime.Scheme
@@ -26,12 +30,18 @@ type InitMonitor struct {
 	rpmOstreeClient      *rpmostreeclient.Client
 	ostreeClient         ostreeclient.IClient
 	rebootClient         reboot.RebootIntf
+	mode                 string
 }
 
-func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExecutor ops.Execute, ops ops.Ops, component string) *InitMonitor {
+func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExecutor ops.Execute, ops ops.Ops, component, mode string) *InitMonitor {
 	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
-	rebootClient := reboot.NewRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
+	var rebootClient reboot.RebootIntf
+	if mode == ipConfigMode {
+		rebootClient = reboot.NewIPCRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
+	} else {
+		rebootClient = reboot.NewIBURebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, ops)
+	}
 	return &InitMonitor{
 		scheme:               scheme,
 		log:                  log,
@@ -41,11 +51,12 @@ func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExec
 		rpmOstreeClient:      rpmOstreeClient,
 		ostreeClient:         ostreeClient,
 		rebootClient:         rebootClient,
+		mode:                 mode,
 	}
 }
 
 func (m *InitMonitor) RunInitMonitor() error {
-	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -67,14 +78,39 @@ func (m *InitMonitor) RunInitMonitor() error {
 
 	timeout := time.Duration(rollbackCfg.InitMonitorTimeout) * time.Second
 
-	m.log.Infof("Launching LCA Init Monitor timeout. Automatic rollback will occur in %s if upgrade is not completed successfully within that time", timeout)
+	// Adjust log message based on mode
+	contextText := "upgrade"
+	if m.mode == ipConfigMode {
+		contextText = "ip-config"
+	}
+	m.log.Infof("Launching LCA Init Monitor timeout. Automatic rollback will occur in %s if %s is not completed successfully within that time", timeout, contextText)
 
 	time.Sleep(timeout)
 
-	// If we reach this point, the init monitor was not shut down by the Upgrade handler, so trigger rollback
+	// If we reach this point, the init monitor was not shut down by the handler, so trigger rollback
 
 	msg := fmt.Sprintf("Rollback due to LCA Init Monitor timeout, after %s", timeout)
 	m.log.Info(msg)
+
+	if m.mode == ipConfigMode {
+		if err := m.ops.RemountSysroot(); err != nil {
+			// prefer to continue with rollback even if we can't write the rollback marker file
+			m.log.Error(err, "failed to remount sysroot")
+		}
+
+		oldStateroot, err := m.rpmOstreeClient.GetUnbootedStaterootName()
+		if err != nil {
+			// prefer to continue with rollback even if we can't write the rollback marker file
+			m.log.Error(err, "failed to get unbooted stateroot name")
+		}
+
+		oldStaterootPath := common.GetStaterootPath(oldStateroot)
+		rollbackMarkerFile := filepath.Join(oldStaterootPath, common.IPConfigMonitorRollbackMarkerFile)
+		if err := m.ops.WriteFile(rollbackMarkerFile, []byte(""), 0o644); err != nil {
+			// prefer to continue with rollback even if we can't write the rollback marker file
+			m.log.Error(err, "failed to write ip-config monitor rollback marker file")
+		}
+	}
 
 	if err := m.rebootClient.InitiateRollback(msg); err != nil {
 		return fmt.Errorf("unable to auto rollback: %w", err)
@@ -84,7 +120,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 }
 
 func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
-	rollbackCfg, err := m.rebootClient.ReadIBUAutoRollbackConfigFile()
+	rollbackCfg, err := m.rebootClient.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false
