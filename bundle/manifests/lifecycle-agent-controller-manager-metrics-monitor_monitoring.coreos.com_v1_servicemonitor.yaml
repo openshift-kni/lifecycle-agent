@@ -5,6 +5,7 @@ metadata:
     app.kubernetes.io/component: lifecycle-agent
     app.kubernetes.io/name: lifecycle-agent-operator
     control-plane: controller-manager
+    openshift.io/user-monitoring: "false"
   name: lifecycle-agent-controller-manager-metrics-monitor
 spec:
   endpoints:
