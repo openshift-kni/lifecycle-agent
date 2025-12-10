@@ -9,6 +9,7 @@
 /cache
 /bundle-*
 testbin/*
+/build
 
 # Test binary, build with `go test -c`
 *.test
