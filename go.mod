@@ -14,7 +14,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20251120164824-14a789e09884
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
-	github.com/operator-framework/api v0.36.0
+	github.com/operator-framework/api v0.37.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.52.0
