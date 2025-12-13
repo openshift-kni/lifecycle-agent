@@ -47,15 +47,20 @@ const (
 	OvnIcEtcFolder = "/var/lib/ovn-ic/etc"
 	OvnNodeCerts   = OvnIcEtcFolder + "/ovnkube-node-certs"
 
-	MultusCerts  = "/etc/cni/multus/certs"
-	ChronyConfig = "/etc/chrony.conf"
+	MultusCerts   = "/etc/cni/multus/certs"
+	ChronyConfig  = "/etc/chrony.conf"
+	OvsConfDb     = "/etc/openvswitch/conf.db"
+	OvsConfDbLock = "/etc/openvswitch/.conf.db.~lock~"
 
 	SSHServerKeysDirectory = "/etc/ssh"
 
 	MCDCurrentConfig = "/etc/machine-config-daemon/currentconfig"
 
 	InstallationConfigurationFilesDir = "/usr/local/installation_configuration_files"
+	IPConfigurationFilesDir           = "/usr/local/ip_configuration_files"
 	OptOpenshift                      = "/opt/openshift"
+	NmstateConfigDir                  = "/etc/nmstate/openshift"
+	NmstateConfigFileName             = "cluster.yml"
 	SeedDataDir                       = "/var/seed_data"
 	KubeconfigCryptoDir               = "kubeconfig-crypto"
 	ClusterConfigDir                  = "cluster-configuration"
@@ -69,11 +74,23 @@ const (
 	LvmDevicesPath                    = "/etc/lvm/devices/system.devices"
 	CABundleFilePath                  = "/etc/pki/ca-trust/source/anchors/openshift-config-user-ca-bundle.crt"
 
-	LCAConfigDir                                    = "/var/lib/lca"
+	LCAConfigDir               = "/var/lib/lca"
+	LCAWorkspaceDir            = LCAConfigDir + "/workspace"
+	IPConfigRunFlagsFile       = LCAWorkspaceDir + "/ip-config-run.json"
+	IPConfigRunPullSecretFile  = LCAWorkspaceDir + "/recert-pull-secret.json"
+	IPConfigRunStatusFile      = LCAWorkspaceDir + "/ip-config-run-status.json"
+	IPConfigPrepareStatusFile  = LCAWorkspaceDir + "/ip-config-prepare-status.json"
+	IPConfigRollbackStatusFile = LCAWorkspaceDir + "/ip-config-rollback-status.json"
+	IPCAutoRollbackConfigFile  = LCAWorkspaceDir + "/ip-config-autorollback-config.json"
+
 	IBUAutoRollbackConfigFile                       = LCAConfigDir + "/autorollback_config.json"
-	IBUAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800
+	IBUAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800 // 30 minutes
 	IBUInitMonitorService                           = "lca-init-monitor.service"
 	IBUInitMonitorServiceFile                       = "/etc/systemd/system/" + IBUInitMonitorService
+	IPCAutoRollbackInitMonitorTimeoutDefaultSeconds = 1800 // 30 minutes
+	IPCInitMonitorService                           = "lca-init-monitor.service"
+	// InitMonitorModeFile configures which mode the init-monitor should operate in ("ibu" or "ipconfig")
+	InitMonitorModeFile = LCAWorkspaceDir + "/initmonitor_mode"
 	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.
 	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
 	AutoRollbackOnFailurePostRebootConfigAnnotation = "auto-rollback-on-failure.lca.openshift.io/post-reboot-config"
@@ -83,6 +100,9 @@ const (
 	// AutoRollbackOnFailureInitMonitorAnnotation configure automatic rollback LCA Init Monitor watchdog, which triggers auto-rollback if timeout occurs before upgrade completion
 	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
 	AutoRollbackOnFailureInitMonitorAnnotation = "auto-rollback-on-failure.lca.openshift.io/init-monitor"
+	// AutoRollbackOnFailureIPConfigRunAnnotation configure automatic rollback when the IP config run fails.
+	// Only acceptable value is AutoRollbackDisableValue. Any other value is treated as "Enabled".
+	AutoRollbackOnFailureIPConfigRunAnnotation = "auto-rollback-on-failure.lca.openshift.io/ip-config-run"
 	// AutoRollbackDisableValue value that decides if rollback is disabled
 	AutoRollbackDisableValue = "Disabled"
 	// ContainerStorageUsageThresholdPercentAnnotation overrides default /var/lib/containers disk usage threshold for image cleanup
@@ -131,6 +151,34 @@ const (
 	IBIWorkspace = "var/tmp"
 
 	ContainerStoragePath = "/var/lib/containers"
+
+	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
+
+	IPConfigName = "ipconfig"
+
+	// DNS family names
+	IPv4FamilyName = "ipv4"
+	IPv6FamilyName = "ipv6"
+)
+
+// DNSMasq-related constants
+const (
+	// MachineConfig name that carries dnsmasq configuration
+	DnsmasqMachineConfigName = "50-master-dnsmasq-configuration"
+	// Path where the single-node filter configuration is placed
+	DnsmasqFilterTargetPath = "/etc/dnsmasq.d/single-node-filter.conf"
+	// Filter directives based on IP family
+	DnsmasqFilterIPv4 = "filter-AAAA\n"
+	DnsmasqFilterIPv6 = "filter-A\n"
+	// Data URL template used for embedding file contents in ignition (URL-encoded body)
+	DataURLBase64Template = "data:text/plain;charset=utf-8,%s"
+	// Ignition version used when creating/updating configs
+	IgnitionVersion32 = "3.2.0"
+	// Environment key written to dnsmasq override file for the IP override
+	DnsmasqOverrideEnvKeyIP = "SNO_DNSMASQ_IP_OVERRIDE"
+	// Common file permission modes
+	FileMode0644 = 420 // 0644
+	FileMode0600 = 384 // 0600
 )
 
 // Annotation names and values related to extra manifest

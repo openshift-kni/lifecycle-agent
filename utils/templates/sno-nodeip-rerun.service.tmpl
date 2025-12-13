@@ -1,0 +1,25 @@
+[Unit]
+Description=SNO post-boot nodeip-configuration rerun
+Wants=NetworkManager-wait-online.service
+After=NetworkManager-wait-online.service nmstate-configuration.service nmstate.service firstboot-osupdate.target
+Before=kubelet-dependencies.target ovs-configuration.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/bash -lc 'rm -f /run/nodeip-configuration/primary-ip || true'
+ExecStartPre=/usr/bin/bash -lc '\
+  if [[ -f "/etc/default/nodeip-configuration" ]]; then \
+    if grep -q "^KUBELET_NODEIP_HINT=" "/etc/default/nodeip-configuration"; then \
+      sed -i "s/^KUBELET_NODEIP_HINT=.*/KUBELET_NODEIP_HINT={{.HintSed}}/" "/etc/default/nodeip-configuration"; \
+    else \
+      echo "KUBELET_NODEIP_HINT={{.BaseIP}}" >> "/etc/default/nodeip-configuration"; \
+    fi; \
+  else \
+    echo "KUBELET_NODEIP_HINT={{.BaseIP}}" > "/etc/default/nodeip-configuration"; \
+  fi'
+ExecStart=/usr/bin/systemctl restart nodeip-configuration.service
+ExecStartPost=/usr/bin/systemctl restart wait-for-primary-ip.service
+RemainAfterExit=no
+
+[Install]
+WantedBy=kubelet-dependencies.target
