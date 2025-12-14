@@ -1,7 +1,24 @@
+/*
+Copyright 2023.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package ops
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +32,14 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
+
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/openshift/assisted-image-service/pkg/isoeditor"
+	cp "github.com/otiai10/copy"
 )
 
 const (
@@ -35,16 +55,28 @@ var podmanRecertArgs = []string{
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
 type Ops interface {
 	SystemctlAction(action string, args ...string) (string, error)
+	RunSystemdAction(args ...string) (string, error)
 	RunInHostNamespace(command string, args ...string) (string, error)
 	RunBashInHostNamespace(command string, args ...string) (string, error)
 	RunListOfCommands(cmds []*CMD) error
+	ReadFile(filename string) ([]byte, error)
+	WriteFile(filename string, data []byte, perm os.FileMode) error
+	CopyFile(src, dest string, perm os.FileMode) error
+	MkdirAll(path string, perm os.FileMode) error
+	RemoveFile(path string) error
+	RemoveAllFiles(path string) error
+	ReadDir(path string) ([]os.DirEntry, error)
+	StatFile(name string) (os.FileInfo, error)
+	IsNotExist(err error) bool
 	ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error
 	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
 	RunUnauthenticatedEtcdServer(authFile, name string) error
+	StopEtcdServer(authfile, name string) error
 	waitForEtcd(healthzEndpoint string) error
 	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
 	ExtractTarWithSELinux(srcPath, destPath string) error
 	RemountSysroot() error
+	RemountBoot() error
 	ImageExists(img string) (bool, error)
 	IsImageMounted(img string) (bool, error)
 	UnmountAndRemoveImage(img string) error
@@ -60,6 +92,8 @@ type Ops interface {
 	GetHostname() (string, error)
 	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
 	GetContainerStorageTarget() (string, error)
+	StopClusterServices() error
+	EnableClusterServices() error
 }
 
 type CMD struct {
@@ -95,6 +129,14 @@ func (o *ops) SystemctlAction(action string, args ...string) (string, error) {
 	return output, err
 }
 
+func (o *ops) RunSystemdAction(args ...string) (string, error) {
+	o.log.Infof("Running systemd-run %s", args)
+	output, err := o.hostCommandsExecutor.Execute("systemd-run", args...)
+	if err != nil {
+		err = fmt.Errorf("failed executing systemd-run with args %s: %w", args, err)
+	}
+	return output, err
+}
 func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, error) {
 	args = append([]string{command}, args...)
 	execute, err := o.hostCommandsExecutor.Execute("bash", "-c", strings.Join(args, " "))
@@ -196,6 +238,14 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	}
 	o.log.Info("Unauthenticated etcd server for recert is up and running")
 
+	return nil
+}
+
+func (o *ops) StopEtcdServer(authfile, name string) error {
+	o.log.Info("Stopping the unauthenticated etcd server")
+	if _, err := o.RunInHostNamespace(podman, "stop", common.EtcdContainerName); err != nil {
+		o.log.WithError(err).Errorf("failed to stop %s container.", common.EtcdContainerName)
+	}
 	return nil
 }
 
@@ -306,6 +356,13 @@ func (o *ops) RemountSysroot() error {
 	return nil
 }
 
+func (o *ops) RemountBoot() error {
+	if _, err := o.hostCommandsExecutor.Execute("mount", "/boot", "-o", "remount,rw"); err != nil {
+		return fmt.Errorf("failed to remount boot: %w", err)
+	}
+	return nil
+}
+
 func (o *ops) ImageExists(img string) (bool, error) {
 	_, err := o.hostCommandsExecutor.Execute(podman, "image", "exists", img)
 	if err != nil {
@@ -403,12 +460,7 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 		return fmt.Errorf("failed to run etcd, err: %w", err)
 	}
 
-	defer func() {
-		o.log.Info("Killing the unauthenticated etcd server")
-		if _, err := o.RunInHostNamespace(podman, "stop", common.EtcdContainerName); err != nil {
-			o.log.WithError(err).Errorf("failed to kill %s container.", common.EtcdContainerName)
-		}
-	}()
+	defer o.StopEtcdServer(authFile, common.EtcdContainerName)
 
 	if preRecertOperations != nil {
 		if err := preRecertOperations(); err != nil {
@@ -501,6 +553,50 @@ func (o *ops) RunListOfCommands(cmds []*CMD) error {
 		}
 	}
 	return nil
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) ReadFile(filename string) ([]byte, error) {
+	return os.ReadFile(filename)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) WriteFile(filename string, data []byte, perm os.FileMode) error {
+	return os.WriteFile(filename, data, perm)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) MkdirAll(path string, perm os.FileMode) error {
+	return os.MkdirAll(path, perm)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying copy error directly
+func (o *ops) CopyFile(src, dest string, perm os.FileMode) error {
+	return cp.Copy(src, dest, cp.Options{AddPermission: perm})
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) RemoveFile(path string) error {
+	return os.Remove(path)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) RemoveAllFiles(path string) error {
+	return os.RemoveAll(path)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) ReadDir(path string) ([]os.DirEntry, error) {
+	return os.ReadDir(path)
+}
+
+// nolint: wrapcheck // this method intentionally returns the underlying os error directly
+func (o *ops) StatFile(name string) (os.FileInfo, error) {
+	return os.Stat(name)
+}
+
+func (o *ops) IsNotExist(err error) bool {
+	return os.IsNotExist(err)
 }
 
 func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
@@ -612,4 +708,60 @@ func (o *ops) GetContainerStorageTarget() (string, error) {
 
 	}
 	return "", fmt.Errorf("failed to find mountpoint target in %s", containerStorageMountUnit)
+}
+
+// StopClusterServices stops kubelet and crio services with proper container cleanup
+func (o *ops) StopClusterServices() error {
+	o.log.Info("Stop kubelet service")
+	_, err := o.SystemctlAction("stop", "kubelet.service")
+	if err != nil {
+		return fmt.Errorf("failed to stop kubelet: %w", err)
+	}
+
+	o.log.Info("Disabling kubelet service")
+	_, err = o.SystemctlAction("disable", "kubelet.service")
+	if err != nil {
+		return fmt.Errorf("failed to disable kubelet: %w", err)
+	}
+
+	o.log.Info("Stopping containers and CRI-O runtime.")
+	crioSystemdStatus, err := o.SystemctlAction("is-active", "crio")
+	var exitErr *exec.ExitError
+	// If ExitCode is 3, the command succeeded and told us that crio is down
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
+		return fmt.Errorf("failed to checking crio status: %w", err)
+	}
+	o.log.Info("crio status is ", crioSystemdStatus)
+	if crioSystemdStatus == "active" {
+		// CRI-O is active, so stop running containers with retry
+		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
+			o.log.Info("Stop running containers")
+			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
+			_, err = o.RunBashInHostNamespace("crictl", args...)
+			if err != nil {
+				return false, fmt.Errorf("failed to stop running containers: %w", err)
+			}
+			return true, nil
+		})
+
+		// Execute a D-Bus call to stop the CRI-O runtime
+		o.log.Debug("Stopping CRI-O engine")
+		_, err = o.SystemctlAction("stop", "crio.service")
+		if err != nil {
+			return fmt.Errorf("failed to stop crio engine: %w", err)
+		}
+		o.log.Info("Running containers and CRI-O engine stopped successfully.")
+	} else {
+		o.log.Info("Skipping running containers and CRI-O engine already stopped.")
+	}
+
+	return nil
+}
+
+func (o *ops) EnableClusterServices() error {
+	_, err := o.SystemctlAction("enable", "kubelet.service")
+	if err != nil {
+		return fmt.Errorf("failed to enable kubelet: %w", err)
+	}
+	return nil
 }

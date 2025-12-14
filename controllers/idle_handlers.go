@@ -322,5 +322,6 @@ func cleanupUnbootedStateroot(stateroot string, ops ops.Ops, ostreeClient ostree
 		fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", staterootPath)); err != nil {
 		return fmt.Errorf("removing stateroot %s failed: %w", stateroot, err)
 	}
+
 	return nil
 }

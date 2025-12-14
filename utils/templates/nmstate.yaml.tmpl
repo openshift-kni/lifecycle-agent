@@ -1,0 +1,58 @@
+interfaces:
+- name: {{ .InterfaceName }}
+  {{- if gt .VLANID 0 }}
+  type: vlan
+  state: up
+  vlan:
+    id: {{ .VLANID }}
+    base-iface: {{ .BaseInterfaceName }}
+  {{- else }}
+  type: ethernet
+  state: up
+  {{- end }}
+  ipv4:
+    enabled: {{ .IPv4.Enabled }}
+    dhcp: false
+    {{- if .IPv4.Enabled }}
+    address:
+    - ip: {{ .IPv4.Address }}
+      prefix-length: {{ .IPv4.PrefixLen }}
+    {{- end }}
+  ipv6:
+    enabled: {{ .IPv6.Enabled }}
+    dhcp: false
+    autoconf: false
+    {{- if .IPv6.Enabled }}
+    address:
+    - ip: {{ .IPv6.Address }}
+      prefix-length: {{ .IPv6.PrefixLen }}
+    {{- end }}
+{{- if or .IPv4.Gateway .IPv6.Gateway }}
+routes:
+  config:
+  {{- if .IPv4.Gateway }}
+  - destination: 0.0.0.0/0
+    next-hop-interface: {{ .InterfaceName }}
+    next-hop-address: {{ .IPv4.Gateway }}
+    metric: 48
+    table-id: 254
+  {{- end }}
+  {{- if .IPv6.Gateway }}
+  - destination: ::/0
+    next-hop-interface: {{ .InterfaceName }}
+    next-hop-address: {{ .IPv6.Gateway }}
+    metric: 48
+    table-id: 254
+  {{- end }}
+{{- end }}
+{{- if or .IPv4.DNSServer .IPv6.DNSServer }}
+dns-resolver:
+  config:
+    server:
+    {{- if .IPv4.DNSServer }}
+    - {{ .IPv4.DNSServer }}
+    {{- end }}
+    {{- if .IPv6.DNSServer }}
+    - {{ .IPv6.DNSServer }}
+    {{- end }}
+{{- end }}

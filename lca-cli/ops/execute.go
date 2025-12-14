@@ -131,6 +131,8 @@ func nsenterArgs() []string {
 		"--mount",
 		// TODO: Document why we need the IPC namespace
 		"--ipc",
+		// Enter the host network namespace so networking tools see host routes/links
+		"--net",
 		"--pid",
 		"--",
 	}

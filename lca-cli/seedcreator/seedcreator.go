@@ -3,15 +3,12 @@ package seedcreator
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	ignconfig "github.com/coreos/ignition/v2/config"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
@@ -20,7 +17,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -336,49 +332,9 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 }
 
 func (s *SeedCreator) stopServices() error {
-	s.log.Info("Stop kubelet service")
-	_, err := s.ops.SystemctlAction("stop", "kubelet.service")
-	if err != nil {
-		return fmt.Errorf("failed to stop kubelet: %w", err)
+	if err := s.ops.StopClusterServices(); err != nil {
+		return fmt.Errorf("failed to stop cluster services: %w", err)
 	}
-
-	s.log.Info("Disabling kubelet service")
-	_, err = s.ops.SystemctlAction("disable", "kubelet.service")
-	if err != nil {
-		return fmt.Errorf("failed to disable kubelet: %w", err)
-	}
-
-	s.log.Info("Stopping containers and CRI-O runtime.")
-	crioSystemdStatus, err := s.ops.SystemctlAction("is-active", "crio")
-	var exitErr *exec.ExitError
-	// If ExitCode is 3, the command succeeded and told us that crio is down
-	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
-		return fmt.Errorf("failed to checking crio status: %w", err)
-	}
-	s.log.Info("crio status is ", crioSystemdStatus)
-	if crioSystemdStatus == "active" {
-		// CRI-O is active, so stop running containers with retry
-		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
-			s.log.Info("Stop running containers")
-			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-			_, err = s.ops.RunBashInHostNamespace("crictl", args...)
-			if err != nil {
-				return false, fmt.Errorf("failed to stop running containers: %w", err)
-			}
-			return true, nil
-		})
-
-		// Execute a D-Bus call to stop the CRI-O runtime
-		s.log.Debug("Stopping CRI-O engine")
-		_, err = s.ops.SystemctlAction("stop", "crio.service")
-		if err != nil {
-			return fmt.Errorf("failed to stop crio engine: %w", err)
-		}
-		s.log.Info("Running containers and CRI-O engine stopped successfully.")
-	} else {
-		s.log.Info("Skipping running containers and CRI-O engine already stopped.")
-	}
-
 	return nil
 }
 
@@ -648,7 +604,7 @@ func (s *SeedCreator) filterCatalogImages(ctx context.Context, images []string) 
 func (s *SeedCreator) removeOvnCertsFolders() error {
 	s.log.Infof("Removing ovn certs folders")
 	dirs := []string{common.OvnNodeCerts, common.MultusCerts}
-	if err := utils.RemoveListOfFolders(s.log, dirs); err != nil {
+	if err := utils.RemoveListOfFiles(s.log, dirs); err != nil {
 		return fmt.Errorf("failed to remove ovn certs in %s: %w", dirs, err)
 	}
 	return nil
