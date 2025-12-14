@@ -69,7 +69,7 @@ func NewPostPivot(scheme *runtime.Scheme, log *logrus.Logger, ops ops.Ops, authF
 }
 
 var (
-	dnsmasqOverrides   = "/etc/default/sno_dnsmasq_configuration_overrides"
+	dnsmasqOverrides   = common.DnsmasqOverrides
 	nmConnectionFolder = common.NMConnectionFolder
 	nodePrimaryIPFile  = "/run/nodeip-configuration/primary-ip"
 	nodeIPHintFile     = "/etc/default/nodeip-configuration"
@@ -198,7 +198,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	if _, err := p.ops.SystemctlAction("enable", "kubelet", "--now"); err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}
-	p.waitForApi(ctx, client)
+	utils.WaitForApi(ctx, client, p.log)
 
 	if err := p.deleteAllOldMirrorResources(ctx, client); err != nil {
 		return fmt.Errorf("failed to all old mirror resources: %w", err)
@@ -411,18 +411,6 @@ func (p *PostPivot) postRecertCommands() error {
 	}
 
 	return nil
-}
-
-func (p *PostPivot) waitForApi(ctx context.Context, client runtimeclient.Client) {
-	p.log.Info("Start waiting for api")
-	_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
-		p.log.Info("waiting for api")
-		nodes := &v1.NodeList{}
-		if err = client.List(ctx, nodes); err == nil {
-			return true, nil
-		}
-		return false, nil
-	})
 }
 
 func (p *PostPivot) applyManifests(ctx context.Context, mPath string, dynamicClient dynamic.Interface, restMapper meta.RESTMapper) error {
@@ -670,7 +658,7 @@ func (p *PostPivot) changeRegistryInCSVDeployment(ctx context.Context, client ru
 func (p *PostPivot) cleanup() error {
 	p.log.Info("Cleaning up")
 	listOfDirs := []string{p.workingDir, common.SeedDataDir}
-	if err := utils.RemoveListOfFolders(p.log, listOfDirs); err != nil {
+	if err := utils.RemoveListOfFiles(p.log, listOfDirs); err != nil {
 		return fmt.Errorf("failed to cleanup in postpivot %s: %w", listOfDirs, err)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,6 +26,8 @@ var ConditionTypes = struct {
 	RollbackCompleted  ConditionType
 	SeedGenInProgress  ConditionType
 	SeedGenCompleted   ConditionType
+	ConfigInProgress   ConditionType
+	ConfigCompleted    ConditionType
 }{
 	Idle:               "Idle",
 	PrepInProgress:     "PrepInProgress",
@@ -35,6 +38,8 @@ var ConditionTypes = struct {
 	RollbackCompleted:  "RollbackCompleted",
 	SeedGenInProgress:  "SeedGenInProgress",
 	SeedGenCompleted:   "SeedGenCompleted",
+	ConfigInProgress:   "ConfigInProgress",
+	ConfigCompleted:    "ConfigCompleted",
 }
 
 var SeedGenConditionTypes = struct {
@@ -54,6 +59,7 @@ type ConditionReason string
 // ConditionReasons define the different reasons that conditions will be set for
 var ConditionReasons = struct {
 	Idle              ConditionReason
+	NotIdle           ConditionReason
 	Completed         ConditionReason
 	Failed            ConditionReason
 	TimedOut          ConditionReason
@@ -65,8 +71,11 @@ var ConditionReasons = struct {
 	FinalizeCompleted ConditionReason
 	FinalizeFailed    ConditionReason
 	InvalidTransition ConditionReason
+	Stabilizing       ConditionReason
+	Blocked           ConditionReason
 }{
 	Idle:              "Idle",
+	NotIdle:           "NotIdle",
 	Completed:         "Completed",
 	Failed:            "Failed",
 	TimedOut:          "TimedOut",
@@ -78,6 +87,8 @@ var ConditionReasons = struct {
 	FinalizeCompleted: "FinalizeCompleted",
 	FinalizeFailed:    "FinalizeFailed",
 	InvalidTransition: "InvalidTransition",
+	Stabilizing:       "Stabilizing",
+	Blocked:           "Blocked",
 }
 
 // Common condition messages
@@ -161,6 +172,22 @@ func ResetStatusConditions(existingConditions *[]metav1.Condition, generation in
 	)
 }
 
+// IsOnlyIdleConditionTrue returns true only if the conditions slice contains
+// exactly one condition of type Idle and it is true. This indicates that
+// cleanup has completed and conditions were reset.
+func IsIdleConditionTrue(conditions []metav1.Condition) bool {
+	if len(conditions) == 0 {
+		return false
+	}
+
+	idle := meta.FindStatusCondition(conditions, string(ConditionTypes.Idle))
+	if idle == nil {
+		return false
+	}
+
+	return idle.Status == metav1.ConditionTrue
+}
+
 // IsStageCompleted checks if the completed condition status for the stage is true
 func IsStageCompleted(ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
@@ -182,10 +209,7 @@ func IsStageFailed(ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeSt
 // IsStageCompletedOrFailed checks if the completed condition for the stage is present
 func IsStageCompletedOrFailed(ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) bool {
 	condition := GetCompletedCondition(ibu, stage)
-	if condition != nil {
-		return true
-	}
-	return false
+	return condition != nil
 }
 
 // IsStageInProgress checks if ibu is working on the stage
@@ -273,6 +297,50 @@ func GetCompletedConditionType(stage ibuv1.ImageBasedUpgradeStage) (conditionTyp
 		conditionType = ConditionTypes.RollbackCompleted
 	}
 	return
+}
+
+// GetIPInProgressConditionType returns the IPConfig in-progress condition type based on the stage
+func GetIPInProgressConditionType(stage ipcv1.IPConfigStage) (conditionType ConditionType) {
+	switch stage {
+	case ipcv1.IPStages.Idle:
+		conditionType = ConditionTypes.Idle
+	case ipcv1.IPStages.Config:
+		conditionType = ConditionTypes.ConfigInProgress
+	case ipcv1.IPStages.Rollback:
+		conditionType = ConditionTypes.RollbackInProgress
+	}
+	return
+}
+
+// GetIPCompletedConditionType returns the IPConfig completed condition type based on the stage
+func GetIPCompletedConditionType(stage ipcv1.IPConfigStage) (conditionType ConditionType) {
+	switch stage {
+	case ipcv1.IPStages.Idle:
+		conditionType = ConditionTypes.Idle
+	case ipcv1.IPStages.Config:
+		conditionType = ConditionTypes.ConfigCompleted
+	case ipcv1.IPStages.Rollback:
+		conditionType = ConditionTypes.RollbackCompleted
+	}
+	return
+}
+
+// GetIPInProgressCondition returns the in-progress condition for the given IPConfig stage
+func GetIPInProgressCondition(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) *metav1.Condition {
+	conditionType := GetIPInProgressConditionType(stage)
+	if conditionType != "" {
+		return meta.FindStatusCondition(ipc.Status.Conditions, string(conditionType))
+	}
+	return nil
+}
+
+// GetIPCompletedCondition returns the completed condition for the given IPConfig stage
+func GetIPCompletedCondition(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) *metav1.Condition {
+	conditionType := GetIPCompletedConditionType(stage)
+	if conditionType != "" {
+		return meta.FindStatusCondition(ipc.Status.Conditions, string(conditionType))
+	}
+	return nil
 }
 
 // SetStatusInvalidTransition updates the given stage status to invalid transition with message
@@ -439,6 +507,17 @@ func SetIdleStatusInProgress(ibu *ibuv1.ImageBasedUpgrade, reason ConditionReaso
 	)
 }
 
+// SetIPIdleStatusInProgress updates the IPConfig Idle status to in progress with message
+func SetIPIdleStatusFalse(ipc *ipcv1.IPConfig, reason ConditionReason, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		ConditionTypes.Idle,
+		reason,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation,
+	)
+}
+
 func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade) error {
 	if c == nil {
 		// In UT code
@@ -460,4 +539,205 @@ func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *ibuv1.ImageBased
 	}
 
 	return nil
+}
+
+// IsIPStageCompleted checks if the completed condition status for the IPConfig stage is true
+func IsIPStageCompleted(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
+	condition := GetIPCompletedCondition(ipc, stage)
+	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// IsIPStageFailed checks if the completed condition status for the IPConfig stage is false
+func IsIPStageFailed(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
+	condition := GetIPCompletedCondition(ipc, stage)
+	if stage == ipcv1.IPStages.Idle {
+		return condition != nil &&
+			condition.Status == metav1.ConditionFalse &&
+			(condition.Reason == string(ConditionReasons.Failed) ||
+				condition.Reason == string(ConditionReasons.InvalidTransition))
+	}
+
+	return condition != nil && condition.Status == metav1.ConditionFalse
+}
+
+// IsIPStageCompletedOrFailed checks if the completed condition for the IPConfig stage is present
+func IsIPStageCompletedOrFailed(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
+	return IsIPStageCompleted(ipc, stage) ||
+		IsIPStageFailed(ipc, stage)
+}
+
+// IsIPStageInProgress checks if IPConfig is working on the stage
+func IsIPStageInProgress(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
+	condition := GetIPInProgressCondition(ipc, stage)
+	if stage == ipcv1.IPStages.Idle {
+		return condition != nil &&
+			condition.Status == metav1.ConditionFalse &&
+			condition.Reason == string(ConditionReasons.InProgress)
+	}
+
+	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// GetIPInProgressStage returns the IPConfig stage that is currently in progress
+func GetIPInProgressStage(ipc *ipcv1.IPConfig) ipcv1.IPConfigStage {
+	stages := []ipcv1.IPConfigStage{
+		ipcv1.IPStages.Idle,
+		ipcv1.IPStages.Config,
+		ipcv1.IPStages.Rollback,
+	}
+
+	for _, stage := range stages {
+		if IsIPStageInProgress(ipc, stage) {
+			return stage
+		}
+	}
+
+	return ""
+}
+
+// ClearIPInvalidTransitionStatusConditions clears any invalid transitions for IPConfig if exist
+func ClearIPInvalidTransitionStatusConditions(ipc *ipcv1.IPConfig) {
+	for _, condition := range ipc.Status.Conditions {
+		if condition.Reason == string(ConditionReasons.InvalidTransition) {
+			meta.RemoveStatusCondition(&ipc.Status.Conditions, condition.Type)
+		}
+	}
+}
+
+// SetIPStatusInvalidTransition updates the given IP stage status to invalid transition with message
+func SetIPStatusInvalidTransition(ipc *ipcv1.IPConfig, msg string) {
+	ct := GetIPInProgressConditionType(ipc.Spec.Stage)
+	if ct == "" {
+		return
+	}
+	SetStatusCondition(&ipc.Status.Conditions,
+		ct,
+		ConditionReasons.InvalidTransition,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation,
+	)
+}
+
+// SetIPConfigStatusInProgress updates the IP Config status to in progress with message
+func SetIPConfigStatusInProgress(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Config),
+		ConditionReasons.InProgress,
+		metav1.ConditionTrue,
+		msg,
+		ipc.Generation)
+}
+
+// SetIPConfigStatusFailed updates the IP Config status to failed with message
+func SetIPConfigStatusFailed(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPCompletedConditionType(ipcv1.IPStages.Config),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Config),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+}
+
+// SetIPConfigStatusCompleted updates the IP Config status to completed
+func SetIPConfigStatusCompleted(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Config),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPCompletedConditionType(ipcv1.IPStages.Config),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		msg,
+		ipc.Generation)
+}
+
+// SetIPRollbackStatusInProgress updates the IP Rollback status to in progress with message
+func SetIPRollbackStatusInProgress(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Rollback),
+		ConditionReasons.InProgress,
+		metav1.ConditionTrue,
+		msg,
+		ipc.Generation)
+}
+
+// SetIPRollbackStatusFailed updates the IP Rollback status to failed with message
+func SetIPRollbackStatusFailed(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPCompletedConditionType(ipcv1.IPStages.Rollback),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Rollback),
+		ConditionReasons.Failed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+}
+
+// SetIPRollbackStatusCompleted updates the IP Rollback status to completed
+func SetIPRollbackStatusCompleted(ipc *ipcv1.IPConfig, msg string) {
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPInProgressConditionType(ipcv1.IPStages.Rollback),
+		ConditionReasons.Completed,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation)
+	SetStatusCondition(&ipc.Status.Conditions,
+		GetIPCompletedConditionType(ipcv1.IPStages.Rollback),
+		ConditionReasons.Completed,
+		metav1.ConditionTrue,
+		msg,
+		ipc.Generation)
+}
+
+// UpdateIPStatus updates IPConfig status and observed generations consistently
+func UpdateIPStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) error {
+	if c == nil {
+		// In UT code
+		return nil
+	}
+
+	ipc.Status.ObservedGeneration = ipc.ObjectMeta.Generation
+
+	for i := range ipc.Status.Conditions {
+		condition := &ipc.Status.Conditions[i]
+		if condition.Type == string(GetIPCompletedConditionType(ipc.Spec.Stage)) ||
+			condition.Type == string(GetIPInProgressConditionType(ipc.Spec.Stage)) {
+			condition.ObservedGeneration = ipc.ObjectMeta.Generation
+		}
+	}
+
+	if err := c.Status().Update(ctx, ipc); err != nil {
+		return fmt.Errorf("failed to update IPConfig status: %w", err)
+	}
+
+	return nil
+}
+
+// SetIPStatusBlocked updates the given IPConfig stage in-progress status to Blocked with message.
+func SetIPStatusBlocked(ipc *ipcv1.IPConfig, msg string) {
+	ct := GetIPInProgressConditionType(ipc.Spec.Stage)
+	if ct == "" {
+		return
+	}
+	SetStatusCondition(&ipc.Status.Conditions,
+		ct,
+		ConditionReasons.Blocked,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation,
+	)
 }
