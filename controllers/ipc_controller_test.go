@@ -1,0 +1,815 @@
+package controllers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"testing"
+
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
+	controllerutils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
+)
+
+type reconcileTestDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (e reconcileTestDirEntry) Name() string               { return e.name }
+func (e reconcileTestDirEntry) IsDir() bool                { return e.isDir }
+func (e reconcileTestDirEntry) Type() fs.FileMode          { return 0 }
+func (e reconcileTestDirEntry) Info() (fs.FileInfo, error) { return nil, errors.New("not implemented") }
+
+func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
+	workspaceDir := common.PathOutsideChroot(common.LCAWorkspaceDir)
+	chrootOps.EXPECT().MkdirAll(workspaceDir, os.FileMode(0o700)).Return(nil).AnyTimes()
+	chrootOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).AnyTimes()
+}
+
+func reconcileTestMinimalNmstateJSON() string {
+	// Includes:
+	// - br-ex ovs-bridge with an uplink port (ens3) so ExtractBrExUplinkName succeeds
+	// - default routes for v4/v6
+	// - DNS servers for v4/v6
+	return `{
+  "interfaces": [
+    {
+      "name": "br-ex",
+      "type": "ovs-bridge",
+      "ipv4": { "enabled": true, "address": [ { "ip": "192.0.2.10", "prefix-length": 24 } ] },
+      "ipv6": { "enabled": false, "address": [] },
+      "bridge": { "port": [ { "name": "br-ex" }, { "name": "ens3" } ] }
+    },
+    {
+      "name": "ens3",
+      "type": "ethernet",
+      "ipv4": { "enabled": false, "address": [] },
+      "ipv6": { "enabled": false, "address": [] }
+    }
+  ],
+  "routes": {
+    "running": [
+      { "destination": "0.0.0.0/0", "next-hop-address": "192.0.2.1", "next-hop-interface": "br-ex" },
+      { "destination": "::/0",      "next-hop-address": "2001:db8::1", "next-hop-interface": "br-ex" }
+    ],
+    "config": []
+  },
+  "dns-resolver": {
+    "running": { "server": ["192.0.2.53", "2001:db8::53"] },
+    "config": { "server": [] }
+  }
+}`
+}
+
+func reconcileTestInstallConfigConfigMap() *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-config-v1",
+			Namespace: "kube-system",
+		},
+		Data: map[string]string{
+			"install-config": "networking:\n  machineNetwork:\n  - cidr: 192.0.2.0/24\n",
+		},
+	}
+}
+
+func reconcileTestDNSMasqMachineConfigEmpty() *machineconfigv1.MachineConfig {
+	return &machineconfigv1.MachineConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: common.DnsmasqMachineConfigName,
+		},
+	}
+}
+
+func reconcileTestBaseIPC(stage ipcv1.IPConfigStage) *ipcv1.IPConfig {
+	return &ipcv1.IPConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       common.IPConfigName,
+			Generation: 5,
+			Annotations: map[string]string{
+				// Avoid recert caching by making cached==image.
+				controllerutils.RecertImageAnnotation:       "quay.io/example/recert:latest",
+				controllerutils.RecertCachedImageAnnotation: "quay.io/example/recert:latest",
+				// Used by tests to ensure reconcile removes it before calling handlers.
+				controllerutils.TriggerReconcileAnnotation: "1",
+			},
+		},
+		Spec: ipcv1.IPConfigSpec{
+			Stage: stage,
+		},
+	}
+}
+
+func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
+	t.Helper()
+
+	if assert.NotNil(t, ipc.Status.Network) {
+		if assert.NotNil(t, ipc.Status.Network.HostNetwork) {
+			if assert.NotNil(t, ipc.Status.Network.HostNetwork.IPv4) {
+				assert.Equal(t, "192.0.2.1", ipc.Status.Network.HostNetwork.IPv4.Gateway)
+				assert.Equal(t, "192.0.2.53", ipc.Status.Network.HostNetwork.IPv4.DNSServer)
+			}
+			if assert.NotNil(t, ipc.Status.Network.HostNetwork.IPv6) {
+				assert.Equal(t, "2001:db8::1", ipc.Status.Network.HostNetwork.IPv6.Gateway)
+				assert.Equal(t, "2001:db8::53", ipc.Status.Network.HostNetwork.IPv6.DNSServer)
+			}
+			// No VLAN in nmstate JSON => should not be set.
+			assert.Equal(t, 0, ipc.Status.Network.HostNetwork.VLANID)
+		}
+		if assert.NotNil(t, ipc.Status.Network.ClusterNetwork) {
+			if assert.NotNil(t, ipc.Status.Network.ClusterNetwork.IPv4) {
+				assert.Equal(t, "192.0.2.10", ipc.Status.Network.ClusterNetwork.IPv4.Address)
+				assert.Equal(t, "192.0.2.0/24", ipc.Status.Network.ClusterNetwork.IPv4.MachineNetwork)
+			}
+			assert.Nil(t, ipc.Status.Network.ClusterNetwork.IPv6)
+		}
+	}
+
+	assert.Equal(t, "none", ipc.Status.DNSResolutionFamily)
+}
+
+type reconcileTestErrReader struct{ err error }
+
+func (e reconcileTestErrReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return e.err
+}
+func (e reconcileTestErrReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return e.err
+}
+
+type reconcileTestStatusErrClient struct {
+	client.Client
+	err error
+}
+
+type reconcileTestStatusErrWriter struct {
+	client.SubResourceWriter
+	err error
+}
+
+func (w *reconcileTestStatusErrWriter) Update(context.Context, client.Object, ...client.SubResourceUpdateOption) error {
+	return w.err
+}
+func (w *reconcileTestStatusErrWriter) Patch(context.Context, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+	return w.err
+}
+
+func (c *reconcileTestStatusErrClient) Status() client.SubResourceWriter {
+	return &reconcileTestStatusErrWriter{SubResourceWriter: c.Client.Status(), err: c.err}
+}
+
+func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
+	scheme := newIPConfigTestScheme(t)
+
+	ctx := context.Background()
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: common.IPConfigName}}
+
+	t.Run("idle success => calls idle handler; refreshes status; resets history; removes trigger annotation before handler", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
+		ipc.Status.History = []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: metav1.Now()}} // should be reset
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		idleHandler := NewMockIPConfigStageHandler(gc)
+		idleHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
+				anns := got.GetAnnotations()
+				assert.NotNil(t, anns)
+				assert.Equal(t, "", anns[controllerutils.TriggerReconcileAnnotation])
+				return doNotRequeue(), nil
+			}).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     idleHandler,
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		assert.Empty(t, updated.Status.History)
+	})
+
+	t.Run("config success => starts history; refreshes status; calls config handler", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
+		// Nil ValidNextStages triggers the early calculation+status update branch.
+		ipc.Status.ValidNextStages = nil
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		configHandler := NewMockIPConfigStageHandler(gc)
+		configHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
+				anns := got.GetAnnotations()
+				assert.NotNil(t, anns)
+				assert.Equal(t, "", anns[controllerutils.TriggerReconcileAnnotation])
+				return requeueWithShortInterval(), nil
+			}).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   configHandler,
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, requeueWithShortInterval(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		// With no conditions, validNextStages defaults to "Idle" on initial creation.
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		if assert.Len(t, updated.Status.History, 1) {
+			assert.Equal(t, ipcv1.IPStages.Config, updated.Status.History[0].Stage)
+			assert.False(t, updated.Status.History[0].StartTime.IsZero())
+		}
+	})
+
+	t.Run("rollback success => starts history; refreshes status; calls rollback handler", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Rollback)
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		rollbackHandler := NewMockIPConfigStageHandler(gc)
+		rollbackHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
+				// validNextStages() depends on status conditions; simulate what the real rollback handler does.
+				controllerutils.SetIPRollbackStatusInProgress(got, "Rollback is in progress")
+				return doNotRequeue(), nil
+			}).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: rollbackHandler,
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		// In-progress rollback disallows any next stages.
+		assert.Empty(t, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		if assert.Len(t, updated.Status.History, 1) {
+			assert.Equal(t, ipcv1.IPStages.Rollback, updated.Status.History[0].Stage)
+			assert.False(t, updated.Status.History[0].StartTime.IsZero())
+		}
+	})
+
+	t.Run("invalid stage => does not call any handler and does not requeue", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPConfigStage("InvalidStage"))
+		ipc.Status.ValidNextStages = nil
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		if assert.Len(t, updated.Status.History, 1) {
+			assert.Equal(t, ipcv1.IPConfigStage("InvalidStage"), updated.Status.History[0].Stage)
+			assert.False(t, updated.Status.History[0].StartTime.IsZero())
+		}
+	})
+
+	t.Run("idle handler error => returns error and does not requeue; status updated", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		idleHandler := NewMockIPConfigStageHandler(gc)
+		idleHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			Return(ctrl.Result{}, fmt.Errorf("boom")).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     idleHandler,
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "idle handler failed")
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+	})
+
+	t.Run("config handler error => returns error; status updated; history started", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		configHandler := NewMockIPConfigStageHandler(gc)
+		configHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			Return(ctrl.Result{}, fmt.Errorf("boom")).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   configHandler,
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "config handler failed")
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		assert.NotEmpty(t, updated.Status.History)
+	})
+
+	t.Run("rollback handler error => returns error; status updated; history started", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Rollback)
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		rollbackHandler := NewMockIPConfigStageHandler(gc)
+		rollbackHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
+				// validNextStages() depends on status conditions; simulate what the real rollback handler does.
+				controllerutils.SetIPRollbackStatusInProgress(got, "Rollback is in progress")
+				return ctrl.Result{}, fmt.Errorf("boom")
+			}).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: rollbackHandler,
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "rollback handler failed")
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		// In-progress rollback disallows any next stages.
+		assert.Empty(t, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+		assert.NotEmpty(t, updated.Status.History)
+	})
+
+	t.Run("cache recert image failure is logged but reconcile continues", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
+		// Force cacheRecertImageIfNeeded to attempt secret lookup and fail (no such secret).
+		ipc.Annotations[controllerutils.RecertPullSecretAnnotation] = "missing"
+		delete(ipc.Annotations, controllerutils.RecertCachedImageAnnotation)
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		idleHandler := NewMockIPConfigStageHandler(gc)
+		idleHandler.EXPECT().
+			Handle(gomock.Any(), gomock.Any()).
+			Return(doNotRequeue(), nil).
+			Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     idleHandler,
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		// Since caching failed, cached annotation should remain unset.
+		assert.Equal(t, "", updated.GetAnnotations()[controllerutils.RecertCachedImageAnnotation])
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+		assertReconcileTestRefreshedNetwork(t, updated)
+	})
+
+	t.Run("workspace mkdir failure => returns error early", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		workspacePath := common.PathOutsideChroot(common.LCAWorkspaceDir)
+
+		chrootOps := ops.NewMockOps(gc)
+		chrootOps.EXPECT().MkdirAll(workspacePath, os.FileMode(0o700)).Return(errors.New("mkdir failed")).Times(1)
+
+		r := &IPConfigReconciler{
+			Client:          newFakeClientWithStatus(t, scheme),
+			NoncachedClient: reconcileTestErrReader{err: errors.New("should not be reached")},
+			Scheme:          scheme,
+			NsenterOps:      ops.NewMockOps(gc),
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to create workspace dir")
+	})
+
+	t.Run("getIPConfig error => returns error early", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          newFakeClientWithStatus(t, scheme),
+			NoncachedClient: reconcileTestErrReader{err: errors.New("get failed")},
+			Scheme:          scheme,
+			NsenterOps:      ops.NewMockOps(gc),
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to get IPConfig")
+	})
+
+	t.Run("ipconfig not found => InitIPConfig creates it, but reconcile fails updating status for the unfetched object", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		// No IPConfig object initially. InitIPConfig should create one.
+		k8sClient := newFakeClientWithStatus(t, scheme, node, cm, mc)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      ops.NewMockOps(gc),
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to update ipconfig status")
+
+		created := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, ipcv1.IPStages.Idle, created.Spec.Stage)
+	})
+
+	t.Run("validNextStages calculation error (nil rpmOstreeClient with config in-progress) => returns error and ValidNextStages stays nil", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
+		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
+		ipc.Status.ValidNextStages = nil
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      ops.NewMockOps(gc),
+			ChrootOps:       chrootOps,
+			RPMOstreeClient: nil, // forces error in isTargetStaterootBooted
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to get valid next stages")
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Nil(t, updated.Status.ValidNextStages)
+	})
+
+	t.Run("refreshStatus error (invalid nmstate JSON) => returns error; network status not populated", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // skip early status update
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return("{invalid json", nil).
+			Times(1)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to refresh status")
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
+		assert.Nil(t, updated.Status.Network)
+	})
+
+	t.Run("status update error after refreshStatus => returns error (and defer also fails to update status)", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		node, _ := mkSNOObjects()
+		cm := reconcileTestInstallConfigConfigMap()
+		mc := reconcileTestDNSMasqMachineConfigEmpty()
+
+		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // avoid early Status().Update path
+
+		baseClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		failingClient := &reconcileTestStatusErrClient{Client: baseClient, err: errors.New("status update failed")}
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			Times(1)
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		chrootOps := ops.NewMockOps(gc)
+		expectReconcileTestFSDefaults(chrootOps)
+
+		r := &IPConfigReconciler{
+			Client:          failingClient,
+			NoncachedClient: baseClient,
+			Scheme:          scheme,
+			NsenterOps:      nsenterOps,
+			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
+			IdleHandler:     NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			RollbackHandler: NewMockIPConfigStageHandler(gc),
+		}
+
+		res, err := r.Reconcile(ctx, req)
+		assert.Error(t, err)
+		assert.Equal(t, ctrl.Result{}, res)
+		assert.Contains(t, err.Error(), "failed to update ipconfig status")
+		assert.Contains(t, err.Error(), "also failed to update ipconfig status")
+	})
+}

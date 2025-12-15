@@ -136,6 +136,7 @@ rules:
   - lca.openshift.io
   resources:
   - imagebasedupgrades
+  - ipconfigs
   - seedgenerators
   verbs:
   - create
@@ -156,6 +157,7 @@ rules:
   - lca.openshift.io
   resources:
   - imagebasedupgrades/status
+  - ipconfigs/status
   - seedgenerators/status
   verbs:
   - get
@@ -192,6 +194,8 @@ rules:
   - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - monitoring.coreos.com

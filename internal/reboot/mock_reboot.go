@@ -11,7 +11,6 @@ package reboot
 import (
 	reflect "reflect"
 
-	v1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -79,33 +78,47 @@ func (mr *MockRebootIntfMockRecorder) InitiateRollback(msg any) *gomock.Call {
 }
 
 // IsOrigStaterootBooted mocks base method.
-func (m *MockRebootIntf) IsOrigStaterootBooted(ibu *v1.ImageBasedUpgrade) (bool, error) {
+func (m *MockRebootIntf) IsOrigStaterootBooted(identifier string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsOrigStaterootBooted", ibu)
+	ret := m.ctrl.Call(m, "IsOrigStaterootBooted", identifier)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IsOrigStaterootBooted indicates an expected call of IsOrigStaterootBooted.
-func (mr *MockRebootIntfMockRecorder) IsOrigStaterootBooted(ibu any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) IsOrigStaterootBooted(identifier any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOrigStaterootBooted", reflect.TypeOf((*MockRebootIntf)(nil).IsOrigStaterootBooted), ibu)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOrigStaterootBooted", reflect.TypeOf((*MockRebootIntf)(nil).IsOrigStaterootBooted), identifier)
 }
 
-// ReadIBUAutoRollbackConfigFile mocks base method.
-func (m *MockRebootIntf) ReadIBUAutoRollbackConfigFile() (*IBUAutoRollbackConfig, error) {
+// ReadAutoRollbackConfigFile mocks base method.
+func (m *MockRebootIntf) ReadAutoRollbackConfigFile() (*AutoRollbackConfig, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReadIBUAutoRollbackConfigFile")
-	ret0, _ := ret[0].(*IBUAutoRollbackConfig)
+	ret := m.ctrl.Call(m, "ReadAutoRollbackConfigFile")
+	ret0, _ := ret[0].(*AutoRollbackConfig)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ReadIBUAutoRollbackConfigFile indicates an expected call of ReadIBUAutoRollbackConfigFile.
-func (mr *MockRebootIntfMockRecorder) ReadIBUAutoRollbackConfigFile() *gomock.Call {
+// ReadAutoRollbackConfigFile indicates an expected call of ReadAutoRollbackConfigFile.
+func (mr *MockRebootIntfMockRecorder) ReadAutoRollbackConfigFile() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadIBUAutoRollbackConfigFile", reflect.TypeOf((*MockRebootIntf)(nil).ReadIBUAutoRollbackConfigFile))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadAutoRollbackConfigFile", reflect.TypeOf((*MockRebootIntf)(nil).ReadAutoRollbackConfigFile))
+}
+
+// Reboot mocks base method.
+func (m *MockRebootIntf) Reboot(rationale string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Reboot", rationale)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Reboot indicates an expected call of Reboot.
+func (mr *MockRebootIntfMockRecorder) Reboot(rationale any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reboot", reflect.TypeOf((*MockRebootIntf)(nil).Reboot), rationale)
 }
 
 // RebootToNewStateRoot mocks base method.
