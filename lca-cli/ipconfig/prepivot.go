@@ -164,11 +164,6 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to prepare network configuration: %w", err)
 	}
 
-	p.log.Info("Cleaning up ACM resources from cluster")
-	if err := common.CleanupACMResources(ctx, p.client, func(msg string) { p.log.Info(msg) }); err != nil {
-		return fmt.Errorf("failed to cleanup ACM resources: %w", err)
-	}
-
 	// all functions above should run before we stop the cluster services
 
 	p.log.Info("Stopping cluster services")

@@ -319,6 +319,13 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
+				// trigger reconcile upon adding or updating recert pull secret annotation
+				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
+				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
+				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+					return true
+				}
+
 				return false
 			},
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },

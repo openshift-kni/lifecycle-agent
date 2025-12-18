@@ -72,6 +72,7 @@ type RecertConfig struct {
 	RegenerateServerSSHKeys   string   `json:"regenerate_server_ssh_keys,omitempty"`
 	MachineNetworkCidr        []string `json:"machine_network_cidr,omitempty"`
 	EtcdDefrag                bool     `json:"etcd_defrag,omitempty"`
+	IPChangeOnly              bool     `json:"ip_change_only,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -287,8 +288,9 @@ func CreateRecertConfigFileForIPConfig(
 	config := createBaseRecertConfig()
 	config.IP = newIPs
 	config.MachineNetworkCidr = newMachineNetworks
-	config.ExtendExpiration = true
+	config.ExtendExpiration = false
 	config.InstallConfig = installConfig
+	config.IPChangeOnly = true
 	config.SummaryFileClean = "/var/tmp/recert-summary.yaml"
 
 	for i := range newIPs {

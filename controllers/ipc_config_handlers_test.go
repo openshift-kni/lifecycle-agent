@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -379,6 +380,36 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// Intentionally provide only a partial spec; the controller should backfill
+		// missing values from status when writing the pre-pivot config file.
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{
+			Address: "192.0.2.20",
+		}
+		ipc.Spec.IPv6 = nil
+		ipc.Status.Network = &ipcv1.NetworkStatus{
+			HostNetwork: &ipcv1.HostNetworkStatus{
+				IPv4: &ipcv1.HostIPStatus{
+					Gateway:   "192.0.2.1",
+					DNSServer: "192.0.2.53",
+				},
+				IPv6: &ipcv1.HostIPStatus{
+					Gateway:   "2001:db8::1",
+					DNSServer: "2001:db8::53",
+				},
+				VLANID: 123,
+			},
+			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
+				IPv4: &ipcv1.ClusterIPStatus{
+					Address:        "192.0.2.10",
+					MachineNetwork: "192.0.2.0/24",
+				},
+				IPv6: &ipcv1.ClusterIPStatus{
+					Address:        "2001:db8::10",
+					MachineNetwork: "2001:db8::/64",
+				},
+			},
+		}
+		ipc.Status.DNSResolutionFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -402,6 +433,26 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 					filepath.Clean(common.PathOutsideChroot(common.IPConfigPrePivotFlagsFile)),
 					filepath.Clean(common.PathOutsideChroot(common.IPConfigPostPivotFlagsFile)),
 					filepath.Clean(common.PathOutsideChroot(common.IPCFilePath)):
+					if filepath.Clean(filename) == filepath.Clean(common.PathOutsideChroot(common.IPConfigPrePivotFlagsFile)) {
+						var got common.IPConfigPrePivotConfig
+						assert.NoError(t, json.Unmarshal(data, &got))
+
+						// IPv4: address from spec, everything else from status.
+						assert.Equal(t, "192.0.2.20", got.IPv4Address)
+						assert.Equal(t, "192.0.2.0/24", got.IPv4MachineNetwork)
+						assert.Equal(t, "192.0.2.1", got.IPv4Gateway)
+						assert.Equal(t, "192.0.2.53", got.IPv4DNSServer)
+
+						// IPv6: fully backfilled from status (spec omitted IPv6 entirely).
+						assert.Equal(t, "2001:db8::10", got.IPv6Address)
+						assert.Equal(t, "2001:db8::/64", got.IPv6MachineNetwork)
+						assert.Equal(t, "2001:db8::1", got.IPv6Gateway)
+						assert.Equal(t, "2001:db8::53", got.IPv6DNSServer)
+
+						// VLAN and DNS family: backfilled from status.
+						assert.Equal(t, 123, got.VLANID)
+						assert.Equal(t, "ipv6", got.DNSIPFamily)
+					}
 					if filepath.Clean(filename) == filepath.Clean(common.PathOutsideChroot(common.IPCFilePath)) {
 						wroteRollbackCopy = true
 					}
@@ -523,11 +574,69 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+		stuck := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stuck-imagepullbackoff",
+				Namespace: "default",
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name: "c",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "ImagePullBackOff",
+						},
+					},
+				}},
+			},
+		}
+		notStuck := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "not-stuck",
+				Namespace: "default",
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name: "c",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "CrashLoopBackOff",
+						},
+					},
+				}},
+			},
+		}
+		// Mirror pod (static pod mirror).
+		mirrorStuck := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mirror-stuck",
+				Namespace: "openshift-kube-apiserver",
+				Annotations: map[string]string{
+					"kubernetes.io/config.mirror": "mirror",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name: "c",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "ImagePullBackOff",
+						},
+					},
+				}},
+			},
+		}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, stuck, notStuck, mirrorStuck)
 
 		oldHC := CheckHealth
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return errors.New("not healthy") }
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
 
 		h := &IPCConfigTwoPhaseHandler{
 			Client:          k8sClient,
@@ -541,6 +650,11 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		res, err := h.PostPivot(context.Background(), ipc, logger)
 		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
+
+		// No pod deletions are performed here; we only update status and requeue.
+		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-imagepullbackoff"}, &corev1.Pod{}))
+		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "not-stuck"}, &corev1.Pod{}))
+		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "openshift-kube-apiserver", Name: "mirror-stuck"}, &corev1.Pod{}))
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
 		assertConfigInProgress(t, updated)
@@ -591,6 +705,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		oldHC := CheckHealth
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
 
 		h := &IPCConfigTwoPhaseHandler{
 			Client:          k8sClient,
@@ -711,6 +827,85 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		}
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Config, ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
 	})
+
+	t.Run("healthcheck failing with client that would fail deletes => still requeues and does not error", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		stuck := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stuck-delete-fails",
+				Namespace: "default",
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name: "c",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason: "ErrImagePull",
+						},
+					},
+				}},
+			},
+		}
+		baseClient := newFakeClientWithStatus(t, scheme, ipc, stuck)
+		k8sClient := &reconcileTestDeleteErrClient{
+			Client:   baseClient,
+			failName: "stuck-delete-fails",
+			failNS:   "default",
+			err:      fmt.Errorf("delete failed"),
+		}
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return errors.New("not healthy") }
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PostPivot(context.Background(), ipc, logger)
+		assert.NoError(t, err)
+		assert.Equal(t, requeueWithHealthCheckInterval(), res)
+
+		// Ensure the pod still exists (no deletion attempted).
+		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-delete-fails"}, &corev1.Pod{}))
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assertConfigInProgress(t, updated)
+		inProg := controllerutils.GetIPInProgressCondition(updated, ipcv1.IPStages.Config)
+		if assert.NotNil(t, inProg) {
+			assert.Contains(t, inProg.Message, "Waiting for system to stabilize")
+		}
+	})
+}
+
+type reconcileTestDeleteErrClient struct {
+	client.Client
+	failName string
+	failNS   string
+	err      error
+}
+
+func (c *reconcileTestDeleteErrClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if obj != nil && obj.GetName() == c.failName && obj.GetNamespace() == c.failNS {
+		return c.err
+	}
+	return c.Client.Delete(ctx, obj, opts...)
 }
 
 func TestIPCConfigStageHandler_Handle(t *testing.T) {
