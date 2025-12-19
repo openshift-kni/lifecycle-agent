@@ -58,6 +58,7 @@ import (
 	lsov1 "github.com/openshift/local-storage-operator/api/v1"
 	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -182,6 +183,44 @@ func (r *SeedGeneratorReconciler) currentAcmAddonNamespaces(ctx context.Context)
 	return
 }
 
+// Get a list of existing ACM namespaces on the cluster
+func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acmNsList []string) {
+	namespaces := &corev1.NamespaceList{}
+	if err := r.Client.List(ctx, namespaces); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
+		}
+		return
+	}
+
+	re := regexp.MustCompile(`^open-cluster-management-agent`)
+	for _, ns := range namespaces.Items {
+		if re.MatchString(ns.ObjectMeta.Name) {
+			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
+		}
+	}
+	return
+}
+
+// Get a list of existing ACM CRDs on the cluster
+func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdList []string) {
+	crds := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := r.Client.List(ctx, crds); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
+		}
+		return
+	}
+
+	re := regexp.MustCompile(`\.open-cluster-management\.io$`)
+	for _, crd := range crds.Items {
+		if re.MatchString(crd.ObjectMeta.Name) {
+			acmCrdList = append(acmCrdList, crd.ObjectMeta.Name)
+		}
+	}
+	return
+}
+
 func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context, dockerConfigJSON []byte) error {
 	updatedPullSecret, _ := lcautils.UpdatePullSecretFromDockerConfig(ctx, r.Client, dockerConfigJSON)
 
@@ -242,9 +281,118 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 
 // Clean up ACM and other resources on the cluster
 func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) error {
-	if err := common.CleanupClusterResources(ctx, r.Client, func(msg string) { r.Log.Info(msg) }); err != nil {
-		return fmt.Errorf("failed to cleanup cluster resources: %w", err)
+	// Ensure that the dependent resources are deleted
+	deleteOpts := []client.DeleteOption{
+		client.PropagationPolicy(metav1.DeletePropagationForeground),
 	}
+
+	interval := 10 * time.Second
+	maxRetries := 90 // ~15 minutes
+
+	// Trigger deletion for any remaining ACM CRDs
+	acmCrds := r.currentAcmCrds(ctx)
+	if len(acmCrds) > 0 {
+		r.Log.Info("Deleting ACM CRDs")
+
+		for _, crdName := range r.currentAcmCrds(ctx) {
+			crd := &apiextensionsv1.CustomResourceDefinition{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: crdName,
+				}}
+			r.Log.Info(fmt.Sprintf("Deleting CRD %s", crdName))
+			if err := r.Client.Delete(ctx, crd, deleteOpts...); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete CRD %s: %w", crdName, err)
+			}
+		}
+
+		// Verify ACM CRDs have been deleted
+		current := 0
+		r.Log.Info("Waiting until ACM CRDs are deleted")
+		for len(r.currentAcmCrds(ctx)) > 0 {
+			if current < maxRetries {
+				time.Sleep(interval)
+				current += 1
+			} else {
+				return fmt.Errorf("timed out waiting for ACM CRD deletion")
+			}
+		}
+	} else {
+		r.Log.Info("No ACM CRDs found")
+	}
+
+	// Trigger deletion for any remaining ACM namespaces
+	acmNamespaces := r.currentAcmNamespaces(ctx)
+	if len(acmNamespaces) > 0 {
+		r.Log.Info("Deleting ACM namespaces")
+		for _, nsName := range r.currentAcmNamespaces(ctx) {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nsName,
+				}}
+			r.Log.Info(fmt.Sprintf("Deleting namespace %s", nsName))
+			if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
+			}
+		}
+
+		// Verify ACM namespaces have been deleted
+		current := 0
+		r.Log.Info("Waiting until ACM namespaces are deleted")
+		for len(r.currentAcmNamespaces(ctx)) > 0 {
+			if current < maxRetries {
+				time.Sleep(interval)
+				current += 1
+			} else {
+				return fmt.Errorf("timed out waiting for ACM namespace deletion")
+			}
+		}
+	} else {
+		r.Log.Info("No ACM namespaces found")
+	}
+
+	// Delete remaining cluster resources leftover from ACM (or install)
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "assisted-installer",
+		}}
+	if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete assisted-installer namespace: %w", err)
+	}
+
+	roles := []string{
+		"klusterlet",
+		"klusterlet-bootstrap-kubeconfig",
+		"open-cluster-management:klusterlet-admin-aggregate-clusterrole",
+	}
+	for _, role := range roles {
+		roleStruct := &rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: role,
+			}}
+		if err := r.Client.Delete(ctx, roleStruct, deleteOpts...); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("failed to delete clusterrole %s: %w", role, err)
+		}
+	}
+
+	roleBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "klusterlet",
+		}}
+	if err := r.Client.Delete(ctx, roleBinding, deleteOpts...); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete klusterlet clusterrolebinding: %w", err)
+	}
+
+	// If observability is enabled, there may be a copy of the accessor secret in openshift-monitoring namespace
+	observabilitySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "openshift-monitoring",
+			Name:      "observability-alertmanager-accessor",
+		}}
+	if err := r.Client.Delete(ctx, observabilitySecret, deleteOpts...); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete observability secret: %w", err)
+	}
+
 	return nil
 }
 

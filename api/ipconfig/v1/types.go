@@ -158,7 +158,7 @@ type IPConfigSpec struct {
 	DNSResolutionFamily string `json:"dnsResolutionFamily,omitempty"`
 
 	// AutoRollbackOnFailure defines automatic rollback settings for IPConfig if the configuration
-	// does not complete within the specified time limit. Behavior mirrors IBU.
+	// does not complete within the specified time limit.
 	// +optional
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
 	AutoRollbackOnFailure *AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
@@ -241,7 +241,7 @@ type ClusterIPStatus struct {
 	MachineNetwork string `json:"machineNetwork,omitempty"`
 }
 
-// IPHistory mirrors IBU history for IPConfig stages
+// history for IPConfig stages
 type IPHistory struct {
 	// Stage The desired stage name read from spec
 	Stage IPConfigStage `json:"stage,omitempty"`

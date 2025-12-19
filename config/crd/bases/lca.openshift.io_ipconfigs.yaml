@@ -74,7 +74,7 @@ spec:
               autoRollbackOnFailure:
                 description: |-
                   AutoRollbackOnFailure defines automatic rollback settings for IPConfig if the configuration
-                  does not complete within the specified time limit. Behavior mirrors IBU.
+                  does not complete within the specified time limit.
                 properties:
                   initMonitorTimeoutSeconds:
                     description: |-
@@ -244,7 +244,7 @@ spec:
                 description: History stores timing info of different IPConfig stages
                   and their important phases
                 items:
-                  description: IPHistory mirrors IBU history for IPConfig stages
+                  description: history for IPConfig stages
                   properties:
                     completionTime:
                       description: CompletionTime A timestamp indicating the Stage

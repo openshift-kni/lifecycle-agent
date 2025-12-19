@@ -16,7 +16,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
-	"github.com/openshift-kni/lifecycle-agent/utils"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/types"
@@ -246,13 +245,25 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	controllerutils.StartIPPhase(h.Client, logger, ipc, IPConfigPhasePostPivot)
 	logger.Info("Starting post-pivot phase")
 
+	if err := h.RebootClient.DisableInitMonitor(); err != nil {
+		controllerutils.SetIPConfigStatusFailed(
+			ipc,
+			fmt.Sprintf("failed to disable init monitor: %s", err.Error()),
+		)
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
+
+		return requeueWithError(fmt.Errorf("failed to disable init monitor: %w", err))
+	}
+
 	if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
 		controllerutils.SetIPConfigStatusInProgress(
 			ipc,
 			fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 		}
 
 		return requeueWithHealthCheckInterval(), nil
@@ -273,18 +284,6 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 		}
 
 		return requeueWithHealthCheckInterval(), nil
-	}
-
-	if err := h.RebootClient.DisableInitMonitor(); err != nil {
-		controllerutils.SetIPConfigStatusFailed(
-			ipc,
-			fmt.Sprintf("failed to disable init monitor: %s", err.Error()),
-		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
-
-		return requeueWithError(fmt.Errorf("failed to disable init monitor: %w", err))
 	}
 
 	controllerutils.StopIPPhase(h.Client, logger, ipc, IPConfigPhasePostPivot)
@@ -488,6 +487,8 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 		cfg.VLANID = v.ID
 	}
 
+	completeIPConfigPrePivotConfigFromStatus(&cfg, ipc)
+
 	if v, ok := ipc.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]; ok && v != "" {
 		cfg.PullSecretRefName = v
 	}
@@ -516,6 +517,123 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	return nil
 }
 
+func completeIPConfigPrePivotConfigFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
+	if cfg == nil || ipc == nil {
+		return
+	}
+
+	host, cluster := getIPConfigNetworks(ipc)
+	if host == nil || cluster == nil {
+		return
+	}
+
+	backfillPrePivotDNSIPFamilyFromStatus(cfg, ipc)
+	backfillPrePivotVLANFromStatus(cfg, host)
+	backfillPrePivotIPv4FromStatus(cfg, host.IPv4, cluster.IPv4)
+	backfillPrePivotIPv6FromStatus(cfg, host.IPv6, cluster.IPv6)
+}
+
+func getIPConfigNetworks(ipc *ipcv1.IPConfig) (*ipcv1.HostNetworkStatus, *ipcv1.ClusterNetworkStatus) {
+	if ipc == nil || ipc.Status.Network == nil {
+		return nil, nil
+	}
+	return ipc.Status.Network.HostNetwork, ipc.Status.Network.ClusterNetwork
+}
+
+func backfillPrePivotDNSIPFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
+	if cfg == nil || ipc == nil {
+		return
+	}
+	if cfg.DNSIPFamily != "" {
+		return
+	}
+	fam := ipc.Status.DNSResolutionFamily
+	if fam == "" || fam == "none" {
+		return
+	}
+	cfg.DNSIPFamily = fam
+}
+
+func backfillPrePivotVLANFromStatus(cfg *common.IPConfigPrePivotConfig, host *ipcv1.HostNetworkStatus) {
+	if cfg == nil || host == nil {
+		return
+	}
+	if cfg.VLANID != 0 {
+		return
+	}
+	if host.VLANID <= 0 {
+		return
+	}
+	cfg.VLANID = host.VLANID
+}
+
+func backfillPrePivotIPv4FromStatus(
+	cfg *common.IPConfigPrePivotConfig,
+	host *ipcv1.HostIPStatus,
+	cluster *ipcv1.ClusterIPStatus,
+) {
+	if cfg == nil {
+		return
+	}
+	// Cluster network: address and machine network.
+	if cfg.IPv4Address == "" && cluster != nil {
+		if cluster.Address != "" {
+			cfg.IPv4Address = cluster.Address
+		}
+	}
+	if cfg.IPv4MachineNetwork == "" && cluster != nil {
+		if cluster.MachineNetwork != "" {
+			cfg.IPv4MachineNetwork = cluster.MachineNetwork
+		}
+	}
+
+	// Host network: gateway and DNS.
+	if cfg.IPv4Gateway == "" && host != nil {
+		if host.Gateway != "" {
+			cfg.IPv4Gateway = host.Gateway
+		}
+	}
+	if cfg.IPv4DNSServer == "" && host != nil {
+		if host.DNSServer != "" {
+			cfg.IPv4DNSServer = host.DNSServer
+		}
+	}
+}
+
+func backfillPrePivotIPv6FromStatus(
+	cfg *common.IPConfigPrePivotConfig,
+	host *ipcv1.HostIPStatus,
+	cluster *ipcv1.ClusterIPStatus,
+) {
+	if cfg == nil {
+		return
+	}
+
+	// Cluster network: address and machine network.
+	if cfg.IPv6Address == "" && cluster != nil {
+		if cluster.Address != "" {
+			cfg.IPv6Address = strings.TrimSpace(strings.Trim(cluster.Address, "[]"))
+		}
+	}
+	if cfg.IPv6MachineNetwork == "" && cluster != nil {
+		if cluster.MachineNetwork != "" {
+			cfg.IPv6MachineNetwork = cluster.MachineNetwork
+		}
+	}
+
+	// Host network: gateway and DNS.
+	if cfg.IPv6Gateway == "" && host != nil {
+		if host.Gateway != "" {
+			cfg.IPv6Gateway = host.Gateway
+		}
+	}
+	if cfg.IPv6DNSServer == "" && host != nil {
+		if host.DNSServer != "" {
+			cfg.IPv6DNSServer = host.DNSServer
+		}
+	}
+}
+
 // writeIPConfigPostPivotConfig writes the ip-config post-pivot configuration file into the host workspace.
 // This file is consumed by `lca-cli ip-config post-pivot` after the reboot into the target stateroot.
 func (h *IPCConfigTwoPhaseHandler) writeIPConfigPostPivotConfig(ipc *ipcv1.IPConfig) error {
@@ -525,6 +643,8 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPostPivotConfig(ipc *ipcv1.IPCon
 
 	if ipc.Spec.DNSResolutionFamily != "" {
 		cfg.DNSIPFamily = ipc.Spec.DNSResolutionFamily
+	} else if ipc.Status.DNSResolutionFamily != "" && ipc.Status.DNSResolutionFamily != "none" {
+		cfg.DNSIPFamily = ipc.Status.DNSResolutionFamily
 	}
 
 	data, err := json.Marshal(cfg)
@@ -710,7 +830,7 @@ func (h *IPCConfigTwoPhaseHandler) copyLcaCliToHost(logger logr.Logger) error {
 }
 
 func (h *IPCConfigStageHandler) validateSNO(ctx context.Context) error {
-	_, err := utils.GetSNOMasterNode(ctx, h.Client)
+	_, err := lcautils.GetSNOMasterNode(ctx, h.Client)
 	if err != nil {
 		return fmt.Errorf("failed to validate SNO master node: %w", err)
 	}

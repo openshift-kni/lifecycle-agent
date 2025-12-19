@@ -35,6 +35,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	intOstree "github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
@@ -84,6 +85,7 @@ const (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(ipPrePivotScheme))
 	utilruntime.Must(mcfgv1.AddToScheme(ipPrePivotScheme))
+	utilruntime.Must(ipcv1.AddToScheme(ipPrePivotScheme))
 
 	ipConfigPrePivotCmd.Flags().StringVar(&newStaterootName, newStaterootNameFlag, "", "New stateroot name")
 	ipConfigPrePivotCmd.Flags().BoolVar(&installInitMonitor, installInitMonitorFlag, false, "Install init monitor service in the new stateroot")
@@ -175,14 +177,6 @@ func runIPConfigPrePivot() (retErr error) {
 
 	if err := validatePrePivotFlags(ctx, client); err != nil {
 		return fmt.Errorf("pre-pivot flags validation failed: %w", err)
-	}
-
-	if err := gatherMissingNetworkData(
-		ctx,
-		client,
-		opsInterface,
-	); err != nil {
-		return err
 	}
 
 	effectivePrimary, err := inferPrimaryStack()
@@ -411,104 +405,6 @@ func validatePrePivotFlags(ctx context.Context, client runtimeClient.Client) err
 		default:
 			return fmt.Errorf("dns-ip-family must be one of: %s|%s", common.IPv4FamilyName, common.IPv6FamilyName)
 		}
-	}
-
-	return nil
-}
-
-// completeMissingIPFamilyFromClusterAndHost fills in missing IP family configuration
-// (address, machine network, gateway, DNS) by inspecting the current SNO host and
-// cluster state. It is used when the user only specifies one IP family on a
-// dual-stack cluster so that recert and nmstate still see a complete configuration.
-func gatherMissingNetworkData(
-	ctx context.Context,
-	client runtimeClient.Client,
-	hostOps ops.Ops,
-) error {
-	ipv4Provided := ipv4Address != "" && ipv4MachineNetwork != "" && ipv4Gateway != "" && ipv4DNS != ""
-	ipv6Provided := ipv6Address != "" && ipv6MachineNetwork != "" && ipv6Gateway != "" && ipv6DNS != ""
-
-	if ipv4Provided && ipv6Provided {
-		return nil
-	}
-
-	// dual-stack clusters only
-
-	nmOutput, err := hostOps.RunInHostNamespace("nmstatectl", "show", "--json", "-q")
-	if err != nil {
-		return fmt.Errorf("failed to run nmstatectl show --json: %w", err)
-	}
-
-	nmState, err := utils.ParseNmstate(nmOutput)
-	if err != nil {
-		return fmt.Errorf("failed to parse nmstate output: %w", err)
-	}
-
-	dnsV4, dnsV6 := utils.ExtractDNS(nmState)
-	if dnsV4 == "" || dnsV6 == "" {
-		pkgLog.Infof("No DNS servers found in nmstate output")
-	}
-
-	gw4, gw6 := utils.FindDefaultGateways(
-		nmState,
-		ipconfig.BridgeExternalName,
-		ipconfig.DefaultRouteV4,
-		ipconfig.DefaultRouteV6,
-	)
-	if gw4 == "" || gw6 == "" {
-		pkgLog.Infof("No default gateways found in nmstate output")
-	}
-
-	ips, err := utils.GetNodeInternalIPs(ctx, client)
-	if err != nil {
-		return fmt.Errorf("failed to get cluster info: %w", err)
-	}
-
-	var nodeIPv4, nodeIPv6 string
-	for _, ip := range ips {
-		if strings.Contains(ip, ":") {
-			if nodeIPv6 == "" {
-				nodeIPv6 = ip
-			}
-		} else {
-			if nodeIPv4 == "" {
-				nodeIPv4 = ip
-			}
-		}
-	}
-
-	clusterHasIPv4, clusterHasIPv6 := common.DetectClusterIPFamilies(ips)
-	machineNetworks, err := utils.GetMachineNetworks(ctx, client)
-	if err != nil {
-		return fmt.Errorf("failed to get machine networks: %w", err)
-	}
-
-	// Auto-complete IPv4 if user omitted it but cluster is IPv4-capable.
-	if !ipv4Provided && clusterHasIPv4 {
-		cidr := utils.FindMatchingCIDR(nodeIPv4, machineNetworks)
-		if cidr == "" {
-			return fmt.Errorf("failed to find machine network CIDR for node IPv4 %s", nodeIPv4)
-		}
-
-		pkgLog.Infof("Auto-completing IPv4 configuration from cluster/host state: ip=%s, cidr=%s", nodeIPv4, cidr)
-		ipv4Address = nodeIPv4
-		ipv4MachineNetwork = cidr
-		ipv4Gateway = gw4
-		ipv4DNS = dnsV4
-	}
-
-	// Auto-complete IPv6 if user omitted it but cluster is IPv6-capable.
-	if !ipv6Provided && clusterHasIPv6 {
-		cidr := utils.FindMatchingCIDR(nodeIPv6, machineNetworks)
-		if cidr == "" {
-			return fmt.Errorf("failed to find machine network CIDR for node IPv6 %s", nodeIPv6)
-		}
-
-		pkgLog.Infof("Auto-completing IPv6 configuration from cluster/host state: ip=%s, cidr=%s", nodeIPv6, cidr)
-		ipv6Address = nodeIPv6
-		ipv6MachineNetwork = cidr
-		ipv6Gateway = gw6
-		ipv6DNS = dnsV6
 	}
 
 	return nil
