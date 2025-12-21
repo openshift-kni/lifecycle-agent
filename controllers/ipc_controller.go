@@ -305,30 +305,29 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating TriggerReconcileAnnotation
-				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
-				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
+				// trigger reconcile upon having the TriggerReconcileAnnotation
+				_, newHas := e.ObjectNew.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
+				if newHas {
+					return true
+				}
+
+				// trigger reconcile upon adding or updating SkipIPConfigClusterHealthChecksAnnotation
+				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
 				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating recert image annotation
+				// trigger reconcile upon adding/removing/updating recert image annotation
 				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.RecertImageAnnotation]
 				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.RecertImageAnnotation]
-				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+				if oldHas != newHas || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating recert pull secret annotation
+				// trigger reconcile upon adding/removing/updating recert pull secret annotation
 				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
 				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
-				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
-					return true
-				}
-
-				// trigger reconcile upon adding/removing/updating SkipIPConfigClusterHealthChecksAnnotation
-				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
-				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
 				if oldHas != newHas || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
