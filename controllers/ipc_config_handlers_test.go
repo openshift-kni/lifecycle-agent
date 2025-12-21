@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -656,7 +657,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ImagePullBackOff",
+							Reason: controllerutils.PodContainerWaitingReasonImagePullBackOff,
 						},
 					},
 				}},
@@ -685,7 +686,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 				Name:      "mirror-stuck",
 				Namespace: "openshift-kube-apiserver",
 				Annotations: map[string]string{
-					"kubernetes.io/config.mirror": "mirror",
+					corev1.MirrorPodAnnotationKey: "mirror",
 				},
 			},
 			Status: corev1.PodStatus{
@@ -694,7 +695,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ImagePullBackOff",
+							Reason: controllerutils.PodContainerWaitingReasonImagePullBackOff,
 						},
 					},
 				}},
@@ -722,8 +723,9 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
-		// No pod deletions are performed here; we only update status and requeue.
-		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-imagepullbackoff"}, &corev1.Pod{}))
+		// Stuck ImagePullBackOff pods are deleted best-effort (except static pod mirror pods).
+		err = k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-imagepullbackoff"}, &corev1.Pod{})
+		assert.True(t, k8serrors.IsNotFound(err), "expected stuck pod to be deleted")
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "not-stuck"}, &corev1.Pod{}))
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "openshift-kube-apiserver", Name: "mirror-stuck"}, &corev1.Pod{}))
 
@@ -906,7 +908,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ErrImagePull",
+							Reason: controllerutils.PodContainerWaitingReasonErrImagePull,
 						},
 					},
 				}},
@@ -939,7 +941,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
-		// Ensure the pod still exists (no deletion attempted).
+		// Ensure we attempted deletion but still requeue and do not error when deletion fails.
+		assert.True(t, k8sClient.called, "expected delete to be attempted")
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-delete-fails"}, &corev1.Pod{}))
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
@@ -956,10 +959,12 @@ type reconcileTestDeleteErrClient struct {
 	failName string
 	failNS   string
 	err      error
+	called   bool
 }
 
 func (c *reconcileTestDeleteErrClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	if obj != nil && obj.GetName() == c.failName && obj.GetNamespace() == c.failNS {
+		c.called = true
 		return c.err
 	}
 	return c.Client.Delete(ctx, obj, opts...)

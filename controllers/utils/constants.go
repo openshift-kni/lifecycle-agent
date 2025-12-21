@@ -55,6 +55,9 @@ const (
 
 	// common binary name
 	LcaCliBinaryName = "lca-cli"
+
+	PodContainerWaitingReasonImagePullBackOff = "ImagePullBackOff"
+	PodContainerWaitingReasonErrImagePull     = "ErrImagePull"
 )
 
 // Networking related constants

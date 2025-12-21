@@ -42,7 +42,7 @@ import (
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
 //+kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch

@@ -18,6 +18,8 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -279,6 +281,9 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
 
+			// Best-effort cleanup: pods stuck in ImagePullBackOff/ErrImagePull can block health checks forever.
+			h.deleteImagePullBackOffPodsBestEffort(ctx, logger.WithName("ImagePullBackOffCleanup"))
+
 			return requeueWithHealthCheckInterval(), nil
 		}
 	}
@@ -308,6 +313,75 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	logger.Info("Finished post-pivot phase successfully")
 
 	return doNotRequeue(), nil
+}
+
+func (h *IPCConfigTwoPhaseHandler) deleteImagePullBackOffPodsBestEffort(ctx context.Context, logger logr.Logger) {
+	pods := &corev1.PodList{}
+	if err := h.NoncachedClient.List(ctx, pods); err != nil {
+		logger.Error(err, "Failed to list pods for ImagePullBackOff cleanup")
+		return
+	}
+
+	for i := range pods.Items {
+		p := pods.Items[i]
+
+		if p.DeletionTimestamp != nil {
+			continue
+		}
+
+		// Static pod mirror pods are continuously reconciled by the kubelet;
+		// deleting them is not useful and can create churn.
+		if _, ok := p.Annotations[corev1.MirrorPodAnnotationKey]; ok {
+			continue
+		}
+
+		reason := imagePullBackOffReason(&p)
+		if reason == "" {
+			continue
+		}
+
+		if err := h.Client.Delete(ctx, &p, client.GracePeriodSeconds(0)); err != nil &&
+			!k8serrors.IsNotFound(err) {
+			logger.Error(
+				err, "Failed to delete pod stuck in image pull backoff",
+				"namespace", p.Namespace, "name", p.Name, "reason", reason,
+			)
+			continue
+		}
+		logger.Info(
+			"Deleted pod stuck in image pull backoff",
+			"namespace", p.Namespace,
+			"name", p.Name,
+			"reason", reason,
+		)
+	}
+}
+
+func imagePullBackOffReason(pod *corev1.Pod) string {
+	if pod == nil {
+		return ""
+	}
+
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting == nil {
+			continue
+		}
+		if r := cs.State.Waiting.Reason; r == controllerutils.PodContainerWaitingReasonImagePullBackOff ||
+			r == controllerutils.PodContainerWaitingReasonErrImagePull {
+			return r
+		}
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting == nil {
+			continue
+		}
+		if r := cs.State.Waiting.Reason; r == controllerutils.PodContainerWaitingReasonImagePullBackOff ||
+			r == controllerutils.PodContainerWaitingReasonErrImagePull {
+			return r
+		}
+	}
+
+	return ""
 }
 
 func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
