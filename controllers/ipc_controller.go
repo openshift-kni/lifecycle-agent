@@ -528,7 +528,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 }
 
 // inferDNSResolutionFamilyFromMC inspects the MachineConfig used to configure dnsmasq
-// and infers the active DNS filter: "ipv4", "ipv6" or "none" when not set.
+// and infers the active DNS filter: "ipv4", "ipv6" or empty when not set.
 // It is assumed that the dnsmasq MachineConfig is the only one that contains the dnsmasq filter file.
 // and it can only container one of the known filters or not exist.
 func (r *IPConfigReconciler) inferDNSResolutionFamilyFromMC(ctx context.Context) (*string, error) {
@@ -568,7 +568,7 @@ func (r *IPConfigReconciler) inferDNSResolutionFamilyFromMC(ctx context.Context)
 		}
 	}
 
-	return lo.ToPtr("none"), nil
+	return lo.ToPtr(""), nil
 }
 
 func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {
@@ -606,9 +606,6 @@ func buildNetworkStatus(
 		}
 	}
 
-	// Note: status.ipv4/status.ipv6 are intentionally a flattened shape matching the spec.
-	// We populate Address/MachineNetwork from node internal IPs, and Gateway/DNSServer from nmstate.
-	// Only populate a family when the node actually has an internal IP for that family.
 	if nodeIPv4 != "" {
 		ipv4 = &ipcv1.IPv4Status{
 			Address:        nodeIPv4,

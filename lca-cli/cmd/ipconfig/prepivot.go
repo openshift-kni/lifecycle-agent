@@ -425,8 +425,8 @@ func validateClusterAPIAndUserIPSpec(
 
 	clusterHasIPv4, clusterHasIPv6 := common.DetectClusterIPFamilies(ips)
 
-	ipv4Provided := ipv4Address != "" || ipv4MachineNetwork != "" || ipv4Gateway != "" || ipv4DNS != ""
-	ipv6Provided := ipv6Address != "" || ipv6MachineNetwork != "" || ipv6Gateway != "" || ipv6DNS != ""
+	ipv4Provided := ipv4Address != "" || ipv4MachineNetwork != ""
+	ipv6Provided := ipv6Address != "" || ipv6MachineNetwork != ""
 
 	if ipv4Provided && !clusterHasIPv4 {
 		return fmt.Errorf("specified IPv4, but the cluster does not have IPv4")
@@ -443,20 +443,22 @@ func validateClusterAPIAndUserIPSpec(
 // It enforces that each family is either fully specified or omitted, and that
 // addresses and gateways belong to their respective machine networks.
 func validateIPFamilyConfigArgs() error {
-	ipv4All := ipv4Address != "" && ipv4MachineNetwork != "" && ipv4Gateway != "" && ipv4DNS != ""
-	ipv4None := ipv4Address == "" && ipv4MachineNetwork == "" && ipv4Gateway == "" && ipv4DNS == ""
-	ipv6All := ipv6Address != "" && ipv6MachineNetwork != "" && ipv6Gateway != "" && ipv6DNS != ""
-	ipv6None := ipv6Address == "" && ipv6MachineNetwork == "" && ipv6Gateway == "" && ipv6DNS == ""
+	ipv4Any := ipv4Address != "" || ipv4MachineNetwork != "" || ipv4Gateway != "" || ipv4DNS != ""
+	ipv4Core := ipv4Address != "" && ipv4MachineNetwork != ""
+	ipv4None := !ipv4Any
+	ipv6Any := ipv6Address != "" || ipv6MachineNetwork != "" || ipv6Gateway != "" || ipv6DNS != ""
+	ipv6Core := ipv6Address != "" && ipv6MachineNetwork != ""
+	ipv6None := !ipv6Any
 
-	if (!ipv4All && !ipv4None) || (!ipv6All && !ipv6None) {
-		return fmt.Errorf("both address, machine-network, gateway and DNS must be provided together for each IP family")
+	if (ipv4Any && !ipv4Core) || (ipv6Any && !ipv6Core) {
+		return fmt.Errorf("both address and machine-network must be provided together for each IP family")
 	}
 
 	if ipv4None && ipv6None {
 		return fmt.Errorf("at least one of IPv4 or IPv6 must be provided")
 	}
 
-	if ipv4All {
+	if ipv4Core {
 		if err := utils.ValidateIPFamilyConfig(
 			common.IPv4FamilyName,
 			ipv4Address,
@@ -468,7 +470,7 @@ func validateIPFamilyConfigArgs() error {
 		}
 	}
 
-	if ipv6All {
+	if ipv6Core {
 		if err := utils.ValidateIPFamilyConfig(
 			common.IPv6FamilyName,
 			ipv6Address,
@@ -519,7 +521,7 @@ func buildIPConfigs(
 	primary string,
 ) []*ipconfig.NetworkIPConfig {
 	var ipv4Config *ipconfig.NetworkIPConfig
-	if ipv4Addr != "" || ipv4Net != "" || ipv4Gw != "" || ipv4DNS != "" {
+	if ipv4Addr != "" && ipv4Net != "" {
 		ipv4Config = &ipconfig.NetworkIPConfig{
 			IP:             ipv4Addr,
 			MachineNetwork: ipv4Net,
@@ -529,7 +531,7 @@ func buildIPConfigs(
 	}
 
 	var ipv6Config *ipconfig.NetworkIPConfig
-	if ipv6Addr != "" || ipv6Net != "" || ipv6Gw != "" || ipv6DNS != "" {
+	if ipv6Addr != "" && ipv6Net != "" {
 		ipv6Config = &ipconfig.NetworkIPConfig{
 			IP:             ipv6Addr,
 			MachineNetwork: ipv6Net,
