@@ -152,7 +152,9 @@ func assertStatusInvariants(t *testing.T, got *ipcv1.IPConfig, want *ipcv1.IPCon
 	t.Helper()
 	assert.Equal(t, want.Status.ObservedGeneration, got.Status.ObservedGeneration)
 	assert.Equal(t, want.Status.ValidNextStages, got.Status.ValidNextStages)
-	assert.Equal(t, want.Status.Network, got.Status.Network)
+	assert.Equal(t, want.Status.IPv4, got.Status.IPv4)
+	assert.Equal(t, want.Status.IPv6, got.Status.IPv6)
+	assert.Equal(t, want.Status.VLANID, got.Status.VLANID)
 	assert.Equal(t, want.Status.DNSResolutionFamily, got.Status.DNSResolutionFamily)
 	assert.Equal(t, normalizeHistoryForCompare(want.Status.History), normalizeHistoryForCompare(got.Status.History))
 }

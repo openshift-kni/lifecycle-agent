@@ -29,16 +29,16 @@ import (
 // +kubebuilder:printcolumn:name="Desired Stage",type="string",JSONPath=".spec.stage"
 // +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.conditions[-1:].reason"
 // +kubebuilder:printcolumn:name="Details",type="string",JSONPath=".status.conditions[-1:].message"
-// +kubebuilder:printcolumn:name="Current IPv4",type="string",JSONPath=".status.network.clusterNetwork.ipv4.address",priority=1
+// +kubebuilder:printcolumn:name="Current IPv4",type="string",JSONPath=".status.ipv4.address",priority=1
 // +kubebuilder:printcolumn:name="Desired IPv4",type="string",JSONPath=".spec.ipv4.address",priority=1
-// +kubebuilder:printcolumn:name="Current IPv6",type="string",JSONPath=".status.network.clusterNetwork.ipv6.address",priority=1
+// +kubebuilder:printcolumn:name="Current IPv6",type="string",JSONPath=".status.ipv6.address",priority=1
 // +kubebuilder:printcolumn:name="Desired IPv6",type="string",JSONPath=".spec.ipv6.address",priority=1
 // +kubebuilder:validation:XValidation:message="ipconfig is a singleton, metadata.name must be 'ipconfig'", rule="self.metadata.name == 'ipconfig'"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv4 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv4) && has(self.spec.ipv4) && oldSelf.spec.ipv4==self.spec.ipv4 || !has(self.spec.ipv4) && !has(oldSelf.spec.ipv4)"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv6 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv6) && has(self.spec.ipv6) && oldSelf.spec.ipv6==self.spec.ipv6 || !has(self.spec.ipv6) && !has(oldSelf.spec.ipv6)"
 // +kubebuilder:validation:XValidation:message="can not change spec.dnsResolutionFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsResolutionFamily) && has(self.spec.dnsResolutionFamily) && oldSelf.spec.dnsResolutionFamily==self.spec.dnsResolutionFamily || !has(self.spec.dnsResolutionFamily) && !has(oldSelf.spec.dnsResolutionFamily)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
-// +kubebuilder:validation:XValidation:message="can not change spec.vlan while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlan) && has(self.spec.vlan) && oldSelf.spec.vlan==self.spec.vlan || !has(self.spec.vlan) && !has(oldSelf.spec.vlan)"
+// +kubebuilder:validation:XValidation:message="can not change spec.vlanID while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID) && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) && !has(oldSelf.spec.vlanID)"
 
 // IPConfig is the Schema for controlling node IP configuration lifecycle via lca-cli ip-config.
 type IPConfig struct {
@@ -123,12 +123,36 @@ type IPv6Config struct {
 	DNSServer string `json:"dnsServer,omitempty"`
 }
 
-// VLANConfig represents optional VLAN configuration for the detected br-ex path
-type VLANConfig struct {
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Minimum=1
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
-	ID int `json:"id,omitempty"`
+// IPv4Status represents observed IPv4 configuration.
+type IPv4Status struct {
+	// Address is the node internal IPv4 address (plain address, no prefix).
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	Address string `json:"address,omitempty"`
+	// MachineNetwork is the machine network CIDR inferred for the node IP.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	MachineNetwork string `json:"machineNetwork,omitempty"`
+	// Gateway is the default IPv4 gateway address.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	Gateway string `json:"gateway,omitempty"`
+	// DNSServer is the IPv4 DNS server IP.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 DNS Server",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	DNSServer string `json:"dnsServer,omitempty"`
+}
+
+// IPv6Status represents observed IPv6 configuration.
+type IPv6Status struct {
+	// Address is the node internal IPv6 address (plain address, no prefix).
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	Address string `json:"address,omitempty"`
+	// MachineNetwork is the machine network CIDR inferred for the node IP.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	MachineNetwork string `json:"machineNetwork,omitempty"`
+	// Gateway is the default IPv6 gateway address.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	Gateway string `json:"gateway,omitempty"`
+	// DNSServer is the IPv6 DNS server IP.
+	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 DNS Server",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	DNSServer string `json:"dnsServer,omitempty"`
 }
 
 // IPConfigSpec defines the desired state of IPConfig
@@ -147,8 +171,10 @@ type IPConfigSpec struct {
 	IPv6 *IPv6Config `json:"ipv6,omitempty"`
 
 	// Optional VLAN applied to br-ex path
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VLAN"
-	VLAN *VLANConfig `json:"vlan,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VLAN ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
+	VLANID int `json:"vlanID,omitempty"`
 
 	// DNSResolutionFamily selects the IP family to resolve DNS records to on dual-stack clusters.
 	// When set, the other IP family will be filtered out from DNS responses.
@@ -169,6 +195,7 @@ type IPConfigSpec struct {
 type AutoRollbackOnFailure struct {
 	// InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0,
 	// the default value of 1800 seconds (30 minutes) is used.
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=0
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"`
@@ -185,12 +212,20 @@ type IPConfigStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Valid Next Stage"
 	ValidNextStages []IPConfigStage `json:"validNextStages,omitempty"`
 
-	// Network groups host and cluster network information
-	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Network"
-	Network *NetworkStatus `json:"network,omitempty"`
+	// IPv4 reports the currently detected IPv4 configuration (if any)
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4"
+	IPv4 *IPv4Status `json:"ipv4,omitempty"`
+
+	// IPv6 reports the currently detected IPv6 configuration (if any)
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6"
+	IPv6 *IPv6Status `json:"ipv6,omitempty"`
+
+	// VLANID reports the currently detected VLAN ID on the br-ex uplink path (if any)
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="VLAN ID"
+	VLANID int `json:"vlanID,omitempty"`
 
 	// DNSResolutionFamily reports the active DNS response filtering family:
-	// "ipv4", "ipv6" or "none" (no filter set)
+	// "ipv4" or "ipv6" (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Resolution Family"
 	DNSResolutionFamily string `json:"dnsResolutionFamily,omitempty"`
 
@@ -198,47 +233,6 @@ type IPConfigStatus struct {
 	// +optional
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="History"
 	History []*IPHistory `json:"history,omitempty"`
-}
-
-type HostIPStatus struct {
-	// DNSServer is the DNS server IP to use
-	DNSServer string `json:"dnsServer,omitempty"`
-	// Gateway is the default gateway address
-	Gateway string `json:"gateway,omitempty"`
-}
-
-// HostNetworkStatus summarizes current host network
-type HostNetworkStatus struct {
-	// IPv4 summarizes the current IPv4 on the host network
-	IPv4 *HostIPStatus `json:"ipv4,omitempty"`
-	// IPv6 summarizes the current IPv6 on the host network
-	IPv6 *HostIPStatus `json:"ipv6,omitempty"`
-	// VLANID is the VLAN identifier on the br-ex uplink path, if any
-	VLANID int `json:"vlanId,omitempty"`
-}
-
-// ClusterNetworkStatus summarizes cluster network using lists of strings
-type ClusterNetworkStatus struct {
-	// IPv4 summarizes the current IPv4 on the cluster network
-	IPv4 *ClusterIPStatus `json:"ipv4,omitempty"`
-	// IPv6 summarizes the current IPv6 on the cluster network
-	IPv6 *ClusterIPStatus `json:"ipv6,omitempty"`
-}
-
-// NetworkStatus groups host and cluster network views
-type NetworkStatus struct {
-	// HostNetwork summarizes current host network
-	HostNetwork *HostNetworkStatus `json:"hostNetwork,omitempty"`
-	// ClusterNetwork summarizes cluster network using lists of strings
-	ClusterNetwork *ClusterNetworkStatus `json:"clusterNetwork,omitempty"`
-}
-
-// ClusterIPStatus represents a single IP family view on the cluster network
-type ClusterIPStatus struct {
-	// Address is the node internal IP (plain address, no prefix)
-	Address string `json:"address,omitempty"`
-	// MachineNetwork is the matching machine network CIDR for the IP
-	MachineNetwork string `json:"machineNetwork,omitempty"`
 }
 
 // history for IPConfig stages

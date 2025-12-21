@@ -195,11 +195,8 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		// statusIPsMatchSpec requires these to be non-nil even if spec is empty.
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		// statusIPsMatchSpec requires status to be populated even if spec is empty.
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		h := &IPCConfigTwoPhaseHandler{
@@ -386,29 +383,19 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			Address: "192.0.2.20",
 		}
 		ipc.Spec.IPv6 = nil
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv4: &ipcv1.HostIPStatus{
-					Gateway:   "192.0.2.1",
-					DNSServer: "192.0.2.53",
-				},
-				IPv6: &ipcv1.HostIPStatus{
-					Gateway:   "2001:db8::1",
-					DNSServer: "2001:db8::53",
-				},
-				VLANID: 123,
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv4: &ipcv1.ClusterIPStatus{
-					Address:        "192.0.2.10",
-					MachineNetwork: "192.0.2.0/24",
-				},
-				IPv6: &ipcv1.ClusterIPStatus{
-					Address:        "2001:db8::10",
-					MachineNetwork: "2001:db8::/64",
-				},
-			},
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{
+			Address:        "192.0.2.10",
+			MachineNetwork: "192.0.2.0/24",
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
 		}
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{
+			Address:        "2001:db8::10",
+			MachineNetwork: "2001:db8::/64",
+			Gateway:        "2001:db8::1",
+			DNSServer:      "2001:db8::53",
+		}
+		ipc.Status.VLANID = 123
 		ipc.Status.DNSResolutionFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -686,19 +673,11 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 			Gateway:        "192.0.2.1",
 			DNSServer:      "192.0.2.53",
 		}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv4: &ipcv1.HostIPStatus{
-					Gateway:   "192.0.2.1",
-					DNSServer: "192.0.2.53",
-				},
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv4: &ipcv1.ClusterIPStatus{
-					Address:        "192.0.2.99",   // mismatch
-					MachineNetwork: "192.0.2.0/24", // match
-				},
-			},
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{
+			Address:        "192.0.2.99",   // mismatch
+			MachineNetwork: "192.0.2.0/24", // match
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
 		}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -746,10 +725,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 
 		ipc := mkConfigIPC(t, true)
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -789,10 +765,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -1168,10 +1141,7 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.DNSResolutionFamily = "ipv4"
 		ipc.Status.DNSResolutionFamily = "ipv6"
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		err := statusIPsMatchSpec(ipc)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dnsResolutionFamily mismatch")
@@ -1179,11 +1149,8 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 
 	t.Run("vlan mismatch => error includes detail", func(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
-		ipc.Spec.VLAN = &ipcv1.VLANConfig{ID: 100}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{VLANID: 200},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Spec.VLANID = 100
+		ipc.Status.VLANID = 200
 		err := statusIPsMatchSpec(ipc)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "vlan mismatch")
@@ -1197,19 +1164,11 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 			Gateway:        "fe80::1",
 			DNSServer:      "2001:db8::53",
 		}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv6: &ipcv1.HostIPStatus{
-					Gateway:   "fe80::1",
-					DNSServer: "2001:db8::53",
-				},
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv6: &ipcv1.ClusterIPStatus{
-					Address:        "2001:db8::10",
-					MachineNetwork: "2001:db8::/64",
-				},
-			},
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{
+			Address:        "2001:db8::10",
+			MachineNetwork: "2001:db8::/64",
+			Gateway:        "fe80::1",
+			DNSServer:      "2001:db8::53",
 		}
 		assert.NoError(t, statusIPsMatchSpec(ipc))
 	})
@@ -1229,25 +1188,34 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 	})
 
 	t.Run("validateFamilyAddressChanges blocks dependent changes without address change", func(t *testing.T) {
-		host := &ipcv1.HostIPStatus{Gateway: "192.0.2.1", DNSServer: "192.0.2.53"}
-		cluster := &ipcv1.ClusterIPStatus{Address: "192.0.2.10", MachineNetwork: "192.0.2.0/24"}
+		status := &ipcv1.IPv4Status{
+			Address:        "192.0.2.10",
+			MachineNetwork: "192.0.2.0/24",
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
+		}
 
 		// Address same, machineNetwork change => error
-		err := validateFamilyAddressChanges("ipv4", "192.0.2.10", "192.0.3.0/24", "", "", host, cluster)
+		err := validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", MachineNetwork: "192.0.3.0/24"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "machineNetwork can be changed only if address is also changed")
 
 		// Address same, gateway change => error
-		err = validateFamilyAddressChanges("ipv4", "192.0.2.10", "", "192.0.2.254", "", host, cluster)
+		err = validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", Gateway: "192.0.2.254"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "gateway can be changed only if address is also changed")
 
 		// Address same, dns change => error
-		err = validateFamilyAddressChanges("ipv4", "192.0.2.10", "", "", "192.0.2.54", host, cluster)
+		err = validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", DNSServer: "192.0.2.54"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dnsServer can be changed only if address is also changed")
 
 		// Address changed => allowed
-		assert.NoError(t, validateFamilyAddressChanges("ipv4", "192.0.2.11", "192.0.3.0/24", "192.0.2.254", "192.0.2.54", host, cluster))
+		assert.NoError(t, validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{
+			Address:        "192.0.2.11",
+			MachineNetwork: "192.0.3.0/24",
+			Gateway:        "192.0.2.254",
+			DNSServer:      "192.0.2.54",
+		}, status))
 	})
 }

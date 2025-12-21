@@ -29,7 +29,7 @@ spec:
     - jsonPath: .status.conditions[-1:].message
       name: Details
       type: string
-    - jsonPath: .status.network.clusterNetwork.ipv4.address
+    - jsonPath: .status.ipv4.address
       name: Current IPv4
       priority: 1
       type: string
@@ -37,7 +37,7 @@ spec:
       name: Desired IPv4
       priority: 1
       type: string
-    - jsonPath: .status.network.clusterNetwork.ipv6.address
+    - jsonPath: .status.ipv6.address
       name: Current IPv6
       priority: 1
       type: string
@@ -82,6 +82,8 @@ spec:
                       the default value of 1800 seconds (30 minutes) is used.
                     minimum: 0
                     type: integer
+                required:
+                - initMonitorTimeoutSeconds
                 type: object
               dnsResolutionFamily:
                 description: |-
@@ -164,15 +166,10 @@ spec:
                 - Config
                 - Rollback
                 type: string
-              vlan:
+              vlanID:
                 description: Optional VLAN applied to br-ex path
-                properties:
-                  id:
-                    minimum: 1
-                    type: integer
-                required:
-                - id
-                type: object
+                minimum: 1
+                type: integer
             required:
             - stage
             type: object
@@ -238,7 +235,7 @@ spec:
               dnsResolutionFamily:
                 description: |-
                   DNSResolutionFamily reports the active DNS response filtering family:
-                  "ipv4", "ipv6" or "none" (no filter set)
+                  "ipv4" or "ipv6" (if any)
                 type: string
               history:
                 description: History stores timing info of different IPConfig stages
@@ -282,70 +279,43 @@ spec:
                       type: string
                   type: object
                 type: array
-              network:
-                description: Network groups host and cluster network information
+              ipv4:
+                description: IPv4 reports the currently detected IPv4 configuration
+                  (if any)
                 properties:
-                  clusterNetwork:
-                    description: ClusterNetwork summarizes cluster network using lists
-                      of strings
-                    properties:
-                      ipv4:
-                        description: IPv4 summarizes the current IPv4 on the cluster
-                          network
-                        properties:
-                          address:
-                            description: Address is the node internal IP (plain address,
-                              no prefix)
-                            type: string
-                          machineNetwork:
-                            description: MachineNetwork is the matching machine network
-                              CIDR for the IP
-                            type: string
-                        type: object
-                      ipv6:
-                        description: IPv6 summarizes the current IPv6 on the cluster
-                          network
-                        properties:
-                          address:
-                            description: Address is the node internal IP (plain address,
-                              no prefix)
-                            type: string
-                          machineNetwork:
-                            description: MachineNetwork is the matching machine network
-                              CIDR for the IP
-                            type: string
-                        type: object
-                    type: object
-                  hostNetwork:
-                    description: HostNetwork summarizes current host network
-                    properties:
-                      ipv4:
-                        description: IPv4 summarizes the current IPv4 on the host
-                          network
-                        properties:
-                          dnsServer:
-                            description: DNSServer is the DNS server IP to use
-                            type: string
-                          gateway:
-                            description: Gateway is the default gateway address
-                            type: string
-                        type: object
-                      ipv6:
-                        description: IPv6 summarizes the current IPv6 on the host
-                          network
-                        properties:
-                          dnsServer:
-                            description: DNSServer is the DNS server IP to use
-                            type: string
-                          gateway:
-                            description: Gateway is the default gateway address
-                            type: string
-                        type: object
-                      vlanId:
-                        description: VLANID is the VLAN identifier on the br-ex uplink
-                          path, if any
-                        type: integer
-                    type: object
+                  address:
+                    description: Address is the node internal IPv4 address (plain
+                      address, no prefix).
+                    type: string
+                  dnsServer:
+                    description: DNSServer is the IPv4 DNS server IP.
+                    type: string
+                  gateway:
+                    description: Gateway is the default IPv4 gateway address.
+                    type: string
+                  machineNetwork:
+                    description: MachineNetwork is the machine network CIDR inferred
+                      for the node IP.
+                    type: string
+                type: object
+              ipv6:
+                description: IPv6 reports the currently detected IPv6 configuration
+                  (if any)
+                properties:
+                  address:
+                    description: Address is the node internal IPv6 address (plain
+                      address, no prefix).
+                    type: string
+                  dnsServer:
+                    description: DNSServer is the IPv6 DNS server IP.
+                    type: string
+                  gateway:
+                    description: Gateway is the default IPv6 gateway address.
+                    type: string
+                  machineNetwork:
+                    description: MachineNetwork is the machine network CIDR inferred
+                      for the node IP.
+                    type: string
                 type: object
               observedGeneration:
                 format: int64
@@ -357,6 +327,10 @@ spec:
                   description: IPConfigStage defines the type for the stage field
                   type: string
                 type: array
+              vlanID:
+                description: VLANID reports the currently detected VLAN ID on the
+                  br-ex uplink path (if any)
+                type: integer
             type: object
         type: object
         x-kubernetes-validations:
@@ -381,10 +355,11 @@ spec:
             && c.status==''True'') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure)
             && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure
             || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)'
-        - message: can not change spec.vlan while ipconfig is not idle
+        - message: can not change spec.vlanID while ipconfig is not idle
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.vlan) && has(self.spec.vlan)
-            && oldSelf.spec.vlan==self.spec.vlan || !has(self.spec.vlan) && !has(oldSelf.spec.vlan)'
+            && c.status==''True'') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID)
+            && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) &&
+            !has(oldSelf.spec.vlanID)'
     served: true
     storage: true
     subresources:
