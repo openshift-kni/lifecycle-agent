@@ -5,7 +5,7 @@ interfaces:
   state: up
   vlan:
     id: {{ .VLANID }}
-    base-iface: {{ .BaseInterfaceName }}
+    base-iface: {{ .InterfaceName }}
   {{- else }}
   type: ethernet
   state: up
@@ -27,20 +27,32 @@ interfaces:
     - ip: {{ .IPv6.Address }}
       prefix-length: {{ .IPv6.PrefixLen }}
     {{- end }}
-{{- if or .IPv4.Gateway .IPv6.Gateway }}
+{{- if or .IPv4.DesiredGateway .IPv6.DesiredGateway .IPv4.CurrentGateway .IPv6.CurrentGateway }}
 routes:
   config:
-  {{- if .IPv4.Gateway }}
+  {{- if .IPv4.CurrentGateway }}
   - destination: 0.0.0.0/0
     next-hop-interface: {{ .InterfaceName }}
-    next-hop-address: {{ .IPv4.Gateway }}
+    next-hop-address: {{ .IPv4.CurrentGateway }}
+    state: absent
+  {{- end }}
+  {{- if .IPv6.CurrentGateway }}
+  - destination: ::/0
+    next-hop-interface: {{ .InterfaceName }}
+    next-hop-address: {{ .IPv6.CurrentGateway }}
+    state: absent
+  {{- end }}
+  {{- if .IPv4.DesiredGateway }}
+  - destination: 0.0.0.0/0
+    next-hop-interface: {{ .InterfaceName }}
+    next-hop-address: {{ .IPv4.DesiredGateway }}
     metric: 48
     table-id: 254
   {{- end }}
-  {{- if .IPv6.Gateway }}
+  {{- if .IPv6.DesiredGateway }}
   - destination: ::/0
     next-hop-interface: {{ .InterfaceName }}
-    next-hop-address: {{ .IPv6.Gateway }}
+    next-hop-address: {{ .IPv6.DesiredGateway }}
     metric: 48
     table-id: 254
   {{- end }}

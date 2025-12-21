@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,6 +37,30 @@ func newPostPivotHandler(t *testing.T) (*IPConfigPostPivotHandler, *ops.MockOps)
 		scheme:       scheme,
 		kubeconfig:   filepath.Join(t.TempDir(), "kubeconfig"),
 		workspaceDir: t.TempDir(),
+	}
+
+	// Create a default nmstate config file for tests that exercise applyNetworkConfiguration().
+	nmstatePath := filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)
+	nmstate := `interfaces:
+- name: ens3
+  type: ethernet
+  state: up
+  ipv4:
+    enabled: true
+    dhcp: false
+    address:
+    - ip: 10.1.1.10
+      prefix-length: 24
+routes:
+  config:
+  - destination: 0.0.0.0/0
+    next-hop-interface: ens3
+    next-hop-address: 10.1.1.1
+    metric: 48
+    table-id: 254
+`
+	if err := os.WriteFile(nmstatePath, []byte(nmstate), 0o600); err != nil {
+		t.Fatalf("failed to write test nmstate config: %v", err)
 	}
 
 	return handler, mockOps

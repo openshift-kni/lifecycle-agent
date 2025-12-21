@@ -52,7 +52,8 @@ type RecertClusterData struct {
 type NetworkIPConfig struct {
 	IP             string
 	MachineNetwork string
-	Gateway        string
+	DesiredGateway string
+	CurrentGateway string
 	DNSServer      string
 }
 
@@ -87,6 +88,8 @@ type PrePivotHandler struct {
 	dnsIPFamily          string
 	hostWorkspaceDir     string
 	mcdCurrentConfigPath string
+	currentGatewayV4     string
+	currentGatewayV6     string
 }
 
 // NewPrePivotHandler creates a new PrePivotHandler instance.
@@ -104,6 +107,8 @@ func NewPrePivotHandler(
 	dnsIPFamily string,
 	hostWorkspaceDir string,
 	mcdCurrentConfigPath string,
+	currentGatewayV4 string,
+	currentGatewayV6 string,
 ) *PrePivotHandler {
 	return &PrePivotHandler{
 		log:                  log,
@@ -119,6 +124,8 @@ func NewPrePivotHandler(
 		dnsIPFamily:          dnsIPFamily,
 		hostWorkspaceDir:     hostWorkspaceDir,
 		mcdCurrentConfigPath: mcdCurrentConfigPath,
+		currentGatewayV4:     currentGatewayV4,
+		currentGatewayV6:     currentGatewayV6,
 	}
 }
 
@@ -561,15 +568,13 @@ func (p *PrePivotHandler) writePullSecretToNewStateroot(
 }
 
 func (p *PrePivotHandler) prepareNetworkConfiguration(ctx context.Context) (*string, error) {
-	logger := p.log.WithContext(ctx)
-
 	if len(p.ipConfigs) == 0 {
 		return nil, fmt.Errorf("no IP configurations provided")
 	}
 
 	ips := make([]string, 0, len(p.ipConfigs))
 	machineNetworks := make([]string, 0, len(p.ipConfigs))
-	var ipv4Gateway, ipv6Gateway, ipv4DNS, ipv6DNS string
+	var desiredGatewayV4, desiredGatewayV6, currentGatewayV4, currentGatewayV6, dnsV4, dnsV6 string
 
 	for _, cfg := range p.ipConfigs {
 		if cfg == nil {
@@ -589,11 +594,13 @@ func (p *PrePivotHandler) prepareNetworkConfiguration(ctx context.Context) (*str
 
 		switch ipFamilyOfString(cfg.IP) {
 		case common.IPv4FamilyName:
-			ipv4Gateway = cfg.Gateway
-			ipv4DNS = cfg.DNSServer
+			desiredGatewayV4 = cfg.DesiredGateway
+			currentGatewayV4 = cfg.CurrentGateway
+			dnsV4 = cfg.DNSServer
 		case common.IPv6FamilyName:
-			ipv6Gateway = cfg.Gateway
-			ipv6DNS = cfg.DNSServer
+			desiredGatewayV6 = cfg.DesiredGateway
+			currentGatewayV6 = cfg.CurrentGateway
+			dnsV6 = cfg.DNSServer
 		}
 	}
 
@@ -601,17 +608,31 @@ func (p *PrePivotHandler) prepareNetworkConfiguration(ctx context.Context) (*str
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect %s network interface: %w", BridgeExternalName, err)
 	}
-	logger.Infof("Detected %s network interface: %s", BridgeExternalName, iface)
+
+	p.log.WithFields(logrus.Fields{
+		"iface":            iface,
+		"vlanID":           p.vlanID,
+		"ips":              ips,
+		"machineNetworks":  machineNetworks,
+		"desiredGatewayV4": desiredGatewayV4,
+		"desiredGatewayV6": desiredGatewayV6,
+		"currentGatewayV4": currentGatewayV4,
+		"currentGatewayV6": currentGatewayV6,
+		"dnsV4":            dnsV4,
+		"dnsV6":            dnsV6,
+	}).Info("Generating nmstate configuration")
 
 	nmstateConfig, err := utils.GenerateNMState(
 		iface,
 		ips,
 		machineNetworks,
-		ipv4Gateway,
-		ipv6Gateway,
-		ipv4DNS,
-		ipv6DNS,
+		desiredGatewayV4,
+		desiredGatewayV6,
+		dnsV4,
+		dnsV6,
 		p.vlanID,
+		currentGatewayV4,
+		currentGatewayV6,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate nmstate configuration: %w", err)

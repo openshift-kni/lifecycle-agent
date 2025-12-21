@@ -57,8 +57,10 @@ var (
 	ipv4MachineNetwork            string
 	ipv6Address                   string
 	ipv6MachineNetwork            string
-	ipv4Gateway                   string
-	ipv6Gateway                   string
+	desiredIPv4Gateway            string
+	desiredIPv6Gateway            string
+	currentGatewayV4              string
+	currentGatewayV6              string
 	ipv4DNS                       string
 	ipv6DNS                       string
 	vlanID                        int
@@ -75,6 +77,8 @@ const (
 	ipv6MachineNetworkFlag            = "ipv6-machine-network"
 	ipv4GatewayFlag                   = "ipv4-gateway"
 	ipv6GatewayFlag                   = "ipv6-gateway"
+	currentIPv4GatewayFlag            = "current-ipv4-gateway"
+	currentIPv6GatewayFlag            = "current-ipv6-gateway"
 	ipv4DNSFlag                       = "ipv4-dns"
 	ipv6DNSFlag                       = "ipv6-dns"
 	vlanIDFlag                        = "vlan-id"
@@ -94,8 +98,10 @@ func init() {
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv4MachineNetwork, ipv4MachineNetworkFlag, "", "Target IPv4 machine network CIDR")
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv6Address, ipv6AddressFlag, "", "Target IPv6 address")
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv6MachineNetwork, ipv6MachineNetworkFlag, "", "Target IPv6 machine network CIDR")
-	ipConfigPrePivotCmd.Flags().StringVar(&ipv4Gateway, ipv4GatewayFlag, "", "IPv4 default gateway")
-	ipConfigPrePivotCmd.Flags().StringVar(&ipv6Gateway, ipv6GatewayFlag, "", "IPv6 default gateway")
+	ipConfigPrePivotCmd.Flags().StringVar(&desiredIPv4Gateway, ipv4GatewayFlag, "", "Desired IPv4 default gateway")
+	ipConfigPrePivotCmd.Flags().StringVar(&desiredIPv6Gateway, ipv6GatewayFlag, "", "Desired IPv6 default gateway")
+	ipConfigPrePivotCmd.Flags().StringVar(&currentGatewayV4, currentIPv4GatewayFlag, "", "Current IPv4 default gateway (used to remove old default route when it differs from desired)")
+	ipConfigPrePivotCmd.Flags().StringVar(&currentGatewayV6, currentIPv6GatewayFlag, "", "Current IPv6 default gateway (used to remove old default route when it differs from desired)")
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv4DNS, ipv4DNSFlag, "", "IPv4 DNS server")
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv6DNS, ipv6DNSFlag, "", "IPv6 DNS server")
 	ipConfigPrePivotCmd.Flags().IntVar(&vlanID, vlanIDFlag, 0, "Optional VLAN ID to use on the br-ex uplink")
@@ -124,8 +130,6 @@ func runIPConfigPrePivot() (retErr error) {
 	if err != nil {
 		return err
 	}
-
-	logPrePivotFlags()
 
 	rpmClient := rpmOstree.NewClient("lca-cli-ip-config-pre-pivot", hostCommandsExecutor)
 	ostreeClient := intOstree.NewClient(hostCommandsExecutor, false)
@@ -157,8 +161,10 @@ func runIPConfigPrePivot() (retErr error) {
 			ipv4MachineNetwork = cfg.IPv4MachineNetwork
 			ipv6Address = cfg.IPv6Address
 			ipv6MachineNetwork = cfg.IPv6MachineNetwork
-			ipv4Gateway = cfg.IPv4Gateway
-			ipv6Gateway = cfg.IPv6Gateway
+			desiredIPv4Gateway = cfg.DesiredIPv4Gateway
+			desiredIPv6Gateway = cfg.DesiredIPv6Gateway
+			currentGatewayV4 = cfg.CurrentIPv4Gateway
+			currentGatewayV6 = cfg.CurrentIPv6Gateway
 			ipv4DNS = cfg.IPv4DNSServer
 			ipv6DNS = cfg.IPv6DNSServer
 			vlanID = cfg.VLANID
@@ -173,6 +179,25 @@ func runIPConfigPrePivot() (retErr error) {
 		pkgLog.Info("using command line flags")
 	}
 
+	pkgLog.WithFields(logrus.Fields{
+		newStaterootNameFlag:              newStaterootName,
+		installInitMonitorFlag:            installInitMonitor,
+		installIpConfigurationServiceFlag: installIpConfigurationService,
+		ipv4AddressFlag:                   ipv4Address,
+		ipv4MachineNetworkFlag:            ipv4MachineNetwork,
+		ipv6AddressFlag:                   ipv6Address,
+		ipv6MachineNetworkFlag:            ipv6MachineNetwork,
+		ipv4GatewayFlag:                   desiredIPv4Gateway,
+		ipv6GatewayFlag:                   desiredIPv6Gateway,
+		currentIPv4GatewayFlag:            currentGatewayV4,
+		currentIPv6GatewayFlag:            currentGatewayV6,
+		ipv4DNSFlag:                       ipv4DNS,
+		ipv6DNSFlag:                       ipv6DNS,
+		vlanIDFlag:                        vlanID,
+		pullSecretRefNameFlag:             pullSecretRefName,
+		dnsIPFamilyFlag:                   dnsIPFamily,
+	}).Info("ip-config pre-pivot flags")
+
 	ctx := context.Background()
 
 	if err := validatePrePivotFlags(ctx, client); err != nil {
@@ -185,8 +210,8 @@ func runIPConfigPrePivot() (retErr error) {
 	}
 
 	ipConfigs := buildIPConfigs(
-		ipv4Address, ipv4MachineNetwork, ipv4Gateway, ipv4DNS,
-		ipv6Address, ipv6MachineNetwork, ipv6Gateway, ipv6DNS,
+		ipv4Address, ipv4MachineNetwork, desiredIPv4Gateway, currentGatewayV4, ipv4DNS,
+		ipv6Address, ipv6MachineNetwork, desiredIPv6Gateway, currentGatewayV6, ipv6DNS,
 		lo.FromPtr(effectivePrimary),
 	)
 
@@ -210,6 +235,8 @@ func runIPConfigPrePivot() (retErr error) {
 		dnsIPFamily,
 		common.LCAWorkspaceDir,
 		common.MCDCurrentConfig,
+		currentGatewayV4,
+		currentGatewayV6,
 	)
 
 	if err := prePivotHandler.Run(ctx); err != nil {
@@ -240,25 +267,6 @@ func runIPConfigPrePivot() (retErr error) {
 	}
 
 	return nil
-}
-
-// logPrePivotFlags prints the flags used by the ip-config pre-pivot command.
-func logPrePivotFlags() {
-	pkgLog.Infof("ip-config pre-pivot flags:")
-	pkgLog.Infof("  %s=%q", newStaterootNameFlag, newStaterootName)
-	pkgLog.Infof("  %s=%t", installInitMonitorFlag, installInitMonitor)
-	pkgLog.Infof("  %s=%t", installIpConfigurationServiceFlag, installIpConfigurationService)
-	pkgLog.Infof("  %s=%q", ipv4AddressFlag, ipv4Address)
-	pkgLog.Infof("  %s=%q", ipv4MachineNetworkFlag, ipv4MachineNetwork)
-	pkgLog.Infof("  %s=%q", ipv6AddressFlag, ipv6Address)
-	pkgLog.Infof("  %s=%q", ipv6MachineNetworkFlag, ipv6MachineNetwork)
-	pkgLog.Infof("  %s=%q", ipv4GatewayFlag, ipv4Gateway)
-	pkgLog.Infof("  %s=%q", ipv6GatewayFlag, ipv6Gateway)
-	pkgLog.Infof("  %s=%q", ipv4DNSFlag, ipv4DNS)
-	pkgLog.Infof("  %s=%q", ipv6DNSFlag, ipv6DNS)
-	pkgLog.Infof("  %s=%d", vlanIDFlag, vlanID)
-	pkgLog.Infof("  %s=%q", pullSecretRefNameFlag, pullSecretRefName)
-	pkgLog.Infof("  %s=%q", dnsIPFamilyFlag, dnsIPFamily)
 }
 
 // installMonitorInitializationServiceInNewStateroot installs and enables the IPC init monitor service
@@ -443,10 +451,10 @@ func validateClusterAPIAndUserIPSpec(
 // It enforces that each family is either fully specified or omitted, and that
 // addresses and gateways belong to their respective machine networks.
 func validateIPFamilyConfigArgs() error {
-	ipv4Any := ipv4Address != "" || ipv4MachineNetwork != "" || ipv4Gateway != "" || ipv4DNS != ""
+	ipv4Any := ipv4Address != "" || ipv4MachineNetwork != "" || desiredIPv4Gateway != "" || currentGatewayV4 != "" || ipv4DNS != ""
 	ipv4Core := ipv4Address != "" && ipv4MachineNetwork != ""
 	ipv4None := !ipv4Any
-	ipv6Any := ipv6Address != "" || ipv6MachineNetwork != "" || ipv6Gateway != "" || ipv6DNS != ""
+	ipv6Any := ipv6Address != "" || ipv6MachineNetwork != "" || desiredIPv6Gateway != "" || currentGatewayV6 != "" || ipv6DNS != ""
 	ipv6Core := ipv6Address != "" && ipv6MachineNetwork != ""
 	ipv6None := !ipv6Any
 
@@ -463,7 +471,7 @@ func validateIPFamilyConfigArgs() error {
 			common.IPv4FamilyName,
 			ipv4Address,
 			ipv4MachineNetwork,
-			ipv4Gateway,
+			desiredIPv4Gateway,
 			ipv4DNS,
 		); err != nil {
 			return fmt.Errorf("invalid IPv4 config: %w", err)
@@ -475,7 +483,7 @@ func validateIPFamilyConfigArgs() error {
 			common.IPv6FamilyName,
 			ipv6Address,
 			ipv6MachineNetwork,
-			ipv6Gateway,
+			desiredIPv6Gateway,
 			ipv6DNS,
 		); err != nil {
 			return fmt.Errorf("invalid IPv6 config: %w", err)
@@ -516,8 +524,8 @@ func inferPrimaryStack() (*string, error) {
 
 // BuildIPConfigs creates the ordered slice of NetworkIPConfig with primary first.
 func buildIPConfigs(
-	ipv4Addr, ipv4Net, ipv4Gw, ipv4DNS string,
-	ipv6Addr, ipv6Net, ipv6Gw, ipv6DNS string,
+	ipv4Addr, ipv4Net, ipv4Gw, ipv4CurrentGw, ipv4DNS string,
+	ipv6Addr, ipv6Net, ipv6Gw, ipv6CurrentGw, ipv6DNS string,
 	primary string,
 ) []*ipconfig.NetworkIPConfig {
 	var ipv4Config *ipconfig.NetworkIPConfig
@@ -525,7 +533,8 @@ func buildIPConfigs(
 		ipv4Config = &ipconfig.NetworkIPConfig{
 			IP:             ipv4Addr,
 			MachineNetwork: ipv4Net,
-			Gateway:        ipv4Gw,
+			DesiredGateway: ipv4Gw,
+			CurrentGateway: ipv4CurrentGw,
 			DNSServer:      ipv4DNS,
 		}
 	}
@@ -535,7 +544,8 @@ func buildIPConfigs(
 		ipv6Config = &ipconfig.NetworkIPConfig{
 			IP:             ipv6Addr,
 			MachineNetwork: ipv6Net,
-			Gateway:        ipv6Gw,
+			DesiredGateway: ipv6Gw,
+			CurrentGateway: ipv6CurrentGw,
 			DNSServer:      ipv6DNS,
 		}
 	}

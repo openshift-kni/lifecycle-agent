@@ -61,7 +61,7 @@ func TestFindDefaultGateways(t *testing.T) {
 	state := NmState{
 		Routes: NmRoutes{
 			Running: []NmRoute{
-				{Destination: "0.0.0.0/0", NextHopAddress: "192.0.2.1", NextHopInterface: ""},
+				{Destination: "0.0.0.0/0", NextHopAddress: "192.0.2.1", NextHopInterface: "br-ex"},
 				{Destination: "::/0", NextHopAddress: "2001:db8::1", NextHopInterface: "br-ex"},
 			},
 			Config: []NmRoute{

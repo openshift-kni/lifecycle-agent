@@ -471,13 +471,15 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 						// IPv4: address from spec, everything else from status.
 						assert.Equal(t, "192.0.2.20", got.IPv4Address)
 						assert.Equal(t, "192.0.2.0/24", got.IPv4MachineNetwork)
-						assert.Equal(t, "192.0.2.1", got.IPv4Gateway)
+						assert.Equal(t, "192.0.2.1", got.DesiredIPv4Gateway)
+						assert.Equal(t, "192.0.2.1", got.CurrentIPv4Gateway)
 						assert.Equal(t, "192.0.2.53", got.IPv4DNSServer)
 
 						// IPv6: fully backfilled from status (spec omitted IPv6 entirely).
 						assert.Equal(t, "2001:db8::10", got.IPv6Address)
 						assert.Equal(t, "2001:db8::/64", got.IPv6MachineNetwork)
-						assert.Equal(t, "2001:db8::1", got.IPv6Gateway)
+						assert.Equal(t, "2001:db8::1", got.DesiredIPv6Gateway)
+						assert.Equal(t, "2001:db8::1", got.CurrentIPv6Gateway)
 						assert.Equal(t, "2001:db8::53", got.IPv6DNSServer)
 
 						// VLAN and DNS family: backfilled from status.

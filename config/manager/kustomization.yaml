@@ -12,7 +12,7 @@ configMapGenerator:
   name: manager-config
 images:
 - name: controller
-  newName: quay.io/openshift-kni/lifecycle-agent-operator
-  newTag: 4.22.0
+  newName: quay.io/dmanor/lca
+  newTag: ip-config-v198
 patches:
 - path: related-images/patch.yaml

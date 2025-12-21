@@ -23,6 +23,7 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -110,7 +111,10 @@ func runIPConfigPostPivot() (retErr error) {
 		pkgLog.Info("using command line flags")
 	}
 
-	logPostPivotFlags()
+	pkgLog.WithFields(logrus.Fields{
+		recertImageFlag: recertImage,
+		dnsIPFamilyFlag: dnsIPFamily,
+	}).Info("IP config post-pivot flags")
 
 	if err := validatePostPivotFlags(); err != nil {
 		return fmt.Errorf("post-pivot flags validation failed: %w", err)
@@ -134,12 +138,6 @@ func runIPConfigPostPivot() (retErr error) {
 	}
 
 	return nil
-}
-
-func logPostPivotFlags() {
-	pkgLog.Info("IP config post-pivot flags:")
-	pkgLog.Infof("  %s=%q", recertImageFlag, recertImage)
-	pkgLog.Infof("  %s=%q", dnsIPFamilyFlag, dnsIPFamily)
 }
 
 // validatePostPivotFlags validates post-pivot cmd flags.

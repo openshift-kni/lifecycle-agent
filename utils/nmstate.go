@@ -36,21 +36,21 @@ type NMStateConfig struct {
 
 // IPConfig represents IP configuration for a specific protocol
 type IPConfig struct {
-	Address     string
-	PrefixLen   int
-	Enabled     bool
-	DHCPEnabled bool
-	Gateway     string
-	DNSServer   string
+	Address        string
+	PrefixLen      int
+	Enabled        bool
+	DHCPEnabled    bool
+	DesiredGateway string
+	CurrentGateway string
+	DNSServer      string
 }
 
 // NMStateTemplateData represents the template data for NMState YAML generation
 type NMStateTemplateData struct {
-	InterfaceName     string
-	BaseInterfaceName string
-	VLANID            int
-	IPv4              IPConfig
-	IPv6              IPConfig
+	InterfaceName string
+	VLANID        int
+	IPv4          IPConfig
+	IPv6          IPConfig
 }
 
 //go:embed templates/nmstate.yaml.tmpl
@@ -63,9 +63,8 @@ func GenerateNMStateYAML(config *NMStateConfig) (string, error) {
 	}
 
 	templateData := NMStateTemplateData{
-		InterfaceName:     config.InterfaceName,
-		BaseInterfaceName: config.InterfaceName,
-		VLANID:            config.VLANID,
+		InterfaceName: config.InterfaceName,
+		VLANID:        config.VLANID,
 		IPv4: IPConfig{
 			Enabled:     false,
 			DHCPEnabled: false,
@@ -107,11 +106,13 @@ func GenerateNMState(
 	interfaceName string,
 	ips []string,
 	machineNetworks []string,
-	ipv4Gateway string,
-	ipv6Gateway string,
+	desiredGatewayV4 string,
+	desiredGatewayV6 string,
 	ipv4DNS string,
 	ipv6DNS string,
 	vlanID int,
+	currentGatewayV4 string,
+	currentGatewayV6 string,
 ) (string, error) {
 	if len(ips) == 0 {
 		return "", fmt.Errorf("at least one IP address is required")
@@ -120,7 +121,10 @@ func GenerateNMState(
 		return "", fmt.Errorf("ips and machineNetworks must be same length")
 	}
 
-	config := &NMStateConfig{InterfaceName: interfaceName, VLANID: vlanID}
+	config := &NMStateConfig{
+		InterfaceName: interfaceName,
+		VLANID:        vlanID,
+	}
 
 	for idx, ip := range ips {
 		cidr := machineNetworks[idx]
@@ -152,12 +156,21 @@ func GenerateNMState(
 	}
 
 	if config.IPv4Config != nil {
-		config.IPv4Config.Gateway = ipv4Gateway
 		config.IPv4Config.DNSServer = ipv4DNS
+		config.IPv4Config.DesiredGateway = desiredGatewayV4
+
+		if desiredGatewayV4 != "" && currentGatewayV4 != desiredGatewayV4 {
+			config.IPv4Config.CurrentGateway = currentGatewayV4
+		}
 	}
+
 	if config.IPv6Config != nil {
-		config.IPv6Config.Gateway = ipv6Gateway
 		config.IPv6Config.DNSServer = ipv6DNS
+		config.IPv6Config.DesiredGateway = desiredGatewayV6
+
+		if desiredGatewayV6 != "" && currentGatewayV6 != desiredGatewayV6 {
+			config.IPv6Config.CurrentGateway = currentGatewayV6
+		}
 	}
 
 	return GenerateNMStateYAML(config)

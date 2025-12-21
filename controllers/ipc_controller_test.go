@@ -130,7 +130,8 @@ func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
 	// No VLAN in nmstate JSON => should not be set.
 	assert.Equal(t, 0, ipc.Status.VLANID)
 
-	assert.Equal(t, "none", ipc.Status.DNSResolutionFamily)
+	// When the dnsmasq MachineConfig has no filter file, the controller reports this as unset/empty.
+	assert.Empty(t, ipc.Status.DNSResolutionFamily)
 }
 
 type reconcileTestErrReader struct{ err error }

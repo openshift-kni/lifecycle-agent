@@ -564,7 +564,7 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 			cfg.IPv4MachineNetwork = v.MachineNetwork
 		}
 		if v.Gateway != "" {
-			cfg.IPv4Gateway = v.Gateway
+			cfg.DesiredIPv4Gateway = v.Gateway
 		}
 		if v.DNSServer != "" {
 			cfg.IPv4DNSServer = v.DNSServer
@@ -579,7 +579,7 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 			cfg.IPv6MachineNetwork = v.MachineNetwork
 		}
 		if v.Gateway != "" {
-			cfg.IPv6Gateway = v.Gateway
+			cfg.DesiredIPv6Gateway = v.Gateway
 		}
 		if v.DNSServer != "" {
 			cfg.IPv6DNSServer = v.DNSServer
@@ -674,8 +674,11 @@ func backfillPrePivotIPv4FromStatus(
 	if cfg.IPv4MachineNetwork == "" && status.MachineNetwork != "" {
 		cfg.IPv4MachineNetwork = status.MachineNetwork
 	}
-	if cfg.IPv4Gateway == "" && status.Gateway != "" {
-		cfg.IPv4Gateway = status.Gateway
+	if cfg.DesiredIPv4Gateway == "" && status.Gateway != "" {
+		cfg.DesiredIPv4Gateway = status.Gateway
+	}
+	if cfg.CurrentIPv4Gateway == "" && status.Gateway != "" {
+		cfg.CurrentIPv4Gateway = status.Gateway
 	}
 	if cfg.IPv4DNSServer == "" && status.DNSServer != "" {
 		cfg.IPv4DNSServer = status.DNSServer
@@ -698,8 +701,11 @@ func backfillPrePivotIPv6FromStatus(
 	if cfg.IPv6MachineNetwork == "" && status.MachineNetwork != "" {
 		cfg.IPv6MachineNetwork = status.MachineNetwork
 	}
-	if cfg.IPv6Gateway == "" && status.Gateway != "" {
-		cfg.IPv6Gateway = status.Gateway
+	if cfg.DesiredIPv6Gateway == "" && status.Gateway != "" {
+		cfg.DesiredIPv6Gateway = status.Gateway
+	}
+	if cfg.CurrentIPv6Gateway == "" && status.Gateway != "" {
+		cfg.CurrentIPv6Gateway = status.Gateway
 	}
 	if cfg.IPv6DNSServer == "" && status.DNSServer != "" {
 		cfg.IPv6DNSServer = status.DNSServer

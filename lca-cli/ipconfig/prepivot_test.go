@@ -157,11 +157,22 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
 		handler.vlanID = 100
 		handler.ipConfigs = []*NetworkIPConfig{
-			{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
-			{IP: "2001::10", MachineNetwork: "2001::/64", Gateway: "2001::1", DNSServer: "2001::2"},
+			{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+			{IP: "2001::10", MachineNetwork: "2001::/64", DesiredGateway: "2001::1", DNSServer: "2001::2"},
 		}
 		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("ens3\npatch-br-ex", nil)
+		ops.EXPECT().RunInHostNamespace("nmstatectl", "show", "--json", "-q").Return(`{
+  "interfaces": [],
+  "routes": {
+    "running": [
+      {"destination":"0.0.0.0/0","next-hop-address":"10.1.1.254","next-hop-interface":"ens3"},
+      {"destination":"::/0","next-hop-address":"2001::254","next-hop-interface":"ens3"}
+    ],
+    "config": []
+  },
+  "dns-resolver": {"running":{"server":[]},"config":{"server":[]}}
+}`, nil)
 
 		nmstate, err := handler.prepareNetworkConfiguration(context.Background())
 		if !assert.NoError(t, err) {
@@ -173,6 +184,9 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 		assert.Contains(t, *nmstate, "ens3")
 		assert.Contains(t, *nmstate, "10.1.1.10")
 		assert.Contains(t, *nmstate, "2001::10")
+		assert.Contains(t, *nmstate, "state: absent")
+		assert.Contains(t, *nmstate, "10.1.1.254")
+		assert.Contains(t, *nmstate, "2001::254")
 	})
 
 	t.Run("returns_errors_for_bad_inputs", func(t *testing.T) {
@@ -220,6 +234,22 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 
 		_, err := handler.prepareNetworkConfiguration(context.Background())
 		assert.Error(t, err)
+	})
+
+	t.Run("fails_when_nmstate_show_fails", func(t *testing.T) {
+		handler, ops, _, _ := newTestHandler(t)
+		handler.vlanID = 0
+		handler.ipConfigs = []*NetworkIPConfig{
+			{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		}
+		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+			Return("ens3\npatch-br-ex", nil)
+		ops.EXPECT().RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return("", errors.New("boom"))
+
+		_, err := handler.prepareNetworkConfiguration(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "discover existing default gateways")
 	})
 }
 
@@ -517,7 +547,7 @@ func TestRunStopsAndReenablesOnFailure(t *testing.T) {
 
 	handler.client = newFakeClient(t)
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{
@@ -543,6 +573,16 @@ func TestRunStopsAndReenablesOnFailure(t *testing.T) {
 
 	// Network config
 	ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
+	ops.EXPECT().RunInHostNamespace("nmstatectl", "show", "--json", "-q").Return(`{
+  "interfaces": [],
+  "routes": {
+    "running": [
+      {"destination":"0.0.0.0/0","next-hop-address":"10.1.1.254","next-hop-interface":"ens3"}
+    ],
+    "config": []
+  },
+  "dns-resolver": {"running":{"server":[]},"config":{"server":[]}}
+}`, nil)
 
 	// Stop/enable services
 	ops.EXPECT().StopClusterServices().Return(nil)
@@ -622,7 +662,7 @@ func TestRunDoesNotPersistOrDeleteACMHubKubeconfigSecretWhenPresent(t *testing.T
 	}
 
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{
@@ -643,6 +683,16 @@ func TestRunDoesNotPersistOrDeleteACMHubKubeconfigSecretWhenPresent(t *testing.T
 	ops.EXPECT().ReadFile(common.ImageRegistryAuthFile).Return([]byte("ps"), nil)
 	ops.EXPECT().MkdirAll(filepath.Join(handler.hostWorkspaceDir, common.KubeconfigCryptoDir), os.FileMode(0o755)).Return(nil)
 	ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
+	ops.EXPECT().RunInHostNamespace("nmstatectl", "show", "--json", "-q").Return(`{
+  "interfaces": [],
+  "routes": {
+    "running": [
+      {"destination":"0.0.0.0/0","next-hop-address":"10.1.1.254","next-hop-interface":"ens3"}
+    ],
+    "config": []
+  },
+  "dns-resolver": {"running":{"server":[]},"config":{"server":[]}}
+}`, nil)
 
 	ops.EXPECT().StopClusterServices().Return(nil)
 	ops.EXPECT().EnableClusterServices().Return(nil)

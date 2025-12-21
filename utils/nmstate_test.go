@@ -16,6 +16,8 @@ func TestGenerateNMState_IPv4Only(t *testing.T) {
 		"8.8.8.8",
 		"",
 		0,
+		"",
+		"",
 	)
 	assert.NoError(t, err)
 	assert.Contains(t, nm, "192.0.2.10")
@@ -35,6 +37,8 @@ func TestGenerateNMState_IPv6Only(t *testing.T) {
 		"",
 		"2001:4860:4860::8888",
 		100,
+		"",
+		"",
 	)
 	assert.NoError(t, err)
 	assert.Contains(t, nm, "2001:db8::10")
@@ -54,6 +58,8 @@ func TestGenerateNMState_DualStack(t *testing.T) {
 		"8.8.8.8",
 		"2001:4860:4860::8888",
 		0,
+		"",
+		"",
 	)
 	assert.NoError(t, err)
 	assert.Contains(t, nm, "192.0.2.10")
@@ -72,6 +78,8 @@ func TestGenerateNMState_Errors(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
+		"",
 	)
 	assert.Error(t, err)
 
@@ -84,6 +92,8 @@ func TestGenerateNMState_Errors(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
+		"",
 	)
 	assert.Error(t, err)
 
@@ -96,6 +106,8 @@ func TestGenerateNMState_Errors(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
+		"",
 	)
 	assert.Error(t, err)
 }
