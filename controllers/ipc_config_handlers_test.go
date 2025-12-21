@@ -272,6 +272,49 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Config, ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
 	})
 
+	t.Run("skip healthcheck annotation => bypasses healthcheck failure and continues", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		// Force statusIPsMatchSpec to return error by leaving status network unpopulated.
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		// If health checks are skipped, we should proceed to copy lca-cli (and fail there).
+		mockOps.EXPECT().CopyFile(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("copy failed")).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PrePivot(context.Background(), ipc, logger)
+		assert.Error(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, ctrl.Result{}, res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assertConfigFailed(t, updated)
+	})
+
 	t.Run("copy lca-cli failure => marks failed and returns error", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
@@ -550,6 +593,47 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 	scheme := newIPConfigTestScheme(t)
 	logger := logr.Logger{}
+
+	t.Run("skip healthcheck annotation => does not call CheckHealth and proceeds", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PostPivot(context.Background(), ipc, logger)
+		assert.NoError(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, doNotRequeue(), res)
+	})
 
 	t.Run("healthcheck failing => updates in-progress and requeues", func(t *testing.T) {
 		gc := gomock.NewController(t)

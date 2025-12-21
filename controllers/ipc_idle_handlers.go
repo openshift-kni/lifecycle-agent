@@ -70,14 +70,21 @@ func (h *IPCIdleStageHandler) Handle(
 		}
 	}
 
-	logger.Info("Running health checks")
-	if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
-		msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
-		controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.Stabilizing, msg)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+		)
+	} else {
+		logger.Info("Running health checks")
+		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
+			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
+			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.Stabilizing, msg)
+			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
+			return requeueWithHealthCheckInterval(), nil
 		}
-		return requeueWithHealthCheckInterval(), nil
 	}
 
 	if err := h.cleanup(logger); err != nil {

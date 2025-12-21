@@ -326,6 +326,13 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
+				// trigger reconcile upon adding/removing/updating SkipIPConfigClusterHealthChecksAnnotation
+				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				if oldHas != newHas || (oldHas && newHas && oldValue != newValue) {
+					return true
+				}
+
 				return false
 			},
 			CreateFunc:  func(ce event.CreateEvent) bool { return true },
@@ -626,4 +633,18 @@ func buildNetworkStatus(
 	}
 
 	return ipv4, ipv6, vlan
+}
+
+// shouldSkipIPClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks.
+// The value is ignored; the annotation acts as a presence flag.
+func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
+	if ipc == nil {
+		return false
+	}
+	anns := ipc.GetAnnotations()
+	if anns == nil {
+		return false
+	}
+	_, ok := anns[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+	return ok
 }

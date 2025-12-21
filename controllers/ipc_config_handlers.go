@@ -167,13 +167,20 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		return doNotRequeue(), nil
 	}
 
-	if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
-		msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
-		controllerutils.SetIPConfigStatusInProgress(ipc, msg)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+		)
+	} else {
+		if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
+			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
+			controllerutils.SetIPConfigStatusInProgress(ipc, msg)
+			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
+			return requeueWithHealthCheckInterval(), nil
 		}
-		return requeueWithHealthCheckInterval(), nil
 	}
 
 	if err := h.copyLcaCliToHost(logger); err != nil {
@@ -257,16 +264,23 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 		return requeueWithError(fmt.Errorf("failed to disable init monitor: %w", err))
 	}
 
-	if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
-		controllerutils.SetIPConfigStatusInProgress(
-			ipc,
-			fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
 		)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
-		}
+	} else {
+		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
+			controllerutils.SetIPConfigStatusInProgress(
+				ipc,
+				fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+			)
+			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
 
-		return requeueWithHealthCheckInterval(), nil
+			return requeueWithHealthCheckInterval(), nil
+		}
 	}
 
 	controllerutils.SetIPConfigStatusInProgress(ipc, "Cluster has stabilized")

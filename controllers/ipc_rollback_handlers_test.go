@@ -305,6 +305,45 @@ func TestIPCRollbackTwoPhaseHandler_PostPivot(t *testing.T) {
 	scheme := newTestScheme(t)
 	logger := logr.Logger{}
 
+	t.Run("skip healthcheck annotation => does not call CheckHealth and completes postpivot", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockOps := ops.NewMockOps(gc)
+		mockRpm := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := mkRollbackIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+
+		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
+		h := &IPCRollbackTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRpm,
+			Ops:             mockOps,
+		}
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		res, err := h.PostPivot(context.Background(), ipc, logger)
+		assert.NoError(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
+		phase := findRollbackPhase(t, updated, IPConfigRollbackPhasePostpivot)
+		if assert.NotNil(t, phase) {
+			assert.False(t, phase.StartTime.IsZero())
+			assert.False(t, phase.CompletionTime.IsZero())
+		}
+	})
+
 	t.Run("healthcheck failing updates rollback in-progress message and requeues", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
