@@ -166,7 +166,7 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 	}
 
 	p.log.Info("Preparing network configuration")
-	nmstateConfig, err := p.prepareNetworkConfiguration(ctx)
+	nmstateConfig, err := p.prepareNetworkConfiguration()
 	if err != nil {
 		return fmt.Errorf("failed to prepare network configuration: %w", err)
 	}
@@ -567,7 +567,7 @@ func (p *PrePivotHandler) writePullSecretToNewStateroot(
 	return nil
 }
 
-func (p *PrePivotHandler) prepareNetworkConfiguration(ctx context.Context) (*string, error) {
+func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 	if len(p.ipConfigs) == 0 {
 		return nil, fmt.Errorf("no IP configurations provided")
 	}

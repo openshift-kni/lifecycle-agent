@@ -57,7 +57,7 @@ type NMStateTemplateData struct {
 var nmstateTemplate string
 
 // GenerateNMStateYAML generates NMState YAML configuration from the provided config
-func GenerateNMStateYAML(config *NMStateConfig) (string, error) {
+func generateNMStateYAML(config *NMStateConfig) (string, error) {
 	if config.InterfaceName == "" {
 		return "", fmt.Errorf("interface name is required")
 	}
@@ -81,10 +81,6 @@ func GenerateNMStateYAML(config *NMStateConfig) (string, error) {
 
 	if config.IPv6Config != nil {
 		templateData.IPv6 = *config.IPv6Config
-	}
-
-	if config.VLANID > 0 {
-		templateData.InterfaceName = fmt.Sprintf("%s.%d", config.InterfaceName, config.VLANID)
 	}
 
 	tmpl, err := template.New("nmstate").Parse(nmstateTemplate)
@@ -173,5 +169,5 @@ func GenerateNMState(
 		}
 	}
 
-	return GenerateNMStateYAML(config)
+	return generateNMStateYAML(config)
 }

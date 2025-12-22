@@ -2,14 +2,12 @@ interfaces:
 - name: {{ .InterfaceName }}
   {{- if gt .VLANID 0 }}
   type: vlan
-  state: up
   vlan:
     id: {{ .VLANID }}
-    base-iface: {{ .InterfaceName }}
   {{- else }}
   type: ethernet
-  state: up
   {{- end }}
+  state: up
   ipv4:
     enabled: {{ .IPv4.Enabled }}
     dhcp: false
