@@ -152,7 +152,9 @@ func assertStatusInvariants(t *testing.T, got *ipcv1.IPConfig, want *ipcv1.IPCon
 	t.Helper()
 	assert.Equal(t, want.Status.ObservedGeneration, got.Status.ObservedGeneration)
 	assert.Equal(t, want.Status.ValidNextStages, got.Status.ValidNextStages)
-	assert.Equal(t, want.Status.Network, got.Status.Network)
+	assert.Equal(t, want.Status.IPv4, got.Status.IPv4)
+	assert.Equal(t, want.Status.IPv6, got.Status.IPv6)
+	assert.Equal(t, want.Status.VLANID, got.Status.VLANID)
 	assert.Equal(t, want.Status.DNSResolutionFamily, got.Status.DNSResolutionFamily)
 	assert.Equal(t, normalizeHistoryForCompare(want.Status.History), normalizeHistoryForCompare(got.Status.History))
 }
@@ -259,6 +261,50 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
 		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertStatusInvariants(t, updated, ipc)
+	})
+
+	t.Run("skip healthcheck annotation => does not call CheckHealth and continues to cleanup", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockOps := ops.NewMockOps(gc)
+		mockRpm := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+
+		ipc := mkIPCForIdle(t)
+		ipc.Status.Conditions = nil
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+
+		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
+		h := &IPCIdleStageHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			ChrootOps:       mockOps,
+			OstreeClient:    mockOstree,
+			RPMOstreeClient: mockRpm,
+		}
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		// If health checks are skipped, handler should proceed to cleanup and hit RemountSysroot.
+		mockOps.EXPECT().RemountSysroot().Return(errors.New("remount failed")).Times(1)
+
+		res, err := h.Handle(ctx, ipc)
+		assert.Error(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		wantRes, _ := requeueWithError(err)
+		assert.Equal(t, wantRes, res)
+
+		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Failed, "failed to cleanup")
 		assertStatusInvariants(t, updated, ipc)
 	})
 

@@ -220,17 +220,24 @@ func (r *IPCRollbackTwoPhaseHandler) PostPivot(
 	controllerutils.StartIPPhase(r.Client, logger, ipc, IPConfigRollbackPhasePostpivot)
 	logger.Info("Starting post-pivot phase")
 
-	log.FromContext(ctx).Info("Starting health check after rollback")
-	if err := CheckHealth(ctx, r.NoncachedClient, log.FromContext(ctx)); err != nil {
-		controllerutils.SetIPRollbackStatusInProgress(
-			ipc,
-			fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
+	} else {
+		log.FromContext(ctx).Info("Starting health check after rollback")
+		if err := CheckHealth(ctx, r.NoncachedClient, log.FromContext(ctx)); err != nil {
+			controllerutils.SetIPRollbackStatusInProgress(
+				ipc,
+				fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+			)
+			if err := r.Client.Status().Update(ctx, ipc); err != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			}
 
-		return requeueWithHealthCheckInterval(), fmt.Errorf("waiting for system to stabilize: %s", err.Error())
+			return requeueWithHealthCheckInterval(), fmt.Errorf("waiting for system to stabilize: %s", err.Error())
+		}
 	}
 
 	controllerutils.StopIPPhase(r.Client, logger, ipc, IPConfigRollbackPhasePostpivot)

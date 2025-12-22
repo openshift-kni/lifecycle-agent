@@ -117,29 +117,21 @@ func reconcileTestBaseIPC(stage ipcv1.IPConfigStage) *ipcv1.IPConfig {
 func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
 	t.Helper()
 
-	if assert.NotNil(t, ipc.Status.Network) {
-		if assert.NotNil(t, ipc.Status.Network.HostNetwork) {
-			if assert.NotNil(t, ipc.Status.Network.HostNetwork.IPv4) {
-				assert.Equal(t, "192.0.2.1", ipc.Status.Network.HostNetwork.IPv4.Gateway)
-				assert.Equal(t, "192.0.2.53", ipc.Status.Network.HostNetwork.IPv4.DNSServer)
-			}
-			if assert.NotNil(t, ipc.Status.Network.HostNetwork.IPv6) {
-				assert.Equal(t, "2001:db8::1", ipc.Status.Network.HostNetwork.IPv6.Gateway)
-				assert.Equal(t, "2001:db8::53", ipc.Status.Network.HostNetwork.IPv6.DNSServer)
-			}
-			// No VLAN in nmstate JSON => should not be set.
-			assert.Equal(t, 0, ipc.Status.Network.HostNetwork.VLANID)
-		}
-		if assert.NotNil(t, ipc.Status.Network.ClusterNetwork) {
-			if assert.NotNil(t, ipc.Status.Network.ClusterNetwork.IPv4) {
-				assert.Equal(t, "192.0.2.10", ipc.Status.Network.ClusterNetwork.IPv4.Address)
-				assert.Equal(t, "192.0.2.0/24", ipc.Status.Network.ClusterNetwork.IPv4.MachineNetwork)
-			}
-			assert.Nil(t, ipc.Status.Network.ClusterNetwork.IPv6)
-		}
+	if assert.NotNil(t, ipc.Status.IPv4) {
+		assert.Equal(t, "192.0.2.10", ipc.Status.IPv4.Address)
+		assert.Equal(t, "192.0.2.0/24", ipc.Status.IPv4.MachineNetwork)
+		assert.Equal(t, "192.0.2.1", ipc.Status.IPv4.Gateway)
+		assert.Equal(t, "192.0.2.53", ipc.Status.IPv4.DNSServer)
 	}
 
-	assert.Equal(t, "none", ipc.Status.DNSResolutionFamily)
+	// No IPv6 in the fixture => should not be set.
+	assert.Nil(t, ipc.Status.IPv6)
+
+	// No VLAN in nmstate JSON => should not be set.
+	assert.Equal(t, 0, ipc.Status.VLANID)
+
+	// When the dnsmasq MachineConfig has no filter file, the controller reports this as unset/empty.
+	assert.Empty(t, ipc.Status.DNSResolutionFamily)
 }
 
 type reconcileTestErrReader struct{ err error }
@@ -766,7 +758,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
 		assert.Equal(t, int64(5), updated.Status.ObservedGeneration)
-		assert.Nil(t, updated.Status.Network)
+		assert.Nil(t, updated.Status.IPv4)
+		assert.Nil(t, updated.Status.IPv6)
+		assert.Equal(t, 0, updated.Status.VLANID)
 	})
 
 	t.Run("status update error after refreshStatus => returns error (and defer also fails to update status)", func(t *testing.T) {

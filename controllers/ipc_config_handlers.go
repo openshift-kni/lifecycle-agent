@@ -18,6 +18,8 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -167,13 +169,20 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		return doNotRequeue(), nil
 	}
 
-	if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
-		msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
-		controllerutils.SetIPConfigStatusInProgress(ipc, msg)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+		)
+	} else {
+		if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
+			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
+			controllerutils.SetIPConfigStatusInProgress(ipc, msg)
+			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
+			return requeueWithHealthCheckInterval(), nil
 		}
-		return requeueWithHealthCheckInterval(), nil
 	}
 
 	if err := h.copyLcaCliToHost(logger); err != nil {
@@ -257,16 +266,26 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 		return requeueWithError(fmt.Errorf("failed to disable init monitor: %w", err))
 	}
 
-	if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
-		controllerutils.SetIPConfigStatusInProgress(
-			ipc,
-			fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+	if shouldSkipIPClusterHealthChecks(ipc) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
 		)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
-		}
+	} else {
+		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
+			controllerutils.SetIPConfigStatusInProgress(
+				ipc,
+				fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
+			)
+			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
 
-		return requeueWithHealthCheckInterval(), nil
+			// Best-effort cleanup: pods stuck in ImagePullBackOff/ErrImagePull can block health checks forever.
+			h.deleteImagePullBackOffPodsBestEffort(ctx, logger.WithName("ImagePullBackOffCleanup"))
+
+			return requeueWithHealthCheckInterval(), nil
+		}
 	}
 
 	controllerutils.SetIPConfigStatusInProgress(ipc, "Cluster has stabilized")
@@ -296,13 +315,80 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	return doNotRequeue(), nil
 }
 
+func (h *IPCConfigTwoPhaseHandler) deleteImagePullBackOffPodsBestEffort(ctx context.Context, logger logr.Logger) {
+	pods := &corev1.PodList{}
+	if err := h.NoncachedClient.List(ctx, pods); err != nil {
+		logger.Error(err, "Failed to list pods for ImagePullBackOff cleanup")
+		return
+	}
+
+	for i := range pods.Items {
+		p := pods.Items[i]
+
+		if p.DeletionTimestamp != nil {
+			continue
+		}
+
+		// Static pod mirror pods are continuously reconciled by the kubelet;
+		// deleting them is not useful and can create churn.
+		if _, ok := p.Annotations[corev1.MirrorPodAnnotationKey]; ok {
+			continue
+		}
+
+		reason := imagePullBackOffReason(&p)
+		if reason == "" {
+			continue
+		}
+
+		if err := h.Client.Delete(ctx, &p, client.GracePeriodSeconds(0)); err != nil &&
+			!k8serrors.IsNotFound(err) {
+			logger.Error(
+				err, "Failed to delete pod stuck in image pull backoff",
+				"namespace", p.Namespace, "name", p.Name, "reason", reason,
+			)
+			continue
+		}
+		logger.Info(
+			"Deleted pod stuck in image pull backoff",
+			"namespace", p.Namespace,
+			"name", p.Name,
+			"reason", reason,
+		)
+	}
+}
+
+func imagePullBackOffReason(pod *corev1.Pod) string {
+	if pod == nil {
+		return ""
+	}
+
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting == nil {
+			continue
+		}
+		if r := cs.State.Waiting.Reason; r == controllerutils.PodContainerWaitingReasonImagePullBackOff ||
+			r == controllerutils.PodContainerWaitingReasonErrImagePull {
+			return r
+		}
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting == nil {
+			continue
+		}
+		if r := cs.State.Waiting.Reason; r == controllerutils.PodContainerWaitingReasonImagePullBackOff ||
+			r == controllerutils.PodContainerWaitingReasonErrImagePull {
+			return r
+		}
+	}
+
+	return ""
+}
+
 func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 	mismatches := []string{}
 
-	if ipc.Status.Network == nil ||
-		ipc.Status.Network.HostNetwork == nil ||
-		ipc.Status.Network.ClusterNetwork == nil {
-		return fmt.Errorf("host/cluster network not yet populated")
+	if ipc.Status.IPv4 == nil && ipc.Status.IPv6 == nil && ipc.Status.VLANID == 0 {
+		return fmt.Errorf("status networking not yet populated")
 	}
 
 	if ipc.Spec.DNSResolutionFamily != "" {
@@ -314,38 +400,22 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 		}
 	}
 
-	if ipc.Spec.VLAN != nil {
-		if ipc.Status.Network.HostNetwork.VLANID != ipc.Spec.VLAN.ID {
+	if ipc.Spec.VLANID > 0 {
+		if ipc.Status.VLANID != ipc.Spec.VLANID {
 			mismatches = append(mismatches, fmt.Sprintf(
 				"vlan mismatch: spec=%d status=%d",
-				ipc.Spec.VLAN.ID, ipc.Status.Network.HostNetwork.VLANID,
+				ipc.Spec.VLANID, ipc.Status.VLANID,
 			))
 		}
 	}
 
 	if v4 := ipc.Spec.IPv4; v4 != nil {
-		v4Mismatches := checkFamilyStatusMatchesSpec(
-			common.IPv4FamilyName,
-			v4.Address,
-			v4.MachineNetwork,
-			v4.Gateway,
-			v4.DNSServer,
-			ipc.Status.Network.HostNetwork.IPv4,
-			ipc.Status.Network.ClusterNetwork.IPv4,
-		)
+		v4Mismatches := checkFamilyStatusMatchesSpec(common.IPv4FamilyName, v4, ipc.Status.IPv4)
 		mismatches = append(mismatches, v4Mismatches...)
 	}
 
 	if v6 := ipc.Spec.IPv6; v6 != nil {
-		v6Mismatches := checkFamilyStatusMatchesSpec(
-			common.IPv6FamilyName,
-			v6.Address,
-			v6.MachineNetwork,
-			v6.Gateway,
-			v6.DNSServer,
-			ipc.Status.Network.HostNetwork.IPv6,
-			ipc.Status.Network.ClusterNetwork.IPv6,
-		)
+		v6Mismatches := checkFamilyStatusMatchesSpec(common.IPv6FamilyName, v6, ipc.Status.IPv6)
 		mismatches = append(mismatches, v6Mismatches...)
 	}
 
@@ -358,49 +428,82 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 
 func checkFamilyStatusMatchesSpec(
 	family string,
-	address, machineNetwork, gateway, dnsServer string,
-	host *ipcv1.HostIPStatus,
-	cluster *ipcv1.ClusterIPStatus,
+	spec interface{},
+	status interface{},
 ) []string {
 	mismatches := []string{}
 
-	if host == nil {
-		mismatches = append(mismatches, fmt.Sprintf("hostNetwork.%s missing", family))
-	} else {
-		if gateway != "" && gateway != host.Gateway {
-			mismatches = append(mismatches, fmt.Sprintf(
-				"%s gateway mismatch: spec=%s status=%s",
-				family, gateway, host.Gateway,
-			))
-		}
-		if dnsServer != "" && dnsServer != host.DNSServer {
-			mismatches = append(mismatches, fmt.Sprintf(
-				"%s dns mismatch: spec=%s status=%s",
-				family, dnsServer, host.DNSServer,
-			))
-		}
+	switch family {
+	case common.IPv4FamilyName:
+		specV4, _ := spec.(*ipcv1.IPv4Config)
+		statusV4, _ := status.(*ipcv1.IPv4Status)
+		mismatches = append(mismatches, checkIPFamilySpecMatchesStatusV4(specV4, statusV4)...)
+	case common.IPv6FamilyName:
+		specV6, _ := spec.(*ipcv1.IPv6Config)
+		statusV6, _ := status.(*ipcv1.IPv6Status)
+		mismatches = append(mismatches, checkIPFamilySpecMatchesStatusV6(specV6, statusV6)...)
+	default:
+		mismatches = append(mismatches, fmt.Sprintf("unknown family: %s", family))
 	}
 
-	if cluster == nil || cluster.Address == "" {
-		mismatches = append(mismatches, fmt.Sprintf("cluster %s not observed: %s address missing", family, family))
-	} else if !ipEqual(address, cluster.Address) {
-		mismatches = append(mismatches, fmt.Sprintf(
-			"cluster %s not observed: want %s got %s",
-			family, address, cluster.Address,
-		))
-	}
+	return mismatches
+}
 
-	if machineNetwork != "" {
-		if cluster == nil || cluster.MachineNetwork == "" {
-			mismatches = append(mismatches, fmt.Sprintf("cluster %s machineNetwork not observed: want %s", family, machineNetwork))
-		} else if !cidrEqual(machineNetwork, cluster.MachineNetwork) {
-			mismatches = append(mismatches, fmt.Sprintf(
-				"cluster %s machineNetwork not observed: want %s got %s",
-				family, machineNetwork, cluster.MachineNetwork,
-			))
+func checkIPFamilySpecMatchesStatusV4(spec *ipcv1.IPv4Config, status *ipcv1.IPv4Status) []string {
+	mismatches := []string{}
+	if spec == nil {
+		return mismatches
+	}
+	if status == nil {
+		return append(mismatches, "ipv4 missing from status")
+	}
+	if spec.Gateway != "" && spec.Gateway != status.Gateway {
+		mismatches = append(mismatches, fmt.Sprintf("ipv4 gateway mismatch: spec=%s status=%s", spec.Gateway, status.Gateway))
+	}
+	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
+		mismatches = append(mismatches, fmt.Sprintf("ipv4 dns mismatch: spec=%s status=%s", spec.DNSServer, status.DNSServer))
+	}
+	if status.Address == "" {
+		mismatches = append(mismatches, "ipv4 address missing from status")
+	} else if !ipEqual(spec.Address, status.Address) {
+		mismatches = append(mismatches, fmt.Sprintf("ipv4 address mismatch: want %s got %s", spec.Address, status.Address))
+	}
+	if spec.MachineNetwork != "" {
+		if status.MachineNetwork == "" {
+			mismatches = append(mismatches, fmt.Sprintf("ipv4 machineNetwork not observed: want %s", spec.MachineNetwork))
+		} else if !cidrEqual(spec.MachineNetwork, status.MachineNetwork) {
+			mismatches = append(mismatches, fmt.Sprintf("ipv4 machineNetwork mismatch: want %s got %s", spec.MachineNetwork, status.MachineNetwork))
 		}
 	}
+	return mismatches
+}
 
+func checkIPFamilySpecMatchesStatusV6(spec *ipcv1.IPv6Config, status *ipcv1.IPv6Status) []string {
+	mismatches := []string{}
+	if spec == nil {
+		return mismatches
+	}
+	if status == nil {
+		return append(mismatches, "ipv6 missing from status")
+	}
+	if spec.Gateway != "" && spec.Gateway != status.Gateway {
+		mismatches = append(mismatches, fmt.Sprintf("ipv6 gateway mismatch: spec=%s status=%s", spec.Gateway, status.Gateway))
+	}
+	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
+		mismatches = append(mismatches, fmt.Sprintf("ipv6 dns mismatch: spec=%s status=%s", spec.DNSServer, status.DNSServer))
+	}
+	if status.Address == "" {
+		mismatches = append(mismatches, "ipv6 address missing from status")
+	} else if !ipEqual(spec.Address, status.Address) {
+		mismatches = append(mismatches, fmt.Sprintf("ipv6 address mismatch: want %s got %s", spec.Address, status.Address))
+	}
+	if spec.MachineNetwork != "" {
+		if status.MachineNetwork == "" {
+			mismatches = append(mismatches, fmt.Sprintf("ipv6 machineNetwork not observed: want %s", spec.MachineNetwork))
+		} else if !cidrEqual(spec.MachineNetwork, status.MachineNetwork) {
+			mismatches = append(mismatches, fmt.Sprintf("ipv6 machineNetwork mismatch: want %s got %s", spec.MachineNetwork, status.MachineNetwork))
+		}
+	}
 	return mismatches
 }
 
@@ -461,7 +564,7 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 			cfg.IPv4MachineNetwork = v.MachineNetwork
 		}
 		if v.Gateway != "" {
-			cfg.IPv4Gateway = v.Gateway
+			cfg.DesiredIPv4Gateway = v.Gateway
 		}
 		if v.DNSServer != "" {
 			cfg.IPv4DNSServer = v.DNSServer
@@ -476,15 +579,15 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 			cfg.IPv6MachineNetwork = v.MachineNetwork
 		}
 		if v.Gateway != "" {
-			cfg.IPv6Gateway = v.Gateway
+			cfg.DesiredIPv6Gateway = v.Gateway
 		}
 		if v.DNSServer != "" {
 			cfg.IPv6DNSServer = v.DNSServer
 		}
 	}
 
-	if v := ipc.Spec.VLAN; v != nil {
-		cfg.VLANID = v.ID
+	if ipc.Spec.VLANID > 0 {
+		cfg.VLANID = ipc.Spec.VLANID
 	}
 
 	completeIPConfigPrePivotConfigFromStatus(&cfg, ipc)
@@ -522,22 +625,10 @@ func completeIPConfigPrePivotConfigFromStatus(cfg *common.IPConfigPrePivotConfig
 		return
 	}
 
-	host, cluster := getIPConfigNetworks(ipc)
-	if host == nil || cluster == nil {
-		return
-	}
-
 	backfillPrePivotDNSIPFamilyFromStatus(cfg, ipc)
-	backfillPrePivotVLANFromStatus(cfg, host)
-	backfillPrePivotIPv4FromStatus(cfg, host.IPv4, cluster.IPv4)
-	backfillPrePivotIPv6FromStatus(cfg, host.IPv6, cluster.IPv6)
-}
-
-func getIPConfigNetworks(ipc *ipcv1.IPConfig) (*ipcv1.HostNetworkStatus, *ipcv1.ClusterNetworkStatus) {
-	if ipc == nil || ipc.Status.Network == nil {
-		return nil, nil
-	}
-	return ipc.Status.Network.HostNetwork, ipc.Status.Network.ClusterNetwork
+	backfillPrePivotVLANFromStatus(cfg, ipc)
+	backfillPrePivotIPv4FromStatus(cfg, ipc.Status.IPv4)
+	backfillPrePivotIPv6FromStatus(cfg, ipc.Status.IPv6)
 }
 
 func backfillPrePivotDNSIPFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
@@ -554,83 +645,70 @@ func backfillPrePivotDNSIPFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, i
 	cfg.DNSIPFamily = fam
 }
 
-func backfillPrePivotVLANFromStatus(cfg *common.IPConfigPrePivotConfig, host *ipcv1.HostNetworkStatus) {
-	if cfg == nil || host == nil {
+func backfillPrePivotVLANFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
+	if cfg == nil || ipc == nil {
 		return
 	}
 	if cfg.VLANID != 0 {
 		return
 	}
-	if host.VLANID <= 0 {
+	if ipc.Status.VLANID <= 0 {
 		return
 	}
-	cfg.VLANID = host.VLANID
+	cfg.VLANID = ipc.Status.VLANID
 }
 
 func backfillPrePivotIPv4FromStatus(
 	cfg *common.IPConfigPrePivotConfig,
-	host *ipcv1.HostIPStatus,
-	cluster *ipcv1.ClusterIPStatus,
+	status *ipcv1.IPv4Status,
 ) {
 	if cfg == nil {
 		return
 	}
-	// Cluster network: address and machine network.
-	if cfg.IPv4Address == "" && cluster != nil {
-		if cluster.Address != "" {
-			cfg.IPv4Address = cluster.Address
-		}
+	if status == nil {
+		return
 	}
-	if cfg.IPv4MachineNetwork == "" && cluster != nil {
-		if cluster.MachineNetwork != "" {
-			cfg.IPv4MachineNetwork = cluster.MachineNetwork
-		}
+	if cfg.IPv4Address == "" && status.Address != "" {
+		cfg.IPv4Address = status.Address
 	}
-
-	// Host network: gateway and DNS.
-	if cfg.IPv4Gateway == "" && host != nil {
-		if host.Gateway != "" {
-			cfg.IPv4Gateway = host.Gateway
-		}
+	if cfg.IPv4MachineNetwork == "" && status.MachineNetwork != "" {
+		cfg.IPv4MachineNetwork = status.MachineNetwork
 	}
-	if cfg.IPv4DNSServer == "" && host != nil {
-		if host.DNSServer != "" {
-			cfg.IPv4DNSServer = host.DNSServer
-		}
+	if cfg.DesiredIPv4Gateway == "" && status.Gateway != "" {
+		cfg.DesiredIPv4Gateway = status.Gateway
+	}
+	if cfg.CurrentIPv4Gateway == "" && status.Gateway != "" {
+		cfg.CurrentIPv4Gateway = status.Gateway
+	}
+	if cfg.IPv4DNSServer == "" && status.DNSServer != "" {
+		cfg.IPv4DNSServer = status.DNSServer
 	}
 }
 
 func backfillPrePivotIPv6FromStatus(
 	cfg *common.IPConfigPrePivotConfig,
-	host *ipcv1.HostIPStatus,
-	cluster *ipcv1.ClusterIPStatus,
+	status *ipcv1.IPv6Status,
 ) {
 	if cfg == nil {
 		return
 	}
-
-	// Cluster network: address and machine network.
-	if cfg.IPv6Address == "" && cluster != nil {
-		if cluster.Address != "" {
-			cfg.IPv6Address = strings.TrimSpace(strings.Trim(cluster.Address, "[]"))
-		}
+	if status == nil {
+		return
 	}
-	if cfg.IPv6MachineNetwork == "" && cluster != nil {
-		if cluster.MachineNetwork != "" {
-			cfg.IPv6MachineNetwork = cluster.MachineNetwork
-		}
+	if cfg.IPv6Address == "" && status.Address != "" {
+		cfg.IPv6Address = strings.TrimSpace(strings.Trim(status.Address, "[]"))
 	}
-
-	// Host network: gateway and DNS.
-	if cfg.IPv6Gateway == "" && host != nil {
-		if host.Gateway != "" {
-			cfg.IPv6Gateway = host.Gateway
-		}
+	if cfg.IPv6MachineNetwork == "" && status.MachineNetwork != "" {
+		cfg.IPv6MachineNetwork = status.MachineNetwork
 	}
-	if cfg.IPv6DNSServer == "" && host != nil {
-		if host.DNSServer != "" {
-			cfg.IPv6DNSServer = host.DNSServer
-		}
+	if cfg.DesiredIPv6Gateway == "" && status.Gateway != "" {
+		cfg.DesiredIPv6Gateway = status.Gateway
+	}
+	if cfg.CurrentIPv6Gateway == "" && status.Gateway != "" {
+		cfg.CurrentIPv6Gateway = status.Gateway
+	}
+	if cfg.IPv6DNSServer == "" && status.DNSServer != "" {
+		cfg.IPv6DNSServer = status.DNSServer
 	}
 }
 
@@ -737,21 +815,15 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 // address changes as well. DNS server / gateway / machineNetwork change without address change are not supported
 // at the moment.
 func validateAddressChanges(ipc *ipcv1.IPConfig) error {
-	if ipc.Status.Network == nil ||
-		ipc.Status.Network.HostNetwork == nil ||
-		ipc.Status.Network.ClusterNetwork == nil {
+	if ipc == nil {
 		return nil
 	}
 
 	if v4 := ipc.Spec.IPv4; v4 != nil {
 		if err := validateFamilyAddressChanges(
 			common.IPv4FamilyName,
-			v4.Address,
-			v4.MachineNetwork,
-			v4.Gateway,
-			v4.DNSServer,
-			ipc.Status.Network.HostNetwork.IPv4,
-			ipc.Status.Network.ClusterNetwork.IPv4,
+			v4,
+			ipc.Status.IPv4,
 		); err != nil {
 			return err
 		}
@@ -760,12 +832,8 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 	if v6 := ipc.Spec.IPv6; v6 != nil {
 		if err := validateFamilyAddressChanges(
 			common.IPv6FamilyName,
-			v6.Address,
-			v6.MachineNetwork,
-			v6.Gateway,
-			v6.DNSServer,
-			ipc.Status.Network.HostNetwork.IPv6,
-			ipc.Status.Network.ClusterNetwork.IPv6,
+			v6,
+			ipc.Status.IPv6,
 		); err != nil {
 			return err
 		}
@@ -779,33 +847,64 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 // address changes as well.
 func validateFamilyAddressChanges(
 	family string,
-	address, machineNetwork, gateway, dnsServer string,
-	host *ipcv1.HostIPStatus,
-	cluster *ipcv1.ClusterIPStatus,
+	spec interface{},
+	status interface{},
 ) error {
+	switch family {
+	case common.IPv4FamilyName:
+		specV4, _ := spec.(*ipcv1.IPv4Config)
+		statusV4, _ := status.(*ipcv1.IPv4Status)
+		return validateFamilyAddressChangesV4(specV4, statusV4)
+	case common.IPv6FamilyName:
+		specV6, _ := spec.(*ipcv1.IPv6Config)
+		statusV6, _ := status.(*ipcv1.IPv6Status)
+		return validateFamilyAddressChangesV6(specV6, statusV6)
+	default:
+		return fmt.Errorf("unknown family: %s", family)
+	}
+}
+
+func validateFamilyAddressChangesV4(spec *ipcv1.IPv4Config, status *ipcv1.IPv4Status) error {
 	// Nothing to validate if we don't have a full picture of spec+status.
-	if host == nil || cluster == nil {
+	if spec == nil || status == nil {
 		return nil
 	}
-
-	if !ipEqual(address, cluster.Address) {
+	if !ipEqual(spec.Address, status.Address) {
 		return nil
 	}
-
-	if machineNetwork != "" &&
-		cluster.MachineNetwork != "" &&
-		!cidrEqual(machineNetwork, cluster.MachineNetwork) {
-		return fmt.Errorf("%s machineNetwork can be changed only if address is also changed", family)
+	if spec.MachineNetwork != "" &&
+		status.MachineNetwork != "" &&
+		!cidrEqual(spec.MachineNetwork, status.MachineNetwork) {
+		return fmt.Errorf("%s machineNetwork can be changed only if address is also changed", common.IPv4FamilyName)
 	}
-
-	if gateway != "" && gateway != host.Gateway {
-		return fmt.Errorf("%s gateway can be changed only if address is also changed", family)
+	if spec.Gateway != "" && spec.Gateway != status.Gateway {
+		return fmt.Errorf("%s gateway can be changed only if address is also changed", common.IPv4FamilyName)
 	}
-
-	if dnsServer != "" && dnsServer != host.DNSServer {
-		return fmt.Errorf("%s dnsServer can be changed only if address is also changed", family)
+	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
+		return fmt.Errorf("%s dnsServer can be changed only if address is also changed", common.IPv4FamilyName)
 	}
+	return nil
+}
 
+func validateFamilyAddressChangesV6(spec *ipcv1.IPv6Config, status *ipcv1.IPv6Status) error {
+	// Nothing to validate if we don't have a full picture of spec+status.
+	if spec == nil || status == nil {
+		return nil
+	}
+	if !ipEqual(spec.Address, status.Address) {
+		return nil
+	}
+	if spec.MachineNetwork != "" &&
+		status.MachineNetwork != "" &&
+		!cidrEqual(spec.MachineNetwork, status.MachineNetwork) {
+		return fmt.Errorf("%s machineNetwork can be changed only if address is also changed", common.IPv6FamilyName)
+	}
+	if spec.Gateway != "" && spec.Gateway != status.Gateway {
+		return fmt.Errorf("%s gateway can be changed only if address is also changed", common.IPv6FamilyName)
+	}
+	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
+		return fmt.Errorf("%s dnsServer can be changed only if address is also changed", common.IPv6FamilyName)
+	}
 	return nil
 }
 

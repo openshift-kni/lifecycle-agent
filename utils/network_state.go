@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+
+	"github.com/samber/lo"
 )
 
 // NmAddr represents an IP address in nmstate output.
@@ -104,23 +106,23 @@ func ExtractDNS(state NmState) (string, string) {
 	return dnsV4, dnsV6
 }
 
+func findDefaultGateway(state NmState, bridgeName, destination string) *string {
+	for _, rt := range state.Routes.Running {
+		if rt.Destination == destination && rt.NextHopInterface == bridgeName {
+			return &rt.NextHopAddress
+		}
+	}
+
+	return nil
+}
+
 // FindDefaultGateways searches nmstate routes to find default IPv4 and IPv6 gateways
 // for the given bridge name and default route destinations.
 func FindDefaultGateways(state NmState, bridgeName, defaultRouteV4, defaultRouteV6 string) (string, string) {
-	findGW := func(dest string) string {
-		for _, rt := range state.Routes.Running {
-			if rt.Destination == dest && (rt.NextHopInterface == "" || rt.NextHopInterface == bridgeName) {
-				return rt.NextHopAddress
-			}
-		}
-		for _, rt := range state.Routes.Config {
-			if rt.Destination == dest && (rt.NextHopInterface == "" || rt.NextHopInterface == bridgeName) {
-				return rt.NextHopAddress
-			}
-		}
-		return ""
-	}
-	return findGW(defaultRouteV4), findGW(defaultRouteV6)
+	gw4 := findDefaultGateway(state, bridgeName, defaultRouteV4)
+	gw6 := findDefaultGateway(state, bridgeName, defaultRouteV6)
+
+	return lo.FromPtr(gw4), lo.FromPtr(gw6)
 }
 
 // ExtractBrExVLANID inspects the bridge uplink port; if it's a VLAN interface, returns its VLAN ID.

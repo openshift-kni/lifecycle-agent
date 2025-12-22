@@ -42,7 +42,7 @@ import (
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
 //+kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
@@ -272,8 +272,8 @@ func buildIPConfigStaterootName(ipc *ipcv1.IPConfig) string {
 		ipv6 = ipc.Spec.IPv6.Address
 	}
 
-	if ipc.Spec.VLAN != nil {
-		vlan = strconv.Itoa(ipc.Spec.VLAN.ID)
+	if ipc.Spec.VLANID > 0 {
+		vlan = strconv.Itoa(ipc.Spec.VLANID)
 	}
 
 	if ipc.Spec.DNSResolutionFamily != "" {
@@ -305,24 +305,30 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating TriggerReconcileAnnotation
-				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
-				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
+				// trigger reconcile upon having the TriggerReconcileAnnotation
+				_, newHas := e.ObjectNew.GetAnnotations()[controllerutils.TriggerReconcileAnnotation]
+				if newHas {
+					return true
+				}
+
+				// trigger reconcile upon adding or updating SkipIPConfigClusterHealthChecksAnnotation
+				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
 				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating recert image annotation
+				// trigger reconcile upon adding/removing/updating recert image annotation
 				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.RecertImageAnnotation]
 				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.RecertImageAnnotation]
-				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+				if oldHas != newHas || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating recert pull secret annotation
+				// trigger reconcile upon adding/removing/updating recert pull secret annotation
 				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
 				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.RecertPullSecretAnnotation]
-				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+				if oldHas != newHas || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
 
@@ -498,7 +504,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 		return fmt.Errorf("failed to find machine networks: %w", err)
 	}
 
-	host, cluster := buildHostAndCluster(
+	ipv4, ipv6, vlan := buildNetworkStatus(
 		gw4,
 		gw6,
 		dnsV4,
@@ -508,12 +514,9 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 		vlanID,
 	)
 
-	if ipc.Status.Network == nil {
-		ipc.Status.Network = &ipcv1.NetworkStatus{}
-	}
-
-	ipc.Status.Network.HostNetwork = host
-	ipc.Status.Network.ClusterNetwork = cluster
+	ipc.Status.IPv4 = ipv4
+	ipc.Status.IPv6 = ipv6
+	ipc.Status.VLANID = vlan
 
 	fam, err := r.inferDNSResolutionFamilyFromMC(ctx)
 	if err != nil {
@@ -525,7 +528,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 }
 
 // inferDNSResolutionFamilyFromMC inspects the MachineConfig used to configure dnsmasq
-// and infers the active DNS filter: "ipv4", "ipv6" or "none" when not set.
+// and infers the active DNS filter: "ipv4", "ipv6" or empty when not set.
 // It is assumed that the dnsmasq MachineConfig is the only one that contains the dnsmasq filter file.
 // and it can only container one of the known filters or not exist.
 func (r *IPConfigReconciler) inferDNSResolutionFamilyFromMC(ctx context.Context) (*string, error) {
@@ -565,7 +568,7 @@ func (r *IPConfigReconciler) inferDNSResolutionFamilyFromMC(ctx context.Context)
 		}
 	}
 
-	return lo.ToPtr("none"), nil
+	return lo.ToPtr(""), nil
 }
 
 func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {
@@ -577,7 +580,7 @@ func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {
 	return output, nil
 }
 
-func buildHostAndCluster(
+func buildNetworkStatus(
 	gw4 string,
 	gw6 string,
 	dnsV4 string,
@@ -585,9 +588,10 @@ func buildHostAndCluster(
 	nodeIPs []string,
 	machineCIDRs []string,
 	vlanID *int,
-) (*ipcv1.HostNetworkStatus, *ipcv1.ClusterNetworkStatus) {
-	host := &ipcv1.HostNetworkStatus{}
-	cluster := &ipcv1.ClusterNetworkStatus{}
+) (*ipcv1.IPv4Status, *ipcv1.IPv6Status, int) {
+	var ipv4 *ipcv1.IPv4Status
+	var ipv6 *ipcv1.IPv6Status
+	var vlan int
 
 	var nodeIPv4, nodeIPv6 string
 	for _, ip := range nodeIPs {
@@ -603,35 +607,40 @@ func buildHostAndCluster(
 	}
 
 	if nodeIPv4 != "" {
-		cluster.IPv4 = &ipcv1.ClusterIPStatus{
+		ipv4 = &ipcv1.IPv4Status{
 			Address:        nodeIPv4,
 			MachineNetwork: lcautils.FindMatchingCIDR(nodeIPv4, machineCIDRs),
+			Gateway:        gw4,
+			DNSServer:      dnsV4,
 		}
 	}
+
 	if nodeIPv6 != "" {
-		cluster.IPv6 = &ipcv1.ClusterIPStatus{
+		ipv6 = &ipcv1.IPv6Status{
 			Address:        nodeIPv6,
 			MachineNetwork: lcautils.FindMatchingCIDR(nodeIPv6, machineCIDRs),
-		}
-	}
-
-	if gw4 != "" || dnsV4 != "" {
-		host.IPv4 = &ipcv1.HostIPStatus{
-			Gateway:   gw4,
-			DNSServer: dnsV4,
-		}
-	}
-
-	if gw6 != "" || dnsV6 != "" {
-		host.IPv6 = &ipcv1.HostIPStatus{
-			Gateway:   gw6,
-			DNSServer: dnsV6,
+			Gateway:        gw6,
+			DNSServer:      dnsV6,
 		}
 	}
 
 	if vlanID != nil {
-		host.VLANID = *vlanID
+		vlan = *vlanID
 	}
 
-	return host, cluster
+	return ipv4, ipv6, vlan
+}
+
+// shouldSkipIPClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks.
+// The value is ignored; the annotation acts as a presence flag.
+func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
+	if ipc == nil {
+		return false
+	}
+	anns := ipc.GetAnnotations()
+	if anns == nil {
+		return false
+	}
+	_, ok := anns[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+	return ok
 }

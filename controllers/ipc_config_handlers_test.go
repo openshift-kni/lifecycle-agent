@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -195,11 +196,8 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		// statusIPsMatchSpec requires these to be non-nil even if spec is empty.
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		// statusIPsMatchSpec requires status to be populated even if spec is empty.
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		h := &IPCConfigTwoPhaseHandler{
@@ -273,6 +271,49 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			assert.Contains(t, inProg.Message, "Waiting for system to stabilize")
 		}
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Config, ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+	})
+
+	t.Run("skip healthcheck annotation => bypasses healthcheck failure and continues", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		// Force statusIPsMatchSpec to return error by leaving status network unpopulated.
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		// If health checks are skipped, we should proceed to copy lca-cli (and fail there).
+		mockOps.EXPECT().CopyFile(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("copy failed")).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PrePivot(context.Background(), ipc, logger)
+		assert.Error(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, ctrl.Result{}, res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assertConfigFailed(t, updated)
 	})
 
 	t.Run("copy lca-cli failure => marks failed and returns error", func(t *testing.T) {
@@ -386,29 +427,19 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			Address: "192.0.2.20",
 		}
 		ipc.Spec.IPv6 = nil
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv4: &ipcv1.HostIPStatus{
-					Gateway:   "192.0.2.1",
-					DNSServer: "192.0.2.53",
-				},
-				IPv6: &ipcv1.HostIPStatus{
-					Gateway:   "2001:db8::1",
-					DNSServer: "2001:db8::53",
-				},
-				VLANID: 123,
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv4: &ipcv1.ClusterIPStatus{
-					Address:        "192.0.2.10",
-					MachineNetwork: "192.0.2.0/24",
-				},
-				IPv6: &ipcv1.ClusterIPStatus{
-					Address:        "2001:db8::10",
-					MachineNetwork: "2001:db8::/64",
-				},
-			},
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{
+			Address:        "192.0.2.10",
+			MachineNetwork: "192.0.2.0/24",
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
 		}
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{
+			Address:        "2001:db8::10",
+			MachineNetwork: "2001:db8::/64",
+			Gateway:        "2001:db8::1",
+			DNSServer:      "2001:db8::53",
+		}
+		ipc.Status.VLANID = 123
 		ipc.Status.DNSResolutionFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -440,13 +471,15 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 						// IPv4: address from spec, everything else from status.
 						assert.Equal(t, "192.0.2.20", got.IPv4Address)
 						assert.Equal(t, "192.0.2.0/24", got.IPv4MachineNetwork)
-						assert.Equal(t, "192.0.2.1", got.IPv4Gateway)
+						assert.Equal(t, "192.0.2.1", got.DesiredIPv4Gateway)
+						assert.Equal(t, "192.0.2.1", got.CurrentIPv4Gateway)
 						assert.Equal(t, "192.0.2.53", got.IPv4DNSServer)
 
 						// IPv6: fully backfilled from status (spec omitted IPv6 entirely).
 						assert.Equal(t, "2001:db8::10", got.IPv6Address)
 						assert.Equal(t, "2001:db8::/64", got.IPv6MachineNetwork)
-						assert.Equal(t, "2001:db8::1", got.IPv6Gateway)
+						assert.Equal(t, "2001:db8::1", got.DesiredIPv6Gateway)
+						assert.Equal(t, "2001:db8::1", got.CurrentIPv6Gateway)
 						assert.Equal(t, "2001:db8::53", got.IPv6DNSServer)
 
 						// VLAN and DNS family: backfilled from status.
@@ -564,6 +597,47 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 	scheme := newIPConfigTestScheme(t)
 	logger := logr.Logger{}
 
+	t.Run("skip healthcheck annotation => does not call CheckHealth and proceeds", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PostPivot(context.Background(), ipc, logger)
+		assert.NoError(t, err)
+		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, doNotRequeue(), res)
+	})
+
 	t.Run("healthcheck failing => updates in-progress and requeues", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
@@ -585,7 +659,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ImagePullBackOff",
+							Reason: controllerutils.PodContainerWaitingReasonImagePullBackOff,
 						},
 					},
 				}},
@@ -614,7 +688,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 				Name:      "mirror-stuck",
 				Namespace: "openshift-kube-apiserver",
 				Annotations: map[string]string{
-					"kubernetes.io/config.mirror": "mirror",
+					corev1.MirrorPodAnnotationKey: "mirror",
 				},
 			},
 			Status: corev1.PodStatus{
@@ -623,7 +697,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ImagePullBackOff",
+							Reason: controllerutils.PodContainerWaitingReasonImagePullBackOff,
 						},
 					},
 				}},
@@ -651,8 +725,9 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
-		// No pod deletions are performed here; we only update status and requeue.
-		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-imagepullbackoff"}, &corev1.Pod{}))
+		// Stuck ImagePullBackOff pods are deleted best-effort (except static pod mirror pods).
+		err = k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-imagepullbackoff"}, &corev1.Pod{})
+		assert.True(t, k8serrors.IsNotFound(err), "expected stuck pod to be deleted")
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "not-stuck"}, &corev1.Pod{}))
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "openshift-kube-apiserver", Name: "mirror-stuck"}, &corev1.Pod{}))
 
@@ -686,19 +761,11 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 			Gateway:        "192.0.2.1",
 			DNSServer:      "192.0.2.53",
 		}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv4: &ipcv1.HostIPStatus{
-					Gateway:   "192.0.2.1",
-					DNSServer: "192.0.2.53",
-				},
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv4: &ipcv1.ClusterIPStatus{
-					Address:        "192.0.2.99",   // mismatch
-					MachineNetwork: "192.0.2.0/24", // match
-				},
-			},
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{
+			Address:        "192.0.2.99",   // mismatch
+			MachineNetwork: "192.0.2.0/24", // match
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
 		}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -746,10 +813,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 
 		ipc := mkConfigIPC(t, true)
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -789,10 +853,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -849,7 +910,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 					Name: "c",
 					State: corev1.ContainerState{
 						Waiting: &corev1.ContainerStateWaiting{
-							Reason: "ErrImagePull",
+							Reason: controllerutils.PodContainerWaitingReasonErrImagePull,
 						},
 					},
 				}},
@@ -882,7 +943,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
-		// Ensure the pod still exists (no deletion attempted).
+		// Ensure we attempted deletion but still requeue and do not error when deletion fails.
+		assert.True(t, k8sClient.called, "expected delete to be attempted")
 		assert.NoError(t, k8sClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "stuck-delete-fails"}, &corev1.Pod{}))
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
@@ -899,10 +961,12 @@ type reconcileTestDeleteErrClient struct {
 	failName string
 	failNS   string
 	err      error
+	called   bool
 }
 
 func (c *reconcileTestDeleteErrClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	if obj != nil && obj.GetName() == c.failName && obj.GetNamespace() == c.failNS {
+		c.called = true
 		return c.err
 	}
 	return c.Client.Delete(ctx, obj, opts...)
@@ -1168,10 +1232,7 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.DNSResolutionFamily = "ipv4"
 		ipc.Status.DNSResolutionFamily = "ipv6"
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		err := statusIPsMatchSpec(ipc)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dnsResolutionFamily mismatch")
@@ -1179,11 +1240,8 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 
 	t.Run("vlan mismatch => error includes detail", func(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
-		ipc.Spec.VLAN = &ipcv1.VLANConfig{ID: 100}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork:    &ipcv1.HostNetworkStatus{VLANID: 200},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{},
-		}
+		ipc.Spec.VLANID = 100
+		ipc.Status.VLANID = 200
 		err := statusIPsMatchSpec(ipc)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "vlan mismatch")
@@ -1197,19 +1255,11 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 			Gateway:        "fe80::1",
 			DNSServer:      "2001:db8::53",
 		}
-		ipc.Status.Network = &ipcv1.NetworkStatus{
-			HostNetwork: &ipcv1.HostNetworkStatus{
-				IPv6: &ipcv1.HostIPStatus{
-					Gateway:   "fe80::1",
-					DNSServer: "2001:db8::53",
-				},
-			},
-			ClusterNetwork: &ipcv1.ClusterNetworkStatus{
-				IPv6: &ipcv1.ClusterIPStatus{
-					Address:        "2001:db8::10",
-					MachineNetwork: "2001:db8::/64",
-				},
-			},
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{
+			Address:        "2001:db8::10",
+			MachineNetwork: "2001:db8::/64",
+			Gateway:        "fe80::1",
+			DNSServer:      "2001:db8::53",
 		}
 		assert.NoError(t, statusIPsMatchSpec(ipc))
 	})
@@ -1229,25 +1279,34 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 	})
 
 	t.Run("validateFamilyAddressChanges blocks dependent changes without address change", func(t *testing.T) {
-		host := &ipcv1.HostIPStatus{Gateway: "192.0.2.1", DNSServer: "192.0.2.53"}
-		cluster := &ipcv1.ClusterIPStatus{Address: "192.0.2.10", MachineNetwork: "192.0.2.0/24"}
+		status := &ipcv1.IPv4Status{
+			Address:        "192.0.2.10",
+			MachineNetwork: "192.0.2.0/24",
+			Gateway:        "192.0.2.1",
+			DNSServer:      "192.0.2.53",
+		}
 
 		// Address same, machineNetwork change => error
-		err := validateFamilyAddressChanges("ipv4", "192.0.2.10", "192.0.3.0/24", "", "", host, cluster)
+		err := validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", MachineNetwork: "192.0.3.0/24"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "machineNetwork can be changed only if address is also changed")
 
 		// Address same, gateway change => error
-		err = validateFamilyAddressChanges("ipv4", "192.0.2.10", "", "192.0.2.254", "", host, cluster)
+		err = validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", Gateway: "192.0.2.254"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "gateway can be changed only if address is also changed")
 
 		// Address same, dns change => error
-		err = validateFamilyAddressChanges("ipv4", "192.0.2.10", "", "", "192.0.2.54", host, cluster)
+		err = validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", DNSServer: "192.0.2.54"}, status)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dnsServer can be changed only if address is also changed")
 
 		// Address changed => allowed
-		assert.NoError(t, validateFamilyAddressChanges("ipv4", "192.0.2.11", "192.0.3.0/24", "192.0.2.254", "192.0.2.54", host, cluster))
+		assert.NoError(t, validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{
+			Address:        "192.0.2.11",
+			MachineNetwork: "192.0.3.0/24",
+			Gateway:        "192.0.2.254",
+			DNSServer:      "192.0.2.54",
+		}, status))
 	})
 }

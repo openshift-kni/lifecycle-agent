@@ -157,13 +157,25 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
 		handler.vlanID = 100
 		handler.ipConfigs = []*NetworkIPConfig{
-			{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
-			{IP: "2001::10", MachineNetwork: "2001::/64", Gateway: "2001::1", DNSServer: "2001::2"},
+			{
+				IP:             "10.1.1.10",
+				MachineNetwork: "10.1.1.0/24",
+				DesiredGateway: "10.1.1.1",
+				CurrentGateway: "10.1.1.254",
+				DNSServer:      "1.1.1.1",
+			},
+			{
+				IP:             "2001::10",
+				MachineNetwork: "2001::/64",
+				DesiredGateway: "2001::1",
+				CurrentGateway: "2001::254",
+				DNSServer:      "2001::2",
+			},
 		}
 		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("ens3\npatch-br-ex", nil)
 
-		nmstate, err := handler.prepareNetworkConfiguration(context.Background())
+		nmstate, err := handler.prepareNetworkConfiguration()
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -173,6 +185,9 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 		assert.Contains(t, *nmstate, "ens3")
 		assert.Contains(t, *nmstate, "10.1.1.10")
 		assert.Contains(t, *nmstate, "2001::10")
+		assert.Contains(t, *nmstate, "state: absent")
+		assert.Contains(t, *nmstate, "10.1.1.254")
+		assert.Contains(t, *nmstate, "2001::254")
 	})
 
 	t.Run("returns_errors_for_bad_inputs", func(t *testing.T) {
@@ -205,7 +220,7 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 				ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).AnyTimes().
 					Return("", errors.New("not needed"))
 
-				_, err := handler.prepareNetworkConfiguration(context.Background())
+				_, err := handler.prepareNetworkConfiguration()
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tc.expect)
 			})
@@ -218,8 +233,31 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("", errors.New("fail"))
 
-		_, err := handler.prepareNetworkConfiguration(context.Background())
+		_, err := handler.prepareNetworkConfiguration()
 		assert.Error(t, err)
+	})
+
+	t.Run("does_not_remove_default_gateway_when_current_equals_desired", func(t *testing.T) {
+		handler, ops, _, _ := newTestHandler(t)
+		handler.vlanID = 0
+		handler.ipConfigs = []*NetworkIPConfig{
+			{
+				IP:             "10.1.1.10",
+				MachineNetwork: "10.1.1.0/24",
+				DesiredGateway: "10.1.1.1",
+				CurrentGateway: "10.1.1.1",
+				DNSServer:      "1.1.1.1",
+			},
+		}
+		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+			Return("ens3\npatch-br-ex", nil)
+
+		nmstate, err := handler.prepareNetworkConfiguration()
+		if !assert.NoError(t, err) {
+			return
+		}
+		assert.NotNil(t, nmstate)
+		assert.NotContains(t, *nmstate, "state: absent")
 	})
 }
 
@@ -517,7 +555,7 @@ func TestRunStopsAndReenablesOnFailure(t *testing.T) {
 
 	handler.client = newFakeClient(t)
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{
@@ -622,7 +660,7 @@ func TestRunDoesNotPersistOrDeleteACMHubKubeconfigSecretWhenPresent(t *testing.T
 	}
 
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", Gateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{
