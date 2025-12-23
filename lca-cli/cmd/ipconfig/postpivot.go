@@ -23,6 +23,7 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+	ocp_config_v1 "github.com/openshift/api/config/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,8 +35,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ipconfig"
 	rpmOstree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
-	ocp_config_v1 "github.com/openshift/api/config/v1"
-	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 )
 
 var (
@@ -51,12 +50,9 @@ const (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(ipConfigScheme))
-	utilruntime.Must(machineconfigv1.AddToScheme(ipConfigScheme))
 	utilruntime.Must(ocp_config_v1.AddToScheme(ipConfigScheme))
 
 	ipConfigPostPivotCmd.Flags().StringVar(&recertImage, recertImageFlag, common.DefaultRecertImage, "The full image name for the recert container tool")
-	ipConfigPostPivotCmd.Flags().StringVar(&dnsIPFamily, dnsIPFamilyFlag, "", "IP family for DNS resolution (ipv4|ipv6)")
-
 }
 
 var ipConfigPostPivotCmd = &cobra.Command{
@@ -101,9 +97,6 @@ func runIPConfigPostPivot() (retErr error) {
 			if cfg.RecertImage != "" {
 				recertImage = cfg.RecertImage
 			}
-			if cfg.DNSIPFamily != "" {
-				dnsIPFamily = cfg.DNSIPFamily
-			}
 		} else {
 			pkgLog.Warnf("failed to unmarshal ip-config post-pivot config: %v", jsonErr)
 		}
@@ -113,12 +106,7 @@ func runIPConfigPostPivot() (retErr error) {
 
 	pkgLog.WithFields(logrus.Fields{
 		recertImageFlag: recertImage,
-		dnsIPFamilyFlag: dnsIPFamily,
 	}).Info("IP config post-pivot flags")
-
-	if err := validatePostPivotFlags(); err != nil {
-		return fmt.Errorf("post-pivot flags validation failed: %w", err)
-	}
 
 	ctx := context.Background()
 
@@ -127,7 +115,6 @@ func runIPConfigPostPivot() (retErr error) {
 		opsInterface,
 		client,
 		recertImage,
-		dnsIPFamily,
 		ipConfigScheme,
 		common.KubeconfigFile,
 		common.LCAWorkspaceDir,
@@ -135,20 +122,6 @@ func runIPConfigPostPivot() (retErr error) {
 
 	if err := postPivotHandler.Run(ctx); err != nil {
 		return fmt.Errorf("ip config post-pivot handler failed: %w", err)
-	}
-
-	return nil
-}
-
-// validatePostPivotFlags validates post-pivot cmd flags.
-func validatePostPivotFlags() error {
-	if dnsIPFamily != "" {
-		switch dnsIPFamily {
-		case common.IPv4FamilyName:
-		case common.IPv6FamilyName:
-		default:
-			return fmt.Errorf("dns-ip-family must be one of: %s|%s", common.IPv4FamilyName, common.IPv6FamilyName)
-		}
 	}
 
 	return nil

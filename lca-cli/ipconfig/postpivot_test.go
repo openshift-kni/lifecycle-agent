@@ -90,8 +90,6 @@ current-context: ctx
 
 func TestRunHappyPath(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	// Avoid exercising dnsmasq MachineConfig mutation (would require a reachable API + MachineConfig CRD).
-	handler.dnsIPFamily = ""
 
 	gomock.InOrder(
 		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
@@ -117,7 +115,6 @@ func TestRunHappyPath(t *testing.T) {
 
 func TestRunApplyNetworkConfigurationError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = ""
 
 	opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).
 		Return("", errors.New("nmstate-fail"))
@@ -131,7 +128,6 @@ func TestRunApplyNetworkConfigurationError(t *testing.T) {
 
 func TestRunRecertError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = ""
 
 	gomock.InOrder(
 		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
@@ -154,7 +150,6 @@ func TestRunRecertError(t *testing.T) {
 
 func TestRunEnableKubeletError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = ""
 
 	gomock.InOrder(
 		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
@@ -178,7 +173,6 @@ func TestRunEnableKubeletError(t *testing.T) {
 
 func TestRunCreateKubeClientError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = ""
 	// force CreateKubeClient to fail by returning an invalid kubeconfig payload
 	opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte("{not a kubeconfig"), nil)
 
@@ -202,10 +196,8 @@ func TestRunCreateKubeClientError(t *testing.T) {
 	assert.Contains(t, err.Error(), "create k8s client")
 }
 
-func TestRunDNSRunOnceError(t *testing.T) {
+func TestRunDNSIPFamilyIsIgnoredInPostPivot(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = common.IPv4FamilyName
-	// No patching here; since API is unreachable, SetDNSMasqFilterInMachineConfig should fail.
 
 	gomock.InOrder(
 		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
@@ -219,18 +211,17 @@ func TestRunDNSRunOnceError(t *testing.T) {
 		).Return(nil),
 		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil),
 		opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte(kubeconfigForLocalhost()), nil),
+		opsMock.EXPECT().SystemctlAction("disable", "ip-configuration.service").Return("", nil),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	t.Cleanup(cancel)
 	err := handler.Run(ctx)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "dnsmasq filter")
+	assert.NoError(t, err)
 }
 
 func TestRunDisableServiceError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
-	handler.dnsIPFamily = ""
 
 	gomock.InOrder(
 		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),

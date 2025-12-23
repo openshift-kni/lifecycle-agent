@@ -85,13 +85,17 @@ spec:
                 required:
                 - initMonitorTimeoutSeconds
                 type: object
-              dnsResolutionFamily:
+              dnsFilterOutFamily:
                 description: |-
-                  DNSResolutionFamily selects the IP family to resolve DNS records to on dual-stack clusters.
-                  When set, the other IP family will be filtered out from DNS responses.
+                  DNSFilterOutFamily selects the IP family to filter out from DNS responses.
+                  This setting is only meaningful on dual-stack clusters:
+                  - "ipv4" => filter out A records, leaving AAAA (IPv6)
+                  - "ipv6" => filter out AAAA records, leaving A (IPv4)
+                  - "none" => explicitly disable DNS response filtering
                 enum:
                 - ipv4
                 - ipv6
+                - none
                 type: string
               ipv4:
                 description: IPv4 stack (omit for IPv6-only)
@@ -232,10 +236,14 @@ spec:
                   - type
                   type: object
                 type: array
-              dnsResolutionFamily:
+              dnsFilterOutFamily:
                 description: |-
-                  DNSResolutionFamily reports the active DNS response filtering family:
-                  "ipv4" or "ipv6" (if any)
+                  DNSFilterOutFamily reports the active DNS response filtering family (the IP family being filtered out):
+                  "ipv4", "ipv6" or "none".
+                enum:
+                - ipv4
+                - ipv6
+                - none
                 type: string
               history:
                 description: History stores timing info of different IPConfig stages
@@ -344,11 +352,11 @@ spec:
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
             && c.status==''True'') || has(oldSelf.spec.ipv6) && has(self.spec.ipv6)
             && oldSelf.spec.ipv6==self.spec.ipv6 || !has(self.spec.ipv6) && !has(oldSelf.spec.ipv6)'
-        - message: can not change spec.dnsResolutionFamily while ipconfig is not idle
+        - message: can not change spec.dnsFilterOutFamily while ipconfig is not idle
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
-            && c.status==''True'') || has(oldSelf.spec.dnsResolutionFamily) && has(self.spec.dnsResolutionFamily)
-            && oldSelf.spec.dnsResolutionFamily==self.spec.dnsResolutionFamily ||
-            !has(self.spec.dnsResolutionFamily) && !has(oldSelf.spec.dnsResolutionFamily)'
+            && c.status==''True'') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily)
+            && oldSelf.spec.dnsFilterOutFamily==self.spec.dnsFilterOutFamily || !has(self.spec.dnsFilterOutFamily)
+            && !has(oldSelf.spec.dnsFilterOutFamily)'
         - message: can not change spec.autoRollbackOnFailure while ipconfig is not
             idle
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''

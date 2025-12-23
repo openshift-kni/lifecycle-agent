@@ -221,10 +221,10 @@ func SanitizeForOsname(s string) string {
 // IPConfigStaterootParams represents the parameters used to build a new stateroot name for IP configuration
 // Each of the spec values the user can change such that unique stateroot name is generated are represented here.
 type IPConfigStaterootParams struct {
-	IPv4Address string
-	IPv6Address string
-	VLANID      string
-	DNSIPFamily string
+	IPv4Address        string
+	IPv6Address        string
+	VLANID             string
+	DNSFilterOutFamily string
 }
 
 func BuildNewStaterootNameForIPConfig(params IPConfigStaterootParams) string {
@@ -241,8 +241,8 @@ func BuildNewStaterootNameForIPConfig(params IPConfigStaterootParams) string {
 		parts = append(parts, "vlan-"+SanitizeForOsname(params.VLANID))
 	}
 
-	if params.DNSIPFamily != "" {
-		parts = append(parts, "dns-"+SanitizeForOsname(params.DNSIPFamily))
+	if params.DNSFilterOutFamily != "" {
+		parts = append(parts, "dns-filter-out-"+SanitizeForOsname(params.DNSFilterOutFamily))
 	}
 
 	return strings.Join(parts, "_")

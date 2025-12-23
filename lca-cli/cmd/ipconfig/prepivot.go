@@ -27,7 +27,6 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,7 +34,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	runtimeClient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	intOstree "github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
@@ -88,8 +86,6 @@ const (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(ipPrePivotScheme))
-	utilruntime.Must(mcfgv1.AddToScheme(ipPrePivotScheme))
-	utilruntime.Must(ipcv1.AddToScheme(ipPrePivotScheme))
 
 	ipConfigPrePivotCmd.Flags().StringVar(&newStaterootName, newStaterootNameFlag, "", "New stateroot name")
 	ipConfigPrePivotCmd.Flags().BoolVar(&installInitMonitor, installInitMonitorFlag, false, "Install init monitor service in the new stateroot")
@@ -106,7 +102,7 @@ func init() {
 	ipConfigPrePivotCmd.Flags().StringVar(&ipv6DNS, ipv6DNSFlag, "", "IPv6 DNS server")
 	ipConfigPrePivotCmd.Flags().IntVar(&vlanID, vlanIDFlag, 0, "Optional VLAN ID to use on the br-ex uplink")
 	ipConfigPrePivotCmd.Flags().StringVar(&pullSecretRefName, pullSecretRefNameFlag, "", "The name of the pull secret to use for the recert container tool")
-	ipConfigPrePivotCmd.Flags().StringVar(&dnsIPFamily, dnsIPFamilyFlag, "", "IP family for DNS resolution (ipv4|ipv6)")
+	ipConfigPrePivotCmd.Flags().StringVar(&dnsIPFamily, dnsIPFamilyFlag, "", "IP family to filter out from DNS responses (ipv4|ipv6|none)")
 
 }
 
@@ -169,7 +165,7 @@ func runIPConfigPrePivot() (retErr error) {
 			ipv6DNS = cfg.IPv6DNSServer
 			vlanID = cfg.VLANID
 			pullSecretRefName = cfg.PullSecretRefName
-			dnsIPFamily = cfg.DNSIPFamily
+			dnsIPFamily = cfg.DNSFilterOutFamily
 			installInitMonitor = cfg.InstallInitMonitor
 			installIpConfigurationService = cfg.InstallIPConfigurationService
 		} else {
@@ -410,8 +406,14 @@ func validatePrePivotFlags(ctx context.Context, client runtimeClient.Client) err
 		switch dnsIPFamily {
 		case common.IPv4FamilyName:
 		case common.IPv6FamilyName:
+		case common.DNSFamilyNone:
 		default:
-			return fmt.Errorf("dns-ip-family must be one of: %s|%s", common.IPv4FamilyName, common.IPv6FamilyName)
+			return fmt.Errorf(
+				"dns-ip-family must be one of: %s|%s|%s",
+				common.IPv4FamilyName,
+				common.IPv6FamilyName,
+				common.DNSFamilyNone,
+			)
 		}
 	}
 
@@ -442,6 +444,12 @@ func validateClusterAPIAndUserIPSpec(
 
 	if ipv6Provided && !clusterHasIPv6 {
 		return fmt.Errorf("specified IPv6, but the cluster does not have IPv6")
+	}
+
+	if dnsIPFamily != "" && dnsIPFamily != common.DNSFamilyNone {
+		if !(clusterHasIPv4 && clusterHasIPv6) {
+			return fmt.Errorf("dns-ip-family is supported only on dual-stack clusters")
+		}
 	}
 
 	return nil

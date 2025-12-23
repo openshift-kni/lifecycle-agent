@@ -440,7 +440,7 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			DNSServer:      "2001:db8::53",
 		}
 		ipc.Status.VLANID = 123
-		ipc.Status.DNSResolutionFamily = "ipv6"
+		ipc.Status.DNSFilterOutFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -484,7 +484,7 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 
 						// VLAN and DNS family: backfilled from status.
 						assert.Equal(t, 123, got.VLANID)
-						assert.Equal(t, "ipv6", got.DNSIPFamily)
+						assert.Equal(t, "ipv6", got.DNSFilterOutFamily)
 					}
 					if filepath.Clean(filename) == filepath.Clean(common.PathOutsideChroot(common.IPCFilePath)) {
 						wroteRollbackCopy = true
@@ -1228,14 +1228,14 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 		assert.Contains(t, err.Error(), "not yet populated")
 	})
 
-	t.Run("dnsResolutionFamily mismatch => error includes detail", func(t *testing.T) {
+	t.Run("dnsFilterOutFamily mismatch => error includes detail", func(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
-		ipc.Spec.DNSResolutionFamily = "ipv4"
-		ipc.Status.DNSResolutionFamily = "ipv6"
+		ipc.Spec.DNSFilterOutFamily = "ipv4"
+		ipc.Status.DNSFilterOutFamily = "ipv6"
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		err := statusIPsMatchSpec(ipc)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "dnsResolutionFamily mismatch")
+		assert.Contains(t, err.Error(), "dnsFilterOutFamily mismatch")
 	})
 
 	t.Run("vlan mismatch => error includes detail", func(t *testing.T) {

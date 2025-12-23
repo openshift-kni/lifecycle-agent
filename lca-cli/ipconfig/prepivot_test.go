@@ -83,7 +83,7 @@ func TestIPFamilyOfString(t *testing.T) {
 func TestGetDNSOverrideIP(t *testing.T) {
 	t.Run("prefers_requested_family", func(t *testing.T) {
 		handler, _, _, _ := newTestHandler(t)
-		handler.dnsIPFamily = common.IPv6FamilyName
+		handler.dnsFilterOutFamily = common.IPv6FamilyName
 		handler.ipConfigs = []*NetworkIPConfig{
 			{IP: "10.0.0.1"},
 			{IP: "2001::1"},
@@ -93,12 +93,13 @@ func TestGetDNSOverrideIP(t *testing.T) {
 		if !assert.NoError(t, err) {
 			return
 		}
-		assert.Equal(t, "2001::1", ip)
+		// Filtering out IPv6 means we keep IPv4, so dnsmasq override should use an IPv4 address.
+		assert.Equal(t, "10.0.0.1", ip)
 	})
 
 	t.Run("falls_back_to_first_when_family_missing", func(t *testing.T) {
 		handler, _, _, _ := newTestHandler(t)
-		handler.dnsIPFamily = common.IPv6FamilyName
+		handler.dnsFilterOutFamily = common.IPv6FamilyName
 		handler.ipConfigs = []*NetworkIPConfig{
 			{IP: "10.0.0.1"},
 		}
@@ -112,7 +113,7 @@ func TestGetDNSOverrideIP(t *testing.T) {
 
 	t.Run("errors_when_no_ips", func(t *testing.T) {
 		handler, _, _, _ := newTestHandler(t)
-		handler.dnsIPFamily = common.IPv4FamilyName
+		handler.dnsFilterOutFamily = common.IPv4FamilyName
 
 		_, err := handler.getDNSOverrideIP()
 		assert.Error(t, err)
@@ -495,7 +496,7 @@ func TestUpdateDNSMasqOverrideIPInNewStateroot(t *testing.T) {
 
 func TestUpdateDNSMasqOverrideIPChoosesFamily(t *testing.T) {
 	handler, _, _, _ := newTestHandler(t)
-	handler.dnsIPFamily = common.IPv6FamilyName
+	handler.dnsFilterOutFamily = common.IPv6FamilyName
 	handler.ipConfigs = []*NetworkIPConfig{
 		{IP: "10.0.0.1"},
 		{IP: "2001::10"},
@@ -505,7 +506,7 @@ func TestUpdateDNSMasqOverrideIPChoosesFamily(t *testing.T) {
 	if !assert.NoError(t, err) {
 		return
 	}
-	assert.Equal(t, "2001::10", ip)
+	assert.Equal(t, "10.0.0.1", ip)
 }
 
 func TestPrepareNewStaterootErrorsPropagate(t *testing.T) {
@@ -544,6 +545,40 @@ func TestUpdateDNSMasqOverrideIPPreservesOtherLines(t *testing.T) {
 	ops.EXPECT().WriteFile(expectedPath, []byte(expectedContent), os.FileMode(common.FileMode0600)).Return(nil)
 
 	assert.NoError(t, handler.updateDNSMasqOverrideIPInNewStateroot())
+}
+
+func TestUpdateDNSMasqFilterInNewStateroot(t *testing.T) {
+	t.Run("ipv4 writes filter file", func(t *testing.T) {
+		handler, ops, _, _ := newTestHandler(t)
+		handler.dnsFilterOutFamily = common.IPv4FamilyName
+		handler.ostreeData = &OstreeData{
+			NewStateroot: &StaterootData{DeploymentDir: "/new/deploy"},
+		}
+
+		expectedPath := filepath.Join(handler.ostreeData.NewStateroot.DeploymentDir, "etc/dnsmasq.d/single-node-filter.conf")
+		ops.EXPECT().MkdirAll(filepath.Dir(expectedPath), os.FileMode(0o755)).Return(nil)
+		ops.EXPECT().WriteFile(
+			expectedPath,
+			[]byte(common.DnsmasqFilterManagedByIPConfigHeader+common.DnsmasqFilterOutIPv4+"\n"),
+			os.FileMode(common.FileMode0644),
+		).Return(nil)
+
+		assert.NoError(t, handler.updateDNSMasqFilterInNewStateroot())
+	})
+
+	t.Run("none removes filter file", func(t *testing.T) {
+		handler, ops, _, _ := newTestHandler(t)
+		handler.dnsFilterOutFamily = common.DNSFamilyNone
+		handler.ostreeData = &OstreeData{
+			NewStateroot: &StaterootData{DeploymentDir: "/new/deploy"},
+		}
+
+		expectedPath := filepath.Join(handler.ostreeData.NewStateroot.DeploymentDir, "etc/dnsmasq.d/single-node-filter.conf")
+		ops.EXPECT().RemoveFile(expectedPath).Return(os.ErrNotExist)
+		ops.EXPECT().IsNotExist(os.ErrNotExist).Return(true)
+
+		assert.NoError(t, handler.updateDNSMasqFilterInNewStateroot())
+	})
 }
 
 func TestRunStopsAndReenablesOnFailure(t *testing.T) {
