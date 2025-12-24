@@ -37,7 +37,6 @@ type IPConfigPostPivotHandler struct {
 	ops          ops.Ops
 	recertImage  string
 	client       runtimeclient.Client
-	dnsIPFamily  string
 	scheme       *runtime.Scheme
 	kubeconfig   string
 	workspaceDir string
@@ -49,7 +48,6 @@ func NewIPConfigPostPivotHandler(
 	ops ops.Ops,
 	client runtimeclient.Client,
 	recertImage string,
-	dnsIPFamily string,
 	scheme *runtime.Scheme,
 	kubeconfig string,
 	workspaceDir string,
@@ -59,7 +57,6 @@ func NewIPConfigPostPivotHandler(
 		ops:          ops,
 		recertImage:  recertImage,
 		client:       client,
-		dnsIPFamily:  dnsIPFamily,
 		scheme:       scheme,
 		kubeconfig:   kubeconfig,
 		workspaceDir: workspaceDir,
@@ -94,17 +91,6 @@ func (p *IPConfigPostPivotHandler) Run(ctx context.Context) error {
 	}
 
 	utils.WaitForApi(ctx, client, p.log)
-
-	if p.dnsIPFamily != "" {
-		p.log.Info("Configuring dnsmasq override")
-		if err := utils.RunOnce("set-dns-masq-filter", p.workspaceDir, p.log, common.SetDNSMasqFilterInMachineConfig,
-			ctx,
-			client,
-			p.dnsIPFamily,
-		); err != nil {
-			return fmt.Errorf("failed to update dnsmasq filter in machine config: %w", err)
-		}
-	}
 
 	if _, err = p.ops.SystemctlAction("disable", "ip-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable ip-configuration.service, err: %w", err)

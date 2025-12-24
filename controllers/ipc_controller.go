@@ -4,21 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/go-logr/logr"
-	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -40,12 +36,10 @@ import (
 
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
-//+kubebuilder:rbac:groups=config.openshift.io,resources=proxies,verbs=get;list;watch
 
 // IPConfigReconciler reconciles an IPConfig object
 type IPConfigReconciler struct {
@@ -276,15 +270,15 @@ func buildIPConfigStaterootName(ipc *ipcv1.IPConfig) string {
 		vlan = strconv.Itoa(ipc.Spec.VLANID)
 	}
 
-	if ipc.Spec.DNSResolutionFamily != "" {
-		dnsIPFamily = ipc.Spec.DNSResolutionFamily
+	if ipc.Spec.DNSFilterOutFamily != "" {
+		dnsIPFamily = ipc.Spec.DNSFilterOutFamily
 	}
 
 	return common.BuildNewStaterootNameForIPConfig(common.IPConfigStaterootParams{
-		IPv4Address: ipv4,
-		IPv6Address: ipv6,
-		VLANID:      vlan,
-		DNSIPFamily: dnsIPFamily,
+		IPv4Address:        ipv4,
+		IPv6Address:        ipv6,
+		VLANID:             vlan,
+		DNSFilterOutFamily: dnsIPFamily,
 	})
 }
 
@@ -518,57 +512,38 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 	ipc.Status.IPv6 = ipv6
 	ipc.Status.VLANID = vlan
 
-	fam, err := r.inferDNSResolutionFamilyFromMC(ctx)
+	fam, err := r.inferDNSFilterOutFamily()
 	if err != nil {
-		return fmt.Errorf("failed to infer DNS resolution family from MC: %w", err)
+		return fmt.Errorf("failed to infer DNS filter-out family from dnsmasq filter file: %w", err)
 	}
-	ipc.Status.DNSResolutionFamily = lo.FromPtr(fam)
+	ipc.Status.DNSFilterOutFamily = lo.FromPtr(fam)
 
 	return nil
 }
 
-// inferDNSResolutionFamilyFromMC inspects the MachineConfig used to configure dnsmasq
-// and infers the active DNS filter: "ipv4", "ipv6" or empty when not set.
-// It is assumed that the dnsmasq MachineConfig is the only one that contains the dnsmasq filter file.
-// and it can only container one of the known filters or not exist.
-func (r *IPConfigReconciler) inferDNSResolutionFamilyFromMC(ctx context.Context) (*string, error) {
-	mc := &machineconfigv1.MachineConfig{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: common.DnsmasqMachineConfigName}, mc); err != nil {
-		return nil, fmt.Errorf("failed to get dnsmasq machine config: %w", err)
+// inferDNSFilterOutFamily reads the dnsmasq filter file on the host and infers
+// the active DNS filter-out family: "ipv4", "ipv6", or "none" when the file is absent/empty.
+func (r *IPConfigReconciler) inferDNSFilterOutFamily() (*string, error) {
+	filterPath := common.PathOutsideChroot(common.DnsmasqFilterTargetPath)
+	raw, err := r.ChrootOps.ReadFile(filterPath)
+	if err != nil {
+		if r.ChrootOps.IsNotExist(err) {
+			return lo.ToPtr(common.DNSFamilyNone), nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", filterPath, err)
 	}
 
-	var cfg igntypes.Config
-	if len(mc.Spec.Config.Raw) > 0 {
-		if err := json.Unmarshal(mc.Spec.Config.Raw, &cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse ignition config: %w", err)
-		}
+	content := strings.TrimSpace(string(raw))
+
+	if strings.Contains(content, common.DnsmasqFilterOutIPv6) {
+		return lo.ToPtr(common.IPv6FamilyName), nil
 	}
 
-	v4Encoded := url.PathEscape(common.DnsmasqFilterIPv4)
-	v6Encoded := url.PathEscape(common.DnsmasqFilterIPv6)
-	v4Source := fmt.Sprintf(common.DataURLBase64Template, v4Encoded)
-	v6Source := fmt.Sprintf(common.DataURLBase64Template, v6Encoded)
-
-	for _, f := range cfg.Storage.Files {
-		if f.Path != common.DnsmasqFilterTargetPath {
-			continue
-		}
-
-		if f.Contents.Source == nil {
-			return nil, fmt.Errorf("contents source is nil for file %s", f.Path)
-		}
-
-		switch *f.Contents.Source {
-		case v4Source:
-			return lo.ToPtr(common.IPv4FamilyName), nil
-		case v6Source:
-			return lo.ToPtr(common.IPv6FamilyName), nil
-		default:
-			return nil, fmt.Errorf("unknown contents source: %s", *f.Contents.Source)
-		}
+	if strings.Contains(content, common.DnsmasqFilterOutIPv4) {
+		return lo.ToPtr(common.IPv4FamilyName), nil
 	}
 
-	return lo.ToPtr(""), nil
+	return nil, fmt.Errorf("unknown filter file contents: %q", content)
 }
 
 func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {

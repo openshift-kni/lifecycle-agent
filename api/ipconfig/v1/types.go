@@ -36,7 +36,7 @@ import (
 // +kubebuilder:validation:XValidation:message="ipconfig is a singleton, metadata.name must be 'ipconfig'", rule="self.metadata.name == 'ipconfig'"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv4 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv4) && has(self.spec.ipv4) && oldSelf.spec.ipv4==self.spec.ipv4 || !has(self.spec.ipv4) && !has(oldSelf.spec.ipv4)"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv6 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv6) && has(self.spec.ipv6) && oldSelf.spec.ipv6==self.spec.ipv6 || !has(self.spec.ipv6) && !has(oldSelf.spec.ipv6)"
-// +kubebuilder:validation:XValidation:message="can not change spec.dnsResolutionFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsResolutionFamily) && has(self.spec.dnsResolutionFamily) && oldSelf.spec.dnsResolutionFamily==self.spec.dnsResolutionFamily || !has(self.spec.dnsResolutionFamily) && !has(oldSelf.spec.dnsResolutionFamily)"
+// +kubebuilder:validation:XValidation:message="can not change spec.dnsFilterOutFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily) && oldSelf.spec.dnsFilterOutFamily==self.spec.dnsFilterOutFamily || !has(self.spec.dnsFilterOutFamily) && !has(oldSelf.spec.dnsFilterOutFamily)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +kubebuilder:validation:XValidation:message="can not change spec.vlanID while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID) && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) && !has(oldSelf.spec.vlanID)"
 
@@ -176,12 +176,15 @@ type IPConfigSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VLAN ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	VLANID int `json:"vlanID,omitempty"`
 
-	// DNSResolutionFamily selects the IP family to resolve DNS records to on dual-stack clusters.
-	// When set, the other IP family will be filtered out from DNS responses.
-	// +kubebuilder:validation:Enum=ipv4;ipv6
+	// DNSFilterOutFamily selects the IP family to filter out from DNS responses.
+	// This setting is only meaningful on dual-stack clusters:
+	// - "ipv4" => filter out A records, leaving AAAA (IPv6)
+	// - "ipv6" => filter out AAAA records, leaving A (IPv4)
+	// - "none" => explicitly disable DNS response filtering
+	// +kubebuilder:validation:Enum=ipv4;ipv6;none
 	// +optional
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Resolution Family",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:select"}
-	DNSResolutionFamily string `json:"dnsResolutionFamily,omitempty"`
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Filter-Out Family",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:select"}
+	DNSFilterOutFamily string `json:"dnsFilterOutFamily,omitempty"`
 
 	// AutoRollbackOnFailure defines automatic rollback settings for IPConfig if the configuration
 	// does not complete within the specified time limit.
@@ -224,10 +227,11 @@ type IPConfigStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="VLAN ID"
 	VLANID int `json:"vlanID,omitempty"`
 
-	// DNSResolutionFamily reports the active DNS response filtering family:
-	// "ipv4" or "ipv6" (if any)
-	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Resolution Family"
-	DNSResolutionFamily string `json:"dnsResolutionFamily,omitempty"`
+	// DNSFilterOutFamily reports the active DNS response filtering family (the IP family being filtered out):
+	// "ipv4", "ipv6" or "none".
+	// +kubebuilder:validation:Enum=ipv4;ipv6;none
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Filter-Out Family"
+	DNSFilterOutFamily string `json:"dnsFilterOutFamily,omitempty"`
 
 	// History stores timing info of different IPConfig stages and their important phases
 	// +optional

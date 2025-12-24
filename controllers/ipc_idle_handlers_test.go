@@ -73,9 +73,9 @@ func mkIPCForIdle(t *testing.T) *ipcv1.IPConfig {
 			Stage: ipcv1.IPStages.Idle,
 		},
 		Status: ipcv1.IPConfigStatus{
-			ObservedGeneration:  99,
-			ValidNextStages:     []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Config},
-			DNSResolutionFamily: "ipv4",
+			ObservedGeneration: 99,
+			ValidNextStages:    []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Config},
+			DNSFilterOutFamily: "ipv4",
 			History: []*ipcv1.IPHistory{{
 				Stage:     ipcv1.IPStages.Config,
 				StartTime: metav1.Now(),
@@ -155,7 +155,7 @@ func assertStatusInvariants(t *testing.T, got *ipcv1.IPConfig, want *ipcv1.IPCon
 	assert.Equal(t, want.Status.IPv4, got.Status.IPv4)
 	assert.Equal(t, want.Status.IPv6, got.Status.IPv6)
 	assert.Equal(t, want.Status.VLANID, got.Status.VLANID)
-	assert.Equal(t, want.Status.DNSResolutionFamily, got.Status.DNSResolutionFamily)
+	assert.Equal(t, want.Status.DNSFilterOutFamily, got.Status.DNSFilterOutFamily)
 	assert.Equal(t, normalizeHistoryForCompare(want.Status.History), normalizeHistoryForCompare(got.Status.History))
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,8 +25,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 )
 
 const (
@@ -391,11 +390,11 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 		return fmt.Errorf("status networking not yet populated")
 	}
 
-	if ipc.Spec.DNSResolutionFamily != "" {
-		if ipc.Status.DNSResolutionFamily != ipc.Spec.DNSResolutionFamily {
+	if ipc.Spec.DNSFilterOutFamily != "" {
+		if ipc.Status.DNSFilterOutFamily != ipc.Spec.DNSFilterOutFamily {
 			mismatches = append(mismatches, fmt.Sprintf(
-				"dnsResolutionFamily mismatch: spec=%s status=%s",
-				ipc.Spec.DNSResolutionFamily, ipc.Status.DNSResolutionFamily,
+				"dnsFilterOutFamily mismatch: spec=%s status=%s",
+				ipc.Spec.DNSFilterOutFamily, ipc.Status.DNSFilterOutFamily,
 			))
 		}
 	}
@@ -596,8 +595,8 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 		cfg.PullSecretRefName = v
 	}
 
-	if ipc.Spec.DNSResolutionFamily != "" {
-		cfg.DNSIPFamily = ipc.Spec.DNSResolutionFamily
+	if ipc.Spec.DNSFilterOutFamily != "" {
+		cfg.DNSFilterOutFamily = ipc.Spec.DNSFilterOutFamily
 	}
 
 	cfg.InstallInitMonitor = true
@@ -625,24 +624,24 @@ func completeIPConfigPrePivotConfigFromStatus(cfg *common.IPConfigPrePivotConfig
 		return
 	}
 
-	backfillPrePivotDNSIPFamilyFromStatus(cfg, ipc)
+	backfillPrePivotDNSFilterOutFamilyFromStatus(cfg, ipc)
 	backfillPrePivotVLANFromStatus(cfg, ipc)
 	backfillPrePivotIPv4FromStatus(cfg, ipc.Status.IPv4)
 	backfillPrePivotIPv6FromStatus(cfg, ipc.Status.IPv6)
 }
 
-func backfillPrePivotDNSIPFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
+func backfillPrePivotDNSFilterOutFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
 	if cfg == nil || ipc == nil {
 		return
 	}
-	if cfg.DNSIPFamily != "" {
+	if cfg.DNSFilterOutFamily != "" {
 		return
 	}
-	fam := ipc.Status.DNSResolutionFamily
-	if fam == "" || fam == "none" {
+	fam := ipc.Status.DNSFilterOutFamily
+	if fam == "" || fam == common.DNSFamilyNone {
 		return
 	}
-	cfg.DNSIPFamily = fam
+	cfg.DNSFilterOutFamily = fam
 }
 
 func backfillPrePivotVLANFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
@@ -717,12 +716,6 @@ func backfillPrePivotIPv6FromStatus(
 func (h *IPCConfigTwoPhaseHandler) writeIPConfigPostPivotConfig(ipc *ipcv1.IPConfig) error {
 	cfg := common.IPConfigPostPivotConfig{
 		RecertImage: getRecertImage(ipc),
-	}
-
-	if ipc.Spec.DNSResolutionFamily != "" {
-		cfg.DNSIPFamily = ipc.Spec.DNSResolutionFamily
-	} else if ipc.Status.DNSResolutionFamily != "" && ipc.Status.DNSResolutionFamily != "none" {
-		cfg.DNSIPFamily = ipc.Status.DNSResolutionFamily
 	}
 
 	data, err := json.Marshal(cfg)
@@ -805,6 +798,12 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 
 	if ipc.Spec.IPv6 != nil && !clusterHasIPv6 {
 		return fmt.Errorf("specified IPv6 in the spec, but the cluster does not have IPv6")
+	}
+
+	if ipc.Spec.DNSFilterOutFamily != "" &&
+		ipc.Spec.DNSFilterOutFamily != common.DNSFamilyNone &&
+		!(clusterHasIPv4 && clusterHasIPv6) {
+		return fmt.Errorf("dnsFilterOutFamily is supported only on dual-stack clusters")
 	}
 
 	return nil

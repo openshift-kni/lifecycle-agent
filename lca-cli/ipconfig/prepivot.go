@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -85,7 +86,7 @@ type PrePivotHandler struct {
 	ipConfigs            []*NetworkIPConfig
 	pullSecretRefName    string
 	vlanID               int
-	dnsIPFamily          string
+	dnsFilterOutFamily   string
 	hostWorkspaceDir     string
 	mcdCurrentConfigPath string
 	currentGatewayV4     string
@@ -104,7 +105,7 @@ func NewPrePivotHandler(
 	ipConfigs []*NetworkIPConfig,
 	pullSecretRefName string,
 	vlanID int,
-	dnsIPFamily string,
+	dnsFilterOutFamily string,
 	hostWorkspaceDir string,
 	mcdCurrentConfigPath string,
 	currentGatewayV4 string,
@@ -121,7 +122,7 @@ func NewPrePivotHandler(
 		ipConfigs:            ipConfigs,
 		pullSecretRefName:    pullSecretRefName,
 		vlanID:               vlanID,
-		dnsIPFamily:          dnsIPFamily,
+		dnsFilterOutFamily:   dnsFilterOutFamily,
 		hostWorkspaceDir:     hostWorkspaceDir,
 		mcdCurrentConfigPath: mcdCurrentConfigPath,
 		currentGatewayV4:     currentGatewayV4,
@@ -216,6 +217,11 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 	p.log.Info("Updating DNSMasq override in new stateroot")
 	if err := p.updateDNSMasqOverrideIPInNewStateroot(); err != nil {
 		return fmt.Errorf("failed to update DNSMasq override in new stateroot: %w", err)
+	}
+
+	p.log.Info("Updating dnsmasq DNS response filtering in new stateroot")
+	if err := p.updateDNSMasqFilterInNewStateroot(); err != nil {
+		return fmt.Errorf("failed to update dnsmasq filter file in new stateroot: %w", err)
 	}
 
 	p.log.Info("Removing stale files for regeneration in new stateroot")
@@ -706,11 +712,22 @@ func (p *PrePivotHandler) writeNMStateConfigToNewStateroot(
 }
 
 // getDNSOverrideIP selects the IP to use for dnsmasq overrides based on the
-// configured IP family (if any), falling back to the first available IP.
+// configured DNS filter-out family (if any), falling back to the first available IP.
 func (p *PrePivotHandler) getDNSOverrideIP() (string, error) {
 	overrideIP := ""
+	wantFamily := ""
+
+	switch p.dnsFilterOutFamily {
+	case common.IPv4FamilyName:
+		wantFamily = common.IPv6FamilyName
+	case common.IPv6FamilyName:
+		wantFamily = common.IPv4FamilyName
+	case common.DNSFamilyNone, "":
+		wantFamily = ""
+	}
 	for _, cfg := range p.ipConfigs {
-		if cfg != nil && cfg.IP != "" && ipFamilyOfString(cfg.IP) == p.dnsIPFamily {
+		if wantFamily != "" && cfg != nil && cfg.IP != "" &&
+			ipFamilyOfString(cfg.IP) == wantFamily {
 			overrideIP = cfg.IP
 			break
 		}
@@ -766,9 +783,55 @@ func (p *PrePivotHandler) updateDNSMasqOverrideIPInNewStateroot() error {
 		content += "\n"
 	}
 
-	dnsmasqOverridesPath := filepath.Join(p.ostreeData.NewStateroot.DeploymentDir, common.DnsmasqOverrides)
+	dnsmasqOverridesPath := filepath.Join(
+		p.ostreeData.NewStateroot.DeploymentDir,
+		common.DnsmasqOverrides,
+	)
 	if err := p.ops.WriteFile(dnsmasqOverridesPath, []byte(content), common.FileMode0600); err != nil {
 		return fmt.Errorf("failed to set dnsmasq overrides: %w", err)
+	}
+
+	return nil
+}
+
+// updateDNSMasqFilterInNewStateroot writes/removes the dnsmasq filter file in the new stateroot
+// based on the configured DNS filter-out family:
+//   - ipv4 => write filter-A (filter out IPv4 A records)
+//   - ipv6 => write filter-AAAA (filter out IPv6 AAAA records)
+//   - none => remove the filter file (disable filtering)
+//   - ""   => leave as-is
+func (p *PrePivotHandler) updateDNSMasqFilterInNewStateroot() error {
+	if p.dnsFilterOutFamily == "" {
+		return nil
+	}
+
+	rel := strings.TrimPrefix(common.DnsmasqFilterTargetPath, "/")
+	targetPath := filepath.Join(p.ostreeData.NewStateroot.DeploymentDir, rel)
+
+	if p.dnsFilterOutFamily == common.DNSFamilyNone {
+		if err := p.ops.RemoveFile(targetPath); err != nil && !p.ops.IsNotExist(err) {
+			return fmt.Errorf("failed to remove %s: %w", targetPath, err)
+		}
+		return nil
+	}
+
+	var content string
+	switch p.dnsFilterOutFamily {
+	case common.IPv4FamilyName:
+		content = common.DnsmasqFilterOutIPv4
+	case common.IPv6FamilyName:
+		content = common.DnsmasqFilterOutIPv6
+	default:
+		return fmt.Errorf("unsupported dns-filter-out-family: %s", p.dnsFilterOutFamily)
+	}
+
+	if err := p.ops.MkdirAll(filepath.Dir(targetPath), os.FileMode(0o755)); err != nil {
+		return fmt.Errorf("failed to create dnsmasq filter dir: %w", err)
+	}
+
+	fileContent := common.DnsmasqFilterManagedByIPConfigHeader + content + "\n"
+	if err := p.ops.WriteFile(targetPath, []byte(fileContent), os.FileMode(common.FileMode0644)); err != nil {
+		return fmt.Errorf("failed to write %s: %w", targetPath, err)
 	}
 
 	return nil

@@ -20,8 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 )
 
 type reconcileTestDirEntry struct {
@@ -38,6 +36,10 @@ func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
 	workspaceDir := common.PathOutsideChroot(common.LCAWorkspaceDir)
 	chrootOps.EXPECT().MkdirAll(workspaceDir, os.FileMode(0o700)).Return(nil).AnyTimes()
 	chrootOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).AnyTimes()
+
+	// Default: no dnsmasq filter file present on the host.
+	filterPath := common.PathOutsideChroot(common.DnsmasqFilterTargetPath)
+	chrootOps.EXPECT().ReadFile(filterPath).Return(nil, os.ErrNotExist).AnyTimes()
 }
 
 func reconcileTestMinimalNmstateJSON() string {
@@ -87,14 +89,6 @@ func reconcileTestInstallConfigConfigMap() *corev1.ConfigMap {
 	}
 }
 
-func reconcileTestDNSMasqMachineConfigEmpty() *machineconfigv1.MachineConfig {
-	return &machineconfigv1.MachineConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: common.DnsmasqMachineConfigName,
-		},
-	}
-}
-
 func reconcileTestBaseIPC(stage ipcv1.IPConfigStage) *ipcv1.IPConfig {
 	return &ipcv1.IPConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -130,8 +124,8 @@ func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
 	// No VLAN in nmstate JSON => should not be set.
 	assert.Equal(t, 0, ipc.Status.VLANID)
 
-	// When the dnsmasq MachineConfig has no filter file, the controller reports this as unset/empty.
-	assert.Empty(t, ipc.Status.DNSResolutionFamily)
+	// When no dnsmasq filter file exists (or it's empty), the controller reports no filtering.
+	assert.Equal(t, common.DNSFamilyNone, ipc.Status.DNSFilterOutFamily)
 }
 
 type reconcileTestErrReader struct{ err error }
@@ -176,12 +170,11 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
 		ipc.Status.History = []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: metav1.Now()}} // should be reset
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -231,13 +224,12 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
 		// Nil ValidNextStages triggers the early calculation+status update branch.
 		ipc.Status.ValidNextStages = nil
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -291,12 +283,11 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Rollback)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -349,12 +340,11 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPConfigStage("InvalidStage"))
 		ipc.Status.ValidNextStages = nil
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -396,10 +386,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -444,10 +433,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -493,11 +481,10 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Rollback)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -548,14 +535,13 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
 		// Force cacheRecertImageIfNeeded to attempt secret lookup and fail (no such secret).
 		ipc.Annotations[controllerutils.RecertPullSecretAnnotation] = "missing"
 		delete(ipc.Annotations, controllerutils.RecertCachedImageAnnotation)
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -651,19 +637,24 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		// No IPConfig object initially. InitIPConfig should create one.
-		k8sClient := newFakeClientWithStatus(t, scheme, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, node, cm)
 
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			AnyTimes()
 
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
-			NsenterOps:      ops.NewMockOps(gc),
+			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
@@ -685,22 +676,27 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
 		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
 		ipc.Status.ValidNextStages = nil
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
+
+		nsenterOps := ops.NewMockOps(gc)
+		nsenterOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(reconcileTestMinimalNmstateJSON(), nil).
+			AnyTimes()
 
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
-			NsenterOps:      ops.NewMockOps(gc),
+			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
 			RPMOstreeClient: nil, // forces error in isTargetStaterootBooted
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
@@ -724,12 +720,11 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Idle)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // skip early status update
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
@@ -769,12 +764,11 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		node, _ := mkSNOObjects()
 		cm := reconcileTestInstallConfigConfigMap()
-		mc := reconcileTestDNSMasqMachineConfigEmpty()
 
 		ipc := reconcileTestBaseIPC(ipcv1.IPStages.Config)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // avoid early Status().Update path
 
-		baseClient := newFakeClientWithStatus(t, scheme, ipc, node, cm, mc)
+		baseClient := newFakeClientWithStatus(t, scheme, ipc, node, cm)
 		failingClient := &reconcileTestStatusErrClient{Client: baseClient, err: errors.New("status update failed")}
 
 		nsenterOps := ops.NewMockOps(gc)
