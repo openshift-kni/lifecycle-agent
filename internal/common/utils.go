@@ -212,7 +212,6 @@ func GenerateDeleteOptions() *client.DeleteOptions {
 }
 
 func SanitizeForOsname(s string) string {
-	s = strings.Trim(s, "[]")
 	s = strings.Split(s, "/")[0]
 	re := regexp.MustCompile(`[^A-Za-z0-9]+`)
 	return re.ReplaceAllString(s, "-")

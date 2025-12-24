@@ -83,27 +83,13 @@ func ParseNmstate(output string) (NmState, error) {
 	return state, nil
 }
 
-// ExtractDNS returns the first IPv4 and IPv6 DNS servers from nmstate, preferring running config.
-func ExtractDNS(state NmState) (string, string) {
+// ExtractDNSServers returns the ordered DNS server list from nmstate, preferring running config.
+func ExtractDNSServers(state NmState) []string {
 	dnsServers := state.DNSResolver.Running.Server
 	if len(dnsServers) == 0 {
 		dnsServers = state.DNSResolver.Config.Server
 	}
-
-	var dnsV4, dnsV6 string
-	for _, s := range dnsServers {
-		if isIPv6String(s) {
-			if dnsV6 == "" {
-				dnsV6 = s
-			}
-		} else {
-			if dnsV4 == "" {
-				dnsV4 = s
-			}
-		}
-	}
-
-	return dnsV4, dnsV6
+	return dnsServers
 }
 
 func findDefaultGateway(state NmState, bridgeName, destination string) *string {
@@ -177,9 +163,4 @@ func FindMatchingCIDR(ipStr string, cidrs []string) string {
 		}
 	}
 	return ""
-}
-
-func isIPv6String(s string) bool {
-	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() == nil
 }

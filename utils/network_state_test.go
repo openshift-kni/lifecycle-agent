@@ -34,7 +34,7 @@ func TestParseNmstate_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestExtractDNS_PrefersRunningThenConfig(t *testing.T) {
+func TestExtractDNSServers_PrefersRunningThenConfig(t *testing.T) {
 	state := NmState{
 		DNSResolver: NmDNS{
 			Running: NmDNSList{
@@ -46,15 +46,13 @@ func TestExtractDNS_PrefersRunningThenConfig(t *testing.T) {
 		},
 	}
 
-	ipv4, ipv6 := ExtractDNS(state)
-	assert.Equal(t, "1.1.1.1", ipv4)
-	assert.Equal(t, "2001:db8::1", ipv6)
+	got := ExtractDNSServers(state)
+	assert.Equal(t, []string{"1.1.1.1", "2001:db8::1"}, got)
 
 	// If running is empty, fall back to config
 	state.DNSResolver.Running.Server = nil
-	ipv4, ipv6 = ExtractDNS(state)
-	assert.Equal(t, "8.8.8.8", ipv4)
-	assert.Equal(t, "2001:db8::2", ipv6)
+	got = ExtractDNSServers(state)
+	assert.Equal(t, []string{"8.8.8.8", "2001:db8::2"}, got)
 }
 
 func TestFindDefaultGateways(t *testing.T) {

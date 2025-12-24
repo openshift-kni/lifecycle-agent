@@ -5,22 +5,21 @@ import (
 )
 
 type IPConfigPrePivotConfig struct {
-	NewStaterootName              string `json:"new-stateroot-name,omitempty"`
-	IPv4Address                   string `json:"ipv4-address,omitempty"`
-	IPv4MachineNetwork            string `json:"ipv4-machine-network,omitempty"`
-	IPv6Address                   string `json:"ipv6-address,omitempty"`
-	IPv6MachineNetwork            string `json:"ipv6-machine-network,omitempty"`
-	DesiredIPv4Gateway            string `json:"ipv4-gateway,omitempty"`
-	DesiredIPv6Gateway            string `json:"ipv6-gateway,omitempty"`
-	CurrentIPv4Gateway            string `json:"current-ipv4-gateway,omitempty"`
-	CurrentIPv6Gateway            string `json:"current-ipv6-gateway,omitempty"`
-	IPv4DNSServer                 string `json:"ipv4-dns,omitempty"`
-	IPv6DNSServer                 string `json:"ipv6-dns,omitempty"`
-	VLANID                        int    `json:"vlan-id,omitempty"`
-	DNSFilterOutFamily            string `json:"dns-filter-out-family,omitempty"`
-	PullSecretRefName             string `json:"pull-secret-ref-name,omitempty"`
-	InstallInitMonitor            bool   `json:"install-init-monitor,omitempty"`
-	InstallIPConfigurationService bool   `json:"install-ip-configuration-service,omitempty"`
+	NewStaterootName              string   `json:"new-stateroot-name,omitempty"`
+	IPv4Address                   string   `json:"ipv4-address,omitempty"`
+	IPv4MachineNetwork            string   `json:"ipv4-machine-network,omitempty"`
+	IPv6Address                   string   `json:"ipv6-address,omitempty"`
+	IPv6MachineNetwork            string   `json:"ipv6-machine-network,omitempty"`
+	DesiredIPv4Gateway            string   `json:"ipv4-gateway,omitempty"`
+	DesiredIPv6Gateway            string   `json:"ipv6-gateway,omitempty"`
+	CurrentIPv4Gateway            string   `json:"current-ipv4-gateway,omitempty"`
+	CurrentIPv6Gateway            string   `json:"current-ipv6-gateway,omitempty"`
+	DNSServers                    []string `json:"dns-servers,omitempty"`
+	VLANID                        int      `json:"vlan-id,omitempty"`
+	DNSFilterOutFamily            string   `json:"dns-filter-out-family,omitempty"`
+	PullSecretRefName             string   `json:"pull-secret-ref-name,omitempty"`
+	InstallInitMonitor            bool     `json:"install-init-monitor,omitempty"`
+	InstallIPConfigurationService bool     `json:"install-ip-configuration-service,omitempty"`
 }
 
 type IPConfigPostPivotConfig struct {

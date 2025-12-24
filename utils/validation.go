@@ -14,7 +14,6 @@ func ValidateIPFamilyConfig(
 	addr string,
 	networkCIDR string,
 	gateway string,
-	dnsServer string,
 ) error {
 	if addr != "" {
 		if err := validateIPAddress(family, addr); err != nil {
@@ -31,12 +30,6 @@ func ValidateIPFamilyConfig(
 	if gateway != "" {
 		if err := validateIPAddress(family, gateway); err != nil {
 			return fmt.Errorf("invalid %s gateway: %w", strings.ToUpper(family), err)
-		}
-	}
-
-	if dnsServer != "" {
-		if err := validateIPAddress(family, dnsServer); err != nil {
-			return fmt.Errorf("invalid %s DNS server: %w", strings.ToUpper(family), err)
 		}
 	}
 

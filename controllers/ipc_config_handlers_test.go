@@ -431,14 +431,13 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			Address:        "192.0.2.10",
 			MachineNetwork: "192.0.2.0/24",
 			Gateway:        "192.0.2.1",
-			DNSServer:      "192.0.2.53",
 		}
 		ipc.Status.IPv6 = &ipcv1.IPv6Status{
 			Address:        "2001:db8::10",
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "2001:db8::1",
-			DNSServer:      "2001:db8::53",
 		}
+		ipc.Status.DNSServers = []string{"192.0.2.53", "2001:db8::53"}
 		ipc.Status.VLANID = 123
 		ipc.Status.DNSFilterOutFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
@@ -473,18 +472,19 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 						assert.Equal(t, "192.0.2.0/24", got.IPv4MachineNetwork)
 						assert.Equal(t, "192.0.2.1", got.DesiredIPv4Gateway)
 						assert.Equal(t, "192.0.2.1", got.CurrentIPv4Gateway)
-						assert.Equal(t, "192.0.2.53", got.IPv4DNSServer)
 
 						// IPv6: fully backfilled from status (spec omitted IPv6 entirely).
 						assert.Equal(t, "2001:db8::10", got.IPv6Address)
 						assert.Equal(t, "2001:db8::/64", got.IPv6MachineNetwork)
 						assert.Equal(t, "2001:db8::1", got.DesiredIPv6Gateway)
 						assert.Equal(t, "2001:db8::1", got.CurrentIPv6Gateway)
-						assert.Equal(t, "2001:db8::53", got.IPv6DNSServer)
+						// dnsServers is not backfilled anymore.
+						assert.Nil(t, got.DNSServers)
 
-						// VLAN and DNS family: backfilled from status.
+						// VLAN: backfilled from status.
 						assert.Equal(t, 123, got.VLANID)
-						assert.Equal(t, "ipv6", got.DNSFilterOutFamily)
+						// dnsFilterOutFamily is not backfilled anymore.
+						assert.Equal(t, "", got.DNSFilterOutFamily)
 					}
 					if filepath.Clean(filename) == filepath.Clean(common.PathOutsideChroot(common.IPCFilePath)) {
 						wroteRollbackCopy = true
@@ -759,14 +759,14 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 			Address:        "192.0.2.11/24",
 			MachineNetwork: "192.0.2.0/24",
 			Gateway:        "192.0.2.1",
-			DNSServer:      "192.0.2.53",
 		}
+		ipc.Spec.DNSServers = []string{"192.0.2.53"}
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{
 			Address:        "192.0.2.99",   // mismatch
 			MachineNetwork: "192.0.2.0/24", // match
 			Gateway:        "192.0.2.1",
-			DNSServer:      "192.0.2.53",
 		}
+		ipc.Status.DNSServers = []string{"192.0.2.53"}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -1253,14 +1253,14 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 			Address:        "2001:db8::10/64",
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "fe80::1",
-			DNSServer:      "2001:db8::53",
 		}
+		ipc.Spec.DNSServers = []string{"2001:db8::53"}
 		ipc.Status.IPv6 = &ipcv1.IPv6Status{
 			Address:        "2001:db8::10",
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "fe80::1",
-			DNSServer:      "2001:db8::53",
 		}
+		ipc.Status.DNSServers = []string{"2001:db8::53"}
 		assert.NoError(t, statusIPsMatchSpec(ipc))
 	})
 }
@@ -1283,7 +1283,6 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 			Address:        "192.0.2.10",
 			MachineNetwork: "192.0.2.0/24",
 			Gateway:        "192.0.2.1",
-			DNSServer:      "192.0.2.53",
 		}
 
 		// Address same, machineNetwork change => error
@@ -1296,17 +1295,27 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "gateway can be changed only if address is also changed")
 
-		// Address same, dns change => error
-		err = validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{Address: "192.0.2.10", DNSServer: "192.0.2.54"}, status)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "dnsServer can be changed only if address is also changed")
-
 		// Address changed => allowed
 		assert.NoError(t, validateFamilyAddressChanges(common.IPv4FamilyName, &ipcv1.IPv4Config{
 			Address:        "192.0.2.11",
 			MachineNetwork: "192.0.3.0/24",
 			Gateway:        "192.0.2.254",
-			DNSServer:      "192.0.2.54",
 		}, status))
+	})
+
+	t.Run("validateAddressChanges blocks dnsServers changes without any address change", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10"}
+		ipc.Spec.DNSServers = []string{"192.0.2.54"}
+		ipc.Status.DNSServers = []string{"192.0.2.53"}
+
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dnsServers can be changed only if address is also changed")
+
+		// Now change address too => allowed
+		ipc.Spec.IPv4.Address = "192.0.2.11"
+		assert.NoError(t, validateAddressChanges(ipc))
 	})
 }

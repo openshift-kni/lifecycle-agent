@@ -55,14 +55,11 @@ routes:
     table-id: 254
   {{- end }}
 {{- end }}
-{{- if or .IPv4.DNSServer .IPv6.DNSServer }}
+{{- if gt (len .DNSServers) 0 }}
 dns-resolver:
   config:
     server:
-    {{- if .IPv4.DNSServer }}
-    - {{ .IPv4.DNSServer }}
-    {{- end }}
-    {{- if .IPv6.DNSServer }}
-    - {{ .IPv6.DNSServer }}
+    {{- range .DNSServers }}
+    - {{ . }}
     {{- end }}
 {{- end }}
