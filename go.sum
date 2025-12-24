@@ -237,8 +237,8 @@ github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8 h1:xSTHSdkK
 github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8/go.mod h1:L8Myy4T/jDhxV1TYMbRgcqoun9jibxdyrcyj7cYZn7M=
 github.com/openshift/machine-config-operator v0.0.1-0.20250320230514-53e78f3692ee h1:ITOXo9zrpzl68qrzh/+1uRJlbpMl88jETfWfFyIa3uU=
 github.com/openshift/machine-config-operator v0.0.1-0.20250320230514-53e78f3692ee/go.mod h1:ZA2cpM5ol3zcxRpG4gQr+XSlEQJe732noPWcMz6MQ4k=
-github.com/operator-framework/api v0.36.0 h1:6+duRhamCvB540JbvNp/1+Pot7luff7HqdAOm9bAntg=
-github.com/operator-framework/api v0.36.0/go.mod h1:QSmHMx8XpGsNWvjU5CUelVZC916VLp/TZhfYvGKpghM=
+github.com/operator-framework/api v0.37.0 h1:2XCMWitBnumtJTqzip6LQKUwpM2pXVlt3gkpdlkbaCE=
+github.com/operator-framework/api v0.37.0/go.mod h1:NZs4vB+Jiamyv3pdPDjZtuC4U7KX0eq4z2r5hKY5fUA=
 github.com/otiai10/copy v1.14.0 h1:dCI/t1iTdYGtkvCuBG2BgR6KZa83PTclw4U5n2wAllU=
 github.com/otiai10/copy v1.14.0/go.mod h1:ECfuL02W+/FkTWZWgQqXPWZgW9oeKCSQ5qVfSc4qc4w=
 github.com/otiai10/mint v1.5.1 h1:XaPLeE+9vGbuyEHem1JNk3bYc7KKqyI/na0/mLd/Kks=
