@@ -115,11 +115,12 @@ func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
 		assert.Equal(t, "192.0.2.10", ipc.Status.IPv4.Address)
 		assert.Equal(t, "192.0.2.0/24", ipc.Status.IPv4.MachineNetwork)
 		assert.Equal(t, "192.0.2.1", ipc.Status.IPv4.Gateway)
-		assert.Equal(t, "192.0.2.53", ipc.Status.IPv4.DNSServer)
 	}
 
 	// No IPv6 in the fixture => should not be set.
 	assert.Nil(t, ipc.Status.IPv6)
+
+	assert.Equal(t, []string{"192.0.2.53", "2001:db8::53"}, ipc.Status.DNSServers)
 
 	// No VLAN in nmstate JSON => should not be set.
 	assert.Equal(t, 0, ipc.Status.VLANID)

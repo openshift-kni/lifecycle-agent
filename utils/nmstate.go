@@ -32,6 +32,7 @@ type NMStateConfig struct {
 	VLANID        int
 	IPv4Config    *IPConfig
 	IPv6Config    *IPConfig
+	DNSServers    []string
 }
 
 // IPConfig represents IP configuration for a specific protocol
@@ -42,7 +43,6 @@ type IPConfig struct {
 	DHCPEnabled    bool
 	DesiredGateway string
 	CurrentGateway string
-	DNSServer      string
 }
 
 // NMStateTemplateData represents the template data for NMState YAML generation
@@ -51,6 +51,7 @@ type NMStateTemplateData struct {
 	VLANID        int
 	IPv4          IPConfig
 	IPv6          IPConfig
+	DNSServers    []string
 }
 
 //go:embed templates/nmstate.yaml.tmpl
@@ -65,6 +66,7 @@ func generateNMStateYAML(config *NMStateConfig) (string, error) {
 	templateData := NMStateTemplateData{
 		InterfaceName: config.InterfaceName,
 		VLANID:        config.VLANID,
+		DNSServers:    config.DNSServers,
 		IPv4: IPConfig{
 			Enabled:     false,
 			DHCPEnabled: false,
@@ -104,8 +106,7 @@ func GenerateNMState(
 	machineNetworks []string,
 	desiredGatewayV4 string,
 	desiredGatewayV6 string,
-	ipv4DNS string,
-	ipv6DNS string,
+	dnsServers []string,
 	vlanID int,
 	currentGatewayV4 string,
 	currentGatewayV6 string,
@@ -120,6 +121,7 @@ func GenerateNMState(
 	config := &NMStateConfig{
 		InterfaceName: interfaceName,
 		VLANID:        vlanID,
+		DNSServers:    dnsServers,
 	}
 
 	for idx, ip := range ips {
@@ -152,7 +154,6 @@ func GenerateNMState(
 	}
 
 	if config.IPv4Config != nil {
-		config.IPv4Config.DNSServer = ipv4DNS
 		config.IPv4Config.DesiredGateway = desiredGatewayV4
 
 		if desiredGatewayV4 != "" && currentGatewayV4 != desiredGatewayV4 {
@@ -161,7 +162,6 @@ func GenerateNMState(
 	}
 
 	if config.IPv6Config != nil {
-		config.IPv6Config.DNSServer = ipv6DNS
 		config.IPv6Config.DesiredGateway = desiredGatewayV6
 
 		if desiredGatewayV6 != "" && currentGatewayV6 != desiredGatewayV6 {

@@ -36,6 +36,7 @@ import (
 // +kubebuilder:validation:XValidation:message="ipconfig is a singleton, metadata.name must be 'ipconfig'", rule="self.metadata.name == 'ipconfig'"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv4 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv4) && has(self.spec.ipv4) && oldSelf.spec.ipv4==self.spec.ipv4 || !has(self.spec.ipv4) && !has(oldSelf.spec.ipv4)"
 // +kubebuilder:validation:XValidation:message="can not change spec.ipv6 while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.ipv6) && has(self.spec.ipv6) && oldSelf.spec.ipv6==self.spec.ipv6 || !has(self.spec.ipv6) && !has(oldSelf.spec.ipv6)"
+// +kubebuilder:validation:XValidation:message="can not change spec.dnsServers while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsServers) && has(self.spec.dnsServers) && oldSelf.spec.dnsServers==self.spec.dnsServers || !has(self.spec.dnsServers) && !has(oldSelf.spec.dnsServers)"
 // +kubebuilder:validation:XValidation:message="can not change spec.dnsFilterOutFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily) && oldSelf.spec.dnsFilterOutFamily==self.spec.dnsFilterOutFamily || !has(self.spec.dnsFilterOutFamily) && !has(oldSelf.spec.dnsFilterOutFamily)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +kubebuilder:validation:XValidation:message="can not change spec.vlanID while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID) && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) && !has(oldSelf.spec.vlanID)"
@@ -90,11 +91,6 @@ type IPv4Config struct {
 	// Gateway is the default IPv4 gateway address
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Gateway string `json:"gateway,omitempty"`
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Format=ipv4
-	// DNSServer is the IPv4 DNS server IP to use
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServer string `json:"dnsServer,omitempty"`
 }
 
 // IPv6Config represents a single IPv6 stack configuration
@@ -116,11 +112,6 @@ type IPv6Config struct {
 	// Gateway is the default IPv6 gateway address
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Gateway string `json:"gateway,omitempty"`
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Format=ipv6
-	// DNSServer is the IPv6 DNS server IP to use
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServer string `json:"dnsServer,omitempty"`
 }
 
 // IPv4Status represents observed IPv4 configuration.
@@ -134,9 +125,6 @@ type IPv4Status struct {
 	// Gateway is the default IPv4 gateway address.
 	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Gateway string `json:"gateway,omitempty"`
-	// DNSServer is the IPv4 DNS server IP.
-	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4 DNS Server",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServer string `json:"dnsServer,omitempty"`
 }
 
 // IPv6Status represents observed IPv6 configuration.
@@ -150,9 +138,6 @@ type IPv6Status struct {
 	// Gateway is the default IPv6 gateway address.
 	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Gateway string `json:"gateway,omitempty"`
-	// DNSServer is the IPv6 DNS server IP.
-	//+operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6 DNS Server",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServer string `json:"dnsServer,omitempty"`
 }
 
 // IPConfigSpec defines the desired state of IPConfig
@@ -169,6 +154,11 @@ type IPConfigSpec struct {
 	// IPv6 stack (omit for IPv4-only)
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv6"
 	IPv6 *IPv6Config `json:"ipv6,omitempty"`
+
+	// DNSServers is the complete ordered list of DNS server IPs (IPv4 and/or IPv6)
+	// to configure on the node.
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Servers",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	DNSServers []string `json:"dnsServers,omitempty"`
 
 	// Optional VLAN applied to br-ex path
 	// +kubebuilder:validation:Minimum=1
@@ -222,6 +212,10 @@ type IPConfigStatus struct {
 	// IPv6 reports the currently detected IPv6 configuration (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv6"
 	IPv6 *IPv6Status `json:"ipv6,omitempty"`
+
+	// DNSServers reports the currently detected ordered list of DNS server IPs (IPv4 and/or IPv6).
+	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Servers"
+	DNSServers []string `json:"dnsServers,omitempty"`
 
 	// VLANID reports the currently detected VLAN ID on the br-ex uplink path (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="VLAN ID"

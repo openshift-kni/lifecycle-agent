@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -408,6 +409,15 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 		}
 	}
 
+	if len(ipc.Spec.DNSServers) > 0 {
+		if !reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+			mismatches = append(
+				mismatches,
+				fmt.Sprintf("dnsServers mismatch: spec=%v status=%v", ipc.Spec.DNSServers, ipc.Status.DNSServers),
+			)
+		}
+	}
+
 	if v4 := ipc.Spec.IPv4; v4 != nil {
 		v4Mismatches := checkFamilyStatusMatchesSpec(common.IPv4FamilyName, v4, ipc.Status.IPv4)
 		mismatches = append(mismatches, v4Mismatches...)
@@ -459,9 +469,6 @@ func checkIPFamilySpecMatchesStatusV4(spec *ipcv1.IPv4Config, status *ipcv1.IPv4
 	if spec.Gateway != "" && spec.Gateway != status.Gateway {
 		mismatches = append(mismatches, fmt.Sprintf("ipv4 gateway mismatch: spec=%s status=%s", spec.Gateway, status.Gateway))
 	}
-	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
-		mismatches = append(mismatches, fmt.Sprintf("ipv4 dns mismatch: spec=%s status=%s", spec.DNSServer, status.DNSServer))
-	}
 	if status.Address == "" {
 		mismatches = append(mismatches, "ipv4 address missing from status")
 	} else if !ipEqual(spec.Address, status.Address) {
@@ -488,9 +495,6 @@ func checkIPFamilySpecMatchesStatusV6(spec *ipcv1.IPv6Config, status *ipcv1.IPv6
 	if spec.Gateway != "" && spec.Gateway != status.Gateway {
 		mismatches = append(mismatches, fmt.Sprintf("ipv6 gateway mismatch: spec=%s status=%s", spec.Gateway, status.Gateway))
 	}
-	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
-		mismatches = append(mismatches, fmt.Sprintf("ipv6 dns mismatch: spec=%s status=%s", spec.DNSServer, status.DNSServer))
-	}
 	if status.Address == "" {
 		mismatches = append(mismatches, "ipv6 address missing from status")
 	} else if !ipEqual(spec.Address, status.Address) {
@@ -512,9 +516,7 @@ func ipEqual(a, b string) bool {
 		if strings.Contains(s, "/") {
 			s = strings.SplitN(s, "/", 2)[0]
 		}
-		// IPv6 addresses sometimes appear wrapped in brackets (e.g. "[2001:db8::1]").
-		// Strip these so "[2001:db8::1]" and "2001:db8::1" compare equal.
-		return strings.Trim(s, "[]")
+		return s
 	}
 
 	na := normalize(a)
@@ -541,8 +543,7 @@ func cidrEqual(a, b string) bool {
 }
 
 func parseCIDR(c string) (string, int, error) {
-	// IPConfig values are expected to use plain CIDRs without brackets.
-	c = strings.Trim(strings.TrimSpace(c), "[]")
+	c = strings.TrimSpace(c)
 	_, ipNet, err := net.ParseCIDR(c)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to parse CIDR %s: %w", c, err)
@@ -565,14 +566,11 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 		if v.Gateway != "" {
 			cfg.DesiredIPv4Gateway = v.Gateway
 		}
-		if v.DNSServer != "" {
-			cfg.IPv4DNSServer = v.DNSServer
-		}
 	}
 
 	if v := ipc.Spec.IPv6; v != nil {
 		if v.Address != "" {
-			cfg.IPv6Address = strings.Trim(strings.Split(v.Address, "/")[0], "[]")
+			cfg.IPv6Address = strings.Split(v.Address, "/")[0]
 		}
 		if v.MachineNetwork != "" {
 			cfg.IPv6MachineNetwork = v.MachineNetwork
@@ -580,9 +578,10 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 		if v.Gateway != "" {
 			cfg.DesiredIPv6Gateway = v.Gateway
 		}
-		if v.DNSServer != "" {
-			cfg.IPv6DNSServer = v.DNSServer
-		}
+	}
+
+	if len(ipc.Spec.DNSServers) > 0 {
+		cfg.DNSServers = append([]string{}, ipc.Spec.DNSServers...)
 	}
 
 	if ipc.Spec.VLANID > 0 {
@@ -619,29 +618,16 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	return nil
 }
 
+// completeIPConfigPrePivotConfigFromStatus completes the ip-config pre-pivot configuration from the status.
+// It only backfills values that must be provided to the cli regrdless of they change.
 func completeIPConfigPrePivotConfigFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
 	if cfg == nil || ipc == nil {
 		return
 	}
 
-	backfillPrePivotDNSFilterOutFamilyFromStatus(cfg, ipc)
 	backfillPrePivotVLANFromStatus(cfg, ipc)
 	backfillPrePivotIPv4FromStatus(cfg, ipc.Status.IPv4)
 	backfillPrePivotIPv6FromStatus(cfg, ipc.Status.IPv6)
-}
-
-func backfillPrePivotDNSFilterOutFamilyFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
-	if cfg == nil || ipc == nil {
-		return
-	}
-	if cfg.DNSFilterOutFamily != "" {
-		return
-	}
-	fam := ipc.Status.DNSFilterOutFamily
-	if fam == "" || fam == common.DNSFamilyNone {
-		return
-	}
-	cfg.DNSFilterOutFamily = fam
 }
 
 func backfillPrePivotVLANFromStatus(cfg *common.IPConfigPrePivotConfig, ipc *ipcv1.IPConfig) {
@@ -679,9 +665,6 @@ func backfillPrePivotIPv4FromStatus(
 	if cfg.CurrentIPv4Gateway == "" && status.Gateway != "" {
 		cfg.CurrentIPv4Gateway = status.Gateway
 	}
-	if cfg.IPv4DNSServer == "" && status.DNSServer != "" {
-		cfg.IPv4DNSServer = status.DNSServer
-	}
 }
 
 func backfillPrePivotIPv6FromStatus(
@@ -695,7 +678,7 @@ func backfillPrePivotIPv6FromStatus(
 		return
 	}
 	if cfg.IPv6Address == "" && status.Address != "" {
-		cfg.IPv6Address = strings.TrimSpace(strings.Trim(status.Address, "[]"))
+		cfg.IPv6Address = strings.TrimSpace(status.Address)
 	}
 	if cfg.IPv6MachineNetwork == "" && status.MachineNetwork != "" {
 		cfg.IPv6MachineNetwork = status.MachineNetwork
@@ -705,9 +688,6 @@ func backfillPrePivotIPv6FromStatus(
 	}
 	if cfg.CurrentIPv6Gateway == "" && status.Gateway != "" {
 		cfg.CurrentIPv6Gateway = status.Gateway
-	}
-	if cfg.IPv6DNSServer == "" && status.DNSServer != "" {
-		cfg.IPv6DNSServer = status.DNSServer
 	}
 }
 
@@ -800,6 +780,21 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 		return fmt.Errorf("specified IPv6 in the spec, but the cluster does not have IPv6")
 	}
 
+	for _, s := range ipc.Spec.DNSServers {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			return fmt.Errorf("dnsServers contains an invalid IP: %q", s)
+		}
+
+		if ip.To4() != nil && !clusterHasIPv4 {
+			return fmt.Errorf("dnsServers contains an IPv4 address %q but the cluster does not have IPv4", s)
+		}
+
+		if ip.To16() != nil && !clusterHasIPv6 {
+			return fmt.Errorf("dnsServers contains an IPv6 address %q but the cluster does not have IPv6", s)
+		}
+	}
+
 	if ipc.Spec.DNSFilterOutFamily != "" &&
 		ipc.Spec.DNSFilterOutFamily != common.DNSFamilyNone &&
 		!(clusterHasIPv4 && clusterHasIPv6) {
@@ -810,8 +805,8 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 }
 
 // validateAddressChanges enforces that for a single IP family (IPv4/IPv6),
-// machineNetwork / gateway / dnsServer are only allowed to change when the
-// address changes as well. DNS server / gateway / machineNetwork change without address change are not supported
+// machineNetwork / gateway are only allowed to change when the
+// address changes as well. Gateway / machineNetwork change without address change are not supported
 // at the moment.
 func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 	if ipc == nil {
@@ -838,11 +833,25 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 		}
 	}
 
+	if len(ipc.Spec.DNSServers) > 0 && len(ipc.Status.DNSServers) > 0 &&
+		!reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+		ipChanged := false
+		if ipc.Spec.IPv4 != nil && ipc.Status.IPv4 != nil && !ipEqual(ipc.Spec.IPv4.Address, ipc.Status.IPv4.Address) {
+			ipChanged = true
+		}
+		if ipc.Spec.IPv6 != nil && ipc.Status.IPv6 != nil && !ipEqual(ipc.Spec.IPv6.Address, ipc.Status.IPv6.Address) {
+			ipChanged = true
+		}
+		if !ipChanged {
+			return fmt.Errorf("dnsServers can be changed only if address is also changed")
+		}
+	}
+
 	return nil
 }
 
 // validateFamilyAddressChanges enforces that for a single IP family (IPv4/IPv6),
-// machineNetwork / gateway / dnsServer are only allowed to change when the
+// machineNetwork / gateway are only allowed to change when the
 // address changes as well.
 func validateFamilyAddressChanges(
 	family string,
@@ -864,7 +873,6 @@ func validateFamilyAddressChanges(
 }
 
 func validateFamilyAddressChangesV4(spec *ipcv1.IPv4Config, status *ipcv1.IPv4Status) error {
-	// Nothing to validate if we don't have a full picture of spec+status.
 	if spec == nil || status == nil {
 		return nil
 	}
@@ -879,14 +887,10 @@ func validateFamilyAddressChangesV4(spec *ipcv1.IPv4Config, status *ipcv1.IPv4St
 	if spec.Gateway != "" && spec.Gateway != status.Gateway {
 		return fmt.Errorf("%s gateway can be changed only if address is also changed", common.IPv4FamilyName)
 	}
-	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
-		return fmt.Errorf("%s dnsServer can be changed only if address is also changed", common.IPv4FamilyName)
-	}
 	return nil
 }
 
 func validateFamilyAddressChangesV6(spec *ipcv1.IPv6Config, status *ipcv1.IPv6Status) error {
-	// Nothing to validate if we don't have a full picture of spec+status.
 	if spec == nil || status == nil {
 		return nil
 	}
@@ -901,9 +905,7 @@ func validateFamilyAddressChangesV6(spec *ipcv1.IPv6Config, status *ipcv1.IPv6St
 	if spec.Gateway != "" && spec.Gateway != status.Gateway {
 		return fmt.Errorf("%s gateway can be changed only if address is also changed", common.IPv6FamilyName)
 	}
-	if spec.DNSServer != "" && spec.DNSServer != status.DNSServer {
-		return fmt.Errorf("%s dnsServer can be changed only if address is also changed", common.IPv6FamilyName)
-	}
+
 	return nil
 }
 
@@ -958,12 +960,12 @@ func (h *IPCConfigStageHandler) validateConfigStart(ctx context.Context, ipc *ip
 		return fmt.Errorf("validation of SNO failed: %w", err)
 	}
 
-	if err := h.validateIPCNetworkSpec(ctx, ipc); err != nil {
-		return fmt.Errorf("validation of IPConfig network spec failed: %w", err)
-	}
-
 	if err := h.validateDNSMasqMCExists(ctx); err != nil {
 		return fmt.Errorf("validation of DNSMasq machine config failed: %w", err)
+	}
+
+	if err := h.validateIPCNetworkSpec(ctx, ipc); err != nil {
+		return fmt.Errorf("validation of IPConfig network spec failed: %w", err)
 	}
 
 	return nil

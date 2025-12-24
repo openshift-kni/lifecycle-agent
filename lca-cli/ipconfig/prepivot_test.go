@@ -157,20 +157,19 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 	t.Run("builds_nmstate_config", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
 		handler.vlanID = 100
+		handler.dnsServers = []string{"1.1.1.1", "2001::2"}
 		handler.ipConfigs = []*NetworkIPConfig{
 			{
 				IP:             "10.1.1.10",
 				MachineNetwork: "10.1.1.0/24",
 				DesiredGateway: "10.1.1.1",
 				CurrentGateway: "10.1.1.254",
-				DNSServer:      "1.1.1.1",
 			},
 			{
 				IP:             "2001::10",
 				MachineNetwork: "2001::/64",
 				DesiredGateway: "2001::1",
 				CurrentGateway: "2001::254",
-				DNSServer:      "2001::2",
 			},
 		}
 		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
@@ -241,13 +240,13 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 	t.Run("does_not_remove_default_gateway_when_current_equals_desired", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
 		handler.vlanID = 0
+		handler.dnsServers = []string{"1.1.1.1"}
 		handler.ipConfigs = []*NetworkIPConfig{
 			{
 				IP:             "10.1.1.10",
 				MachineNetwork: "10.1.1.0/24",
 				DesiredGateway: "10.1.1.1",
 				CurrentGateway: "10.1.1.1",
-				DNSServer:      "1.1.1.1",
 			},
 		}
 		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
@@ -589,8 +588,9 @@ func TestRunStopsAndReenablesOnFailure(t *testing.T) {
 	ops.EXPECT().ReadFile(handler.mcdCurrentConfigPath).Return([]byte(minimalMachineConfigYAML([]string{"foo=bar"})), nil)
 
 	handler.client = newFakeClient(t)
+	handler.dnsServers = []string{"1.1.1.1"}
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{
@@ -694,8 +694,9 @@ func TestRunDoesNotPersistOrDeleteACMHubKubeconfigSecretWhenPresent(t *testing.T
 		return
 	}
 
+	handler.dnsServers = []string{"1.1.1.1"}
 	handler.ipConfigs = []*NetworkIPConfig{
-		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1", DNSServer: "1.1.1.1"},
+		{IP: "10.1.1.10", MachineNetwork: "10.1.1.0/24", DesiredGateway: "10.1.1.1"},
 	}
 	handler.ostreeData = &OstreeData{
 		OldStateroot: &StaterootData{

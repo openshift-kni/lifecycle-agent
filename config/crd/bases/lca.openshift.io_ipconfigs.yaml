@@ -97,16 +97,19 @@ spec:
                 - ipv6
                 - none
                 type: string
+              dnsServers:
+                description: |-
+                  DNSServers is the complete ordered list of DNS server IPs (IPv4 and/or IPv6)
+                  to configure on the node.
+                items:
+                  type: string
+                type: array
               ipv4:
                 description: IPv4 stack (omit for IPv6-only)
                 properties:
                   address:
                     description: Address is the full IPv4 address without prefix length
                       (e.g., 192.0.2.10)
-                    format: ipv4
-                    type: string
-                  dnsServer:
-                    description: DNSServer is the IPv4 DNS server IP to use
                     format: ipv4
                     type: string
                   gateway:
@@ -120,7 +123,6 @@ spec:
                     type: string
                 required:
                 - address
-                - dnsServer
                 - gateway
                 - machineNetwork
                 type: object
@@ -137,10 +139,6 @@ spec:
                       (e.g., 2001:db8::1)
                     format: ipv6
                     type: string
-                  dnsServer:
-                    description: DNSServer is the IPv6 DNS server IP to use
-                    format: ipv6
-                    type: string
                   gateway:
                     description: Gateway is the default IPv6 gateway address
                     format: ipv6
@@ -152,7 +150,6 @@ spec:
                     type: string
                 required:
                 - address
-                - dnsServer
                 - gateway
                 - machineNetwork
                 type: object
@@ -245,6 +242,12 @@ spec:
                 - ipv6
                 - none
                 type: string
+              dnsServers:
+                description: DNSServers reports the currently detected ordered list
+                  of DNS server IPs (IPv4 and/or IPv6).
+                items:
+                  type: string
+                type: array
               history:
                 description: History stores timing info of different IPConfig stages
                   and their important phases
@@ -295,9 +298,6 @@ spec:
                     description: Address is the node internal IPv4 address (plain
                       address, no prefix).
                     type: string
-                  dnsServer:
-                    description: DNSServer is the IPv4 DNS server IP.
-                    type: string
                   gateway:
                     description: Gateway is the default IPv4 gateway address.
                     type: string
@@ -313,9 +313,6 @@ spec:
                   address:
                     description: Address is the node internal IPv6 address (plain
                       address, no prefix).
-                    type: string
-                  dnsServer:
-                    description: DNSServer is the IPv6 DNS server IP.
                     type: string
                   gateway:
                     description: Gateway is the default IPv6 gateway address.
@@ -352,6 +349,11 @@ spec:
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
             && c.status==''True'') || has(oldSelf.spec.ipv6) && has(self.spec.ipv6)
             && oldSelf.spec.ipv6==self.spec.ipv6 || !has(self.spec.ipv6) && !has(oldSelf.spec.ipv6)'
+        - message: can not change spec.dnsServers while ipconfig is not idle
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || has(oldSelf.spec.dnsServers) && has(self.spec.dnsServers)
+            && oldSelf.spec.dnsServers==self.spec.dnsServers || !has(self.spec.dnsServers)
+            && !has(oldSelf.spec.dnsServers)'
         - message: can not change spec.dnsFilterOutFamily while ipconfig is not idle
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
             && c.status==''True'') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily)

@@ -476,7 +476,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 		return fmt.Errorf("failed to parse nmstate output: %w", err)
 	}
 
-	dnsV4, dnsV6 := lcautils.ExtractDNS(state)
+	dnsServers := lcautils.ExtractDNSServers(state)
 	gw4, gw6 := lcautils.FindDefaultGateways(
 		state,
 		controllerutils.BridgeExternalName,
@@ -501,8 +501,6 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 	ipv4, ipv6, vlan := buildNetworkStatus(
 		gw4,
 		gw6,
-		dnsV4,
-		dnsV6,
 		nodeIPs,
 		machineCIDRs,
 		vlanID,
@@ -511,6 +509,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 	ipc.Status.IPv4 = ipv4
 	ipc.Status.IPv6 = ipv6
 	ipc.Status.VLANID = vlan
+	ipc.Status.DNSServers = dnsServers
 
 	fam, err := r.inferDNSFilterOutFamily()
 	if err != nil {
@@ -558,8 +557,6 @@ func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {
 func buildNetworkStatus(
 	gw4 string,
 	gw6 string,
-	dnsV4 string,
-	dnsV6 string,
 	nodeIPs []string,
 	machineCIDRs []string,
 	vlanID *int,
@@ -586,7 +583,6 @@ func buildNetworkStatus(
 			Address:        nodeIPv4,
 			MachineNetwork: lcautils.FindMatchingCIDR(nodeIPv4, machineCIDRs),
 			Gateway:        gw4,
-			DNSServer:      dnsV4,
 		}
 	}
 
@@ -595,7 +591,6 @@ func buildNetworkStatus(
 			Address:        nodeIPv6,
 			MachineNetwork: lcautils.FindMatchingCIDR(nodeIPv6, machineCIDRs),
 			Gateway:        gw6,
-			DNSServer:      dnsV6,
 		}
 	}
 

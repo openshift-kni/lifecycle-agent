@@ -55,7 +55,6 @@ type NetworkIPConfig struct {
 	MachineNetwork string
 	DesiredGateway string
 	CurrentGateway string
-	DNSServer      string
 }
 
 // OstreeData groups metadata about the old and new stateroots involved in the
@@ -84,6 +83,7 @@ type PrePivotHandler struct {
 	reboot               reboot.RebootIntf
 	client               runtimeclient.Client
 	ipConfigs            []*NetworkIPConfig
+	dnsServers           []string
 	pullSecretRefName    string
 	vlanID               int
 	dnsFilterOutFamily   string
@@ -103,6 +103,7 @@ func NewPrePivotHandler(
 	reboot reboot.RebootIntf,
 	client runtimeclient.Client,
 	ipConfigs []*NetworkIPConfig,
+	dnsServers []string,
 	pullSecretRefName string,
 	vlanID int,
 	dnsFilterOutFamily string,
@@ -120,6 +121,7 @@ func NewPrePivotHandler(
 		reboot:               reboot,
 		client:               client,
 		ipConfigs:            ipConfigs,
+		dnsServers:           dnsServers,
 		pullSecretRefName:    pullSecretRefName,
 		vlanID:               vlanID,
 		dnsFilterOutFamily:   dnsFilterOutFamily,
@@ -580,7 +582,7 @@ func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 
 	ips := make([]string, 0, len(p.ipConfigs))
 	machineNetworks := make([]string, 0, len(p.ipConfigs))
-	var desiredGatewayV4, desiredGatewayV6, currentGatewayV4, currentGatewayV6, dnsV4, dnsV6 string
+	var desiredGatewayV4, desiredGatewayV6, currentGatewayV4, currentGatewayV6 string
 
 	for _, cfg := range p.ipConfigs {
 		if cfg == nil {
@@ -602,11 +604,9 @@ func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 		case common.IPv4FamilyName:
 			desiredGatewayV4 = cfg.DesiredGateway
 			currentGatewayV4 = cfg.CurrentGateway
-			dnsV4 = cfg.DNSServer
 		case common.IPv6FamilyName:
 			desiredGatewayV6 = cfg.DesiredGateway
 			currentGatewayV6 = cfg.CurrentGateway
-			dnsV6 = cfg.DNSServer
 		}
 	}
 
@@ -624,8 +624,7 @@ func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 		"desiredGatewayV6": desiredGatewayV6,
 		"currentGatewayV4": currentGatewayV4,
 		"currentGatewayV6": currentGatewayV6,
-		"dnsV4":            dnsV4,
-		"dnsV6":            dnsV6,
+		"dnsServers":       p.dnsServers,
 	}).Info("Generating nmstate configuration")
 
 	nmstateConfig, err := utils.GenerateNMState(
@@ -634,8 +633,7 @@ func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 		machineNetworks,
 		desiredGatewayV4,
 		desiredGatewayV6,
-		dnsV4,
-		dnsV6,
+		p.dnsServers,
 		p.vlanID,
 		currentGatewayV4,
 		currentGatewayV6,
