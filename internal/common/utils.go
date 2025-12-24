@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 
 	"io"
 	"os"
@@ -125,8 +126,8 @@ func GetStaterootCertsDir(ibu *ibuv1.ImageBasedUpgrade) string {
 	return PathOutsideChroot(filepath.Join(GetStaterootOptOpenshift(GetStaterootPath(GetDesiredStaterootName(ibu))), KubeconfigCryptoDir))
 }
 
-func GetStaterootName(seedImageVersion string) string {
-	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(seedImageVersion, "-", "_"))
+func GetStaterootName(identifier string) string {
+	return fmt.Sprintf("rhcos_%s", strings.ReplaceAll(identifier, "-", "_"))
 }
 
 func RemoveDuplicates[T comparable](list []T) []T {
@@ -208,4 +209,41 @@ func GenerateDeleteOptions() *client.DeleteOptions {
 		PropagationPolicy: &propagationPolicy,
 	}
 	return &delOpt
+}
+
+func SanitizeForOsname(s string) string {
+	s = strings.Trim(s, "[]")
+	s = strings.Split(s, "/")[0]
+	re := regexp.MustCompile(`[^A-Za-z0-9]+`)
+	return re.ReplaceAllString(s, "-")
+}
+
+// IPConfigStaterootParams represents the parameters used to build a new stateroot name for IP configuration
+// Each of the spec values the user can change such that unique stateroot name is generated are represented here.
+type IPConfigStaterootParams struct {
+	IPv4Address        string
+	IPv6Address        string
+	VLANID             string
+	DNSFilterOutFamily string
+}
+
+func BuildNewStaterootNameForIPConfig(params IPConfigStaterootParams) string {
+	parts := []string{"rhcos"}
+	if params.IPv4Address != "" {
+		parts = append(parts, SanitizeForOsname(params.IPv4Address))
+	}
+
+	if params.IPv6Address != "" {
+		parts = append(parts, SanitizeForOsname(params.IPv6Address))
+	}
+
+	if params.VLANID != "" {
+		parts = append(parts, "vlan-"+SanitizeForOsname(params.VLANID))
+	}
+
+	if params.DNSFilterOutFamily != "" {
+		parts = append(parts, "dns-filter-out-"+SanitizeForOsname(params.DNSFilterOutFamily))
+	}
+
+	return strings.Join(parts, "_")
 }

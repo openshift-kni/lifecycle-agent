@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	ipconfigcmd "github.com/openshift-kni/lifecycle-agent/lca-cli/cmd/ipconfig"
 )
 
 // Create logger
@@ -55,6 +56,9 @@ func addCommonFlags(cmd *cobra.Command) {
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Display verbose logs")
 	rootCmd.PersistentFlags().BoolVarP(&noColor, "no-color", "c", false, "Control colored output")
+
+	// Register grouped ip-config command and its subcommands
+	rootCmd.AddCommand(ipconfigcmd.NewIPConfigCmd(log))
 }
 
 var (
@@ -69,7 +73,7 @@ var (
 			}
 		},
 
-		Long: `lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
+		Long: `lca-cli assists LCA in Image Based Install (IBI), Image Based Upgrade (IBU) and IP Configuration (IPC) workflows.
 
 Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
 `,
