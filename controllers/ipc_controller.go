@@ -40,6 +40,7 @@ import (
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
+//+kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
 
 // IPConfigReconciler reconciles an IPConfig object
 type IPConfigReconciler struct {
@@ -476,7 +477,6 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 		return fmt.Errorf("failed to parse nmstate output: %w", err)
 	}
 
-	dnsServers := lcautils.ExtractDNSServers(state)
 	gw4, gw6 := lcautils.FindDefaultGateways(
 		state,
 		controllerutils.BridgeExternalName,
@@ -505,10 +505,11 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 		machineCIDRs,
 		vlanID,
 	)
-
 	ipc.Status.IPv4 = ipv4
 	ipc.Status.IPv6 = ipv6
 	ipc.Status.VLANID = vlan
+
+	dnsServers := lcautils.ExtractDNSServers(state)
 	ipc.Status.DNSServers = dnsServers
 
 	fam, err := r.inferDNSFilterOutFamily()
@@ -521,7 +522,7 @@ func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPCon
 }
 
 // inferDNSFilterOutFamily reads the dnsmasq filter file on the host and infers
-// the active DNS filter-out family: "ipv4", "ipv6", or "none" when the file is absent/empty.
+// the active DNS filter-out family: "ipv4", "ipv6", or "none" when the file is absent.
 func (r *IPConfigReconciler) inferDNSFilterOutFamily() (*string, error) {
 	filterPath := common.PathOutsideChroot(common.DnsmasqFilterTargetPath)
 	raw, err := r.ChrootOps.ReadFile(filterPath)

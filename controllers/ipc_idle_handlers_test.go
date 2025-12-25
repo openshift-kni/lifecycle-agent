@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -640,4 +642,77 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assertIdleCond(t, updated, metav1.ConditionTrue, controllerutils.ConditionReasons.Idle, "")
 		assertStatusInvariants(t, updated, ipc)
 	})
+}
+
+type idleCleanupTestDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (e idleCleanupTestDirEntry) Name() string      { return e.name }
+func (e idleCleanupTestDirEntry) IsDir() bool       { return e.isDir }
+func (e idleCleanupTestDirEntry) Type() fs.FileMode { return 0 }
+func (e idleCleanupTestDirEntry) Info() (fs.FileInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
+func TestGetStaterootsToRemove(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+	mockRPM.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+		Deployments: []rpmostreeclient.Deployment{
+			{OSName: "booted", Booted: true},
+			{OSName: "old-1", Booted: false},
+			{OSName: "old-2", Booted: false},
+		},
+	}, nil).Times(1)
+
+	got, err := getStaterootsToRemove(mockRPM)
+	assert.NoError(t, err)
+	// Reverse order because code walks deployments from end to start.
+	assert.Equal(t, []string{"old-2", "old-1"}, got)
+}
+
+func TestRemoveBootDirsByStaterootPrefixes(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockOps := ops.NewMockOps(gc)
+	logger := logr.Logger{}
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+	entries := []os.DirEntry{
+		idleCleanupTestDirEntry{name: "rhcos-aaa", isDir: true},
+		idleCleanupTestDirEntry{name: "rhcos", isDir: true},      // no dash suffix => should not match
+		idleCleanupTestDirEntry{name: "other-bbb", isDir: true},  // different stateroot
+		idleCleanupTestDirEntry{name: "rhcos-ccc", isDir: false}, // not a dir => ignored
+		idleCleanupTestDirEntry{name: "rhcos-zzz", isDir: true},  // should match
+		idleCleanupTestDirEntry{name: "rhcos2-111", isDir: true}, // should not match "rhcos-"
+	}
+
+	mockOps.EXPECT().ReadDir(bootOstreePath).Return(entries, nil).Times(1)
+
+	mockOps.EXPECT().RemoveAllFiles(filepath.Join(bootOstreePath, "rhcos-aaa")).Return(nil).Times(1)
+	mockOps.EXPECT().RemoveAllFiles(filepath.Join(bootOstreePath, "rhcos-zzz")).Return(nil).Times(1)
+
+	err := removeBootDirsByStaterootPrefixes(logger, mockOps, []string{"rhcos"})
+	assert.NoError(t, err)
+}
+
+func TestRemoveBootDirsByStaterootPrefixes_NoBootDir(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockOps := ops.NewMockOps(gc)
+	logger := logr.Logger{}
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+	mockOps.EXPECT().ReadDir(bootOstreePath).Return(nil, os.ErrNotExist).Times(1)
+	mockOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).Times(1)
+
+	err := removeBootDirsByStaterootPrefixes(logger, mockOps, []string{"rhcos"})
+	assert.NoError(t, err)
 }

@@ -790,7 +790,9 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 			return fmt.Errorf("dnsServers contains an IPv4 address %q but the cluster does not have IPv4", s)
 		}
 
-		if ip.To16() != nil && !clusterHasIPv6 {
+		// Note: ip.To16() is non-nil for IPv4 addresses too; ensure we only treat
+		// it as IPv6 when it's not IPv4.
+		if ip.To4() == nil && ip.To16() != nil && !clusterHasIPv6 {
 			return fmt.Errorf("dnsServers contains an IPv6 address %q but the cluster does not have IPv6", s)
 		}
 	}

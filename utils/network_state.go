@@ -83,13 +83,9 @@ func ParseNmstate(output string) (NmState, error) {
 	return state, nil
 }
 
-// ExtractDNSServers returns the ordered DNS server list from nmstate, preferring running config.
+// ExtractDNSServers returns the ordered DNS server list from nmstate
 func ExtractDNSServers(state NmState) []string {
-	dnsServers := state.DNSResolver.Running.Server
-	if len(dnsServers) == 0 {
-		dnsServers = state.DNSResolver.Config.Server
-	}
-	return dnsServers
+	return state.DNSResolver.Running.Server
 }
 
 func findDefaultGateway(state NmState, bridgeName, destination string) *string {
