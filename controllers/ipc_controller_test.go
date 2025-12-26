@@ -802,3 +802,284 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		assert.Contains(t, err.Error(), "also failed to update ipconfig status")
 	})
 }
+
+func TestInferDNSFilterOutFamily(t *testing.T) {
+	filterPath := common.PathOutsideChroot(common.DnsmasqFilterTargetPath)
+
+	t.Run("missing file => none", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		chrootOps := ops.NewMockOps(gc)
+		r := &IPConfigReconciler{ChrootOps: chrootOps}
+
+		chrootOps.EXPECT().ReadFile(filterPath).Return(nil, os.ErrNotExist).Times(1)
+		chrootOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).Times(1)
+
+		fam, err := r.inferDNSFilterOutFamily()
+		assert.NoError(t, err)
+		assert.Equal(t, common.DNSFamilyNone, *fam)
+	})
+
+	t.Run("ipv4 filter => ipv4", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		chrootOps := ops.NewMockOps(gc)
+		r := &IPConfigReconciler{ChrootOps: chrootOps}
+
+		chrootOps.EXPECT().ReadFile(filterPath).Return([]byte(common.DnsmasqFilterManagedByIPConfigHeader+common.DnsmasqFilterOutIPv4+"\n"), nil).Times(1)
+
+		fam, err := r.inferDNSFilterOutFamily()
+		assert.NoError(t, err)
+		assert.Equal(t, common.IPv4FamilyName, *fam)
+	})
+
+	t.Run("ipv6 filter => ipv6", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		chrootOps := ops.NewMockOps(gc)
+		r := &IPConfigReconciler{ChrootOps: chrootOps}
+
+		chrootOps.EXPECT().ReadFile(filterPath).Return([]byte(common.DnsmasqFilterManagedByIPConfigHeader+common.DnsmasqFilterOutIPv6+"\n"), nil).Times(1)
+
+		fam, err := r.inferDNSFilterOutFamily()
+		assert.NoError(t, err)
+		assert.Equal(t, common.IPv6FamilyName, *fam)
+	})
+
+	t.Run("unknown contents => error", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		chrootOps := ops.NewMockOps(gc)
+		r := &IPConfigReconciler{ChrootOps: chrootOps}
+
+		chrootOps.EXPECT().ReadFile(filterPath).Return([]byte("garbage=1\n"), nil).Times(1)
+
+		_, err := r.inferDNSFilterOutFamily()
+		if !assert.Error(t, err) {
+			return
+		}
+		assert.Contains(t, err.Error(), "unknown filter file contents")
+	})
+}
+
+func TestValidNextStages(t *testing.T) {
+	t.Run("rollback in progress => none", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		controllerutils.SetIPRollbackStatusInProgress(ipc, "in progress")
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Empty(t, stages)
+	})
+
+	t.Run("rollback failed => none", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		controllerutils.SetIPRollbackStatusFailed(ipc, "failed")
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Empty(t, stages)
+	})
+
+	t.Run("config in progress and both target booted + unbooted available => rollback allowed", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		ipc.Spec.DNSFilterOutFamily = common.IPv6FamilyName
+		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
+
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}, stages)
+	})
+
+	t.Run("config in progress and not booted => only idle allowed (no rollback)", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
+
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
+	})
+
+	t.Run("config completed => idle and rollback", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		controllerutils.SetIPConfigStatusCompleted(ipc, "done")
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, stages)
+	})
+
+	t.Run("rollback completed => idle", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		controllerutils.SetIPRollbackStatusCompleted(ipc, "done")
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
+	})
+
+	t.Run("initial creation (no idle condition) => idle", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{
+			Status: ipcv1.IPConfigStatus{
+				Conditions: []metav1.Condition{},
+			},
+		}
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
+	})
+
+	t.Run("config in progress with nil rpm client => error", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
+
+		_, err := validNextStages(ipc, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "rpmOstreeClient is nil")
+	})
+
+	t.Run("config in progress and unbooted not available => idle only", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
+
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+
+		stages, err := validNextStages(ipc, mockRPM)
+		assert.NoError(t, err)
+		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
+	})
+}
+
+func TestIsIPTransitionRequested(t *testing.T) {
+	t.Run("idle stage requested when neither completed nor in-progress", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.Stage = ipcv1.IPStages.Idle
+		assert.True(t, isIPTransitionRequested(ipc))
+	})
+
+	t.Run("idle stage not requested when completed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.Generation = 1
+		ipc.Spec.Stage = ipcv1.IPStages.Idle
+		// For Idle, "completed" is represented by the Idle condition itself being True.
+		ipc.Status.Conditions = []metav1.Condition{{
+			Type:               string(controllerutils.ConditionTypes.Idle),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(controllerutils.ConditionReasons.Idle),
+			Message:            "Idle",
+			ObservedGeneration: ipc.Generation,
+		}}
+		assert.False(t, isIPTransitionRequested(ipc))
+	})
+
+	t.Run("config stage not requested when failed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.Stage = ipcv1.IPStages.Config
+		controllerutils.SetIPConfigStatusFailed(ipc, "failed")
+		assert.False(t, isIPTransitionRequested(ipc))
+	})
+
+	t.Run("config stage requested when no conditions", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.Spec.Stage = ipcv1.IPStages.Config
+		assert.True(t, isIPTransitionRequested(ipc))
+	})
+}
+
+func TestBuildIPConfigStaterootName_Stable(t *testing.T) {
+	// Ensure it does not panic and returns non-empty name for typical inputs.
+	ipc := &ipcv1.IPConfig{
+		Spec: ipcv1.IPConfigSpec{
+			IPv4:               &ipcv1.IPv4Config{Address: "192.0.2.10/24"},
+			IPv6:               &ipcv1.IPv6Config{Address: "2001:db8::10/64"},
+			VLANID:             123,
+			DNSFilterOutFamily: common.IPv6FamilyName,
+		},
+	}
+	name := buildIPConfigStaterootName(ipc)
+	assert.NotEmpty(t, name)
+}
+
+func TestShouldSkipIPClusterHealthChecks(t *testing.T) {
+	assert.False(t, shouldSkipIPClusterHealthChecks(nil))
+	assert.False(t, shouldSkipIPClusterHealthChecks(&ipcv1.IPConfig{}))
+
+	ipc := &ipcv1.IPConfig{}
+	ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: "any"})
+	assert.True(t, shouldSkipIPClusterHealthChecks(ipc))
+}
+
+func TestValidNextStages_DoesNotMutateIPC(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockRPM := rpmostreeclient.NewMockIClient(gc)
+
+	ipc := &ipcv1.IPConfig{}
+	controllerutils.SetIPConfigStatusCompleted(ipc, "done")
+	before := ipc.DeepCopy()
+
+	_, err := validNextStages(ipc, mockRPM)
+	assert.NoError(t, err)
+	assert.Equal(t, before, ipc, "validNextStages should be pure and not mutate IPC")
+}
+
+func TestBuildNetworkStatus_SelectsFirstV4V6AndVLAN(t *testing.T) {
+	v4, v6, vlan := buildNetworkStatus(
+		"192.0.2.1",
+		"2001:db8::1",
+		[]string{"192.0.2.10", "192.0.2.11", "2001:db8::10"},
+		[]string{"192.0.2.0/24", "2001:db8::/64"},
+		func() *int { i := 100; return &i }(),
+	)
+	if assert.NotNil(t, v4) {
+		assert.Equal(t, "192.0.2.10", v4.Address)
+	}
+	if assert.NotNil(t, v6) {
+		assert.Equal(t, "2001:db8::10", v6.Address)
+	}
+	assert.Equal(t, 100, vlan)
+}

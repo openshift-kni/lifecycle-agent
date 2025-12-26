@@ -73,20 +73,18 @@ var IPStages = struct {
 }
 
 // IPv4Config represents a single IPv4 stack configuration
-// +kubebuilder:validation:XValidation:message="IPv4 address must be within its machineNetwork CIDR",rule="self.address == \"\" || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
-// +kubebuilder:validation:XValidation:message="IPv4 gateway must be within its machineNetwork CIDR",rule="self.gateway == \"\" || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway)"
+// +kubebuilder:validation:XValidation:message="IPv4 address must be within its machineNetwork CIDR",rule="!has(self.address) || self.address == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
+// +kubebuilder:validation:XValidation:message="IPv4 gateway must be within its machineNetwork CIDR",rule="!has(self.gateway) || self.gateway == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway)"
 type IPv4Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv4
 	// Address is the full IPv4 address without prefix length (e.g., 192.0.2.10)
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Address string `json:"address,omitempty"`
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv4 machine network CIDR (e.g., 192.0.2.0/24)
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv4
 	// Gateway is the default IPv4 gateway address
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
@@ -94,20 +92,18 @@ type IPv4Config struct {
 }
 
 // IPv6Config represents a single IPv6 stack configuration
-// +kubebuilder:validation:XValidation:message="IPv6 address must be within its machineNetwork CIDR",rule="self.address == \"\" || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
-// +kubebuilder:validation:XValidation:message="IPv6 gateway must be within its machineNetwork CIDR unless it is link-local",rule="self.gateway == \"\" || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway) || cidr(\"fe80::/10\").containsIP(self.gateway)"
+// +kubebuilder:validation:XValidation:message="IPv6 address must be within its machineNetwork CIDR",rule="!has(self.address) || self.address == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
+// +kubebuilder:validation:XValidation:message="IPv6 gateway must be within its machineNetwork CIDR unless it is link-local",rule="!has(self.gateway) || self.gateway == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway) || cidr(\"fe80::/10\").containsIP(self.gateway)"
 type IPv6Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv6
 	// Address is the full IPv6 address without prefix length (e.g., 2001:db8::1)
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Address string `json:"address,omitempty"`
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv6 machine network CIDR (e.g., 2001:db8::/64)
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv6
 	// Gateway is the default IPv6 gateway address
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}

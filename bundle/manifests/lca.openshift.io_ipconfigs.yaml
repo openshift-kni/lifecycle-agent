@@ -123,14 +123,14 @@ spec:
                     type: string
                 required:
                 - address
-                - gateway
-                - machineNetwork
                 type: object
                 x-kubernetes-validations:
                 - message: IPv4 address must be within its machineNetwork CIDR
-                  rule: self.address == "" || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.address)
+                  rule: '!has(self.address) || self.address == "" || !has(self.machineNetwork)
+                    || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.address)'
                 - message: IPv4 gateway must be within its machineNetwork CIDR
-                  rule: self.gateway == "" || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.gateway)
+                  rule: '!has(self.gateway) || self.gateway == "" || !has(self.machineNetwork)
+                    || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.gateway)'
               ipv6:
                 description: IPv6 stack (omit for IPv4-only)
                 properties:
@@ -150,16 +150,16 @@ spec:
                     type: string
                 required:
                 - address
-                - gateway
-                - machineNetwork
                 type: object
                 x-kubernetes-validations:
                 - message: IPv6 address must be within its machineNetwork CIDR
-                  rule: self.address == "" || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.address)
+                  rule: '!has(self.address) || self.address == "" || !has(self.machineNetwork)
+                    || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.address)'
                 - message: IPv6 gateway must be within its machineNetwork CIDR unless
                     it is link-local
-                  rule: self.gateway == "" || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.gateway)
-                    || cidr("fe80::/10").containsIP(self.gateway)
+                  rule: '!has(self.gateway) || self.gateway == "" || !has(self.machineNetwork)
+                    || self.machineNetwork == "" || cidr(self.machineNetwork).containsIP(self.gateway)
+                    || cidr("fe80::/10").containsIP(self.gateway)'
               stage:
                 description: IPConfigStage defines the type for the stage field
                 enum:

@@ -34,7 +34,7 @@ func TestParseNmstate_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestExtractDNSServers_PrefersRunningThenConfig(t *testing.T) {
+func TestExtractDNSServers_ReturnsRunningOnly(t *testing.T) {
 	state := NmState{
 		DNSResolver: NmDNS{
 			Running: NmDNSList{
@@ -49,10 +49,9 @@ func TestExtractDNSServers_PrefersRunningThenConfig(t *testing.T) {
 	got := ExtractDNSServers(state)
 	assert.Equal(t, []string{"1.1.1.1", "2001:db8::1"}, got)
 
-	// If running is empty, fall back to config
 	state.DNSResolver.Running.Server = nil
 	got = ExtractDNSServers(state)
-	assert.Equal(t, []string{"8.8.8.8", "2001:db8::2"}, got)
+	assert.Empty(t, got)
 }
 
 func TestFindDefaultGateways(t *testing.T) {

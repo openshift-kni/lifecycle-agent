@@ -1319,3 +1319,77 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 		assert.NoError(t, validateAddressChanges(ipc))
 	})
 }
+
+func TestValidateClusterAndNetworkSpecCompatability_DNSServerFamilyChecks(t *testing.T) {
+	scheme := newIPConfigTestScheme(t)
+	ctx := context.Background()
+
+	t.Run("single-stack IPv4 cluster allows IPv4 dnsServers", func(t *testing.T) {
+		nodeV4 := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "master-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+			Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.10"}}},
+		}
+		mc := &machineconfigv1.MachineConfig{ObjectMeta: metav1.ObjectMeta{Name: common.DnsmasqMachineConfigName}}
+
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
+		ipc.Spec.DNSServers = []string{"192.0.2.53"}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
+		h := &IPCConfigStageHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+		}
+
+		assert.NoError(t, h.validateClusterAndNetworkSpecCompatability(ctx, ipc))
+	})
+
+	t.Run("single-stack IPv4 cluster rejects IPv6 dnsServers", func(t *testing.T) {
+		nodeV4 := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "master-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+			Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.10"}}},
+		}
+		mc := &machineconfigv1.MachineConfig{ObjectMeta: metav1.ObjectMeta{Name: common.DnsmasqMachineConfigName}}
+
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
+		ipc.Spec.DNSServers = []string{"2001:db8::53"}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
+		h := &IPCConfigStageHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+		}
+
+		err := h.validateClusterAndNetworkSpecCompatability(ctx, ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "cluster does not have IPv6")
+	})
+}
+
+func TestValidateClusterAndNetworkSpecCompatability_DNSFilterOutFamilyRequiresDualStack(t *testing.T) {
+	scheme := newIPConfigTestScheme(t)
+	ctx := context.Background()
+
+	t.Run("dnsFilterOutFamily set on single-stack => error", func(t *testing.T) {
+		nodeV4 := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "master-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+			Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.10"}}},
+		}
+		mc := &machineconfigv1.MachineConfig{ObjectMeta: metav1.ObjectMeta{Name: common.DnsmasqMachineConfigName}}
+
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
+		ipc.Spec.DNSFilterOutFamily = common.IPv4FamilyName
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
+		h := &IPCConfigStageHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+		}
+
+		err := h.validateClusterAndNetworkSpecCompatability(ctx, ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dual-stack")
+	})
+}
