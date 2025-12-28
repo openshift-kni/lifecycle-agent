@@ -76,7 +76,7 @@ var (
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu.Spec.SeedImageRef.Version)
 
 	if err != nil {
 		utils.SetUpgradeStatusFailed(ibu, err.Error())

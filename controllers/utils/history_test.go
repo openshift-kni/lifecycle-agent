@@ -1,15 +1,17 @@
 package utils
 
 import (
+	"testing"
+
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
 )
 
 var (
@@ -19,6 +21,11 @@ var (
 func getFakeClientFromObjects() client.Client {
 	testscheme.AddKnownTypes(ibuv1.GroupVersion, &ibuv1.ImageBasedUpgrade{})
 	return fake.NewClientBuilder().WithScheme(testscheme).WithObjects(&ibuv1.ImageBasedUpgrade{}).Build()
+}
+
+func getFakeIPClientFromObjects() client.Client {
+	testscheme.AddKnownTypes(ipcv1.GroupVersion, &ipcv1.IPConfig{})
+	return fake.NewClientBuilder().WithScheme(testscheme).WithObjects(&ipcv1.IPConfig{}).Build()
 }
 
 func TestResetHistory(t *testing.T) {
@@ -423,6 +430,282 @@ func TestStopStageHistory(t *testing.T) {
 			StopStageHistory(client, log, tt.args.ibu)
 			if !equality.Semantic.DeepEqual(tt.args.ibu.Status.History, tt.expectation.Status.History) {
 				assert.Fail(t, "expect ibu resources to be equal", "got", tt.args.ibu)
+			}
+		})
+	}
+}
+
+func TestResetIPHistory(t *testing.T) {
+	client := getFakeIPClientFromObjects()
+	log := logr.Logger{}
+
+	type args struct {
+		ipc *ipcv1.IPConfig
+	}
+	tests := []struct {
+		name        string
+		args        args
+		expectation *ipcv1.IPConfig
+	}{
+		{
+			name: "history field resets to empty if desired IP stage is Idle",
+			args: args{
+				ipc: &ipcv1.IPConfig{
+					Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Idle},
+					Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{
+						{Stage: ipcv1.IPStages.Config},
+					}},
+				},
+			},
+			expectation: &ipcv1.IPConfig{
+				Spec:   ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Idle},
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{}},
+			},
+		},
+		{
+			name: "no change in history if IP stage other than Idle is desired",
+			args: args{
+				ipc: &ipcv1.IPConfig{
+					Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config},
+					Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{
+						{Stage: ipcv1.IPStages.Config},
+					}},
+				},
+			},
+			expectation: &ipcv1.IPConfig{
+				Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config},
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{
+					{Stage: ipcv1.IPStages.Config},
+				}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ResetIPHistory(client, log, tt.args.ipc)
+			if !equality.Semantic.DeepEqual(tt.args.ipc.Status.History, tt.expectation.Status.History) {
+				assert.Fail(t, "expect ipconfig resources to be equal", "got:", tt.args.ipc.Status.History, "want:", tt.expectation.Status.History)
+			}
+		})
+	}
+}
+
+func TestStartIPStageHistory(t *testing.T) {
+	client := getFakeIPClientFromObjects()
+	log := logr.Logger{}
+
+	currentTime := metav1.Now()
+	getMetav1Now = func() metav1.Time { return currentTime }
+
+	type args struct {
+		ipc *ipcv1.IPConfig
+	}
+	tests := []struct {
+		name        string
+		args        args
+		expectation *ipcv1.IPConfig
+	}{
+		{
+			name: "Start IP stage when not Idle",
+			args: args{ipc: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}},
+			expectation: &ipcv1.IPConfig{
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: currentTime}}},
+			},
+		},
+		{
+			name: "IP stage already started and called again during requeue",
+			args: args{ipc: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}, Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: currentTime}}}}},
+			expectation: &ipcv1.IPConfig{
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: currentTime}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			StartIPStageHistory(client, log, tt.args.ipc)
+			if !equality.Semantic.DeepEqual(tt.args.ipc.Status.History, tt.expectation.Status.History) {
+				assert.Fail(t, "expect ipconfig status.history to be equal", "got", tt.args.ipc.Status.History, "want:", tt.expectation.Status.History)
+			}
+		})
+	}
+}
+
+func TestStartIPPhase(t *testing.T) {
+	client := getFakeIPClientFromObjects()
+	log := logr.Logger{}
+
+	currentTime := metav1.Now()
+	getMetav1Now = func() metav1.Time { return currentTime }
+
+	type args struct {
+		ipc   *ipcv1.IPConfig
+		phase string
+	}
+	tests := []struct {
+		name        string
+		args        args
+		expectation *ipcv1.IPConfig
+	}{
+		{
+			name:        "Start an IP phase before initializing stage history",
+			args:        args{ipc: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}, phase: "TEST-PHASE"},
+			expectation: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}},
+		},
+		{
+			name: "Start an IP phase after initializing stage",
+			args: args{
+				ipc: func() *ipcv1.IPConfig {
+					cur := &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}
+					StartIPStageHistory(client, log, cur)
+					return cur
+				}(),
+				phase: "TEST-PHASE",
+			},
+			expectation: &ipcv1.IPConfig{
+				Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config},
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{
+					Stage:     ipcv1.IPStages.Config,
+					StartTime: currentTime,
+					Phases:    []*ipcv1.IPPhase{{Phase: "TEST-PHASE", StartTime: currentTime}},
+				}}},
+			},
+		},
+		{
+			name: "IP phase already started but called again during requeue",
+			args: args{
+				ipc: func() *ipcv1.IPConfig {
+					cur := &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}
+					StartIPStageHistory(client, log, cur)
+					StartIPPhase(client, log, cur, "TEST-PHASE")
+					return cur
+				}(),
+				phase: "TEST-PHASE",
+			},
+			expectation: &ipcv1.IPConfig{
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{
+					Stage:     ipcv1.IPStages.Config,
+					StartTime: currentTime,
+					Phases:    []*ipcv1.IPPhase{{Phase: "TEST-PHASE", StartTime: currentTime}},
+				}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			StartIPPhase(client, log, tt.args.ipc, tt.args.phase)
+			if !equality.Semantic.DeepEqual(tt.args.ipc.Status.History, tt.expectation.Status.History) {
+				assert.Fail(t, "expect ipconfig status.history to be equal", "got", tt.args.ipc.Status.History, "want:", &tt.expectation.Status.History)
+			}
+		})
+	}
+}
+
+func TestStopIPPhase(t *testing.T) {
+	client := getFakeIPClientFromObjects()
+	log := logr.Logger{}
+
+	currentTime := metav1.Now()
+	getMetav1Now = func() metav1.Time { return currentTime }
+
+	type args struct {
+		ipc   *ipcv1.IPConfig
+		phase string
+	}
+	tests := []struct {
+		name        string
+		args        args
+		expectation *ipcv1.IPConfig
+	}{
+		{
+			name: "Stop an IP phase of a stage",
+			args: args{
+				ipc: func() *ipcv1.IPConfig {
+					cur := &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}
+					StartIPStageHistory(client, log, cur)
+					StartIPPhase(client, log, cur, "TEST-PHASE")
+					return cur
+				}(),
+				phase: "TEST-PHASE",
+			},
+			expectation: &ipcv1.IPConfig{
+				Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config},
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{
+					Stage:     ipcv1.IPStages.Config,
+					StartTime: currentTime,
+					Phases: []*ipcv1.IPPhase{{
+						Phase:          "TEST-PHASE",
+						StartTime:      currentTime,
+						CompletionTime: currentTime,
+					}},
+				}}},
+			},
+		},
+		{
+			name: "Stop an IP phase that doesn't exist",
+			args: args{
+				ipc: func() *ipcv1.IPConfig {
+					cur := &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}
+					StartIPStageHistory(client, log, cur)
+					return cur
+				}(),
+				phase: "TEST-PHASE",
+			},
+			expectation: &ipcv1.IPConfig{
+				Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config},
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{
+					Stage:     ipcv1.IPStages.Config,
+					StartTime: currentTime,
+				}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			StopIPPhase(client, log, tt.args.ipc, tt.args.phase)
+			if !equality.Semantic.DeepEqual(tt.args.ipc.Status.History, tt.expectation.Status.History) {
+				assert.Fail(t, "expect ipconfig status.history to be equal", "got", tt.args.ipc.Status.History, "want:", &tt.expectation.Status.History)
+			}
+		})
+	}
+}
+
+func TestStopIPStageHistory(t *testing.T) {
+	client := getFakeIPClientFromObjects()
+	log := logr.Logger{}
+
+	currentTime := metav1.Now()
+	getMetav1Now = func() metav1.Time { return currentTime }
+
+	type args struct {
+		ipc *ipcv1.IPConfig
+	}
+	tests := []struct {
+		name        string
+		args        args
+		expectation *ipcv1.IPConfig
+	}{
+		{
+			name: "Stop a known IP stage timer with completionTime",
+			args: args{ipc: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}, Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{Stage: ipcv1.IPStages.Config, StartTime: currentTime}}}}},
+			expectation: &ipcv1.IPConfig{
+				Status: ipcv1.IPConfigStatus{History: []*ipcv1.IPHistory{{
+					Stage:          ipcv1.IPStages.Config,
+					StartTime:      currentTime,
+					CompletionTime: currentTime,
+				}}},
+			},
+		},
+		{
+			name:        "Stop IP stage timer that doesn't exist",
+			args:        args{ipc: &ipcv1.IPConfig{Spec: ipcv1.IPConfigSpec{Stage: ipcv1.IPStages.Config}}},
+			expectation: &ipcv1.IPConfig{Status: ipcv1.IPConfigStatus{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			StopIPStageHistory(client, log, tt.args.ipc)
+			if !equality.Semantic.DeepEqual(tt.args.ipc.Status.History, tt.expectation.Status.History) {
+				assert.Fail(t, "expect ipconfig resources to be equal", "got", tt.args.ipc)
 			}
 		})
 	}

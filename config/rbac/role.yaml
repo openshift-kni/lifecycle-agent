@@ -38,7 +38,6 @@ rules:
   - ""
   resources:
   - nodes
-  - pods
   verbs:
   - get
   - list
@@ -51,6 +50,15 @@ rules:
   - get
   - list
   - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - get
+  - list
   - watch
 - apiGroups:
   - ""
@@ -136,6 +144,7 @@ rules:
   - lca.openshift.io
   resources:
   - imagebasedupgrades
+  - ipconfigs
   - seedgenerators
   verbs:
   - create
@@ -156,6 +165,7 @@ rules:
   - lca.openshift.io
   resources:
   - imagebasedupgrades/status
+  - ipconfigs/status
   - seedgenerators/status
   verbs:
   - get

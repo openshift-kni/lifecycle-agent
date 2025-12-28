@@ -54,7 +54,7 @@ To see the tool's help on your local host, run the following command:
 
 ```shell
 -> ./bin/lca-cli -h
-lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
+lca-cli assists LCA in Image Based Install (IBI), Image Based Upgrade (IBU) and IP Configuration (IPC) workflows.
 
   Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
 
@@ -62,12 +62,16 @@ Usage:
   lca-cli [command]
 
 Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  create      Create OCI image and push it to a container registry.
-  help        Help about any command
-  ibi         prepare ibi
-  post-pivot  post pivot configuration
-  restore     Restore seed cluster configurations
+  completion          Generate the autocompletion script for the specified shell
+  create              Create OCI image and push it to a container registry.
+  help                Help about any command
+  ibi                 prepare ibi
+  ibuPrecacheWorkload Start precache during IBU
+  ibuStaterootSetup   Setup a new stateroot during IBU
+  init-monitor        LCA Init Monitor
+  ip-config           IP configuration commands
+  post-pivot          post pivot configuration
+  restore             Restore seed cluster configurations
 
 Flags:
   -h, --help       help for lca-cli
@@ -98,7 +102,7 @@ To create an IBU seed image out of your Single Node OpenShift (SNO), run the fol
                                                  --image ${SEED_IMG_REFSPEC} \
                                                  --recert-image ${IMG_RECERT_TOOL}
 
-lca-cli assists LCA in Image Based Install (IBI) and Image Based Upgrade (IBU) workflows.
+lca-cli assists LCA in Image Based Install (IBI), Image Based Upgrade (IBU) and IP Configuration (IPC) workflows.
 
   Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
 

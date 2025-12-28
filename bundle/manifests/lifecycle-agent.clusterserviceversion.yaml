@@ -165,6 +165,9 @@ spec:
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1
+    - kind: IPConfig
+      name: ipconfigs.lca.openshift.io
+      version: v1
     - description: SeedGenerator is the Schema for the seedgenerators API
       displayName: Seed Generator
       kind: SeedGenerator
@@ -240,7 +243,6 @@ spec:
           - ""
           resources:
           - nodes
-          - pods
           verbs:
           - get
           - list
@@ -253,6 +255,15 @@ spec:
           - get
           - list
           - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - delete
+          - get
+          - list
           - watch
         - apiGroups:
           - ""
@@ -338,6 +349,7 @@ spec:
           - lca.openshift.io
           resources:
           - imagebasedupgrades
+          - ipconfigs
           - seedgenerators
           verbs:
           - create
@@ -358,6 +370,7 @@ spec:
           - lca.openshift.io
           resources:
           - imagebasedupgrades/status
+          - ipconfigs/status
           - seedgenerators/status
           verbs:
           - get
