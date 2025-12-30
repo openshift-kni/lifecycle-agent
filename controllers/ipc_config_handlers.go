@@ -89,12 +89,8 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 	logger.Info("Starting handleConfig")
 
 	if isIPTransitionRequested(ipc) {
-		controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, "In progress")
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
-
-		controllerutils.SetIPConfigStatusInProgress(ipc, "Configuration is in progress")
+		controllerutils.SetIPIdleStatusFalse(
+			ipc, controllerutils.ConditionReasons.NotIdle, "Not Idle")
 		if err := h.Client.Status().Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -107,10 +103,16 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 
 			return doNotRequeue(), nil
 		}
+
+		controllerutils.SetIPConfigStatusInProgress(ipc, "Configuration is in progress")
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
 	}
 
 	// stop when completed or failed
 	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Config) {
+		logger.Info("IPConfig in Config stage but not in progress, exiting config handler")
 		return doNotRequeue(), nil
 	}
 
