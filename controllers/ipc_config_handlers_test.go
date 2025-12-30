@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	controllerutils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -34,6 +35,9 @@ import (
 func newIPConfigTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
+	if err := ibuv1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add ibu scheme: %v", err)
+	}
 	if err := ipcv1.AddToScheme(s); err != nil {
 		t.Fatalf("failed to add ipconfig scheme: %v", err)
 	}
@@ -95,6 +99,23 @@ func mkConfigIPC(t *testing.T, withHistory bool) *ipcv1.IPConfig {
 		}}
 	}
 	return ipc
+}
+
+func mkIBU(t *testing.T, stage ibuv1.ImageBasedUpgradeStage, idleConditionTrue bool) *ibuv1.ImageBasedUpgrade {
+	t.Helper()
+	ibu := &ibuv1.ImageBasedUpgrade{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       controllerutils.IBUName,
+			Generation: 1,
+		},
+		Spec: ibuv1.ImageBasedUpgradeSpec{
+			Stage: stage,
+		},
+	}
+	if idleConditionTrue {
+		controllerutils.ResetStatusConditions(&ibu.Status.Conditions, ibu.Generation)
+	}
+	return ibu
 }
 
 func mkSNOObjects() (*corev1.Node, *machineconfigv1.MachineConfig) {
@@ -986,7 +1007,8 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		ipc := mkConfigIPC(t, true)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // exclude config => invalid
 
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu)
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		stageHandler := NewIPCConfigStageHandler(k8sClient, k8sClient, mockRPM, mockOps, tph)
 
@@ -1016,7 +1038,8 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 
 		// No master node => validateSNO should fail.
 		mc := &machineconfigv1.MachineConfig{ObjectMeta: metav1.ObjectMeta{Name: common.DnsmasqMachineConfigName}}
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, mc)
+		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, mc)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		stageHandler := NewIPCConfigStageHandler(k8sClient, k8sClient, mockRPM, mockOps, tph)
@@ -1072,8 +1095,9 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		ipc := mkConfigIPC(t, true)
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config}
 
+		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
 		node, mc := mkSNOObjects()
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, node, mc)
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, node, mc)
 
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
 
@@ -1093,7 +1117,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		idle := controllerutils.GetIPInProgressCondition(updated, ipcv1.IPStages.Idle)
 		if assert.NotNil(t, idle) {
 			assert.Equal(t, metav1.ConditionFalse, idle.Status)
-			assert.Equal(t, string(controllerutils.ConditionReasons.InProgress), idle.Reason)
+			assert.Equal(t, string(controllerutils.ConditionReasons.NotIdle), idle.Reason)
 		}
 		hist := findConfigStageHistory(t, updated)
 		if assert.NotNil(t, hist) {
