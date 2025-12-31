@@ -74,13 +74,6 @@ func (h *IPCRollbackStageHandler) Handle(
 	logger.Info("Starting handleRollback")
 
 	if isIPTransitionRequested(ipc) {
-		controllerutils.SetIPRollbackStatusInProgress(
-			ipc, "Rollback is in progress",
-		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
-
 		if err := h.validateRollbackStart(ipc); err != nil {
 			controllerutils.SetIPRollbackStatusFailed(
 				ipc,
@@ -92,10 +85,16 @@ func (h *IPCRollbackStageHandler) Handle(
 
 			return doNotRequeue(), nil
 		}
+
+		controllerutils.SetIPRollbackStatusInProgress(ipc, "Rollback is in progress")
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
 	}
 
 	// stop when completed or failed
 	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Rollback) {
+		logger.Info("IPConfig in Rollback stage but not in progress, exiting rollback handler")
 		return doNotRequeue(), nil
 	}
 

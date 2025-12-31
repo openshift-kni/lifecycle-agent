@@ -59,6 +59,7 @@ type ConditionReason string
 // ConditionReasons define the different reasons that conditions will be set for
 var ConditionReasons = struct {
 	Idle              ConditionReason
+	NotIdle           ConditionReason
 	Completed         ConditionReason
 	Failed            ConditionReason
 	TimedOut          ConditionReason
@@ -71,8 +72,10 @@ var ConditionReasons = struct {
 	FinalizeFailed    ConditionReason
 	InvalidTransition ConditionReason
 	Stabilizing       ConditionReason
+	Blocked           ConditionReason
 }{
 	Idle:              "Idle",
+	NotIdle:           "NotIdle",
 	Completed:         "Completed",
 	Failed:            "Failed",
 	TimedOut:          "TimedOut",
@@ -85,6 +88,7 @@ var ConditionReasons = struct {
 	FinalizeFailed:    "FinalizeFailed",
 	InvalidTransition: "InvalidTransition",
 	Stabilizing:       "Stabilizing",
+	Blocked:           "Blocked",
 }
 
 // Common condition messages
@@ -540,30 +544,37 @@ func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *ibuv1.ImageBased
 // IsIPStageCompleted checks if the completed condition status for the IPConfig stage is true
 func IsIPStageCompleted(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
 	condition := GetIPCompletedCondition(ipc, stage)
-	if condition != nil && condition.Status == metav1.ConditionTrue {
-		return true
-	}
-	return false
+	return condition != nil && condition.Status == metav1.ConditionTrue
 }
 
 // IsIPStageFailed checks if the completed condition status for the IPConfig stage is false
 func IsIPStageFailed(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
 	condition := GetIPCompletedCondition(ipc, stage)
-	if condition != nil && condition.Status == metav1.ConditionFalse {
-		return true
+	if stage == ipcv1.IPStages.Idle {
+		return condition != nil &&
+			condition.Status == metav1.ConditionFalse &&
+			(condition.Reason == string(ConditionReasons.Failed) ||
+				condition.Reason == string(ConditionReasons.InvalidTransition))
 	}
-	return false
+
+	return condition != nil && condition.Status == metav1.ConditionFalse
 }
 
 // IsIPStageCompletedOrFailed checks if the completed condition for the IPConfig stage is present
 func IsIPStageCompletedOrFailed(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
-	condition := GetIPCompletedCondition(ipc, stage)
-	return condition != nil
+	return IsIPStageCompleted(ipc, stage) ||
+		IsIPStageFailed(ipc, stage)
 }
 
 // IsIPStageInProgress checks if IPConfig is working on the stage
 func IsIPStageInProgress(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
 	condition := GetIPInProgressCondition(ipc, stage)
+	if stage == ipcv1.IPStages.Idle {
+		return condition != nil &&
+			condition.Status == metav1.ConditionFalse &&
+			condition.Reason == string(ConditionReasons.InProgress)
+	}
+
 	return condition != nil && condition.Status == metav1.ConditionTrue
 }
 
@@ -607,8 +618,6 @@ func SetIPStatusInvalidTransition(ipc *ipcv1.IPConfig, msg string) {
 		ipc.Generation,
 	)
 }
-
-// Removed Prep-stage status helpers as Prep stage no longer exists for IPConfig
 
 // SetIPConfigStatusInProgress updates the IP Config status to in progress with message
 func SetIPConfigStatusInProgress(ipc *ipcv1.IPConfig, msg string) {
@@ -716,4 +725,19 @@ func UpdateIPStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) e
 	}
 
 	return nil
+}
+
+// SetIPStatusBlocked updates the given IPConfig stage in-progress status to Blocked with message.
+func SetIPStatusBlocked(ipc *ipcv1.IPConfig, msg string) {
+	ct := GetIPInProgressConditionType(ipc.Spec.Stage)
+	if ct == "" {
+		return
+	}
+	SetStatusCondition(&ipc.Status.Conditions,
+		ct,
+		ConditionReasons.Blocked,
+		metav1.ConditionFalse,
+		msg,
+		ipc.Generation,
+	)
 }
