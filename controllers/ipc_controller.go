@@ -114,6 +114,12 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 				err = fmt.Errorf("failed to update ipconfig status: %w", uErr)
 			}
 		}
+
+		logger.Info(
+			"Finish reconciling IPConfig",
+			"name", req.NamespacedName.Name,
+			"namespace", req.NamespacedName.Namespace,
+		)
 	}()
 
 	if ipc.Status.ValidNextStages == nil {
@@ -248,18 +254,18 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		return []ipcv1.IPConfigStage{}, nil
 	}
 
+	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
+	}
+
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(rpmOstreeClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
+	}
+
 	if inProgressStage == ipcv1.IPStages.Config ||
 		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Config) {
-		isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
-		}
-
-		isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(rpmOstreeClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
-		}
-
 		if lo.FromPtr(isTargetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable) {
 			return []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}, nil
 		}
@@ -272,7 +278,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 	if controllerutils.IsIPStageCompleted(ipc, ipcv1.IPStages.Config) {
-		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, nil
+		if lo.FromPtr(isTargetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable) {
+			return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, nil
+		}
+
+		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 	if controllerutils.IsIPStageCompleted(ipc, ipcv1.IPStages.Idle) {
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Config}, nil

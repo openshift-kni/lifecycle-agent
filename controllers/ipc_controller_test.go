@@ -44,6 +44,11 @@ func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
 	chrootOps.EXPECT().ReadFile(filterPath).Return(nil, os.ErrNotExist).AnyTimes()
 }
 
+func mockTargetStaterootNotBooted(mockRPM *rpmostreeclient.MockIClient) {
+	mockRPM.EXPECT().IsStaterootBooted(gomock.Any()).Return(false, nil).AnyTimes()
+	mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).AnyTimes()
+}
+
 func reconcileTestMinimalNmstateJSON() string {
 	// Includes:
 	// - br-ex ovs-bridge with an uplink port (ens3) so ExtractBrExUplinkName succeeds
@@ -205,6 +210,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		idleHandler := NewMockIPConfigStageHandler(gc)
 		idleHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -222,6 +230,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     idleHandler,
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -261,6 +270,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		configHandler := NewMockIPConfigStageHandler(gc)
 		configHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -278,6 +290,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   configHandler,
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -322,12 +335,16 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -370,12 +387,16 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -418,6 +439,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		configHandler := NewMockIPConfigStageHandler(gc)
 		configHandler.EXPECT().Handle(gomock.Any(), gomock.Any()).Return(doNotRequeue(), nil).Times(1)
 
@@ -427,6 +451,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   configHandler,
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -466,6 +491,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		rollbackHandler := NewMockIPConfigStageHandler(gc)
 		rollbackHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -482,6 +510,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: rollbackHandler,
@@ -524,12 +553,16 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -569,6 +602,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		idleHandler := NewMockIPConfigStageHandler(gc)
 		idleHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -581,6 +617,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     idleHandler,
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -617,6 +654,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		configHandler := NewMockIPConfigStageHandler(gc)
 		configHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -629,6 +669,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   configHandler,
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -667,6 +708,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		rollbackHandler := NewMockIPConfigStageHandler(gc)
 		rollbackHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -683,6 +727,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: rollbackHandler,
@@ -725,6 +770,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		idleHandler := NewMockIPConfigStageHandler(gc)
 		idleHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
@@ -737,6 +785,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     idleHandler,
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -823,12 +872,16 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			AnyTimes()
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -910,12 +963,16 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
 
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
 			Scheme:          scheme,
 			NsenterOps:      nsenterOps,
 			ChrootOps:       chrootOps,
+			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
 			ConfigHandler:   NewMockIPConfigStageHandler(gc),
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
@@ -954,6 +1011,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			Times(1)
 
 		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockTargetStaterootNotBooted(mockRPM)
 
 		chrootOps := ops.NewMockOps(gc)
 		expectReconcileTestFSDefaults(chrootOps)
@@ -1107,6 +1165,9 @@ func TestValidNextStages(t *testing.T) {
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPConfigStatusCompleted(ipc, "done")
 
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, stages)
@@ -1119,6 +1180,9 @@ func TestValidNextStages(t *testing.T) {
 
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusCompleted(ipc, "done")
+
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
 
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)
@@ -1135,6 +1199,9 @@ func TestValidNextStages(t *testing.T) {
 				Conditions: []metav1.Condition{},
 			},
 		}
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
@@ -1236,6 +1303,9 @@ func TestValidNextStages_DoesNotMutateIPC(t *testing.T) {
 	ipc := &ipcv1.IPConfig{}
 	controllerutils.SetIPConfigStatusCompleted(ipc, "done")
 	before := ipc.DeepCopy()
+
+	mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+	mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 
 	_, err := validNextStages(ipc, mockRPM)
 	assert.NoError(t, err)
