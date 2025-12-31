@@ -72,6 +72,7 @@ type RecertConfig struct {
 	RegenerateServerSSHKeys   string   `json:"regenerate_server_ssh_keys,omitempty"`
 	MachineNetworkCidr        []string `json:"machine_network_cidr,omitempty"`
 	EtcdDefrag                bool     `json:"etcd_defrag,omitempty"`
+	IPChangeOnly              bool     `json:"ip_change_only,omitempty"`
 }
 
 func FormatRecertProxyFromSeedReconfigProxy(proxy, statusProxy *seedreconfig.Proxy) string {
@@ -268,6 +269,51 @@ func createBaseRecertConfig() RecertConfig {
 		ClusterCustomizationDirs:  clusterCustomizationDirs,
 		ClusterCustomizationFiles: clusterCustomizationFiles,
 	}
+}
+
+// CreateRecertConfigFileForIPConfig creates a recert config file for IP configuration changes
+// TODO: Create common function for this one and CreateRecertConfigFile
+func CreateRecertConfigFileForIPConfig(
+	oldIPs []string,
+	newIPs []string,
+	newMachineNetworks []string,
+	installConfig string,
+	cryptoDir string,
+	ingressCertificateCN string,
+) (*RecertConfig, error) {
+	if len(oldIPs) != len(newIPs) {
+		return nil, fmt.Errorf("oldIPs and newIPs must have the same length")
+	}
+
+	config := createBaseRecertConfig()
+	config.IP = newIPs
+	config.MachineNetworkCidr = newMachineNetworks
+	config.ExtendExpiration = false
+	config.InstallConfig = installConfig
+	config.IPChangeOnly = true
+	config.SummaryFileClean = "/var/tmp/recert-summary.yaml"
+
+	for i := range newIPs {
+		config.CNSanReplaceRules = append(
+			config.CNSanReplaceRules, fmt.Sprintf("%s,%s", oldIPs[i], newIPs[i]),
+		)
+	}
+
+	if _, err := os.Stat(cryptoDir); err == nil {
+		ingressKeyFile, err := getIngressKeyPath(cryptoDir)
+		if err != nil {
+			return nil, err
+		}
+		config.UseKeyRules = []string{
+			fmt.Sprintf("kube-apiserver-lb-signer %s/loadbalancer-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-localhost-signer %s/localhost-serving-signer.key", cryptoDir),
+			fmt.Sprintf("kube-apiserver-service-network-signer %s/service-network-serving-signer.key", cryptoDir),
+			fmt.Sprintf("%s %s/%s", ingressCertificateCN, cryptoDir, ingressKeyFile),
+		}
+		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
+	}
+
+	return &config, nil
 }
 
 func getIngressKeyPath(certsFolder string) (string, error) {
