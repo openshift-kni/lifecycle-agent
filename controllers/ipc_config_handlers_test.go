@@ -1100,6 +1100,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, node, mc)
 
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
@@ -1139,6 +1140,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
@@ -1181,6 +1183,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 
 		// Transition requested should still be false since we're already in progress; only boot check should be called.
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
@@ -1226,6 +1229,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
