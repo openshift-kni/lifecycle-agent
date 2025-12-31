@@ -121,7 +121,12 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 		return requeueWithError(fmt.Errorf("failed to check if target stateroot is booted: %w", err))
 	}
 
-	if !lo.FromPtr(targetStaterootBooted) {
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(h.RPMOstreeClient)
+	if err != nil {
+		return requeueWithError(fmt.Errorf("failed to check if unbooted stateroot is available: %w", err))
+	}
+
+	if !(lo.FromPtr(targetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable)) {
 		result, err := h.PhasesHandler.PrePivot(ctx, ipc, logger)
 		if err != nil {
 			return result, fmt.Errorf("failed to run pre pivot: %w", err)
