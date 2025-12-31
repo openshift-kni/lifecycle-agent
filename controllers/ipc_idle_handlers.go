@@ -52,11 +52,12 @@ func (h *IPCIdleStageHandler) Handle(
 	logger := log.FromContext(ctx).WithName("IPConfigIdle")
 	logger.Info("Starting handleIdle")
 
+	// best effort to handle manual cleanup if failed
 	if err := h.handleManualCleanupIfFailed(ctx, ipc, logger); err != nil {
 		return requeueWithError(fmt.Errorf("failed to handle manual cleanup if failed: %w", err))
 	}
 
-	if isIPTransitionRequested(ipc) && ipc.Status.ValidNextStages != nil {
+	if isIPTransitionRequested(ipc) {
 		if err := validateIPConfigStage(ipc); err != nil {
 			controllerutils.SetIPIdleStatusFalse(
 				ipc,
@@ -68,6 +69,16 @@ func (h *IPCIdleStageHandler) Handle(
 			}
 			return doNotRequeue(), nil
 		}
+
+		controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, "In progress")
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
+	}
+
+	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Idle) {
+		logger.Info("IPConfig in Idle stage but not in progress, exiting idle handler")
+		return doNotRequeue(), nil
 	}
 
 	if shouldSkipIPClusterHealthChecks(ipc) {
@@ -247,6 +258,10 @@ func (h *IPCIdleStageHandler) handleManualCleanupIfFailed(
 		}
 
 		if done {
+			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, "In progress")
+			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+				return fmt.Errorf("failed to update ipconfig status: %w", err)
+			}
 			logger.Info("Manual cleanup annotation is found, removed annotation and retrying idle tasks")
 		}
 	}
