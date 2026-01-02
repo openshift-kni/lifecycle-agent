@@ -551,6 +551,10 @@ func GetMachineNetworks(ctx context.Context, client runtimeclient.Reader) ([]str
 		}
 	}
 
+	if len(machineNetworks) == 0 {
+		return nil, fmt.Errorf("no machine networks found in install config")
+	}
+
 	return machineNetworks, nil
 }
 
