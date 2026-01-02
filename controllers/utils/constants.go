@@ -13,12 +13,13 @@ const (
 	IBUName     string = "upgrade"
 	IBUFilePath string = common.LCAConfigDir + "/ibu.json"
 
-	ManualCleanupAnnotation                   string = "lca.openshift.io/manual-cleanup-done"
-	TriggerReconcileAnnotation                string = "lca.openshift.io/trigger-reconcile"
-	RecertImageAnnotation                     string = "lca.openshift.io/recert-image"
-	RecertPullSecretAnnotation                string = "lca.openshift.io/recert-pull-secret" //nolint:gosec // annotation key, not credentials
-	RecertCachedImageAnnotation               string = "lca.openshift.io/recert-image-cached"
-	SkipIPConfigClusterHealthChecksAnnotation string = "lca.openshift.io/ipconfig-skip-cluster-health-checks"
+	ManualCleanupAnnotation                                    string = "lca.openshift.io/manual-cleanup-done"
+	TriggerReconcileAnnotation                                 string = "lca.openshift.io/trigger-reconcile"
+	RecertImageAnnotation                                      string = "lca.openshift.io/recert-image"
+	RecertPullSecretAnnotation                                 string = "lca.openshift.io/recert-pull-secret" //nolint:gosec // annotation key, not credentials
+	RecertCachedImageAnnotation                                string = "lca.openshift.io/recert-image-cached"
+	SkipIPConfigPreConfigurationClusterHealthChecksAnnotation  string = "lca.openshift.io/ipconfig-skip-pre-configuration-cluster-health-checks"
+	SkipIPConfigPostConfigurationClusterHealthChecksAnnotation string = "lca.openshift.io/ipconfig-skip-post-configuration-cluster-health-checks"
 
 	// SeedGenName defines the valid name of the CR for the controller to reconcile
 	SeedGenName          string = "seedimage"
