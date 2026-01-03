@@ -142,7 +142,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	}
 
 	if err := r.cacheRecertImageIfNeeded(ctx, ipc, logger); err != nil {
-		logger.Error(err, "recert image caching failed")
+		logger.Error(err, "Recert image caching failed")
 	}
 
 	annotations := ipc.GetAnnotations()
@@ -185,7 +185,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		return res, nil
 	default:
 		// Shouldn't happen
-		logger.Error(nil, "invalid IPConfig stage", "stage", ipc.Spec.Stage)
+		logger.Error(nil, "Invalid IPConfig stage", "stage", ipc.Spec.Stage)
 		return doNotRequeue(), nil
 	}
 }
@@ -218,7 +218,7 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 	}
 
 	if len(ibu.Status.Conditions) == 0 {
-		controllerutils.SetIPStatusBlocked(ipc, "Blocked by gating: IBU is not initialized")
+		controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotInitialized)
 		if err := r.Client.Status().Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -238,7 +238,7 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 		return doNotRequeue(), nil
 	}
 
-	controllerutils.SetIPStatusBlocked(ipc, "Blocked by gating: IBU is not idle")
+	controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotIdle)
 	if err := r.Client.Status().Update(ctx, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
@@ -384,9 +384,14 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating SkipIPConfigClusterHealthChecksAnnotation
-				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
-				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				// trigger reconcile upon adding or updating IPConfig health check skip annotations
+				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation]
+				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation]
+				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+					return true
+				}
+				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation]
+				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation]
 				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
@@ -507,7 +512,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		}
 		defer func() {
 			if derr := r.ChrootOps.RemoveFile(tmpPath); derr != nil && !r.ChrootOps.IsNotExist(derr) {
-				logger.Error(derr, "failed to remove temp recert pull secret file", "path", tmpPath)
+				logger.Error(derr, "Failed to remove temp recert pull secret file", "path", tmpPath)
 			}
 		}()
 		authFile = tmpPath
@@ -529,15 +534,16 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		return fmt.Errorf("failed to update annotations after caching recert image: %w", err)
 	}
 
-	logger.Info("recert image cached on host", "image", image)
+	logger.Info("Recert image cached on host", "image", image)
 
 	return nil
 }
 
 func isIPTransitionRequested(ipc *ipcv1.IPConfig) bool {
 	desiredStage := ipc.Spec.Stage
-	return !(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
-		controllerutils.IsIPStageInProgress(ipc, desiredStage))
+	return controllerutils.IsIPStageStatusInvalidTransition(ipc, desiredStage) ||
+		!(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
+			controllerutils.IsIPStageInProgress(ipc, desiredStage))
 }
 
 func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {
@@ -676,9 +682,9 @@ func buildNetworkStatus(
 	return ipv4, ipv6, vlan
 }
 
-// shouldSkipIPClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks.
+// shouldSkipClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks
 // The value is ignored; the annotation acts as a presence flag.
-func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
+func shouldSkipClusterHealthChecks(ipc *ipcv1.IPConfig, annotation string) bool {
 	if ipc == nil {
 		return false
 	}
@@ -686,6 +692,6 @@ func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
 	if anns == nil {
 		return false
 	}
-	_, ok := anns[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+	_, ok := anns[annotation]
 	return ok
 }
