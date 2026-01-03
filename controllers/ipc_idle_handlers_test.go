@@ -165,7 +165,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme(t)
 
-	t.Run("transition requested but invalid next stage => status idle=false invalidTransition, no requeue", func(t *testing.T) {
+	t.Run("transition requested but invalid next stage => invalidTransition; then becomes valid and proceeds", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -174,8 +174,10 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		mockOstree := ostreeclient.NewMockIClient(gc)
 
 		ipc := mkIPCForIdle(t)
-		ipc.Spec.Stage = ipcv1.IPStages.Config
-		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+		ipc.Spec.Stage = ipcv1.IPStages.Idle
+		// Exclude Idle => invalid transition.
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config}
+		ipc.Status.Conditions = nil
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCIdleStageHandler{
@@ -201,6 +203,25 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
 		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InvalidTransition, "invalid IPConfig stage")
 		assertStatusInvariants(t, updated, ipc)
+
+		// Now the stage becomes valid: allow Idle, then ensure the next reconcile proceeds and overwrites
+		// the previous InvalidTransition condition with a regular non-invalid state.
+		updated.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
+
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		res2, err2 := h.Handle(ctx, updated)
+		assert.NoError(t, err2)
+		assert.True(t, called, "CheckHealth should be called once Idle becomes valid")
+		assert.Equal(t, requeueWithHealthCheckInterval(), res2)
+
+		updated2 := mustGetIPC(t, k8sClient, common.IPConfigName)
+		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
 	})
 
 	t.Run("status update fails before stage validation => returns requeueWithError and does not persist changes", func(t *testing.T) {
@@ -283,7 +304,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		ipc := mkIPCForIdle(t)
 		ipc.Status.Conditions = nil
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
-		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCIdleStageHandler{

@@ -165,8 +165,60 @@ spec:
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1
-    - kind: IPConfig
+    - description: IPConfig is the Schema for controlling node IP configuration lifecycle
+        via lca-cli ip-config.
+      displayName: IP Configuration
+      kind: IPConfig
       name: ipconfigs.lca.openshift.io
+      resources:
+      - kind: Namespace
+        name: ""
+        version: v1
+      specDescriptors:
+      - displayName: Stage
+        path: stage
+      - displayName: IPv4
+        path: ipv4
+      - displayName: IPv6
+        path: ipv6
+      - displayName: DNS Servers
+        path: dnsServers
+      - displayName: VLAN ID
+        path: vlanID
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:number
+      - displayName: DNS Filter-Out Family
+        path: dnsFilterOutFamily
+      - displayName: Auto Rollback On Failure
+        path: autoRollbackOnFailure
+      - description: |-
+          InitMonitorTimeoutSeconds defines the time frame in seconds. If not defined or set to 0, the default value of
+          1800 seconds (30 minutes) is used.
+        displayName: Init Monitor Timeout Seconds
+        path: autoRollbackOnFailure.initMonitorTimeoutSeconds
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:number
+      statusDescriptors:
+      - displayName: Observed Generation
+        path: observedGeneration
+      - displayName: Conditions
+        path: conditions
+        x-descriptors:
+        - urn:alm:descriptor:io.kubernetes.conditions
+      - displayName: IPv4
+        path: ipv4
+      - displayName: IPv6
+        path: ipv6
+      - displayName: DNS Servers
+        path: dnsServers
+      - displayName: VLAN ID
+        path: vlanID
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:number
+      - displayName: DNS Filter-Out Family
+        path: dnsFilterOutFamily
+      - displayName: Valid Next Stage
+        path: validNextStages
       version: v1
     - description: SeedGenerator is the Schema for the seedgenerators API
       displayName: Seed Generator

@@ -375,6 +375,12 @@ spec:
             && c.status==''True'') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID)
             && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) &&
             !has(oldSelf.spec.vlanID)'
+        - message: the stage transition is not permitted. Please refer to status.validNextStages
+            for valid transitions. If status.validNextStages is not present, it indicates
+            that no transitions are currently allowed
+          rule: '!has(oldSelf.status) || has(oldSelf.status.validNextStages) && self.spec.stage
+            in oldSelf.status.validNextStages || has(oldSelf.spec.stage) && has(self.spec.stage)
+            && oldSelf.spec.stage==self.spec.stage'
     served: true
     storage: true
     subresources:

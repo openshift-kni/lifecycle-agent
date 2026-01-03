@@ -96,6 +96,17 @@ func assertRollbackFailed(t *testing.T, ipc *v1.IPConfig) {
 	}
 }
 
+func assertRollbackInvalidTransition(t *testing.T, ipc *v1.IPConfig) {
+	t.Helper()
+	inProg := controllerutils.GetIPInProgressCondition(ipc, v1.IPStages.Rollback)
+	comp := controllerutils.GetIPCompletedCondition(ipc, v1.IPStages.Rollback)
+	if assert.NotNil(t, inProg) {
+		assert.Equal(t, metav1.ConditionFalse, inProg.Status)
+		assert.Equal(t, string(controllerutils.ConditionReasons.InvalidTransition), inProg.Reason)
+	}
+	assert.Nil(t, comp, "invalid transition should not set completed condition")
+}
+
 func assertRollbackCompleted(t *testing.T, ipc *v1.IPConfig) {
 	t.Helper()
 	inProg := controllerutils.GetIPInProgressCondition(ipc, v1.IPStages.Rollback)
@@ -313,7 +324,7 @@ func TestIPCRollbackTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockRpm := rpmostreeclient.NewMockIClient(gc)
 
 		ipc := mkRollbackIPC(t, true)
-		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCRollbackTwoPhaseHandler{
@@ -368,7 +379,7 @@ func TestIPCRollbackTwoPhaseHandler_PostPivot(t *testing.T) {
 		}
 
 		res, err := h.PostPivot(context.Background(), ipc, logger)
-		assert.Error(t, err)
+		assert.NoError(t, err)
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
@@ -417,7 +428,7 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 	scheme := newTestScheme(t)
 	ctx := context.Background()
 
-	t.Run("transition requested but invalid next stage => status failed and no requeue", func(t *testing.T) {
+	t.Run("transition requested but invalid next stage => status invalidTransition, then becomes valid and proceeds", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -437,9 +448,28 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, doNotRequeue(), res)
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assertRollbackFailed(t, updated)
+		assertRollbackInvalidTransition(t, updated)
 		// validate we didn't clobber validNextStages
 		assert.Equal(t, []v1.IPConfigStage{v1.IPStages.Idle}, updated.Status.ValidNextStages)
+
+		// Now the stage becomes valid: allow Rollback, then ensure the next reconcile proceeds and overwrites
+		// the previous InvalidTransition condition with a regular in-progress status.
+		updated.Status.ValidNextStages = []v1.IPConfigStage{v1.IPStages.Rollback}
+		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
+
+		mockRpm.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any()).Return(true, nil).Times(1)
+		tph.EXPECT().
+			PrePivot(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(requeueWithShortInterval(), nil).
+			Times(1)
+
+		res2, err2 := stageHandler.Handle(ctx, updated)
+		assert.NoError(t, err2)
+		assert.Equal(t, requeueWithShortInterval(), res2)
+
+		updated2 := mustGetIPC(t, k8sClient, common.IPConfigName)
+		assertRollbackInProgress(t, updated2)
 	})
 
 	t.Run("transition requested but unbooted stateroot not available => status failed and no requeue", func(t *testing.T) {
