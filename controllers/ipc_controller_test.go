@@ -359,7 +359,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		if assert.NotNil(t, cond) {
 			assert.Equal(t, metav1.ConditionFalse, cond.Status)
 			assert.Equal(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
-			assert.Equal(t, "Blocked by gating: IBU is not idle", cond.Message)
+			assert.Equal(t, controllerutils.IBUNotIdle, cond.Message)
 		}
 		anns := updated.GetAnnotations()
 		assert.NotNil(t, anns)
@@ -411,7 +411,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		if assert.NotNil(t, cond) {
 			assert.Equal(t, metav1.ConditionFalse, cond.Status)
 			assert.Equal(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
-			assert.Equal(t, "Blocked by gating: IBU is not initialized", cond.Message)
+			assert.Equal(t, controllerutils.IBUNotInitialized, cond.Message)
 		}
 	})
 
@@ -1285,13 +1285,25 @@ func TestBuildIPConfigStaterootName_Stable(t *testing.T) {
 	assert.NotEmpty(t, name)
 }
 
-func TestShouldSkipIPClusterHealthChecks(t *testing.T) {
-	assert.False(t, shouldSkipIPClusterHealthChecks(nil))
-	assert.False(t, shouldSkipIPClusterHealthChecks(&ipcv1.IPConfig{}))
+func TestShouldSkipClusterHealthChecks(t *testing.T) {
+	t.Run("nil and empty => false", func(t *testing.T) {
+		assert.False(t, shouldSkipClusterHealthChecks(nil, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation))
+		assert.False(t, shouldSkipClusterHealthChecks(&ipcv1.IPConfig{}, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation))
+	})
 
-	ipc := &ipcv1.IPConfig{}
-	ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: "any"})
-	assert.True(t, shouldSkipIPClusterHealthChecks(ipc))
+	t.Run("pre annotation present => true", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: "any"})
+		assert.True(t, shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation))
+		assert.False(t, shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation))
+	})
+
+	t.Run("post annotation present => true", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation: "any"})
+		assert.True(t, shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation))
+		assert.False(t, shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation))
+	})
 }
 
 func TestValidNextStages_DoesNotMutateIPC(t *testing.T) {

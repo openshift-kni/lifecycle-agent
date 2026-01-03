@@ -138,8 +138,8 @@ func ExtractBrExUplinkName(state NmState, bridgeName string) (string, error) {
 	return "", fmt.Errorf("%s uplink port not found", bridgeName)
 }
 
-// FindMatchingCIDR returns the first CIDR from the list that contains the given IP
-// and matches its IP family. If none is found, returns an empty string.
+// FindMatchingCIDR returns the first CIDR from the list that matches the given IP's
+// IP family (IPv4 vs IPv6). If none is found, returns an empty string.
 func FindMatchingCIDR(ipStr string, cidrs []string) string {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
@@ -154,9 +154,7 @@ func FindMatchingCIDR(ipStr string, cidrs []string) string {
 		if (n.IP.To4() != nil) != isV4 {
 			continue
 		}
-		if n.Contains(ip) {
-			return c
-		}
+		return c
 	}
 	return ""
 }

@@ -164,6 +164,17 @@ func assertConfigFailed(t *testing.T, ipc *ipcv1.IPConfig) {
 	}
 }
 
+func assertConfigInvalidTransition(t *testing.T, ipc *ipcv1.IPConfig) {
+	t.Helper()
+	inProg := controllerutils.GetIPInProgressCondition(ipc, ipcv1.IPStages.Config)
+	comp := controllerutils.GetIPCompletedCondition(ipc, ipcv1.IPStages.Config)
+	if assert.NotNil(t, inProg) {
+		assert.Equal(t, metav1.ConditionFalse, inProg.Status)
+		assert.Equal(t, string(controllerutils.ConditionReasons.InvalidTransition), inProg.Reason)
+	}
+	assert.Nil(t, comp, "invalid transition should not set completed condition")
+}
+
 func assertConfigCompleted(t *testing.T, ipc *ipcv1.IPConfig) {
 	t.Helper()
 	inProg := controllerutils.GetIPInProgressCondition(ipc, ipcv1.IPStages.Config)
@@ -304,7 +315,7 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 		// Force statusIPsMatchSpec to return error by leaving status network unpopulated.
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -628,7 +639,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
-		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation: ""})
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 
@@ -656,6 +667,47 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		res, err := h.PostPivot(context.Background(), ipc, logger)
 		assert.NoError(t, err)
 		assert.False(t, called, "CheckHealth should not be called when skip annotation is set")
+		assert.Equal(t, doNotRequeue(), res)
+	})
+
+	t.Run("pre skip annotation does not skip post-pivot health checks", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+		mockReboot := reboot.NewMockRebootIntf(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
+		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
+
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return nil
+		}
+
+		mockReboot.EXPECT().DisableInitMonitor().Return(nil).Times(1)
+
+		h := &IPCConfigTwoPhaseHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			RPMOstreeClient: mockRPM,
+			OstreeClient:    mockOstree,
+			ChrootOps:       mockOps,
+			RebootClient:    mockReboot,
+		}
+
+		res, err := h.PostPivot(context.Background(), ipc, logger)
+		assert.NoError(t, err)
+		assert.True(t, called, "CheckHealth should be called when only pre-skip annotation is set")
 		assert.Equal(t, doNotRequeue(), res)
 	})
 
@@ -997,7 +1049,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 	scheme := newIPConfigTestScheme(t)
 	ctx := context.Background()
 
-	t.Run("transition requested but invalid next stage => status failed and no requeue", func(t *testing.T) {
+	t.Run("transition requested but invalid next stage => status invalidTransition, then becomes valid and proceeds", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -1008,7 +1060,8 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // exclude config => invalid
 
 		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
-		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu)
+		node, mc := mkSNOObjects()
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, node, mc)
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		stageHandler := NewIPCConfigStageHandler(k8sClient, k8sClient, mockRPM, mockOps, tph)
 
@@ -1017,13 +1070,32 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, doNotRequeue(), res)
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
-		assertConfigFailed(t, updated)
+		assertConfigInvalidTransition(t, updated)
 		hist := findConfigStageHistory(t, updated)
 		if assert.NotNil(t, hist) {
 			assert.False(t, hist.StartTime.IsZero())
 			assert.True(t, hist.CompletionTime.IsZero())
 		}
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, updated.Status.ValidNextStages)
+
+		// Now the stage becomes valid: allow Config, then ensure the next reconcile proceeds and overwrites
+		// the previous InvalidTransition condition with a regular in-progress status.
+		updated.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config}
+		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
+
+		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+		tph.EXPECT().
+			PrePivot(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(requeueWithShortInterval(), nil).
+			Times(1)
+
+		res2, err2 := stageHandler.Handle(ctx, updated)
+		assert.NoError(t, err2)
+		assert.Equal(t, requeueWithShortInterval(), res2)
+
+		updated2 := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assertConfigInProgress(t, updated2)
 	})
 
 	t.Run("transition requested but SNO validation fails => status failed and no requeue", func(t *testing.T) {
@@ -1118,7 +1190,7 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		idle := controllerutils.GetIPInProgressCondition(updated, ipcv1.IPStages.Idle)
 		if assert.NotNil(t, idle) {
 			assert.Equal(t, metav1.ConditionFalse, idle.Status)
-			assert.Equal(t, string(controllerutils.ConditionReasons.NotIdle), idle.Reason)
+			assert.Equal(t, string(controllerutils.ConditionReasons.ConfigurationInProgress), idle.Reason)
 		}
 		hist := findConfigStageHistory(t, updated)
 		if assert.NotNil(t, hist) {
