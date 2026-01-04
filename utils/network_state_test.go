@@ -171,8 +171,10 @@ func TestFindMatchingCIDR(t *testing.T) {
 
 	assert.Equal(t, "192.0.2.0/24", FindMatchingCIDR("192.0.2.10", cidrs))
 	assert.Equal(t, "2001:db8::/64", FindMatchingCIDR("2001:db8::10", cidrs))
-	// No matching CIDR for this IP
-	assert.Equal(t, "", FindMatchingCIDR("203.0.113.10", []string{"10.0.0.0/8"}))
+	// Family match does not require containment
+	assert.Equal(t, "10.0.0.0/8", FindMatchingCIDR("203.0.113.10", []string{"10.0.0.0/8"}))
+	// Mismatched family should return empty string
+	assert.Equal(t, "", FindMatchingCIDR("192.0.2.10", []string{"2001:db8::/64"}))
 	// Invalid IP should return empty string
 	assert.Equal(t, "", FindMatchingCIDR("not-an-ip", cidrs))
 }
