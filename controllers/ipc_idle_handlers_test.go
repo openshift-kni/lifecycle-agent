@@ -165,7 +165,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme(t)
 
-	t.Run("transition requested but invalid next stage => status idle=false invalidTransition, no requeue", func(t *testing.T) {
+	t.Run("transition requested but invalid next stage => invalidTransition; then becomes valid and proceeds", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -174,8 +174,10 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		mockOstree := ostreeclient.NewMockIClient(gc)
 
 		ipc := mkIPCForIdle(t)
-		ipc.Spec.Stage = ipcv1.IPStages.Config
-		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+		ipc.Spec.Stage = ipcv1.IPStages.Idle
+		// Exclude Idle => invalid transition.
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config}
+		ipc.Status.Conditions = nil
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCIdleStageHandler{
@@ -186,6 +188,14 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			RPMOstreeClient: mockRpm,
 		}
 
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			t.Fatalf("CheckHealth should not be called when stage validation fails")
+			return nil
+		}
+		mockOps.EXPECT().RemountSysroot().Times(0)
+
 		res, err := h.Handle(ctx, ipc)
 		assert.NoError(t, err)
 		assert.Equal(t, doNotRequeue(), res)
@@ -193,9 +203,28 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
 		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InvalidTransition, "invalid IPConfig stage")
 		assertStatusInvariants(t, updated, ipc)
+
+		// Now the stage becomes valid: allow Idle, then ensure the next reconcile proceeds and overwrites
+		// the previous InvalidTransition condition with a regular non-invalid state.
+		updated.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
+
+		called := false
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			called = true
+			return errors.New("not healthy")
+		}
+
+		res2, err2 := h.Handle(ctx, updated)
+		assert.NoError(t, err2)
+		assert.True(t, called, "CheckHealth should be called once Idle becomes valid")
+		assert.Equal(t, requeueWithHealthCheckInterval(), res2)
+
+		updated2 := mustGetIPC(t, k8sClient, common.IPConfigName)
+		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
 	})
 
-	t.Run("invalid next stage but status update fails => returns requeueWithError and does not persist changes", func(t *testing.T) {
+	t.Run("status update fails before stage validation => returns requeueWithError and does not persist changes", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -223,8 +252,6 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		wantRes, _ := requeueWithError(err)
 		assert.Equal(t, wantRes, res)
 		assert.Contains(t, err.Error(), "failed to update ipconfig status")
-		// Note: Handle currently wraps the *stage validation* error, not the update error.
-		assert.Contains(t, err.Error(), "invalid IPConfig stage")
 
 		unchanged := mustGetIPC(t, baseClient, common.IPConfigName)
 		assert.Nil(t, meta.FindStatusCondition(unchanged.Status.Conditions, string(controllerutils.ConditionTypes.Idle)))
@@ -277,7 +304,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		ipc := mkIPCForIdle(t)
 		ipc.Status.Conditions = nil
 		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
-		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigClusterHealthChecksAnnotation: ""})
+		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCIdleStageHandler{
@@ -595,7 +622,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assertStatusInvariants(t, unchanged, ipc)
 	})
 
-	t.Run("transition not requested but invalid stage in spec => still runs healthcheck/cleanup and can succeed", func(t *testing.T) {
+	t.Run("already idle (transition not requested) => exits early and does not run healthcheck/cleanup", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -604,10 +631,15 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		mockOstree := ostreeclient.NewMockIClient(gc)
 
 		ipc := mkIPCForIdle(t)
-		ipc.Spec.Stage = ipcv1.IPStages.Config
-		// Transition not requested: set a completed condition for Config stage.
-		controllerutils.SetIPConfigStatusCompleted(ipc, "done")
-		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle} // would be invalid if validate ran
+		// Transition not requested: Idle is already "completed".
+		ipc.Status.Conditions = []metav1.Condition{{
+			Type:               string(controllerutils.ConditionTypes.Idle),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(controllerutils.ConditionReasons.Idle),
+			Message:            "Idle",
+			ObservedGeneration: ipc.Generation,
+		}}
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 		h := &IPCIdleStageHandler{
@@ -620,27 +652,71 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 
 		oldHC := CheckHealth
 		defer func() { CheckHealth = oldHC }()
-		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
-
-		status := &rpmostreeclient.Status{
-			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			t.Fatalf("CheckHealth should not be called when idle handler exits early")
+			return nil
 		}
 
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
-		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(2)
-		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
-		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(1)
-		mockRpm.EXPECT().RpmOstreeCleanup().Return(nil).Times(1)
-		mockOps.EXPECT().StatFile(gomock.Any()).Return(nil, errors.New("not exist")).Times(1)
+		mockOps.EXPECT().RemountSysroot().Times(0)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.NoError(t, err)
 		assert.Equal(t, doNotRequeue(), res)
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assert.Len(t, updated.Status.Conditions, 1)
 		assertIdleCond(t, updated, metav1.ConditionTrue, controllerutils.ConditionReasons.Idle, "")
 		assertStatusInvariants(t, updated, ipc)
+	})
+
+	t.Run("manual cleanup done but status update fails => returns requeueWithError and does not proceed", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockOps := ops.NewMockOps(gc)
+		mockRpm := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+
+		ipc := mkIPCForIdle(t)
+		ipc.SetAnnotations(map[string]string{controllerutils.ManualCleanupAnnotation: ""})
+		ipc.Status.Conditions = []metav1.Condition{{
+			Type:               string(controllerutils.ConditionTypes.Idle),
+			Status:             metav1.ConditionFalse,
+			Reason:             string(controllerutils.ConditionReasons.Failed),
+			Message:            "failed earlier",
+			ObservedGeneration: ipc.Generation,
+		}}
+
+		baseClient := newFakeClientWithIPC(t, scheme, ipc)
+		wrapped := errStatusClient{Client: baseClient, err: errors.New("status update failed")}
+
+		h := &IPCIdleStageHandler{
+			Client:          wrapped,
+			NoncachedClient: baseClient,
+			ChrootOps:       mockOps,
+			OstreeClient:    mockOstree,
+			RPMOstreeClient: mockRpm,
+		}
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+			t.Fatalf("CheckHealth should not be called when manual-cleanup status update fails")
+			return nil
+		}
+
+		mockOps.EXPECT().RemountSysroot().Times(0)
+
+		res, err := h.Handle(ctx, ipc)
+		assert.Error(t, err)
+		wantRes, _ := requeueWithError(err)
+		assert.Equal(t, wantRes, res)
+		assert.Contains(t, err.Error(), "failed to handle manual cleanup if failed")
+
+		updated := mustGetIPC(t, baseClient, common.IPConfigName)
+		_, annPresent := updated.GetAnnotations()[controllerutils.ManualCleanupAnnotation]
+		assert.False(t, annPresent, "annotation removal should persist even if status update fails")
+		// Status condition update should not persist when Status().Update fails.
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Failed, "failed earlier")
 	})
 }
 

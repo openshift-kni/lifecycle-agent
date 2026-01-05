@@ -13,8 +13,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,31 +47,60 @@ func (h *IPCIdleStageHandler) Handle(
 	ctx context.Context,
 	ipc *ipcv1.IPConfig,
 ) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithName("IPConfigIdle")
-	logger.Info("Starting handleIdle")
+	logger := log.FromContext(ctx).WithName("IPConfig Idle handler")
+	logger.Info("Handler started")
 
-	if err := h.handleManualCleanupIfFailed(ctx, ipc, logger); err != nil {
+	defer func() {
+		logger.Info("Handler completed")
+	}()
+
+	// best effort to handle manual cleanup if failed
+	if err := h.handleManualCleanup(ctx, ipc, logger); err != nil {
+		logger.Error(err, "Manual cleanup handling failed")
 		return requeueWithError(fmt.Errorf("failed to handle manual cleanup if failed: %w", err))
 	}
 
-	if isIPTransitionRequested(ipc) && ipc.Status.ValidNextStages != nil {
+	if isIPTransitionRequested(ipc) {
 		if err := validateIPConfigStage(ipc); err != nil {
-			controllerutils.SetIPIdleStatusFalse(
-				ipc,
-				controllerutils.ConditionReasons.InvalidTransition,
-				fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
+			controllerutils.SetIPStatusInvalidTransition(
+				ipc, fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
 			)
 			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
-				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+				logger.Error(uerr, "Failed to update IPConfig status after invalid transition")
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
+			logger.Info(
+				"Invalid transition requested",
+				"stage", ipc.Spec.Stage,
+			)
 			return doNotRequeue(), nil
+		}
+
+		controllerutils.ClearIPInvalidTransitionStatusConditions(ipc)
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			logger.Error(err, "Failed to clear IPConfig invalid transition status conditions")
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
+
+		controllerutils.SetIPIdleStatusFalse(
+			ipc, controllerutils.ConditionReasons.InProgress,
+			controllerutils.InProgressOfBecomingIdle,
+		)
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			logger.Error(err, "Failed to update IPConfig status to in progress of becoming idle")
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 	}
 
-	if shouldSkipIPClusterHealthChecks(ipc) {
+	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Idle) {
+		logger.Info("Stage is not in progress")
+		return doNotRequeue(), nil
+	}
+
+	if shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation) {
 		logger.Info(
 			"Skipping cluster health checks due to annotation",
-			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+			"annotation", controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation,
 		)
 	} else {
 		logger.Info("Running health checks")
@@ -81,8 +108,10 @@ func (h *IPCIdleStageHandler) Handle(
 			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
 			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.Stabilizing, msg)
 			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+				logger.Error(uerr, "Failed to update IPConfig status after health check failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
+			logger.Info("Cluster not healthy yet", "reason", msg)
 			return requeueWithHealthCheckInterval(), nil
 		}
 	}
@@ -97,17 +126,20 @@ func (h *IPCIdleStageHandler) Handle(
 			),
 		)
 		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			logger.Error(uerr, "Failed to update IPConfig status after cleanup failure")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 		}
+		logger.Error(err, "Cleanup failed")
 		return requeueWithError(fmt.Errorf("failed to cleanup: %w", err))
 	}
 
 	controllerutils.ResetStatusConditions(&ipc.Status.Conditions, ipc.Generation)
 	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		logger.Error(err, "Failed to update IPConfig status after successful cleanup/reset")
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
-	logger.Info("handleIdle completed successfully")
+	logger.Info("Completed successfully")
 
 	return doNotRequeue(), nil
 }
@@ -235,20 +267,23 @@ func getStaterootsToRemove(rpmOstreeClient rpmostreeclient.IClient) ([]string, e
 	return toRemove, nil
 }
 
-func (h *IPCIdleStageHandler) handleManualCleanupIfFailed(
+func (h *IPCIdleStageHandler) handleManualCleanup(
 	ctx context.Context, ipc *ipcv1.IPConfig, logger logr.Logger,
 ) error {
-	idleCond := meta.FindStatusCondition(ipc.Status.Conditions, string(controllerutils.ConditionTypes.Idle))
-	if idleCond != nil && idleCond.Status == metav1.ConditionFalse &&
-		idleCond.Reason == string(controllerutils.ConditionReasons.Failed) {
-		done, err := h.checkIPManualCleanup(ctx, ipc)
-		if err != nil {
-			return fmt.Errorf("failed to check manual cleanup: %w", err)
-		}
+	done, err := h.checkIPManualCleanup(ctx, ipc)
+	if err != nil {
+		return fmt.Errorf("failed to check manual cleanup: %w", err)
+	}
 
-		if done {
-			logger.Info("Manual cleanup annotation is found, removed annotation and retrying idle tasks")
+	if done {
+		controllerutils.SetIPIdleStatusFalse(
+			ipc, controllerutils.ConditionReasons.InProgress,
+			controllerutils.InProgressOfBecomingIdle,
+		)
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			return fmt.Errorf("failed to update ipconfig status to in progress of becoming idle: %w", err)
 		}
+		logger.Info("Manual cleanup annotation is found, removed annotation and retrying idle tasks")
 	}
 
 	return nil

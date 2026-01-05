@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	controllerutils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -36,6 +37,7 @@ import (
 
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get
@@ -112,6 +114,12 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 				err = fmt.Errorf("failed to update ipconfig status: %w", uErr)
 			}
 		}
+
+		logger.Info(
+			"Finish reconciling IPConfig",
+			"name", req.NamespacedName.Name,
+			"namespace", req.NamespacedName.Namespace,
+		)
 	}()
 
 	if ipc.Status.ValidNextStages == nil {
@@ -125,8 +133,8 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		}
 	}
 
-	if err := r.refreshStatus(ctx, ipc); err != nil {
-		return requeueWithError(fmt.Errorf("failed to refresh status: %w", err))
+	if err := r.refreshNetworkStatus(ctx, ipc); err != nil {
+		return requeueWithError(fmt.Errorf("failed to refresh network status: %w", err))
 	}
 
 	if err := r.Client.Status().Update(ctx, ipc); err != nil {
@@ -134,7 +142,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	}
 
 	if err := r.cacheRecertImageIfNeeded(ctx, ipc, logger); err != nil {
-		logger.Error(err, "recert image caching failed")
+		logger.Error(err, "Recert image caching failed")
 	}
 
 	annotations := ipc.GetAnnotations()
@@ -144,6 +152,11 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		if err := r.Client.Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig annotations: %w", err))
 		}
+	}
+
+	requeueResult, err := r.gateIPConfigByIBU(ctx, ipc)
+	if err != nil || requeueResult.RequeueAfter > 0 {
+		return requeueResult, err
 	}
 
 	// Start stage history timer. The timer is stopped from inside the handlers when they complete successfully
@@ -172,9 +185,65 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		return res, nil
 	default:
 		// Shouldn't happen
-		logger.Error(nil, "invalid IPConfig stage", "stage", ipc.Spec.Stage)
+		logger.Error(nil, "Invalid IPConfig stage", "stage", ipc.Spec.Stage)
 		return doNotRequeue(), nil
 	}
+}
+
+// gateIPConfigByIBU gates IPConfig reconciliation based on the ImageBasedUpgrade (IBU) CR.
+//
+// IPC is considered "allowed to proceed" only when:
+//   - the IBU CR exists, AND
+//   - IBU spec.stage is Idle, AND
+//   - the IBU Idle condition is present and true.
+//
+// Otherwise IPC gates reconciliation as follows:
+//   - If the IBU CR does not exist yet: requeue immediately (without updating IPC status).
+//   - If the IBU CR exists but has no status conditions yet: mark IPC as Blocked and requeue immediately.
+//   - If IBU is not idle (stage != Idle or Idle condition is not true): mark IPC as Blocked and requeue after a short interval.
+//
+// Notice: this is not mutual exclusion. For delivery reasons, IBU can still start while IPC is
+// not Idle. We should add mutual exclusion between IPC and IBU controllers to avoid this
+// in the future.
+func (r *IPConfigReconciler) gateIPConfigByIBU(
+	ctx context.Context,
+	ipc *ipcv1.IPConfig,
+) (ctrl.Result, error) {
+	ibu := &ibuv1.ImageBasedUpgrade{}
+	if getErr := r.NoncachedClient.Get(ctx, client.ObjectKey{Name: controllerutils.IBUName}, ibu); getErr != nil {
+		if !k8serrors.IsNotFound(getErr) {
+			return requeueWithError(fmt.Errorf("failed to get ImageBasedUpgrade for gating: %w", getErr))
+		}
+		return requeueImmediately(), nil
+	}
+
+	if len(ibu.Status.Conditions) == 0 {
+		controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotInitialized)
+		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
+		return requeueImmediately(), nil
+	}
+
+	if ibu.Spec.Stage == ibuv1.Stages.Idle &&
+		controllerutils.IsIdleConditionTrue(ibu.Status.Conditions) {
+		inProgressCondition := controllerutils.GetIPInProgressCondition(ipc, ipc.Spec.Stage)
+		if inProgressCondition != nil &&
+			inProgressCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+			meta.RemoveStatusCondition(&ipc.Status.Conditions, inProgressCondition.Type)
+		}
+		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+		}
+		return doNotRequeue(), nil
+	}
+
+	controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotIdle)
+	if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+	}
+
+	return requeueWithShortInterval(), nil
 }
 
 func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
@@ -185,18 +254,18 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		return []ipcv1.IPConfigStage{}, nil
 	}
 
+	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
+	}
+
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(rpmOstreeClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
+	}
+
 	if inProgressStage == ipcv1.IPStages.Config ||
 		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Config) {
-		isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
-		}
-
-		isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(rpmOstreeClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
-		}
-
 		if lo.FromPtr(isTargetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable) {
 			return []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}, nil
 		}
@@ -209,7 +278,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 	if controllerutils.IsIPStageCompleted(ipc, ipcv1.IPStages.Config) {
-		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, nil
+		if lo.FromPtr(isTargetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable) {
+			return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, nil
+		}
+
+		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 	if controllerutils.IsIPStageCompleted(ipc, ipcv1.IPStages.Idle) {
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Config}, nil
@@ -219,6 +292,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 	idleCondition := meta.FindStatusCondition(ipc.Status.Conditions, string(controllerutils.ConditionTypes.Idle))
 	if idleCondition == nil {
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
+	}
+
+	// blocked by IBU, allow same stage only
+	if idleCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+		return []ipcv1.IPConfigStage{ipc.Spec.Stage}, nil
 	}
 
 	return []ipcv1.IPConfigStage{}, nil
@@ -306,9 +384,14 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				}
 
-				// trigger reconcile upon adding or updating SkipIPConfigClusterHealthChecksAnnotation
-				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
-				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+				// trigger reconcile upon adding or updating IPConfig health check skip annotations
+				oldValue, oldHas := e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation]
+				newValue, newHas := e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation]
+				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
+					return true
+				}
+				oldValue, oldHas = e.ObjectOld.GetAnnotations()[controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation]
+				newValue, newHas = e.ObjectNew.GetAnnotations()[controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation]
 				if (!oldHas && newHas) || (oldHas && newHas && oldValue != newValue) {
 					return true
 				}
@@ -365,7 +448,7 @@ func (r *IPConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *IPConfigReconciler) getIPConfig(ctx context.Context, logger logr.Logger) (*ipcv1.IPConfig, error) {
 	ipc := &ipcv1.IPConfig{}
 	if err := r.NoncachedClient.Get(ctx, client.ObjectKey{Name: common.IPConfigName}, ipc); err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			if initErr := lcautils.InitIPConfig(ctx, r.Client, &logger); initErr != nil {
 				return nil, fmt.Errorf("failed to initialize IPConfig: %w", initErr)
 			}
@@ -429,7 +512,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		}
 		defer func() {
 			if derr := r.ChrootOps.RemoveFile(tmpPath); derr != nil && !r.ChrootOps.IsNotExist(derr) {
-				logger.Error(derr, "failed to remove temp recert pull secret file", "path", tmpPath)
+				logger.Error(derr, "Failed to remove temp recert pull secret file", "path", tmpPath)
 			}
 		}()
 		authFile = tmpPath
@@ -451,22 +534,19 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		return fmt.Errorf("failed to update annotations after caching recert image: %w", err)
 	}
 
-	logger.Info("recert image cached on host", "image", image)
+	logger.Info("Recert image cached on host", "image", image)
 
 	return nil
 }
 
 func isIPTransitionRequested(ipc *ipcv1.IPConfig) bool {
 	desiredStage := ipc.Spec.Stage
-	if desiredStage == ipcv1.IPStages.Idle {
-		return !(controllerutils.IsIPStageCompleted(ipc, desiredStage) ||
+	return controllerutils.IsIPStageStatusInvalidTransition(ipc, desiredStage) ||
+		!(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
 			controllerutils.IsIPStageInProgress(ipc, desiredStage))
-	}
-	return !(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
-		controllerutils.IsIPStageInProgress(ipc, desiredStage))
 }
 
-func (r *IPConfigReconciler) refreshStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {
+func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {
 	output, err := r.nmstateShowJSON()
 	if err != nil {
 		return fmt.Errorf("failed to get nmstate output: %w", err)
@@ -602,9 +682,9 @@ func buildNetworkStatus(
 	return ipv4, ipv6, vlan
 }
 
-// shouldSkipIPClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks.
+// shouldSkipClusterHealthChecks returns true when the IPConfig CR opts out of cluster health checks
 // The value is ignored; the annotation acts as a presence flag.
-func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
+func shouldSkipClusterHealthChecks(ipc *ipcv1.IPConfig, annotation string) bool {
 	if ipc == nil {
 		return false
 	}
@@ -612,6 +692,6 @@ func shouldSkipIPClusterHealthChecks(ipc *ipcv1.IPConfig) bool {
 	if anns == nil {
 		return false
 	}
-	_, ok := anns[controllerutils.SkipIPConfigClusterHealthChecksAnnotation]
+	_, ok := anns[annotation]
 	return ok
 }

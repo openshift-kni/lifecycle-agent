@@ -85,46 +85,90 @@ func NewIPCConfigStageHandler(
 }
 
 func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithName("IPConfigConfig")
-	logger.Info("Starting handleConfig")
+	logger := log.FromContext(ctx).WithName("IPConfig Config handler")
+	logger.Info("Handler started")
+
+	defer func() {
+		logger.Info("Handler completed")
+	}()
 
 	if isIPTransitionRequested(ipc) {
-		controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, "In progress")
+		if err := validateIPConfigStage(ipc); err != nil {
+			controllerutils.SetIPStatusInvalidTransition(
+				ipc, fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
+			)
+			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+				logger.Error(err, "Failed to update IPConfig status after invalid transition")
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			}
+			return doNotRequeue(), nil
+		}
+
+		controllerutils.ClearIPInvalidTransitionStatusConditions(ipc)
 		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			logger.Error(err, "Failed to clear IPConfig invalid transition status conditions")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
-		controllerutils.SetIPConfigStatusInProgress(ipc, "Configuration is in progress")
+		controllerutils.SetIPIdleStatusFalse(
+			ipc,
+			controllerutils.ConditionReasons.ConfigurationInProgress,
+			controllerutils.ConfigurationInProgress,
+		)
 		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			logger.Error(err, "Failed to update IPConfig idle status to configuration in progress")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
 		if err := h.validateConfigStart(ctx, ipc); err != nil {
 			controllerutils.SetIPConfigStatusFailed(ipc, fmt.Sprintf("config validation failed: %s", err.Error()))
 			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+				logger.Error(err, "Failed to update IPConfig status after validation failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
 
+			logger.Info("Validation failed", "reason", err.Error())
 			return doNotRequeue(), nil
+		}
+
+		controllerutils.SetIPConfigStatusInProgress(ipc, controllerutils.ConfigurationInProgress)
+		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			logger.Error(err, "Failed to update IPConfig status to in-progress")
+			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 	}
 
 	// stop when completed or failed
 	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Config) {
+		logger.Info("Stage is not in progress")
 		return doNotRequeue(), nil
 	}
 
 	targetStaterootBooted, err := isTargetStaterootBooted(ipc, h.RPMOstreeClient)
 	if err != nil {
+		logger.Error(err, "Failed to determine whether target stateroot is booted")
 		return requeueWithError(fmt.Errorf("failed to check if target stateroot is booted: %w", err))
 	}
 
-	if !lo.FromPtr(targetStaterootBooted) {
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(h.RPMOstreeClient)
+	if err != nil {
+		logger.Error(err, "Failed to determine whether an unbooted stateroot is available")
+		return requeueWithError(fmt.Errorf("failed to check if unbooted stateroot is available: %w", err))
+	}
+
+	if !(lo.FromPtr(targetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable)) {
+		logger.Info(
+			"Config stage handler: running pre-pivot",
+			"targetStaterootBooted", lo.FromPtr(targetStaterootBooted),
+			"unbootedStaterootAvailable", lo.FromPtr(isUnbootedStaterootAvailable),
+		)
 		result, err := h.PhasesHandler.PrePivot(ctx, ipc, logger)
 		if err != nil {
+			logger.Error(err, "Pre-pivot phase failed")
 			return result, fmt.Errorf("failed to run pre pivot: %w", err)
 		}
 
+		logger.Info("Returning after pre-pivot phase")
 		return result, nil
 	}
 
@@ -132,20 +176,23 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 
 	result, err := h.PhasesHandler.PostPivot(ctx, ipc, logger)
 	if err != nil {
+		logger.Error(err, "Post-pivot phase failed")
 		return result, fmt.Errorf("failed to run post pivot: %w", err)
 	}
 
 	if result.RequeueAfter != 0 {
+		logger.Info("Returning after post-pivot phase")
 		return result, nil
 	}
 
 	controllerutils.StopIPStageHistory(h.Client, logger, ipc)
 	controllerutils.SetIPConfigStatusCompleted(ipc, "Configuration completed successfully")
 	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		logger.Error(err, "Failed to update IPConfig status to completed")
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
-	logger.Info("Completed handleConfig")
+	logger.Info("Completed successfully")
 
 	return result, nil
 }
@@ -169,10 +216,13 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		return doNotRequeue(), nil
 	}
 
-	if shouldSkipIPClusterHealthChecks(ipc) {
+	if shouldSkipClusterHealthChecks(
+		ipc,
+		controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation,
+	) {
 		logger.Info(
 			"Skipping cluster health checks due to annotation",
-			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+			"annotation", controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation,
 		)
 	} else {
 		if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
@@ -237,7 +287,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		if err := h.Client.Status().Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
-		logger.Error(err, "ip-config pre-pivot failed")
+		logger.Error(err, "IP-config pre-pivot failed")
 		return doNotRequeue(), nil
 	}
 
@@ -266,10 +316,13 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 		return requeueWithError(fmt.Errorf("failed to disable init monitor: %w", err))
 	}
 
-	if shouldSkipIPClusterHealthChecks(ipc) {
+	if shouldSkipClusterHealthChecks(
+		ipc,
+		controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation,
+	) {
 		logger.Info(
 			"Skipping cluster health checks due to annotation",
-			"annotation", controllerutils.SkipIPConfigClusterHealthChecksAnnotation,
+			"annotation", controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation,
 		)
 	} else {
 		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
@@ -954,10 +1007,6 @@ func exportIPConfigForUncontrolledRollback(ipc *ipcv1.IPConfig, chrootOps ops.Op
 }
 
 func (h *IPCConfigStageHandler) validateConfigStart(ctx context.Context, ipc *ipcv1.IPConfig) error {
-	if err := validateIPConfigStage(ipc); err != nil {
-		return fmt.Errorf("invalid IPConfig stage: %w", err)
-	}
-
 	if err := h.validateSNO(ctx); err != nil {
 		return fmt.Errorf("validation of SNO failed: %w", err)
 	}
