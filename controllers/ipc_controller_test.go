@@ -366,7 +366,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		assert.Equal(t, "", anns[controllerutils.TriggerReconcileAnnotation])
 	})
 
-	t.Run("gating: IBU exists but has no conditions => blocked and requeues immediately (IBU not initialized)", func(t *testing.T) {
+	t.Run("gating: IBU exists but has no conditions => allowed (IBU not initialized)", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -390,6 +390,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		mockRPM := rpmostreeclient.NewMockIClient(gc)
 		mockTargetStaterootNotBooted(mockRPM)
 
+		configHandler := NewMockIPConfigStageHandler(gc)
+		configHandler.EXPECT().Handle(gomock.Any(), gomock.Any()).Return(doNotRequeue(), nil).Times(1)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
@@ -398,20 +401,19 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			ChrootOps:       chrootOps,
 			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
-			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   configHandler,
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
 		}
 
 		res, err := r.Reconcile(ctx, req)
 		assert.NoError(t, err)
-		assert.Equal(t, requeueImmediately(), res)
+		assert.Equal(t, doNotRequeue(), res)
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
 		cond := meta.FindStatusCondition(updated.Status.Conditions, string(controllerutils.ConditionTypes.ConfigInProgress))
-		if assert.NotNil(t, cond) {
-			assert.Equal(t, metav1.ConditionFalse, cond.Status)
-			assert.Equal(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
-			assert.Equal(t, controllerutils.IBUNotInitialized, cond.Message)
+		// If present, it should not be Blocked by gating.
+		if cond != nil {
+			assert.NotEqual(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
 		}
 	})
 

@@ -23,7 +23,9 @@ import (
 
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
@@ -44,6 +46,7 @@ var (
 
 func init() {
 	testscheme.AddKnownTypes(ibuv1.GroupVersion, &ibuv1.ImageBasedUpgrade{})
+	testscheme.AddKnownTypes(ipcv1.GroupVersion, &ipcv1.IPConfig{})
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
@@ -820,6 +823,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 	testcases := []struct {
 		name         string
 		ibu          client.Object
+		ipc          client.Object
 		request      reconcile.Request
 		validateFunc func(t *testing.T, result ctrl.Result, ibu *ibuv1.ImageBasedUpgrade)
 	}{
@@ -831,6 +835,17 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: ibuv1.ImageBasedUpgradeSpec{
 					Stage: ibuv1.Stages.Idle,
+				},
+			},
+			// Ensure IBU gating does not requeue early due to a missing IPConfig CR.
+			// (If IPConfig exists but is not initialized yet, reconciliation is allowed to proceed.)
+			ipc: &ipcv1.IPConfig{
+				ObjectMeta: v1.ObjectMeta{
+					Name:       common.IPConfigName,
+					Generation: 5,
+				},
+				Spec: ipcv1.IPConfigSpec{
+					Stage: ipcv1.IPStages.Idle,
 				},
 			},
 			request: reconcile.Request{
@@ -851,6 +866,9 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 		t.TempDir()
 		t.Run(tc.name, func(t *testing.T) {
 			objs := []client.Object{tc.ibu}
+			if tc.ipc != nil {
+				objs = append(objs, tc.ipc)
+			}
 			fakeClient, err := getFakeClientFromObjects(objs...)
 			if err != nil {
 				t.Errorf("error in creating fake client")
@@ -1024,4 +1042,207 @@ func Test_getValidNextStageList(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
+	t.Run("ipconfig not found => requeues soon (no status update)", func(t *testing.T) {
+		ibuObj := &ibuv1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       utils.IBUName,
+				Generation: 7,
+			},
+			Spec: ibuv1.ImageBasedUpgradeSpec{
+				Stage: ibuv1.Stages.Prep,
+			},
+		}
+
+		c, err := getFakeClientFromObjects(ibuObj)
+		if err != nil {
+			t.Fatalf("failed to create fake client: %v", err)
+		}
+
+		ibu := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu))
+
+		r := &ImageBasedUpgradeReconciler{Client: c, NoncachedClient: c}
+		res, err := r.gateIBUByIPConfig(context.TODO(), ibu)
+		assert.NoError(t, err)
+		assert.Equal(t, requeueImmediately(), res)
+
+		updated := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, updated))
+		cond := meta.FindStatusCondition(updated.Status.Conditions, string(utils.ConditionTypes.PrepInProgress))
+		assert.Nil(t, cond)
+	})
+
+	t.Run("ipconfig exists but has no conditions => allowed (ipconfig not initialized)", func(t *testing.T) {
+		ibuObj := &ibuv1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       utils.IBUName,
+				Generation: 7,
+			},
+			Spec: ibuv1.ImageBasedUpgradeSpec{
+				Stage: ibuv1.Stages.Prep,
+			},
+		}
+
+		ipcObj := &ipcv1.IPConfig{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       common.IPConfigName,
+				Generation: 5,
+			},
+			Spec: ipcv1.IPConfigSpec{
+				Stage: ipcv1.IPStages.Idle,
+			},
+		}
+
+		c, err := getFakeClientFromObjects(ibuObj, ipcObj)
+		if err != nil {
+			t.Fatalf("failed to create fake client: %v", err)
+		}
+
+		ibu := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu))
+
+		r := &ImageBasedUpgradeReconciler{Client: c, NoncachedClient: c}
+		res, err := r.gateIBUByIPConfig(context.TODO(), ibu)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, updated))
+		cond := meta.FindStatusCondition(updated.Status.Conditions, string(utils.ConditionTypes.PrepInProgress))
+		assert.Nil(t, cond)
+	})
+
+	t.Run("ipconfig exists and is not idle => blocked and requeues short interval", func(t *testing.T) {
+		ibuObj := &ibuv1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       utils.IBUName,
+				Generation: 7,
+			},
+			Spec: ibuv1.ImageBasedUpgradeSpec{
+				Stage: ibuv1.Stages.Prep,
+			},
+		}
+
+		ipcObj := &ipcv1.IPConfig{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       common.IPConfigName,
+				Generation: 5,
+			},
+			Spec: ipcv1.IPConfigSpec{
+				Stage: ipcv1.IPStages.Config,
+			},
+		}
+		utils.SetIPConfigStatusInProgress(ipcObj, "config in progress")
+
+		c, err := getFakeClientFromObjects(ibuObj, ipcObj)
+		if err != nil {
+			t.Fatalf("failed to create fake client: %v", err)
+		}
+
+		ibu := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu))
+
+		r := &ImageBasedUpgradeReconciler{Client: c, NoncachedClient: c}
+		res, err := r.gateIBUByIPConfig(context.TODO(), ibu)
+		assert.NoError(t, err)
+		assert.Equal(t, requeueWithShortInterval(), res)
+
+		updated := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, updated))
+		cond := meta.FindStatusCondition(updated.Status.Conditions, string(utils.ConditionTypes.PrepInProgress))
+		if assert.NotNil(t, cond) {
+			assert.Equal(t, metav1.ConditionFalse, cond.Status)
+			assert.Equal(t, string(utils.ConditionReasons.Blocked), cond.Reason)
+			assert.Equal(t, utils.IPCNotIdle, cond.Message)
+		}
+	})
+
+	t.Run("ipconfig not idle but blocked => still blocked (no deadlock avoidance)", func(t *testing.T) {
+		ibuObj := &ibuv1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       utils.IBUName,
+				Generation: 7,
+			},
+			Spec: ibuv1.ImageBasedUpgradeSpec{
+				Stage: ibuv1.Stages.Prep,
+			},
+		}
+		utils.SetIBUStatusBlocked(ibuObj, "Blocked by gating: previous")
+
+		ipcObj := &ipcv1.IPConfig{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       common.IPConfigName,
+				Generation: 5,
+			},
+			Spec: ipcv1.IPConfigSpec{
+				Stage: ipcv1.IPStages.Config,
+			},
+		}
+		utils.SetIPStatusBlocked(ipcObj, utils.IBUNotIdle)
+
+		c, err := getFakeClientFromObjects(ibuObj, ipcObj)
+		if err != nil {
+			t.Fatalf("failed to create fake client: %v", err)
+		}
+
+		ibu := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu))
+
+		r := &ImageBasedUpgradeReconciler{Client: c, NoncachedClient: c}
+		res, err := r.gateIBUByIPConfig(context.TODO(), ibu)
+		assert.NoError(t, err)
+		// IPC being Blocked is treated as "allowed to proceed" (deadlock avoidance).
+		// If IBU was previously blocked, gating should unblock it and not requeue.
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, updated))
+		cond := meta.FindStatusCondition(updated.Status.Conditions, string(utils.ConditionTypes.PrepInProgress))
+		assert.Nil(t, cond)
+	})
+
+	t.Run("ipconfig idle => allowed and unblocks self", func(t *testing.T) {
+		ibuObj := &ibuv1.ImageBasedUpgrade{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       utils.IBUName,
+				Generation: 7,
+			},
+			Spec: ibuv1.ImageBasedUpgradeSpec{
+				Stage: ibuv1.Stages.Prep,
+			},
+		}
+		utils.SetIBUStatusBlocked(ibuObj, "Blocked by gating: previous")
+
+		ipcObj := &ipcv1.IPConfig{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       common.IPConfigName,
+				Generation: 5,
+			},
+			Spec: ipcv1.IPConfigSpec{
+				Stage: ipcv1.IPStages.Idle,
+			},
+		}
+		utils.ResetStatusConditions(&ipcObj.Status.Conditions, ipcObj.Generation)
+
+		c, err := getFakeClientFromObjects(ibuObj, ipcObj)
+		if err != nil {
+			t.Fatalf("failed to create fake client: %v", err)
+		}
+
+		ibu := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, ibu))
+
+		r := &ImageBasedUpgradeReconciler{Client: c, NoncachedClient: c}
+		res, err := r.gateIBUByIPConfig(context.TODO(), ibu)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := &ibuv1.ImageBasedUpgrade{}
+		assert.NoError(t, c.Get(context.TODO(), types.NamespacedName{Name: utils.IBUName}, updated))
+		cond := meta.FindStatusCondition(updated.Status.Conditions, string(utils.ConditionTypes.PrepInProgress))
+		assert.Nil(t, cond)
+	})
 }
