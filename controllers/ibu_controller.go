@@ -35,6 +35,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	controllerutils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -54,6 +55,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -122,6 +124,8 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=imagebasedupgrades/finalizers,verbs=update
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs,verbs=get;list;watch
+//+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
@@ -173,6 +177,11 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	r.Log.Info("Loaded IBU", "name", req.NamespacedName, "version", ibu.GetResourceVersion(), "desired stage", ibu.Spec.Stage)
 
+	nextReconcile, err = r.gateIBUByIPConfig(ctx, ibu)
+	if err != nil || nextReconcile.RequeueAfter > 0 {
+		return
+	}
+
 	var isAfterPivot bool
 	isAfterPivot, err = r.RPMOstreeClient.IsStaterootBooted(common.GetDesiredStaterootName(ibu))
 	if err != nil {
@@ -217,6 +226,62 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return
 }
 
+// gateIBUByIPConfig gates IBU reconciliation based on the IPConfig (IPC) CR.
+//
+// IBU is considered "allowed to proceed" when:
+//   - the IPC CR exists but has no status conditions yet (not yet initialized), OR
+//   - IPC is Idle (spec.stage is Idle AND the Idle condition is present and true), OR
+//   - IPC is currently Blocked.
+//
+// If IPC is Idle or Blocked, IBU will be unblocked if it is blocked already.
+//
+// Otherwise IBU gates reconciliation as follows:
+//   - If the IPC CR does not exist yet: requeue soon.
+//   - Otherwise, mark IBU as Blocked and requeue after a short interval.
+func (r *ImageBasedUpgradeReconciler) gateIBUByIPConfig(
+	ctx context.Context,
+	ibu *ibuv1.ImageBasedUpgrade,
+) (ctrl.Result, error) {
+	// If the IPC CR does not exist, we can't check if it is idle or not; try again soon.
+	ipc := &ipcv1.IPConfig{}
+	if getErr := r.NoncachedClient.Get(ctx, client.ObjectKey{Name: common.IPConfigName}, ipc); getErr != nil {
+		if !errors.IsNotFound(getErr) {
+			return requeueWithError(fmt.Errorf("failed to get IPConfig for gating: %w", getErr))
+		}
+		return requeueImmediately(), nil
+	}
+
+	// If the IPC CR exists but has no status conditions yet,
+	// it means it is not initialized yet. Allow IBU reconciliation to proceed to avoid startup deadlocks.
+	if len(ipc.Status.Conditions) == 0 {
+		return doNotRequeue(), nil
+	}
+
+	// If the IPC CR exists and has status conditions and is Idle or Blocked,
+	// unblock the IBU if it is blocked already.
+	if (ipc.Spec.Stage == ipcv1.IPStages.Idle &&
+		utils.IsIdleConditionTrue(ipc.Status.Conditions)) ||
+		utils.IsIPCStatusBlocked(ipc, ipc.Spec.Stage) {
+		inProgressCondition := utils.GetInProgressCondition(ibu, ibu.Spec.Stage)
+		if utils.IsIBUStatusBlocked(ibu, ibu.Spec.Stage) {
+			meta.RemoveStatusCondition(&ibu.Status.Conditions, inProgressCondition.Type)
+			if err := utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
+				return requeueWithError(err)
+			}
+		}
+		return doNotRequeue(), nil
+	}
+
+	// If the IPC CR exists and has status conditions and is neither Idle nor Blocked,
+	// block the IBU.
+	utils.SetIBUStatusBlocked(ibu, utils.IPCNotIdle)
+	if err := utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
+		return requeueWithError(err)
+	}
+
+	return requeueWithShortInterval(), nil
+}
+
 func getValidNextStageList(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) []ibuv1.ImageBasedUpgradeStage {
 	inProgressStage := utils.GetInProgressStage(ibu)
 	if inProgressStage == ibuv1.Stages.Idle || inProgressStage == ibuv1.Stages.Rollback || utils.IsStageFailed(ibu, ibuv1.Stages.Rollback) {
@@ -254,6 +319,11 @@ func getValidNextStageList(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) []ib
 	idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 	if idleCondition == nil {
 		return []ibuv1.ImageBasedUpgradeStage{ibuv1.Stages.Idle}
+	}
+
+	// blocked by IBU, allow same stage only
+	if idleCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+		return []ibuv1.ImageBasedUpgradeStage{ibu.Spec.Stage}
 	}
 
 	return []ibuv1.ImageBasedUpgradeStage{}
