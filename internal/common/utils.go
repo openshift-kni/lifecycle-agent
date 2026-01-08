@@ -19,8 +19,11 @@ package common
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"regexp"
+	"time"
 
 	"io"
 	"os"
@@ -245,4 +248,61 @@ func BuildNewStaterootNameForIPConfig(params IPConfigStaterootParams) string {
 	}
 
 	return strings.Join(parts, "_")
+}
+
+// GetRollbackAvailabilityExpiration calculates the point at which rolling back to the unbooted stateroot
+// may require manual recovery due to expired control plane certificates. It calculates the earliest expiry time
+// of the kubelet client and server certificates.
+func GetRollbackAvailabilityExpiration(staterootName string, logger logr.Logger) (time.Time, error) {
+	expiry := time.Time{}
+
+	staterootPath := PathOutsideChroot(GetStaterootPath(staterootName))
+
+	certfiles := []string{
+		"/var/lib/kubelet/pki/kubelet-client-current.pem",
+		"/var/lib/kubelet/pki/kubelet-server-current.pem",
+	}
+
+	for _, certfile := range certfiles {
+		fname := filepath.Join(staterootPath, certfile)
+
+		// Evaluate symlinks, if needed
+		if _, err := os.Stat(fname); err != nil {
+			if _, err = os.Lstat(fname); err != nil {
+				logger.Error(err, "unable to read file", "filepath", fname)
+				continue
+			} else if target, err := os.Readlink(fname); err != nil {
+				logger.Error(err, "unable to read link", "filepath", fname)
+				continue
+			} else {
+				fname = filepath.Join(staterootPath, target)
+			}
+		}
+
+		certs, err := tls.LoadX509KeyPair(fname, fname)
+		if err != nil {
+			logger.Error(err, "failed to parse cert file", "certfile", certfile)
+			continue
+		}
+
+		for _, cert := range certs.Certificate {
+			// Check certificate expiry
+			parsed, err := x509.ParseCertificate(cert)
+			if err != nil {
+				logger.Error(err, "failed to parse cert from file", "certfile", certfile)
+				continue
+			}
+
+			if expiry.Equal(time.Time{}) || expiry.After(parsed.NotAfter) {
+				expiry = parsed.NotAfter
+			}
+		}
+	}
+
+	if expiry.Equal(time.Time{}) {
+		return expiry, fmt.Errorf("unable to determine control plane expiry for staterootPath=%s", staterootPath)
+	}
+
+	// Subtract 30 minutes from the expiry time
+	return expiry.Add(time.Minute * -30), nil
 }

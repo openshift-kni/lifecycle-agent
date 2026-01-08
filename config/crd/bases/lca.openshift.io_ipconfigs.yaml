@@ -48,8 +48,7 @@ spec:
     name: v1
     schema:
       openAPIV3Schema:
-        description: IPConfig is the Schema for controlling node IP configuration
-          lifecycle via lca-cli ip-config.
+        description: IPConfig is the Schema for IPConfigs API
         properties:
           apiVersion:
             description: |-
@@ -325,6 +324,12 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              rollbackAvailabilityExpiration:
+                description: RollbackAvailabilityExpiration reflects the point at
+                  which rolling back may require manual recovery from expired control
+                  plane certificates.
+                format: date-time
+                type: string
               validNextStages:
                 description: ValidNextStages enumerates allowed next transitions from
                   current stage
@@ -370,6 +375,11 @@ spec:
             && c.status==''True'') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID)
             && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) &&
             !has(oldSelf.spec.vlanID)'
+        - message: spec.dnsFilterOutFamily may be set to 'ipv4' or 'ipv6' only on
+            dual-stack clusters
+          rule: '!has(self.spec.dnsFilterOutFamily) || self.spec.dnsFilterOutFamily==''''
+            || self.spec.dnsFilterOutFamily==''none'' || has(self.status) && has(self.status.ipv4)
+            && self.status.ipv4.address!='''' && has(self.status.ipv6) && self.status.ipv6.address!='''''
         - message: the stage transition is not permitted. Please refer to status.validNextStages
             for valid transitions. If status.validNextStages is not present, it indicates
             that no transitions are currently allowed

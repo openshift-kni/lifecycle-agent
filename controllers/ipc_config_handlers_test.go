@@ -639,6 +639,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation: ""})
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
@@ -680,6 +682,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
@@ -721,6 +725,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		stuck := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "stuck-imagepullbackoff",
@@ -828,6 +834,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{
 			Address:        "192.0.2.11/24",
 			MachineNetwork: "192.0.2.0/24",
@@ -885,6 +893,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
@@ -926,6 +936,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -972,6 +984,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		stuck := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "stuck-delete-fails",
