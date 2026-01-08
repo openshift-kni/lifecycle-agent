@@ -729,10 +729,9 @@ func SetIPRollbackStatusCompleted(ipc *ipcv1.IPConfig, msg string) {
 }
 
 // UpdateIPStatus updates IPConfig status and observed generations consistently
-func UpdateIPStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) error {
+func UpdateIPCStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) error {
 	if c == nil {
-		// In UT code
-		return nil
+		return fmt.Errorf("client is nil")
 	}
 
 	ipc.Status.ObservedGeneration = ipc.ObjectMeta.Generation

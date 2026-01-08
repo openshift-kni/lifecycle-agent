@@ -165,8 +165,7 @@ spec:
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1
-    - description: IPConfig is the Schema for controlling node IP configuration lifecycle
-        via lca-cli ip-config.
+    - description: IPConfig is the Schema for IPConfigs API via lca-cli ip-config.
       displayName: IP Configuration
       kind: IPConfig
       name: ipconfigs.lca.openshift.io
