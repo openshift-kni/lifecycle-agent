@@ -461,7 +461,9 @@ func validateClusterAPIAndUserIPSpec(
 		if ip.To4() != nil && !clusterHasIPv4 {
 			return fmt.Errorf("specified IPv4 DNS server %q, but the cluster does not have IPv4", s)
 		}
-		if ip.To16() != nil && !clusterHasIPv6 {
+		// Note: ip.To16() is non-nil for IPv4 addresses too; ensure we only treat
+		// it as IPv6 when it's not IPv4.
+		if ip.To4() == nil && ip.To16() != nil && !clusterHasIPv6 {
 			return fmt.Errorf("specified IPv6 DNS server %q, but the cluster does not have IPv6", s)
 		}
 	}

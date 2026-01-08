@@ -82,7 +82,7 @@ func (h *IPCRollbackStageHandler) Handle(
 			controllerutils.SetIPStatusInvalidTransition(
 				ipc, fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
 			)
-			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 				logger.Error(err, "Failed to update IPConfig status after invalid transition")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
@@ -94,7 +94,7 @@ func (h *IPCRollbackStageHandler) Handle(
 				ipc,
 				fmt.Sprintf("rollback validation failed: %s", err.Error()),
 			)
-			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 				logger.Error(err, "Failed to update IPConfig status after validation failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
@@ -104,13 +104,13 @@ func (h *IPCRollbackStageHandler) Handle(
 		}
 
 		controllerutils.ClearIPInvalidTransitionStatusConditions(ipc)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to clear IPConfig invalid transition status conditions")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
 		controllerutils.SetIPRollbackStatusInProgress(ipc, controllerutils.RollbackRequested)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to update IPConfig rollback status to rollback requested")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -157,7 +157,7 @@ func (h *IPCRollbackStageHandler) Handle(
 
 	controllerutils.StopIPStageHistory(h.Client, logger, ipc)
 	controllerutils.SetIPRollbackStatusCompleted(ipc, controllerutils.RollbackCompleted)
-	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 		logger.Error(err, "Failed to update IPConfig rollback status to completed")
 		return requeueWithError(fmt.Errorf("failed to update ipconfig rollback status: %w", err))
 	}
@@ -181,7 +181,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Errorf("failed to determine unbooted stateroot: %w", err).Error(),
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueWithError(fmt.Errorf("failed to determine unbooted stateroot: %w", err))
@@ -192,7 +192,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Errorf("failed to remount sysroot: %w", err).Error(),
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueWithError(fmt.Errorf("failed to remount sysroot: %w", err))
@@ -212,7 +212,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Errorf("failed to marshal IPConfig CR: %w", err).Error(),
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueWithError(fmt.Errorf("failed to marshal IPConfig CR: %w", err))
@@ -223,7 +223,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Errorf("failed to save IPConfig CR before pivot: %w", err).Error(),
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueWithError(fmt.Errorf("failed to save IPConfig CR before pivot: %w", err))
@@ -234,7 +234,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Errorf("failed to schedule ip-config rollback: %w", err).Error(),
 		)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueWithError(err)
@@ -268,7 +268,7 @@ func (r *IPCRollbackTwoPhaseHandler) PostPivot(
 				ipc,
 				fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
 			)
-			if err := r.Client.Status().Update(ctx, ipc); err != nil {
+			if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
 

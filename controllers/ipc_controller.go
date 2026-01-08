@@ -94,7 +94,6 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	if err != nil {
 		return requeueWithError(fmt.Errorf("failed to get IPConfig: %w", err))
 	}
-	ipc.Status.ObservedGeneration = ipc.Generation
 
 	defer func() {
 		validNextStages, ierr := validNextStages(ipc, r.RPMOstreeClient)
@@ -107,7 +106,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		}
 
 		ipc.Status.ValidNextStages = validNextStages
-		if uErr := r.Client.Status().Update(ctx, ipc); uErr != nil {
+		if uErr := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); uErr != nil {
 			if err != nil {
 				err = fmt.Errorf("%w; also failed to update ipconfig status: %s", err, uErr.Error())
 			} else {
@@ -128,7 +127,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 			return requeueWithError(fmt.Errorf("failed to get valid next stages: %w", err))
 		}
 		ipc.Status.ValidNextStages = validNextStages
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 	}
@@ -137,7 +136,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		return requeueWithError(fmt.Errorf("failed to refresh network status: %w", err))
 	}
 
-	if err := r.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
@@ -219,7 +218,7 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 
 	if len(ibu.Status.Conditions) == 0 {
 		controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotInitialized)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return requeueImmediately(), nil
@@ -232,14 +231,14 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 			inProgressCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
 			meta.RemoveStatusCondition(&ipc.Status.Conditions, inProgressCondition.Type)
 		}
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		return doNotRequeue(), nil
 	}
 
 	controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotIdle)
-	if err := r.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 

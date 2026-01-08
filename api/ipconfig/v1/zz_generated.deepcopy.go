@@ -149,6 +149,7 @@ func (in *IPConfigStatus) DeepCopyInto(out *IPConfigStatus) {
 		*out = make([]IPConfigStage, len(*in))
 		copy(*out, *in)
 	}
+	in.RollbackAvailabilityExpiration.DeepCopyInto(&out.RollbackAvailabilityExpiration)
 	if in.IPv4 != nil {
 		in, out := &in.IPv4, &out.IPv4
 		*out = new(IPv4Status)
