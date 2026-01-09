@@ -40,9 +40,10 @@ import (
 // +kubebuilder:validation:XValidation:message="can not change spec.dnsFilterOutFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily) && oldSelf.spec.dnsFilterOutFamily==self.spec.dnsFilterOutFamily || !has(self.spec.dnsFilterOutFamily) && !has(oldSelf.spec.dnsFilterOutFamily)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +kubebuilder:validation:XValidation:message="can not change spec.vlanID while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID) && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) && !has(oldSelf.spec.vlanID)"
+// +kubebuilder:validation:XValidation:message="spec.dnsFilterOutFamily may be set to 'ipv4' or 'ipv6' only on dual-stack clusters",rule="!has(self.spec.dnsFilterOutFamily) || self.spec.dnsFilterOutFamily=='' || self.spec.dnsFilterOutFamily=='none' || has(self.status) && has(self.status.ipv4) && self.status.ipv4.address!='' && has(self.status.ipv6) && self.status.ipv6.address!=''"
 // +kubebuilder:validation:XValidation:message="the stage transition is not permitted. Please refer to status.validNextStages for valid transitions. If status.validNextStages is not present, it indicates that no transitions are currently allowed", rule="!has(oldSelf.status) || has(oldSelf.status.validNextStages) && self.spec.stage in oldSelf.status.validNextStages || has(oldSelf.spec.stage) && has(self.spec.stage) && oldSelf.spec.stage==self.spec.stage"
 
-// IPConfig is the Schema for controlling node IP configuration lifecycle via lca-cli ip-config.
+// IPConfig is the Schema for IPConfigs API
 type IPConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -201,6 +202,9 @@ type IPConfigStatus struct {
 	// ValidNextStages enumerates allowed next transitions from current stage
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="Valid Next Stage"
 	ValidNextStages []IPConfigStage `json:"validNextStages,omitempty"`
+
+	// RollbackAvailabilityExpiration reflects the point at which rolling back may require manual recovery from expired control plane certificates.
+	RollbackAvailabilityExpiration metav1.Time `json:"rollbackAvailabilityExpiration,omitempty"`
 
 	// IPv4 reports the currently detected IPv4 configuration (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="IPv4"
