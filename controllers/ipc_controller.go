@@ -191,19 +191,15 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 
 // gateIPConfigByIBU gates IPConfig reconciliation based on the ImageBasedUpgrade (IBU) CR.
 //
-// IPC is considered "allowed to proceed" only when:
-//   - the IBU CR exists, AND
-//   - IBU spec.stage is Idle, AND
-//   - the IBU Idle condition is present and true.
+// IPConfig is considered "allowed to proceed" when:
+//   - the IBU CR exists but has no status conditions yet (not initialized), OR
+//   - IBU spec.stage is Idle AND either:
+//   - the IBU Idle condition is present and true, OR
+//   - IBU is currently Blocked (by gating) and needs to be unblocked.
 //
-// Otherwise IPC gates reconciliation as follows:
-//   - If the IBU CR does not exist yet: requeue immediately (without updating IPC status).
-//   - If the IBU CR exists but has no status conditions yet: mark IPC as Blocked and requeue immediately.
-//   - If IBU is not idle (stage != Idle or Idle condition is not true): mark IPC as Blocked and requeue after a short interval.
-//
-// Notice: this is not mutual exclusion. For delivery reasons, IBU can still start while IPC is
-// not Idle. We should add mutual exclusion between IPC and IBU controllers to avoid this
-// in the future.
+// Otherwise IPConfig gates reconciliation as follows:
+//   - If the IBU CR does not exist yet: requeue soon (without updating IPConfig status).
+//   - If IBU is not idle (stage != Idle or Idle condition is not true): mark IPConfig as Blocked and requeue after a short interval.
 func (r *IPConfigReconciler) gateIPConfigByIBU(
 	ctx context.Context,
 	ipc *ipcv1.IPConfig,
@@ -216,27 +212,29 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 		return requeueImmediately(), nil
 	}
 
+	// If the IBU CR exists but has no status conditions yet,
+	// it means it is not initialized yet. Allow IPConfig reconciliation to proceed to avoid startup deadlocks.
 	if len(ibu.Status.Conditions) == 0 {
-		controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotInitialized)
-		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
-		return requeueImmediately(), nil
+		return doNotRequeue(), nil
 	}
 
+	// If the IBU CR exists and has status conditions and is idle or blocked,
+	// unblock the IPC if it is blocked already.
 	if ibu.Spec.Stage == ibuv1.Stages.Idle &&
-		controllerutils.IsIdleConditionTrue(ibu.Status.Conditions) {
+		(controllerutils.IsIdleConditionTrue(ibu.Status.Conditions) ||
+			controllerutils.IsIBUStatusBlocked(ibu, ibu.Spec.Stage)) {
 		inProgressCondition := controllerutils.GetIPInProgressCondition(ipc, ipc.Spec.Stage)
-		if inProgressCondition != nil &&
-			inProgressCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+		if controllerutils.IsIPCStatusBlocked(ipc, ipc.Spec.Stage) {
 			meta.RemoveStatusCondition(&ipc.Status.Conditions, inProgressCondition.Type)
-		}
-		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			if err := r.Client.Status().Update(ctx, ipc); err != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			}
 		}
 		return doNotRequeue(), nil
 	}
 
+	// If the IBU CR exists and has status conditions and is not idle,
+	// block the IPC.
 	controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotIdle)
 	if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
