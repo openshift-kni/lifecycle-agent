@@ -113,7 +113,8 @@ The API/implementation is designed to be extensible, but the currently supported
   - You can’t set `spec.ipv4` if the cluster is IPv6-only.
   - You can’t set `spec.ipv6` if the cluster is IPv4-only.
   - `dnsFilterOutFamily` is supported only on **dual-stack** clusters.
-    - Setting `spec.dnsFilterOutFamily` to `ipv4` or `ipv6` is only allowed when the cluster is *observably* dual-stack via status (both `status.ipv4.address` and `status.ipv6.address` are present).
+    - Setting `spec.dnsFilterOutFamily` to `ipv4` or `ipv6` is validated as dual-stack once status is populated (both `status.ipv4.address` and `status.ipv6.address` must be present).
+      - During initial create / CR restore, `.status` may be missing; the CRD allows creation in that case so the controller can restore status afterward.
     - `spec.dnsFilterOutFamily: none` (or leaving it unset/empty) is always allowed.
   - `dnsServers` entries must match cluster families (no IPv4 DNS server on IPv6-only, etc.).
 - **Address-change coupling** (current limitation):
@@ -273,6 +274,7 @@ If it doesn’t exist, it is created automatically by LCA initialization logic.
 
 - **`spec.vlanID`** *(optional)*:
   - VLAN ID (minimum 1). If omitted/0, no VLAN is applied.
+  - Note: once networking status is populated (`status.ipv4` or `status.ipv6` exists), setting `spec.vlanID` is only allowed if a VLAN is already observed in `status.vlanID` (i.e., you cannot add VLAN on a cluster that is currently non-VLAN).
 
 - **`spec.dnsFilterOutFamily`** *(optional; dual-stack clusters only)*:
   - `ipv4`: filter out A records (prefer IPv6)
