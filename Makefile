@@ -561,6 +561,14 @@ konflux-update-rpm-lock-runtime: sync-git-submodules ## Update the rpm lock file
 	mkdir -p $(PROJECT_DIR)/.konflux/lock-runtime/tmp/
 	@echo "Copying rpms.in.yaml to lock-runtime directory..."
 	cp $(PROJECT_DIR)/.konflux/lock-runtime/rpms.in.yaml $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
+	@echo "Replacing SSL_CLIENT_KEY and SSL_CLIENT_CERT in lock-runtime/tmp/rpms.in.yaml..."
+	if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' 's|sslclientkey: $$SSL_CLIENT_KEY|sslclientkey: /etc/pki/entitlement/placeholder-key.pem|g' $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml; \
+		sed -i '' 's|sslclientcert: $$SSL_CLIENT_CERT|sslclientcert: /etc/pki/entitlement/placeholder.pem|g' $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml; \
+	else \
+		sed -i 's|sslclientkey: $$SSL_CLIENT_KEY|sslclientkey: /etc/pki/entitlement/placeholder-key.pem|g' $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml; \
+		sed -i 's|sslclientcert: $$SSL_CLIENT_CERT|sslclientcert: /etc/pki/entitlement/placeholder.pem|g' $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml; \
+	fi
 	@cat $(PROJECT_DIR)/.konflux/lock-runtime/tmp/rpms.in.yaml
 	@echo "Updating rpm lock file for the runtime..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/rpm-lock generate-rhel9-locks \
