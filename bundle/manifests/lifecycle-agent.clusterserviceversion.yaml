@@ -176,18 +176,62 @@ spec:
       specDescriptors:
       - displayName: Stage
         path: stage
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:select
       - displayName: IPv4
         path: ipv4
+      - displayName: Address
+        path: ipv4.address
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
+      - displayName: Machine Network
+        path: ipv4.machineNetwork
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
+      - displayName: Gateway
+        path: ipv4.gateway
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
       - displayName: IPv6
         path: ipv6
+      - displayName: Address
+        path: ipv6.address
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
+      - displayName: Machine Network
+        path: ipv6.machineNetwork
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
+      - displayName: Gateway
+        path: ipv6.gateway
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
       - displayName: DNS Servers
         path: dnsServers
+      - displayName: DNS Server 1
+        path: dnsServers[0]
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:DNS Servers
+      - displayName: DNS Server 2
+        path: dnsServers[1]
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:DNS Servers
       - displayName: VLAN ID
         path: vlanID
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
       - displayName: DNS Filter-Out Family
         path: dnsFilterOutFamily
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:select
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
       - description: |-
@@ -197,6 +241,7 @@ spec:
         path: autoRollbackOnFailure.initMonitorTimeoutSeconds
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure
       statusDescriptors:
       - displayName: Observed Generation
         path: observedGeneration
