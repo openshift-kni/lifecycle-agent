@@ -83,7 +83,8 @@ func (h *IPCIdleStageHandler) Handle(
 		}
 
 		controllerutils.SetIPIdleStatusFalse(
-			ipc, controllerutils.ConditionReasons.InProgress,
+			ipc,
+			controllerutils.ConditionReasons.InProgress,
 			controllerutils.InProgressOfBecomingIdle,
 		)
 		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
@@ -106,7 +107,7 @@ func (h *IPCIdleStageHandler) Handle(
 		logger.Info("Running health checks")
 		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
 			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
-			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.Stabilizing, msg)
+			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, msg)
 			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 				logger.Error(uerr, "Failed to update IPConfig status after health check failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))

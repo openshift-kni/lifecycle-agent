@@ -221,7 +221,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, requeueWithHealthCheckInterval(), res2)
 
 		updated2 := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 	})
 
 	t.Run("status update fails before stage validation => returns requeueWithError", func(t *testing.T) {
@@ -288,7 +288,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 		assertStatusInvariants(t, updated, ipc)
 	})
 
@@ -480,7 +480,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			{
 				Type:               string(controllerutils.ConditionTypes.Idle),
 				Status:             metav1.ConditionFalse,
-				Reason:             string(controllerutils.ConditionReasons.Stabilizing),
+				Reason:             string(controllerutils.ConditionReasons.InProgress),
 				Message:            "old idle condition",
 				ObservedGeneration: ipc.Generation,
 			},
@@ -569,7 +569,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
 		_, annPresent := updated.GetAnnotations()[controllerutils.ManualCleanupAnnotation]
 		assert.False(t, annPresent, "manual cleanup annotation should be removed")
-		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 		assertStatusInvariants(t, updated, ipc)
 	})
 

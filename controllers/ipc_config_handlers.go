@@ -650,7 +650,9 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	}
 
 	if len(ipc.Spec.DNSServers) > 0 {
-		cfg.DNSServers = append([]string{}, ipc.Spec.DNSServers...)
+		cfg.DNSServers = lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string {
+			return string(s)
+		})
 	}
 
 	if ipc.Spec.VLANID > 0 {
@@ -850,7 +852,7 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 	}
 
 	for _, s := range ipc.Spec.DNSServers {
-		ip := net.ParseIP(s)
+		ip := net.ParseIP(string(s))
 		if ip == nil {
 			return fmt.Errorf("dnsServers contains an invalid IP: %q", s)
 		}
