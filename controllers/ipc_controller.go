@@ -247,9 +247,8 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
 	inProgressStage := controllerutils.GetIPInProgressStage(ipc)
 
-	if inProgressStage == ipcv1.IPStages.Rollback ||
-		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
-		return []ipcv1.IPConfigStage{}, nil
+	if inProgressStage == ipcv1.IPStages.Idle {
+		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 
 	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
@@ -269,6 +268,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		}
 
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
+	}
+
+	if inProgressStage == ipcv1.IPStages.Rollback ||
+		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
+		return []ipcv1.IPConfigStage{}, nil
 	}
 
 	// no in progress stage, check completed stages in reverse order
@@ -588,7 +592,9 @@ func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv
 	ipc.Status.VLANID = vlan
 
 	dnsServers := lcautils.ExtractDNSServers(state)
-	ipc.Status.DNSServers = dnsServers
+	ipc.Status.DNSServers = lo.Map(dnsServers, func(s string, _ int) ipcv1.IPAddress {
+		return ipcv1.IPAddress(s)
+	})
 
 	fam, err := r.inferDNSFilterOutFamily()
 	if err != nil {

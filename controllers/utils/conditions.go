@@ -71,7 +71,6 @@ var ConditionReasons = struct {
 	FinalizeCompleted       ConditionReason
 	FinalizeFailed          ConditionReason
 	InvalidTransition       ConditionReason
-	Stabilizing             ConditionReason
 	Blocked                 ConditionReason
 }{
 	Idle:                    "Idle",
@@ -87,7 +86,6 @@ var ConditionReasons = struct {
 	FinalizeCompleted:       "FinalizeCompleted",
 	FinalizeFailed:          "FinalizeFailed",
 	InvalidTransition:       "InvalidTransition",
-	Stabilizing:             "Stabilizing",
 	// Blocked condition reason is used to specify IPC or IBU is blocked by each other.
 	// They are not allowed to run their flows simultaneously due to conflicts.
 	Blocked: "Blocked",
