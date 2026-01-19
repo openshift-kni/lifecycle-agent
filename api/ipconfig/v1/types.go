@@ -77,6 +77,12 @@ var IPStages = struct {
 	Rollback: "Rollback",
 }
 
+// IPAddress represents an IP address (IPv4 or IPv6).
+// IPv6 max textual length is 39 chars; we allow some headroom.
+// +kubebuilder:validation:MaxLength=45
+// +kubebuilder:validation:XValidation:rule="isIP(self)",message="must be a valid IP address"
+type IPAddress string
+
 // IPv4Config represents a single IPv4 stack configuration
 // +kubebuilder:validation:XValidation:message="IPv4 address must be within its machineNetwork CIDR",rule="!has(self.address) || self.address == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
 // +kubebuilder:validation:XValidation:message="IPv4 gateway must be within its machineNetwork CIDR",rule="!has(self.gateway) || self.gateway == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway)"
@@ -84,15 +90,15 @@ type IPv4Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv4
 	// Address is the full IPv4 address without prefix length (e.g., 192.0.2.10)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	Address string `json:"address,omitempty"`
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv4 machine network CIDR (e.g., 192.0.2.0/24)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
 	// +kubebuilder:validation:Format=ipv4
 	// Gateway is the default IPv4 gateway address
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	Gateway string `json:"gateway,omitempty"`
 }
 
@@ -103,15 +109,15 @@ type IPv6Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv6
 	// Address is the full IPv6 address without prefix length (e.g., 2001:db8::1)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	Address string `json:"address,omitempty"`
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv6 machine network CIDR (e.g., 2001:db8::/64)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
 	// +kubebuilder:validation:Format=ipv6
 	// Gateway is the default IPv6 gateway address
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	Gateway string `json:"gateway,omitempty"`
 }
 
@@ -149,20 +155,22 @@ type IPConfigSpec struct {
 	Stage IPConfigStage `json:"stage,omitempty"`
 
 	// IPv4 stack (omit for IPv6-only)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv4"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv4",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	IPv4 *IPv4Config `json:"ipv4,omitempty"`
 
 	// IPv6 stack (omit for IPv4-only)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv6"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv6",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	IPv6 *IPv6Config `json:"ipv6,omitempty"`
 
 	// DNSServers is the complete ordered list of DNS server IPs (IPv4 and/or IPv6)
-	// to configure on the node.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Servers",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServers []string `json:"dnsServers,omitempty"`
+	// to configure on the node. Up to 2 DNS servers are supported.
+	// +kubebuilder:validation:MaxItems=2
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Servers"
+	DNSServers []IPAddress `json:"dnsServers,omitempty"`
 
 	// Optional VLAN applied to br-ex path
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4095
 	// +optional
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VLAN ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	VLANID int `json:"vlanID,omitempty"`
@@ -180,7 +188,7 @@ type IPConfigSpec struct {
 	// AutoRollbackOnFailure defines automatic rollback settings for IPConfig if the configuration
 	// does not complete within the specified time limit.
 	// +optional
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure"}
 	AutoRollbackOnFailure *AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
 }
 
@@ -191,7 +199,7 @@ type AutoRollbackOnFailure struct {
 	// the default value of 1800 seconds (30 minutes) is used.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=0
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number","urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure"}
 	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"`
 }
 
@@ -218,8 +226,10 @@ type IPConfigStatus struct {
 	IPv6 *IPv6Status `json:"ipv6,omitempty"`
 
 	// DNSServers reports the currently detected ordered list of DNS server IPs (IPv4 and/or IPv6).
+	// Up to 2 DNS servers are supported.
+	// +kubebuilder:validation:MaxItems=2
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Servers"
-	DNSServers []string `json:"dnsServers,omitempty"`
+	DNSServers []IPAddress `json:"dnsServers,omitempty"`
 
 	// VLANID reports the currently detected VLAN ID on the br-ex uplink path (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="VLAN ID"
