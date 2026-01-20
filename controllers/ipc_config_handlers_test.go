@@ -469,7 +469,7 @@ func TestIPCConfigTwoPhaseHandler_PrePivot(t *testing.T) {
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "2001:db8::1",
 		}
-		ipc.Status.DNSServers = []string{"192.0.2.53", "2001:db8::53"}
+		ipc.Status.DNSServers = []ipcv1.IPAddress{"192.0.2.53", "2001:db8::53"}
 		ipc.Status.VLANID = 123
 		ipc.Status.DNSFilterOutFamily = "ipv6"
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
@@ -639,6 +639,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPostConfigurationClusterHealthChecksAnnotation: ""})
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
@@ -680,6 +682,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.SetAnnotations(map[string]string{controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation: ""})
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
@@ -721,6 +725,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		stuck := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "stuck-imagepullbackoff",
@@ -828,18 +834,20 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{
 			Address:        "192.0.2.11/24",
 			MachineNetwork: "192.0.2.0/24",
 			Gateway:        "192.0.2.1",
 		}
-		ipc.Spec.DNSServers = []string{"192.0.2.53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{
 			Address:        "192.0.2.99",   // mismatch
 			MachineNetwork: "192.0.2.0/24", // match
 			Gateway:        "192.0.2.1",
 		}
-		ipc.Status.DNSServers = []string{"192.0.2.53"}
+		ipc.Status.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
 		oldHC := CheckHealth
@@ -885,6 +893,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		// Make statusIPsMatchSpec succeed (spec empty but status must be populated).
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
@@ -926,6 +936,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{}
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc)
 
@@ -972,6 +984,8 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 		mockReboot := reboot.NewMockRebootIntf(gc)
 
 		ipc := mkConfigIPC(t, true)
+		// PostPivot now best-effort persists rollback availability expiration; keep it non-zero to avoid filesystem-dependent logic.
+		ipc.Status.RollbackAvailabilityExpiration = metav1.Now()
 		stuck := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "stuck-delete-fails",
@@ -1354,13 +1368,13 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "fe80::1",
 		}
-		ipc.Spec.DNSServers = []string{"2001:db8::53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
 		ipc.Status.IPv6 = &ipcv1.IPv6Status{
 			Address:        "2001:db8::10",
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "fe80::1",
 		}
-		ipc.Status.DNSServers = []string{"2001:db8::53"}
+		ipc.Status.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
 		assert.NoError(t, statusIPsMatchSpec(ipc))
 	})
 }
@@ -1407,8 +1421,8 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10"}
-		ipc.Spec.DNSServers = []string{"192.0.2.54"}
-		ipc.Status.DNSServers = []string{"192.0.2.53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.54"}
+		ipc.Status.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 
 		err := validateAddressChanges(ipc)
 		assert.Error(t, err)
@@ -1433,7 +1447,7 @@ func TestValidateClusterAndNetworkSpecCompatability_DNSServerFamilyChecks(t *tes
 
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
-		ipc.Spec.DNSServers = []string{"192.0.2.53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
 		h := &IPCConfigStageHandler{
@@ -1453,7 +1467,7 @@ func TestValidateClusterAndNetworkSpecCompatability_DNSServerFamilyChecks(t *tes
 
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
-		ipc.Spec.DNSServers = []string{"2001:db8::53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
 
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
 		h := &IPCConfigStageHandler{

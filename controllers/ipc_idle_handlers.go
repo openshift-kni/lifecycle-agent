@@ -65,7 +65,7 @@ func (h *IPCIdleStageHandler) Handle(
 			controllerutils.SetIPStatusInvalidTransition(
 				ipc, fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
 			)
-			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 				logger.Error(uerr, "Failed to update IPConfig status after invalid transition")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
@@ -77,16 +77,17 @@ func (h *IPCIdleStageHandler) Handle(
 		}
 
 		controllerutils.ClearIPInvalidTransitionStatusConditions(ipc)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to clear IPConfig invalid transition status conditions")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
 		controllerutils.SetIPIdleStatusFalse(
-			ipc, controllerutils.ConditionReasons.InProgress,
+			ipc,
+			controllerutils.ConditionReasons.InProgress,
 			controllerutils.InProgressOfBecomingIdle,
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to update IPConfig status to in progress of becoming idle")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -106,8 +107,8 @@ func (h *IPCIdleStageHandler) Handle(
 		logger.Info("Running health checks")
 		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
 			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
-			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.Stabilizing, msg)
-			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, msg)
+			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 				logger.Error(uerr, "Failed to update IPConfig status after health check failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
@@ -125,7 +126,7 @@ func (h *IPCIdleStageHandler) Handle(
 				controllerutils.ManualCleanupAnnotation,
 			),
 		)
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+		if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 			logger.Error(uerr, "Failed to update IPConfig status after cleanup failure")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 		}
@@ -134,7 +135,8 @@ func (h *IPCIdleStageHandler) Handle(
 	}
 
 	controllerutils.ResetStatusConditions(&ipc.Status.Conditions, ipc.Generation)
-	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+	ipc.Status.RollbackAvailabilityExpiration.Reset()
+	if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 		logger.Error(err, "Failed to update IPConfig status after successful cleanup/reset")
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
@@ -280,7 +282,7 @@ func (h *IPCIdleStageHandler) handleManualCleanup(
 			ipc, controllerutils.ConditionReasons.InProgress,
 			controllerutils.InProgressOfBecomingIdle,
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return fmt.Errorf("failed to update ipconfig status to in progress of becoming idle: %w", err)
 		}
 		logger.Info("Manual cleanup annotation is found, removed annotation and retrying idle tasks")

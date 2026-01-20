@@ -48,8 +48,7 @@ spec:
     name: v1
     schema:
       openAPIV3Schema:
-        description: IPConfig is the Schema for controlling node IP configuration
-          lifecycle via lca-cli ip-config.
+        description: IPConfig is the Schema for IPConfigs API
         properties:
           apiVersion:
             description: |-
@@ -100,9 +99,17 @@ spec:
               dnsServers:
                 description: |-
                   DNSServers is the complete ordered list of DNS server IPs (IPv4 and/or IPv6)
-                  to configure on the node.
+                  to configure on the node. Up to 2 DNS servers are supported.
                 items:
+                  description: |-
+                    IPAddress represents an IP address (IPv4 or IPv6).
+                    IPv6 max textual length is 39 chars; we allow some headroom.
+                  maxLength: 45
                   type: string
+                  x-kubernetes-validations:
+                  - message: must be a valid IP address
+                    rule: isIP(self)
+                maxItems: 2
                 type: array
               ipv4:
                 description: IPv4 stack (omit for IPv6-only)
@@ -169,7 +176,8 @@ spec:
                 type: string
               vlanID:
                 description: Optional VLAN applied to br-ex path
-                minimum: 1
+                maximum: 4095
+                minimum: 0
                 type: integer
             required:
             - stage
@@ -243,10 +251,19 @@ spec:
                 - none
                 type: string
               dnsServers:
-                description: DNSServers reports the currently detected ordered list
-                  of DNS server IPs (IPv4 and/or IPv6).
+                description: |-
+                  DNSServers reports the currently detected ordered list of DNS server IPs (IPv4 and/or IPv6).
+                  Up to 2 DNS servers are supported.
                 items:
+                  description: |-
+                    IPAddress represents an IP address (IPv4 or IPv6).
+                    IPv6 max textual length is 39 chars; we allow some headroom.
+                  maxLength: 45
                   type: string
+                  x-kubernetes-validations:
+                  - message: must be a valid IP address
+                    rule: isIP(self)
+                maxItems: 2
                 type: array
               history:
                 description: History stores timing info of different IPConfig stages
@@ -325,6 +342,12 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              rollbackAvailabilityExpiration:
+                description: RollbackAvailabilityExpiration reflects the point at
+                  which rolling back may require manual recovery from expired control
+                  plane certificates.
+                format: date-time
+                type: string
               validNextStages:
                 description: ValidNextStages enumerates allowed next transitions from
                   current stage
@@ -370,6 +393,26 @@ spec:
             && c.status==''True'') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID)
             && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) &&
             !has(oldSelf.spec.vlanID)'
+        - message: can not assign spec.ipv4.address for cluster without current ipv4
+            address
+          rule: (!has(self.spec.ipv4) || !has(self.spec.ipv4.address) || self.spec.ipv4.address=='')
+            || !has(oldSelf.status) || !has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6)
+            || (has(oldSelf.status) && has(oldSelf.status.ipv4))
+        - message: can not assign spec.ipv6.address for cluster without current ipv6
+            address
+          rule: (!has(self.spec.ipv6) || !has(self.spec.ipv6.address) || self.spec.ipv6.address=='')
+            || !has(oldSelf.status) || !has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6)
+            || (has(oldSelf.status) && has(oldSelf.status.ipv6))
+        - message: can not assign spec.vlanID for a cluster without current vlan ID
+          rule: (!has(self.spec.vlanID) || self.spec.vlanID==0) || !has(oldSelf.status)
+            || (!has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6)) || (has(oldSelf.status.vlanID)
+            && oldSelf.status.vlanID > 0)
+        - message: can not assign spec.dnsFilterOutFamily to 'ipv4' or 'ipv6' for
+            a non-dual-stack cluster
+          rule: '!has(self.spec.dnsFilterOutFamily) || self.spec.dnsFilterOutFamily==''''
+            || self.spec.dnsFilterOutFamily==''none'' || !has(oldSelf.status) || !has(oldSelf.status.ipv4)
+            && !has(oldSelf.status.ipv6) || has(oldSelf.status.ipv4) && oldSelf.status.ipv4.address!=''''
+            && has(oldSelf.status.ipv6) && oldSelf.status.ipv6.address!='''''
         - message: the stage transition is not permitted. Please refer to status.validNextStages
             for valid transitions. If status.validNextStages is not present, it indicates
             that no transitions are currently allowed

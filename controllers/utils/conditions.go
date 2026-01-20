@@ -71,7 +71,6 @@ var ConditionReasons = struct {
 	FinalizeCompleted       ConditionReason
 	FinalizeFailed          ConditionReason
 	InvalidTransition       ConditionReason
-	Stabilizing             ConditionReason
 	Blocked                 ConditionReason
 }{
 	Idle:                    "Idle",
@@ -87,8 +86,9 @@ var ConditionReasons = struct {
 	FinalizeCompleted:       "FinalizeCompleted",
 	FinalizeFailed:          "FinalizeFailed",
 	InvalidTransition:       "InvalidTransition",
-	Stabilizing:             "Stabilizing",
-	Blocked:                 "Blocked",
+	// Blocked condition reason is used to specify IPC or IBU is blocked by each other.
+	// They are not allowed to run their flows simultaneously due to conflicts.
+	Blocked: "Blocked",
 }
 
 // Common condition messages
@@ -108,7 +108,7 @@ const (
 	RollbackFailed           = "Rollback failed"
 	RollbackRequested        = "Rollback requested"
 	IBUNotIdle               = "IBU is not idle"
-	IBUNotInitialized        = "IBU is not initialized"
+	IPCNotIdle               = "IPC is not idle"
 )
 
 var SeedGenConditionReasons = struct {
@@ -537,6 +537,27 @@ func SetIPIdleStatusFalse(ipc *ipcv1.IPConfig, reason ConditionReason, msg strin
 	)
 }
 
+// SetIBUStatusBlocked updates the given IBU stage in-progress status to Blocked with message.
+func SetIBUStatusBlocked(ibu *ibuv1.ImageBasedUpgrade, msg string) {
+	ct := GetInProgressConditionType(ibu.Spec.Stage)
+	if ct == "" {
+		return
+	}
+	SetStatusCondition(&ibu.Status.Conditions,
+		ct,
+		ConditionReasons.Blocked,
+		metav1.ConditionFalse,
+		msg,
+		ibu.Generation,
+	)
+}
+
+// IsIBUStatusBlocked checks if the given IBU stage in-progress status is Blocked.
+func IsIBUStatusBlocked(ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) bool {
+	condition := GetInProgressCondition(ibu, stage)
+	return condition != nil && condition.Reason == string(ConditionReasons.Blocked)
+}
+
 func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade) error {
 	if c == nil {
 		// In UT code
@@ -728,11 +749,16 @@ func SetIPRollbackStatusCompleted(ipc *ipcv1.IPConfig, msg string) {
 		ipc.Generation)
 }
 
+// IsIPCStatusBlocked checks if the given IPConfig stage in-progress status is Blocked.
+func IsIPCStatusBlocked(ipc *ipcv1.IPConfig, stage ipcv1.IPConfigStage) bool {
+	condition := GetIPInProgressCondition(ipc, stage)
+	return condition != nil && condition.Reason == string(ConditionReasons.Blocked)
+}
+
 // UpdateIPStatus updates IPConfig status and observed generations consistently
-func UpdateIPStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) error {
+func UpdateIPCStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) error {
 	if c == nil {
-		// In UT code
-		return nil
+		return fmt.Errorf("client is nil")
 	}
 
 	ipc.Status.ObservedGeneration = ipc.ObjectMeta.Generation

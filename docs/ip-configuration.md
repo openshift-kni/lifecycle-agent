@@ -113,6 +113,9 @@ The API/implementation is designed to be extensible, but the currently supported
   - You can’t set `spec.ipv4` if the cluster is IPv6-only.
   - You can’t set `spec.ipv6` if the cluster is IPv4-only.
   - `dnsFilterOutFamily` is supported only on **dual-stack** clusters.
+    - Setting `spec.dnsFilterOutFamily` to `ipv4` or `ipv6` is validated as dual-stack once status is populated (both `status.ipv4.address` and `status.ipv6.address` must be present).
+      - During initial create / CR restore, `.status` may be missing; the CRD allows creation in that case so the controller can restore status afterward.
+    - `spec.dnsFilterOutFamily: none` (or leaving it unset/empty) is always allowed.
   - `dnsServers` entries must match cluster families (no IPv4 DNS server on IPv6-only, etc.).
 - **Address-change coupling** (current limitation):
   - For each family, changing **gateway** or **machineNetwork** without changing **address** is **not supported**.
@@ -130,6 +133,7 @@ The API/implementation is designed to be extensible, but the currently supported
   - Runs health checks (unless skipped via `lca.openshift.io/ipconfig-skip-pre-configuration-cluster-health-checks`).
   - Performs cleanup (including removing unbooted stateroots and LCA workspace).
   - Resets conditions back to a clean Idle state.
+  - Resets `status.rollbackAvailabilityExpiration` back to empty/zero.
   - **Important**: transitioning to Idle after a successful Config is the **finalization point**; it will remove rollback ability
 
 - **Config**
@@ -270,11 +274,13 @@ If it doesn’t exist, it is created automatically by LCA initialization logic.
 
 - **`spec.vlanID`** *(optional)*:
   - VLAN ID (minimum 1). If omitted/0, no VLAN is applied.
+  - Note: once networking status is populated (`status.ipv4` or `status.ipv6` exists), setting `spec.vlanID` is only allowed if a VLAN is already observed in `status.vlanID` (i.e., you cannot add VLAN on a cluster that is currently non-VLAN).
 
 - **`spec.dnsFilterOutFamily`** *(optional; dual-stack clusters only)*:
   - `ipv4`: filter out A records (prefer IPv6)
   - `ipv6`: filter out AAAA records (prefer IPv4)
   - `none`: explicitly disable filtering (removes the managed dnsmasq filter file)
+  - Note: setting it to `ipv4`/`ipv6` is only allowed when the cluster is observably dual-stack (both `status.ipv4.address` and `status.ipv6.address` are present).
 
 - **`spec.autoRollbackOnFailure.initMonitorTimeoutSeconds`** *(optional)*:
   - Timeout for the init-monitor watchdog; `0` or unset uses default **1800s (30m)**.
@@ -301,6 +307,12 @@ If it doesn’t exist, it is created automatically by LCA initialization logic.
 - **`status.dnsFilterOutFamily`**: inferred active dnsmasq filter-out family (`ipv4`, `ipv6`, or `none`).
 
 - **`status.history`**: timestamps for stage/phase progression (useful for auditing/debugging).
+
+- **`status.rollbackAvailabilityExpiration`**: a timestamp indicating when rolling back may start
+  to require **manual recovery** due to expired control plane / kubelet certificates in the
+  rollback (unbooted) stateroot. This is best-effort computed during Config post-pivot (based on
+  the earliest kubelet client/server certificate expiry, minus 30 minutes) and is reset when
+  returning to `Idle`.
 
 ## Annotations (behavioral controls)
 

@@ -94,7 +94,6 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	if err != nil {
 		return requeueWithError(fmt.Errorf("failed to get IPConfig: %w", err))
 	}
-	ipc.Status.ObservedGeneration = ipc.Generation
 
 	defer func() {
 		validNextStages, ierr := validNextStages(ipc, r.RPMOstreeClient)
@@ -107,7 +106,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		}
 
 		ipc.Status.ValidNextStages = validNextStages
-		if uErr := r.Client.Status().Update(ctx, ipc); uErr != nil {
+		if uErr := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); uErr != nil {
 			if err != nil {
 				err = fmt.Errorf("%w; also failed to update ipconfig status: %s", err, uErr.Error())
 			} else {
@@ -128,7 +127,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 			return requeueWithError(fmt.Errorf("failed to get valid next stages: %w", err))
 		}
 		ipc.Status.ValidNextStages = validNextStages
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 	}
@@ -137,7 +136,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		return requeueWithError(fmt.Errorf("failed to refresh network status: %w", err))
 	}
 
-	if err := r.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
@@ -192,19 +191,16 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 
 // gateIPConfigByIBU gates IPConfig reconciliation based on the ImageBasedUpgrade (IBU) CR.
 //
-// IPC is considered "allowed to proceed" only when:
-//   - the IBU CR exists, AND
-//   - IBU spec.stage is Idle, AND
-//   - the IBU Idle condition is present and true.
+// IPConfig is considered "allowed to proceed" when:
+//   - the IBU CR exists but has no status conditions yet (not yet initialized), OR
+//   - IBU is Idle (spec.stage is Idle AND the Idle condition is present and true), OR
+//   - IBU is currently Blocked.
 //
-// Otherwise IPC gates reconciliation as follows:
-//   - If the IBU CR does not exist yet: requeue immediately (without updating IPC status).
-//   - If the IBU CR exists but has no status conditions yet: mark IPC as Blocked and requeue immediately.
-//   - If IBU is not idle (stage != Idle or Idle condition is not true): mark IPC as Blocked and requeue after a short interval.
+// If IBU is Idle or Blocked, IPC will be unblocked if it is blocked already.
 //
-// Notice: this is not mutual exclusion. For delivery reasons, IBU can still start while IPC is
-// not Idle. We should add mutual exclusion between IPC and IBU controllers to avoid this
-// in the future.
+// Otherwise IPConfig gates reconciliation as follows:
+//   - If the IBU CR does not exist yet: requeue soon.
+//   - Otherwise, mark IPC as Blocked and requeue after a short interval.
 func (r *IPConfigReconciler) gateIPConfigByIBU(
 	ctx context.Context,
 	ipc *ipcv1.IPConfig,
@@ -217,29 +213,31 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 		return requeueImmediately(), nil
 	}
 
+	// If the IBU CR exists but has no status conditions yet,
+	// it means it is not initialized yet. Allow IPConfig reconciliation to proceed to avoid startup deadlocks.
 	if len(ibu.Status.Conditions) == 0 {
-		controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotInitialized)
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
-		}
-		return requeueImmediately(), nil
+		return doNotRequeue(), nil
 	}
 
-	if ibu.Spec.Stage == ibuv1.Stages.Idle &&
-		controllerutils.IsIdleConditionTrue(ibu.Status.Conditions) {
+	// If the IBU CR exists and has status conditions and is Idle or Blocked,
+	// unblock the IPC if it is blocked already.
+	if (ibu.Spec.Stage == ibuv1.Stages.Idle &&
+		controllerutils.IsIdleConditionTrue(ibu.Status.Conditions)) ||
+		controllerutils.IsIBUStatusBlocked(ibu, ibu.Spec.Stage) {
 		inProgressCondition := controllerutils.GetIPInProgressCondition(ipc, ipc.Spec.Stage)
-		if inProgressCondition != nil &&
-			inProgressCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+		if controllerutils.IsIPCStatusBlocked(ipc, ipc.Spec.Stage) {
 			meta.RemoveStatusCondition(&ipc.Status.Conditions, inProgressCondition.Type)
-		}
-		if err := r.Client.Status().Update(ctx, ipc); err != nil {
-			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			}
 		}
 		return doNotRequeue(), nil
 	}
 
+	// If the IBU CR exists and has status conditions and is neither Idle nor Blocked,
+	// block the IPC.
 	controllerutils.SetIPStatusBlocked(ipc, controllerutils.IBUNotIdle)
-	if err := r.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, r.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
@@ -249,9 +247,8 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
 	inProgressStage := controllerutils.GetIPInProgressStage(ipc)
 
-	if inProgressStage == ipcv1.IPStages.Rollback ||
-		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
-		return []ipcv1.IPConfigStage{}, nil
+	if inProgressStage == ipcv1.IPStages.Idle {
+		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 
 	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
@@ -271,6 +268,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		}
 
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
+	}
+
+	if inProgressStage == ipcv1.IPStages.Rollback ||
+		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
+		return []ipcv1.IPConfigStage{}, nil
 	}
 
 	// no in progress stage, check completed stages in reverse order
@@ -590,7 +592,9 @@ func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv
 	ipc.Status.VLANID = vlan
 
 	dnsServers := lcautils.ExtractDNSServers(state)
-	ipc.Status.DNSServers = dnsServers
+	ipc.Status.DNSServers = lo.Map(dnsServers, func(s string, _ int) ipcv1.IPAddress {
+		return ipcv1.IPAddress(s)
+	})
 
 	fam, err := r.inferDNSFilterOutFamily()
 	if err != nil {

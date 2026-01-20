@@ -143,7 +143,7 @@ func assertReconcileTestRefreshedNetwork(t *testing.T, ipc *ipcv1.IPConfig) {
 	// No IPv6 in the fixture => should not be set.
 	assert.Nil(t, ipc.Status.IPv6)
 
-	assert.Equal(t, []string{"192.0.2.53", "2001:db8::53"}, ipc.Status.DNSServers)
+	assert.Equal(t, []ipcv1.IPAddress{"192.0.2.53", "2001:db8::53"}, ipc.Status.DNSServers)
 
 	// No VLAN in nmstate JSON => should not be set.
 	assert.Equal(t, 0, ipc.Status.VLANID)
@@ -366,7 +366,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		assert.Equal(t, "", anns[controllerutils.TriggerReconcileAnnotation])
 	})
 
-	t.Run("gating: IBU exists but has no conditions => blocked and requeues immediately (IBU not initialized)", func(t *testing.T) {
+	t.Run("gating: IBU exists but has no conditions => allowed (IBU not initialized)", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -390,6 +390,9 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		mockRPM := rpmostreeclient.NewMockIClient(gc)
 		mockTargetStaterootNotBooted(mockRPM)
 
+		configHandler := NewMockIPConfigStageHandler(gc)
+		configHandler.EXPECT().Handle(gomock.Any(), gomock.Any()).Return(doNotRequeue(), nil).Times(1)
+
 		r := &IPConfigReconciler{
 			Client:          k8sClient,
 			NoncachedClient: k8sClient,
@@ -398,20 +401,19 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 			ChrootOps:       chrootOps,
 			RPMOstreeClient: mockRPM,
 			IdleHandler:     NewMockIPConfigStageHandler(gc),
-			ConfigHandler:   NewMockIPConfigStageHandler(gc),
+			ConfigHandler:   configHandler,
 			RollbackHandler: NewMockIPConfigStageHandler(gc),
 		}
 
 		res, err := r.Reconcile(ctx, req)
 		assert.NoError(t, err)
-		assert.Equal(t, requeueImmediately(), res)
+		assert.Equal(t, doNotRequeue(), res)
 
 		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
 		cond := meta.FindStatusCondition(updated.Status.Conditions, string(controllerutils.ConditionTypes.ConfigInProgress))
-		if assert.NotNil(t, cond) {
-			assert.Equal(t, metav1.ConditionFalse, cond.Status)
-			assert.Equal(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
-			assert.Equal(t, controllerutils.IBUNotInitialized, cond.Message)
+		// If present, it should not be Blocked by gating.
+		if cond != nil {
+			assert.NotEqual(t, string(controllerutils.ConditionReasons.Blocked), cond.Reason)
 		}
 	})
 
@@ -1104,6 +1106,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusInProgress(ipc, "in progress")
 
+		// validNextStages queries rpm-ostree even for rollback stages.
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Empty(t, stages)
@@ -1116,6 +1122,10 @@ func TestValidNextStages(t *testing.T) {
 
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusFailed(ipc, "failed")
+
+		// validNextStages queries rpm-ostree even for rollback stages.
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
 
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)

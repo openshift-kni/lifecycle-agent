@@ -86,10 +86,15 @@ func validateNetworkCIDR(family, networkCIDR string) error {
 		if ipNet.IP.To4() == nil {
 			return fmt.Errorf("invalid %s machine network CIDR: %s", strings.ToLower(family), networkCIDR)
 		}
+		return nil
 	}
 
-	if ipNet.IP.To16() == nil {
-		return fmt.Errorf("invalid %s machine network CIDR: %s", strings.ToLower(family), networkCIDR)
+	if isIPv6 {
+		// Note: ip.To16() is non-nil for IPv4 addresses too; ensure we only treat
+		// it as IPv6 when it's not IPv4.
+		if ipNet.IP.To4() != nil || ipNet.IP.To16() == nil {
+			return fmt.Errorf("invalid %s machine network CIDR: %s", strings.ToLower(family), networkCIDR)
+		}
 	}
 
 	return nil
@@ -115,7 +120,9 @@ func validateIPAddress(family, ipStr string) error {
 		return nil
 	}
 
-	if ip.To16() == nil {
+	// Note: ip.To16() is non-nil for IPv4 addresses too; ensure we only treat
+	// it as IPv6 when it's not IPv4.
+	if ip.To4() != nil || ip.To16() == nil {
 		return fmt.Errorf("%s is not a valid %s address", ipStr, strings.ToUpper(family))
 	}
 
