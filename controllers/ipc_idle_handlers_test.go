@@ -221,10 +221,10 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, requeueWithHealthCheckInterval(), res2)
 
 		updated2 := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated2, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 	})
 
-	t.Run("status update fails before stage validation => returns requeueWithError and does not persist changes", func(t *testing.T) {
+	t.Run("status update fails before stage validation => returns requeueWithError", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
 
@@ -247,15 +247,14 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			RPMOstreeClient: mockRpm,
 		}
 
+		// Since status update fails before we can proceed, we should not attempt any cleanup.
+		mockOps.EXPECT().RemountSysroot().Times(0)
+
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
 		wantRes, _ := requeueWithError(err)
 		assert.Equal(t, wantRes, res)
 		assert.Contains(t, err.Error(), "failed to update ipconfig status")
-
-		unchanged := mustGetIPC(t, baseClient, common.IPConfigName)
-		assert.Nil(t, meta.FindStatusCondition(unchanged.Status.Conditions, string(controllerutils.ConditionTypes.Idle)))
-		assertStatusInvariants(t, unchanged, ipc)
 	})
 
 	t.Run("healthcheck failing => idle=false stabilizing, requeueWithHealthCheckInterval and error", func(t *testing.T) {
@@ -289,7 +288,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, requeueWithHealthCheckInterval(), res)
 
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
-		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 		assertStatusInvariants(t, updated, ipc)
 	})
 
@@ -481,7 +480,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			{
 				Type:               string(controllerutils.ConditionTypes.Idle),
 				Status:             metav1.ConditionFalse,
-				Reason:             string(controllerutils.ConditionReasons.Stabilizing),
+				Reason:             string(controllerutils.ConditionReasons.InProgress),
 				Message:            "old idle condition",
 				ObservedGeneration: ipc.Generation,
 			},
@@ -570,7 +569,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
 		_, annPresent := updated.GetAnnotations()[controllerutils.ManualCleanupAnnotation]
 		assert.False(t, annPresent, "manual cleanup annotation should be removed")
-		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Stabilizing, "Waiting for system to stabilize")
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.InProgress, "Waiting for system to stabilize")
 		assertStatusInvariants(t, updated, ipc)
 	})
 

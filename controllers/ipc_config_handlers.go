@@ -97,7 +97,7 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 			controllerutils.SetIPStatusInvalidTransition(
 				ipc, fmt.Sprintf("invalid IPConfig stage: %s", ipc.Spec.Stage),
 			)
-			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 				logger.Error(err, "Failed to update IPConfig status after invalid transition")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
@@ -105,7 +105,7 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 		}
 
 		controllerutils.ClearIPInvalidTransitionStatusConditions(ipc)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to clear IPConfig invalid transition status conditions")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -115,14 +115,14 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 			controllerutils.ConditionReasons.ConfigurationInProgress,
 			controllerutils.ConfigurationInProgress,
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to update IPConfig idle status to configuration in progress")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
 		if err := h.validateConfigStart(ctx, ipc); err != nil {
 			controllerutils.SetIPConfigStatusFailed(ipc, fmt.Sprintf("config validation failed: %s", err.Error()))
-			if err := h.Client.Status().Update(ctx, ipc); err != nil {
+			if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 				logger.Error(err, "Failed to update IPConfig status after validation failure")
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 			}
@@ -132,7 +132,7 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 		}
 
 		controllerutils.SetIPConfigStatusInProgress(ipc, controllerutils.ConfigurationInProgress)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			logger.Error(err, "Failed to update IPConfig status to in-progress")
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
@@ -187,7 +187,7 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 
 	controllerutils.StopIPStageHistory(h.Client, logger, ipc)
 	controllerutils.SetIPConfigStatusCompleted(ipc, "Configuration completed successfully")
-	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 		logger.Error(err, "Failed to update IPConfig status to completed")
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
@@ -207,7 +207,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 
 	if err := statusIPsMatchSpec(ipc); err == nil {
 		controllerutils.SetIPConfigStatusCompleted(ipc, "Spec and status match; nothing to do")
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
@@ -228,7 +228,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		if err := CheckHealth(ctx, h.NoncachedClient, logger.WithName("HealthCheck")); err != nil {
 			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
 			controllerutils.SetIPConfigStatusInProgress(ipc, msg)
-			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
 			return requeueWithHealthCheckInterval(), nil
@@ -237,7 +237,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 
 	if err := h.copyLcaCliToHost(logger); err != nil {
 		controllerutils.SetIPConfigStatusFailed(ipc, err.Error())
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+		if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 		}
 		return requeueWithError(fmt.Errorf("failed to copy lca-cli binary: %w", err))
@@ -245,7 +245,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 
 	if err := reboot.WriteIPCAutoRollbackConfigFile(logger, ipc, h.ChrootOps); err != nil {
 		controllerutils.SetIPConfigStatusFailed(ipc, fmt.Sprintf("failed to write ip-config auto-rollback config: %s", err.Error()))
-		if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+		if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 		}
 		return requeueWithError(fmt.Errorf("failed to write ip-config auto-rollback config: %w", err))
@@ -256,7 +256,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Sprintf("failed to write ip-config pre-pivot config: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
@@ -268,7 +268,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Sprintf("failed to write ip-config post-pivot config: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
@@ -284,7 +284,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 			ipc,
 			fmt.Sprintf("ip-config pre-pivot failed. error: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 		logger.Error(err, "IP-config pre-pivot failed")
@@ -304,12 +304,28 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	controllerutils.StartIPPhase(h.Client, logger, ipc, IPConfigPhasePostPivot)
 	logger.Info("Starting post-pivot phase")
 
+	if ipc.Status.RollbackAvailabilityExpiration.IsZero() {
+		unbootedStateroot, err := h.RPMOstreeClient.GetUnbootedStaterootName()
+		if err != nil {
+			return requeueWithError(fmt.Errorf("unable to determine unbooted stateroot path for rollback: %w", err))
+		}
+		expiry, err := common.GetRollbackAvailabilityExpiration(unbootedStateroot, logger)
+		if err != nil {
+			logger.Error(err, "unable to determine rollback availability expiration", "stateroot", unbootedStateroot)
+		} else {
+			ipc.Status.RollbackAvailabilityExpiration.Time = expiry
+			if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
+			}
+		}
+	}
+
 	if err := h.RebootClient.DisableInitMonitor(); err != nil {
 		controllerutils.SetIPConfigStatusFailed(
 			ipc,
 			fmt.Sprintf("failed to disable init monitor: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
@@ -330,7 +346,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 				ipc,
 				fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()),
 			)
-			if uerr := h.Client.Status().Update(ctx, ipc); uerr != nil {
+			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
 				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
 			}
 
@@ -342,7 +358,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	}
 
 	controllerutils.SetIPConfigStatusInProgress(ipc, "Cluster has stabilized")
-	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
@@ -351,7 +367,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 			ipc,
 			fmt.Sprintf("Waiting for current IPs to match spec: %s", err.Error()),
 		)
-		if err := h.Client.Status().Update(ctx, ipc); err != nil {
+		if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 		}
 
@@ -359,7 +375,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	}
 
 	controllerutils.StopIPPhase(h.Client, logger, ipc, IPConfigPhasePostPivot)
-	if err := h.Client.Status().Update(ctx, ipc); err != nil {
+	if err := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); err != nil {
 		return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", err))
 	}
 
@@ -634,7 +650,9 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	}
 
 	if len(ipc.Spec.DNSServers) > 0 {
-		cfg.DNSServers = append([]string{}, ipc.Spec.DNSServers...)
+		cfg.DNSServers = lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string {
+			return string(s)
+		})
 	}
 
 	if ipc.Spec.VLANID > 0 {
@@ -794,7 +812,7 @@ func (h *IPCConfigTwoPhaseHandler) RunLcaCliIPConfigPrePivot(
 	}
 
 	if _, err := h.ChrootOps.RunSystemdAction(args...); err != nil {
-		return fmt.Errorf("ip-config pre-pivot failed")
+		return fmt.Errorf("lca-cli ip-config pre-pivot failed: %w", err)
 	}
 
 	// We should never get here when the ip-config pre-pivot command succeeds.
@@ -834,7 +852,7 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 	}
 
 	for _, s := range ipc.Spec.DNSServers {
-		ip := net.ParseIP(s)
+		ip := net.ParseIP(string(s))
 		if ip == nil {
 			return fmt.Errorf("dnsServers contains an invalid IP: %q", s)
 		}
