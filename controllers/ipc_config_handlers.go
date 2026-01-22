@@ -479,10 +479,11 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 	}
 
 	if len(ipc.Spec.DNSServers) > 0 {
-		if !reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+		specDNSServers := lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string { return string(s) })
+		if !reflect.DeepEqual(specDNSServers, ipc.Status.DNSServers) {
 			mismatches = append(
 				mismatches,
-				fmt.Sprintf("dnsServers mismatch: spec=%v status=%v", ipc.Spec.DNSServers, ipc.Status.DNSServers),
+				fmt.Sprintf("dnsServers mismatch: spec=%v status=%v", specDNSServers, ipc.Status.DNSServers),
 			)
 		}
 	}
@@ -906,8 +907,11 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 		}
 	}
 
-	if len(ipc.Spec.DNSServers) > 0 && len(ipc.Status.DNSServers) > 0 &&
-		!reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+	if len(ipc.Spec.DNSServers) > 0 && len(ipc.Status.DNSServers) > 0 {
+		specDNSServers := lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string { return string(s) })
+		if reflect.DeepEqual(specDNSServers, ipc.Status.DNSServers) {
+			return nil
+		}
 		ipChanged := false
 		if ipc.Spec.IPv4 != nil && ipc.Status.IPv4 != nil && !ipEqual(ipc.Spec.IPv4.Address, ipc.Status.IPv4.Address) {
 			ipChanged = true
