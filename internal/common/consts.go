@@ -161,6 +161,10 @@ const (
 	IPv4FamilyName = "ipv4"
 	IPv6FamilyName = "ipv6"
 	DNSFamilyNone  = "none"
+
+	OvsBridgeInterfaceType = "ovs-bridge"
+	OvsInterfaceType       = "ovs-interface"
+	OvsBridgeExternalName  = "br-ex"
 )
 
 // DNSMasq-related constants

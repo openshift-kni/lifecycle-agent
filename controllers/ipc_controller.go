@@ -565,7 +565,7 @@ func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv
 		controllerutils.DefaultRouteV4,
 		controllerutils.DefaultRouteV6,
 	)
-	vlanID, err := lcautils.ExtractBrExVLANID(state, controllerutils.BridgeExternalName)
+	vlanID, err := lcautils.ExtractBrExVLANID(state)
 	if err != nil {
 		return fmt.Errorf("failed to extract BrEx VLAN ID: %w", err)
 	}
