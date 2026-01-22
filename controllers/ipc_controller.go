@@ -592,9 +592,7 @@ func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv
 	ipc.Status.VLANID = vlan
 
 	dnsServers := lcautils.ExtractDNSServers(state)
-	ipc.Status.DNSServers = lo.Map(dnsServers, func(s string, _ int) ipcv1.IPAddress {
-		return ipcv1.IPAddress(s)
-	})
+	ipc.Status.DNSServers = dnsServers
 
 	fam, err := r.inferDNSFilterOutFamily()
 	if err != nil {
