@@ -294,8 +294,8 @@ bundle-check: bundle
 
 .PHONY: bundle-run
 bundle-run: # Install bundle on cluster using operator sdk.
-	oc create ns openshift-lifecycle-agent
-	$(OPERATOR_SDK) --security-context-config restricted -n openshift-lifecycle-agent run bundle $(BUNDLE_IMG)
+	OPERATOR_SDK="$(OPERATOR_SDK)" BUNDLE_IMG="$(BUNDLE_IMG)" \
+		bash $(PROJECT_DIR)/hack/bundle-run.sh
 
 .PHONY: bundle-upgrade
 bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
