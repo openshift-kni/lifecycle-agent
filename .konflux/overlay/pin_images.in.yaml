@@ -7,7 +7,7 @@
 # Recert
 - key: recert_image
   source: quay.io/edge-infrastructure/recert:v0
-  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-16@sha256:fd8f5b75fedc4560968ff5b0a5e3f5954d5a78eb7c0c61c1c4bcb9cac9a2943c
+  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-16@sha256:000abc9ec2dded2e4af548746146f2ce51b5c16dc5247fcebd9f71561f204ae7
 #
 # Kube RBAC Proxy
 - key: kube_rbac
