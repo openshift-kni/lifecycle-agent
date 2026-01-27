@@ -162,7 +162,7 @@ func (in *IPConfigStatus) DeepCopyInto(out *IPConfigStatus) {
 	}
 	if in.DNSServers != nil {
 		in, out := &in.DNSServers, &out.DNSServers
-		*out = make([]IPAddress, len(*in))
+		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
 	if in.History != nil {

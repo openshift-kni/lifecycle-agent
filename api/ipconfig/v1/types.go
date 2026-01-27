@@ -226,10 +226,8 @@ type IPConfigStatus struct {
 	IPv6 *IPv6Status `json:"ipv6,omitempty"`
 
 	// DNSServers reports the currently detected ordered list of DNS server IPs (IPv4 and/or IPv6).
-	// Up to 2 DNS servers are supported.
-	// +kubebuilder:validation:MaxItems=2
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="DNS Servers"
-	DNSServers []IPAddress `json:"dnsServers,omitempty"`
+	DNSServers []string `json:"dnsServers,omitempty"`
 
 	// VLANID reports the currently detected VLAN ID on the br-ex uplink path (if any)
 	// +operator-sdk:csv:customresourcedefinitions:type=status,displayName="VLAN ID"
