@@ -251,19 +251,10 @@ spec:
                 - none
                 type: string
               dnsServers:
-                description: |-
-                  DNSServers reports the currently detected ordered list of DNS server IPs (IPv4 and/or IPv6).
-                  Up to 2 DNS servers are supported.
+                description: DNSServers reports the currently detected ordered list
+                  of DNS server IPs (IPv4 and/or IPv6).
                 items:
-                  description: |-
-                    IPAddress represents an IP address (IPv4 or IPv6).
-                    IPv6 max textual length is 39 chars; we allow some headroom.
-                  maxLength: 45
                   type: string
-                  x-kubernetes-validations:
-                  - message: must be a valid IP address
-                    rule: isIP(self)
-                maxItems: 2
                 type: array
               history:
                 description: History stores timing info of different IPConfig stages
