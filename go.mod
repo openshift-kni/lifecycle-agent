@@ -1,6 +1,6 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.24.6
+go 1.25.0
 
 require (
 	github.com/containers/image/v5 v5.36.2
@@ -30,7 +30,7 @@ require (
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
 	k8s.io/code-generator v0.34.2
-	open-cluster-management.io/api v1.1.0
+	open-cluster-management.io/api v1.2.0
 	open-cluster-management.io/config-policy-controller v0.17.0
 	open-cluster-management.io/governance-policy-propagator v0.17.0
 	sigs.k8s.io/controller-runtime v0.22.4
