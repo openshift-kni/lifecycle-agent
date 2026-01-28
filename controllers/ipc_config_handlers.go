@@ -1014,6 +1014,47 @@ func (h *IPCConfigStageHandler) validateSNO(ctx context.Context) error {
 	return nil
 }
 
+func (h *IPCConfigStageHandler) validateStaticNetworking() error {
+	output, err := h.ChrootOps.RunInHostNamespace("nmstatectl", "show", "--json", "-q")
+	if err != nil {
+		return fmt.Errorf("failed to run nmstatectl show --json for static networking validation: %w", err)
+	}
+
+	state, err := lcautils.ParseNmstate(output)
+	if err != nil {
+		return fmt.Errorf("failed to parse nmstate output for static networking validation: %w", err)
+	}
+
+	var reasons []string
+
+	intf, err := lcautils.GetBrExInterface(state)
+	if err != nil {
+		return fmt.Errorf("failed to get br-ex interface: %w", err)
+	}
+
+	if intf.IPv4.Enabled && intf.IPv4.DHCP {
+		reasons = append(reasons, "IPv4 DHCP enabled")
+	}
+
+	if intf.IPv6.Enabled {
+		if intf.IPv6.Autoconf {
+			reasons = append(reasons, "IPv6 DHCP and autoconf enabled")
+		}
+		if intf.IPv6.DHCP {
+			reasons = append(reasons, "IPv6 DHCP enabled")
+		}
+	}
+
+	if len(reasons) > 0 {
+		return fmt.Errorf(
+			"ip-config flow is supported only on SNOs with static networking; detected dynamic configuration: %s",
+			strings.Join(reasons, "; "),
+		)
+	}
+
+	return nil
+}
+
 func exportIPConfigForUncontrolledRollback(ipc *ipcv1.IPConfig, chrootOps ops.Ops) error {
 	ipcCopy := ipc.DeepCopy()
 	controllerutils.SetIPConfigStatusFailed(ipcCopy, "Uncontrolled rollback")
@@ -1031,6 +1072,10 @@ func exportIPConfigForUncontrolledRollback(ipc *ipcv1.IPConfig, chrootOps ops.Op
 func (h *IPCConfigStageHandler) validateConfigStart(ctx context.Context, ipc *ipcv1.IPConfig) error {
 	if err := h.validateSNO(ctx); err != nil {
 		return fmt.Errorf("validation of SNO failed: %w", err)
+	}
+
+	if err := h.validateStaticNetworking(); err != nil {
+		return fmt.Errorf("validation of static networking failed: %w", err)
 	}
 
 	if err := h.validateDNSMasqMCExists(ctx); err != nil {
