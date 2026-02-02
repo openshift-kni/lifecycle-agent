@@ -479,10 +479,11 @@ func statusIPsMatchSpec(ipc *ipcv1.IPConfig) error {
 	}
 
 	if len(ipc.Spec.DNSServers) > 0 {
-		if !reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+		specDNSServers := lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string { return string(s) })
+		if !reflect.DeepEqual(specDNSServers, ipc.Status.DNSServers) {
 			mismatches = append(
 				mismatches,
-				fmt.Sprintf("dnsServers mismatch: spec=%v status=%v", ipc.Spec.DNSServers, ipc.Status.DNSServers),
+				fmt.Sprintf("dnsServers mismatch: spec=%v status=%v", specDNSServers, ipc.Status.DNSServers),
 			)
 		}
 	}
@@ -650,7 +651,9 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	}
 
 	if len(ipc.Spec.DNSServers) > 0 {
-		cfg.DNSServers = append([]string{}, ipc.Spec.DNSServers...)
+		cfg.DNSServers = lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string {
+			return string(s)
+		})
 	}
 
 	if ipc.Spec.VLANID > 0 {
@@ -850,7 +853,7 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 	}
 
 	for _, s := range ipc.Spec.DNSServers {
-		ip := net.ParseIP(s)
+		ip := net.ParseIP(string(s))
 		if ip == nil {
 			return fmt.Errorf("dnsServers contains an invalid IP: %q", s)
 		}
@@ -904,8 +907,11 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 		}
 	}
 
-	if len(ipc.Spec.DNSServers) > 0 && len(ipc.Status.DNSServers) > 0 &&
-		!reflect.DeepEqual(ipc.Spec.DNSServers, ipc.Status.DNSServers) {
+	if len(ipc.Spec.DNSServers) > 0 && len(ipc.Status.DNSServers) > 0 {
+		specDNSServers := lo.Map(ipc.Spec.DNSServers, func(s ipcv1.IPAddress, _ int) string { return string(s) })
+		if reflect.DeepEqual(specDNSServers, ipc.Status.DNSServers) {
+			return nil
+		}
 		ipChanged := false
 		if ipc.Spec.IPv4 != nil && ipc.Status.IPv4 != nil && !ipEqual(ipc.Spec.IPv4.Address, ipc.Status.IPv4.Address) {
 			ipChanged = true
@@ -1008,6 +1014,47 @@ func (h *IPCConfigStageHandler) validateSNO(ctx context.Context) error {
 	return nil
 }
 
+func (h *IPCConfigStageHandler) validateStaticNetworking() error {
+	output, err := h.ChrootOps.RunInHostNamespace("nmstatectl", "show", "--json", "-q")
+	if err != nil {
+		return fmt.Errorf("failed to run nmstatectl show --json for static networking validation: %w", err)
+	}
+
+	state, err := lcautils.ParseNmstate(output)
+	if err != nil {
+		return fmt.Errorf("failed to parse nmstate output for static networking validation: %w", err)
+	}
+
+	var reasons []string
+
+	intf, err := lcautils.GetBrExInterface(state)
+	if err != nil {
+		return fmt.Errorf("failed to get br-ex interface: %w", err)
+	}
+
+	if intf.IPv4.Enabled && intf.IPv4.DHCP {
+		reasons = append(reasons, "IPv4 DHCP enabled")
+	}
+
+	if intf.IPv6.Enabled {
+		if intf.IPv6.Autoconf {
+			reasons = append(reasons, "IPv6 DHCP and autoconf enabled")
+		}
+		if intf.IPv6.DHCP {
+			reasons = append(reasons, "IPv6 DHCP enabled")
+		}
+	}
+
+	if len(reasons) > 0 {
+		return fmt.Errorf(
+			"ip-config flow is supported only on SNOs with static networking; detected dynamic configuration: %s",
+			strings.Join(reasons, "; "),
+		)
+	}
+
+	return nil
+}
+
 func exportIPConfigForUncontrolledRollback(ipc *ipcv1.IPConfig, chrootOps ops.Ops) error {
 	ipcCopy := ipc.DeepCopy()
 	controllerutils.SetIPConfigStatusFailed(ipcCopy, "Uncontrolled rollback")
@@ -1025,6 +1072,10 @@ func exportIPConfigForUncontrolledRollback(ipc *ipcv1.IPConfig, chrootOps ops.Op
 func (h *IPCConfigStageHandler) validateConfigStart(ctx context.Context, ipc *ipcv1.IPConfig) error {
 	if err := h.validateSNO(ctx); err != nil {
 		return fmt.Errorf("validation of SNO failed: %w", err)
+	}
+
+	if err := h.validateStaticNetworking(); err != nil {
+		return fmt.Errorf("validation of static networking failed: %w", err)
 	}
 
 	if err := h.validateDNSMasqMCExists(ctx); err != nil {

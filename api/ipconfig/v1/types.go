@@ -40,7 +40,10 @@ import (
 // +kubebuilder:validation:XValidation:message="can not change spec.dnsFilterOutFamily while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.dnsFilterOutFamily) && has(self.spec.dnsFilterOutFamily) && oldSelf.spec.dnsFilterOutFamily==self.spec.dnsFilterOutFamily || !has(self.spec.dnsFilterOutFamily) && !has(oldSelf.spec.dnsFilterOutFamily)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +kubebuilder:validation:XValidation:message="can not change spec.vlanID while ipconfig is not idle",rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || has(oldSelf.spec.vlanID) && has(self.spec.vlanID) && oldSelf.spec.vlanID==self.spec.vlanID || !has(self.spec.vlanID) && !has(oldSelf.spec.vlanID)"
-// +kubebuilder:validation:XValidation:message="spec.dnsFilterOutFamily may be set to 'ipv4' or 'ipv6' only on dual-stack clusters",rule="!has(self.spec.dnsFilterOutFamily) || self.spec.dnsFilterOutFamily=='' || self.spec.dnsFilterOutFamily=='none' || has(self.status) && has(self.status.ipv4) && self.status.ipv4.address!='' && has(self.status.ipv6) && self.status.ipv6.address!=''"
+// +kubebuilder:validation:XValidation:message="can not assign spec.ipv4.address for cluster without current ipv4 address",rule="(!has(self.spec.ipv4) || !has(self.spec.ipv4.address) || self.spec.ipv4.address=='') || !has(oldSelf.status) || !has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6) || (has(oldSelf.status) && has(oldSelf.status.ipv4))"
+// +kubebuilder:validation:XValidation:message="can not assign spec.ipv6.address for cluster without current ipv6 address",rule="(!has(self.spec.ipv6) || !has(self.spec.ipv6.address) || self.spec.ipv6.address=='') || !has(oldSelf.status) || !has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6) || (has(oldSelf.status) && has(oldSelf.status.ipv6))"
+// +kubebuilder:validation:XValidation:message="can not assign spec.vlanID for a cluster without current vlan ID",rule="(!has(self.spec.vlanID) || self.spec.vlanID==0) || !has(oldSelf.status) || (!has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6)) || (has(oldSelf.status.vlanID) && oldSelf.status.vlanID > 0)"
+// +kubebuilder:validation:XValidation:message="can not assign spec.dnsFilterOutFamily to 'ipv4' or 'ipv6' for a non-dual-stack cluster",rule="!has(self.spec.dnsFilterOutFamily) || self.spec.dnsFilterOutFamily=='' || self.spec.dnsFilterOutFamily=='none' || !has(oldSelf.status) || !has(oldSelf.status.ipv4) && !has(oldSelf.status.ipv6) || has(oldSelf.status.ipv4) && oldSelf.status.ipv4.address!='' && has(oldSelf.status.ipv6) && oldSelf.status.ipv6.address!=''"
 // +kubebuilder:validation:XValidation:message="the stage transition is not permitted. Please refer to status.validNextStages for valid transitions. If status.validNextStages is not present, it indicates that no transitions are currently allowed", rule="!has(oldSelf.status) || has(oldSelf.status.validNextStages) && self.spec.stage in oldSelf.status.validNextStages || has(oldSelf.spec.stage) && has(self.spec.stage) && oldSelf.spec.stage==self.spec.stage"
 
 // IPConfig is the Schema for IPConfigs API
@@ -74,6 +77,12 @@ var IPStages = struct {
 	Rollback: "Rollback",
 }
 
+// IPAddress represents an IP address (IPv4 or IPv6).
+// IPv6 max textual length is 39 chars; we allow some headroom.
+// +kubebuilder:validation:MaxLength=45
+// +kubebuilder:validation:XValidation:rule="isIP(self)",message="must be a valid IP address"
+type IPAddress string
+
 // IPv4Config represents a single IPv4 stack configuration
 // +kubebuilder:validation:XValidation:message="IPv4 address must be within its machineNetwork CIDR",rule="!has(self.address) || self.address == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.address)"
 // +kubebuilder:validation:XValidation:message="IPv4 gateway must be within its machineNetwork CIDR",rule="!has(self.gateway) || self.gateway == \"\" || !has(self.machineNetwork) || self.machineNetwork == \"\" || cidr(self.machineNetwork).containsIP(self.gateway)"
@@ -81,15 +90,15 @@ type IPv4Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv4
 	// Address is the full IPv4 address without prefix length (e.g., 192.0.2.10)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	Address string `json:"address,omitempty"`
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv4 machine network CIDR (e.g., 192.0.2.0/24)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
 	// +kubebuilder:validation:Format=ipv4
 	// Gateway is the default IPv4 gateway address
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	Gateway string `json:"gateway,omitempty"`
 }
 
@@ -100,15 +109,15 @@ type IPv6Config struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ipv6
 	// Address is the full IPv6 address without prefix length (e.g., 2001:db8::1)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Address",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	Address string `json:"address,omitempty"`
 	// +kubebuilder:validation:Format=cidr
 	// MachineNetwork is the IPv6 machine network CIDR (e.g., 2001:db8::/64)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Machine Network",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	MachineNetwork string `json:"machineNetwork,omitempty"`
 	// +kubebuilder:validation:Format=ipv6
 	// Gateway is the default IPv6 gateway address
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Gateway",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text","urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	Gateway string `json:"gateway,omitempty"`
 }
 
@@ -146,20 +155,22 @@ type IPConfigSpec struct {
 	Stage IPConfigStage `json:"stage,omitempty"`
 
 	// IPv4 stack (omit for IPv6-only)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv4"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv4",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4"}
 	IPv4 *IPv4Config `json:"ipv4,omitempty"`
 
 	// IPv6 stack (omit for IPv4-only)
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv6"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="IPv6",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6"}
 	IPv6 *IPv6Config `json:"ipv6,omitempty"`
 
 	// DNSServers is the complete ordered list of DNS server IPs (IPv4 and/or IPv6)
-	// to configure on the node.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Servers",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
-	DNSServers []string `json:"dnsServers,omitempty"`
+	// to configure on the node. Up to 2 DNS servers are supported.
+	// +kubebuilder:validation:MaxItems=2
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="DNS Servers"
+	DNSServers []IPAddress `json:"dnsServers,omitempty"`
 
 	// Optional VLAN applied to br-ex path
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4095
 	// +optional
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="VLAN ID",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
 	VLANID int `json:"vlanID,omitempty"`
@@ -177,7 +188,7 @@ type IPConfigSpec struct {
 	// AutoRollbackOnFailure defines automatic rollback settings for IPConfig if the configuration
 	// does not complete within the specified time limit.
 	// +optional
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure"
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Auto Rollback On Failure",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure"}
 	AutoRollbackOnFailure *AutoRollbackOnFailure `json:"autoRollbackOnFailure,omitempty"`
 }
 
@@ -188,7 +199,7 @@ type AutoRollbackOnFailure struct {
 	// the default value of 1800 seconds (30 minutes) is used.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=0
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number"}
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:number","urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure"}
 	InitMonitorTimeoutSeconds int `json:"initMonitorTimeoutSeconds,omitempty"`
 }
 

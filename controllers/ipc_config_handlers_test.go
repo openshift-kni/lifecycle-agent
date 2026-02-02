@@ -841,7 +841,7 @@ func TestIPCConfigTwoPhaseHandler_PostPivot(t *testing.T) {
 			MachineNetwork: "192.0.2.0/24",
 			Gateway:        "192.0.2.1",
 		}
-		ipc.Spec.DNSServers = []string{"192.0.2.53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{
 			Address:        "192.0.2.99",   // mismatch
 			MachineNetwork: "192.0.2.0/24", // match
@@ -1097,6 +1097,11 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		updated.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config}
 		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
 
+		mockOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(`{"interfaces":[{"name":"br-ex","type":"ovs-interface","bridge":{"port":[{"name":"ens3"},{"name":"patch-br-ex"}]}},{"name":"ens3","type":"ethernet","ipv4":{"enabled":true,"dhcp":false,"address":[{"ip":"192.0.2.10","prefix-length":24}]},"ipv6":{"enabled":false,"dhcp":false,"autoconf":false,"address":[]}}],"routes":{"running":[], "config":[]},"dns-resolver":{"running":{"server":[]},"config":{"server":[]}}}`, nil).
+			Times(1)
+
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
 		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
 		tph.EXPECT().
@@ -1144,6 +1149,37 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Config}, updated.Status.ValidNextStages)
 	})
 
+	t.Run("transition requested but static networking validation fails (DHCP enabled) => status failed and no requeue", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockRPM := rpmostreeclient.NewMockIClient(gc)
+		mockOps := ops.NewMockOps(gc)
+
+		ipc := mkConfigIPC(t, true)
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Config} // allow stage
+
+		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
+		node, mc := mkSNOObjects()
+		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, node, mc)
+
+		// DHCP enabled on br-ex uplink => should fail validation.
+		mockOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(`{"interfaces":[{"name":"br-ex","type":"ovs-interface","bridge":{"port":[{"name":"ens3"},{"name":"patch-br-ex"}]},"ipv4":{"enabled":true,"dhcp":true,"address":[{"ip":"192.0.2.10","prefix-length":24}]}},{"name":"ens3","type":"ethernet","ipv4":{"enabled":true,"dhcp":false,"address":[{"ip":"192.0.2.10","prefix-length":24}]},"ipv6":{"enabled":false,"dhcp":false,"autoconf":false,"address":[]}}],"routes":{"running":[], "config":[]},"dns-resolver":{"running":{"server":[]},"config":{"server":[]}}}`, nil).
+			Times(1)
+
+		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
+		stageHandler := NewIPCConfigStageHandler(k8sClient, k8sClient, mockRPM, mockOps, tph)
+
+		res, err := stageHandler.Handle(ctx, ipc)
+		assert.NoError(t, err)
+		assert.Equal(t, doNotRequeue(), res)
+
+		updated := mustGetIPCConfig(t, k8sClient, common.IPConfigName)
+		assertConfigFailed(t, updated)
+	})
+
 	t.Run("stage not in progress => do not requeue", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
@@ -1184,6 +1220,11 @@ func TestIPCConfigStageHandler_Handle(t *testing.T) {
 		ibu := mkIBU(t, ibuv1.Stages.Idle, true)
 		node, mc := mkSNOObjects()
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, ibu, node, mc)
+
+		mockOps.EXPECT().
+			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			Return(`{"interfaces":[{"name":"br-ex","type":"ovs-interface","bridge":{"port":[{"name":"ens3"},{"name":"patch-br-ex"}]}},{"name":"ens3","type":"ethernet","ipv4":{"enabled":true,"dhcp":false,"address":[{"ip":"192.0.2.10","prefix-length":24}]},"ipv6":{"enabled":false,"dhcp":false,"autoconf":false,"address":[]}}],"routes":{"running":[], "config":[]},"dns-resolver":{"running":{"server":[]},"config":{"server":[]}}}`, nil).
+			Times(1)
 
 		mockRPM.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
 		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
@@ -1368,7 +1409,7 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 			MachineNetwork: "2001:db8::/64",
 			Gateway:        "fe80::1",
 		}
-		ipc.Spec.DNSServers = []string{"2001:db8::53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
 		ipc.Status.IPv6 = &ipcv1.IPv6Status{
 			Address:        "2001:db8::10",
 			MachineNetwork: "2001:db8::/64",
@@ -1421,7 +1462,7 @@ func TestIPAndCIDRHelpers(t *testing.T) {
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
 		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10"}
-		ipc.Spec.DNSServers = []string{"192.0.2.54"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.54"}
 		ipc.Status.DNSServers = []string{"192.0.2.53"}
 
 		err := validateAddressChanges(ipc)
@@ -1447,7 +1488,7 @@ func TestValidateClusterAndNetworkSpecCompatability_DNSServerFamilyChecks(t *tes
 
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
-		ipc.Spec.DNSServers = []string{"192.0.2.53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
 
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
 		h := &IPCConfigStageHandler{
@@ -1467,7 +1508,7 @@ func TestValidateClusterAndNetworkSpecCompatability_DNSServerFamilyChecks(t *tes
 
 		ipc := mkConfigIPC(t, false)
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.20"}
-		ipc.Spec.DNSServers = []string{"2001:db8::53"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
 
 		k8sClient := newFakeClientWithStatus(t, scheme, ipc, nodeV4, mc)
 		h := &IPCConfigStageHandler{
