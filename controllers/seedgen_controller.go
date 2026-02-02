@@ -542,7 +542,7 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 
 	r.Log.Info("Checking status of lca_cli container")
 
-	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", imagerContainerName)
+	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", "--log-level", "error", imagerContainerName)
 	if err != nil {
 		return fmt.Errorf("failed to run podman inspect command: %w", err)
 	}
@@ -550,7 +550,7 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 	var containers []ContainerInfo
 
 	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return fmt.Errorf("unable to parse podman inspect command output: %w", err)
+		return fmt.Errorf("unable to parse podman inspect command output: %s with error: %w", output, err)
 	}
 
 	if len(containers) != 1 {
