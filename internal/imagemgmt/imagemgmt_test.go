@@ -1189,7 +1189,7 @@ func Test_GetInuseImages(t *testing.T) {
 		imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
 
 		mockExec.EXPECT().Execute("crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
-		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json").Return(test_PodmanPsOutput, nil)
+		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
 
 		inUse, err := imageMgmtClient.GetInuseImages()
 		if err != nil {
@@ -1266,9 +1266,9 @@ func Test_GetRemovalCandidates(t *testing.T) {
 		imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
 
 		mockExec.EXPECT().Execute("crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
-		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json").Return(test_PodmanPsOutput, nil)
+		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
 		mockExec.EXPECT().Execute("crictl", "images", "-o", "json").Return(test_CrictlImagesOutput, nil)
-		mockExec.EXPECT().Execute("podman", "images", "--format", "json").Return(test_PodmanImagesOutput, nil)
+		mockExec.EXPECT().Execute("podman", "images", "--format", "json", "--log-level", "error").Return(test_PodmanImagesOutput, nil)
 
 		removalCandidates, err := imageMgmtClient.GetRemovalCandidates()
 		if err != nil {
