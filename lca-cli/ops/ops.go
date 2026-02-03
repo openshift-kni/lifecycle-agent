@@ -347,7 +347,7 @@ type PodmanImage struct {
 // IsImageMounted checkes whether certain image is mounted
 // pass in the full address with tag e.g: quay.io/openshift/lifecycle-agent-operator:latest
 func (o *ops) IsImageMounted(imgName string) (bool, error) {
-	output, err := o.hostCommandsExecutor.Execute("podman", "image", "mount", "--format", "json")
+	output, err := o.hostCommandsExecutor.Execute("podman", "image", "mount", "--format", "json", "--log-level", "error")
 	if err != nil {
 		return false, fmt.Errorf("failed to mount podamn image: %w", err)
 	}
