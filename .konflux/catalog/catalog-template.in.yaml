@@ -15,6 +15,7 @@ entries:
         skipRange: '>=4.9.0 <4.21.0'
       # v4.21.1
       - name: lifecycle-agent.v4.21.1
+        replaces: lifecycle-agent.v4.21.0
         skipRange: '>=4.21.0 <4.21.1'
     name: stable
     package: lifecycle-agent
@@ -26,6 +27,7 @@ entries:
         skipRange: '>=4.9.0 <4.21.0'
       # v4.21.1
       - name: lifecycle-agent.v4.21.1
+        replaces: lifecycle-agent.v4.21.0
         skipRange: '>=4.21.0 <4.21.1'
     name: "4.21"
     package: lifecycle-agent
