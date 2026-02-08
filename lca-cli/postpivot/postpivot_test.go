@@ -1451,3 +1451,62 @@ func TestNodeLabelsProvided(t *testing.T) {
 		})
 	}
 }
+
+func TestRestartChronydService(t *testing.T) {
+	testcases := []struct {
+		name          string
+		chronyConfig  string
+		expectedError bool
+		expectCall    bool
+		mockError     error
+	}{
+		{
+			name:          "Happy flow - chronyd restart is called",
+			chronyConfig:  "server 192.168.1.1 iburst",
+			expectedError: false,
+			expectCall:    true,
+			mockError:     nil,
+		},
+		{
+			name:          "Chronyd restart fails",
+			chronyConfig:  "server 192.168.1.1 iburst",
+			expectedError: true,
+			expectCall:    true,
+			mockError:     fmt.Errorf("failed to restart chronyd"),
+		},
+		{
+			name:          "Empty chrony config - restart is skipped",
+			chronyConfig:  "",
+			expectedError: false,
+			expectCall:    false,
+			mockError:     nil,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a new mock controller for each test case to avoid conflicts
+			testMockController := gomock.NewController(t)
+			testMockOps := ops.NewMockOps(testMockController)
+			defer testMockController.Finish()
+
+			log := &logrus.Logger{}
+			pp := NewPostPivot(nil, log, testMockOps, "", "", "")
+
+			// Mock: chronyd restart only if expected
+			if tc.expectCall {
+				testMockOps.EXPECT().SystemctlAction("restart", "chronyd").
+					Return("", tc.mockError).Times(1)
+			}
+
+			err := pp.restartChronydService(tc.chronyConfig)
+
+			if tc.expectedError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to restart chronyd")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
