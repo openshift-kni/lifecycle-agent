@@ -21,12 +21,14 @@ filters:
   ^Dockerfile:
     reviewers:
       - rauhersu
+      - by2waysprojects
   ^api/seedreconfig/seedreconfig.go:
     labels:
       - cluster-config-api-changed
   ^bundle/manifests/lifecycle-agent.clusterserviceversion.yaml:
     reviewers:
       - rauhersu
+      - by2waysprojects
   "renovate.json":
     approvers:
       - konflux-approvers
