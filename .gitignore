@@ -36,3 +36,9 @@ __debug_bin
 
 # tmp directory
 tmp
+
+# Stale golangci-lint config files (active config is .golangci.yml)
+.golangci-test.yml
+.golangci-v1.bck.yml
+.golangci-v1.yml
+.golangci.yml.test
