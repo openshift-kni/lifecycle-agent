@@ -74,7 +74,7 @@ Events:
 
 The reason for this issue is that the application has restored its PVC and PV manifests correctly, but the
 `logicalvolume` associated to this PV hasn't been restored properly after pivot.
-Steps for its resolution were described in [Section 1.1 - Backup resource when LVMS is used](backuprestore-with-oadp.md#11-backup-resource-when-lvms-is-used),
+Steps for its resolution were described in [Application backup and restore CRs](backuprestore-with-oadp.md#application-backup-and-restore-crs),
 and basically relates to also include `logicalvolumes.topolvm.io` in the application's Backup CR (see sample below).
 
 ```yaml
@@ -143,7 +143,7 @@ NAMESPACE   NAME                                                                
 The reason for this issue was that the `logicalvolume` status was not preserved in the Restore CR, this is important
 because it explicitly instructs Velero about the reference to the volumes that need to be preserved after pivoting.
 
-Steps were described in [Section 1.1 - Backup resource when LVMS is used](backuprestore-with-oadp.md#11-backup-resource-when-lvms-is-used),
+Steps were described in [Application backup and restore CRs](backuprestore-with-oadp.md#application-backup-and-restore-crs),
 and basically relates to also include the corresponding fields in the application's Restore CR (see sample below).
 
 ```yaml
