@@ -162,7 +162,7 @@ skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTR
 
 ## Setup dev backup steps
 
-### minio + oadp oprator
+### minio + oadp operator
 
 Consider using podman if you have a HV
 
