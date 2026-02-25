@@ -49,7 +49,7 @@ import (
 
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
-	ocpV1 "github.com/openshift/api/config/v1"
+	ocpv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	lsov1 "github.com/openshift/local-storage-operator/api/v1"
@@ -74,6 +74,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	utiltls "github.com/openshift/controller-runtime-common/pkg/tls"
 	"github.com/openshift/library-go/pkg/config/leaderelection"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -86,6 +87,7 @@ import (
 
 // +kubebuilder:rbac:groups="security.openshift.io",resources=securitycontextconstraints,resourceNames=privileged,verbs=use
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs="*"
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 
 var (
 	scheme   = runtime.NewScheme()
@@ -101,7 +103,7 @@ func init() {
 	utilruntime.Must(ibuv1.AddToScheme(scheme))
 	utilruntime.Must(seedgenv1.AddToScheme(scheme))
 	utilruntime.Must(ipcv1.AddToScheme(scheme))
-	utilruntime.Must(ocpV1.AddToScheme(scheme))
+	utilruntime.Must(ocpv1.AddToScheme(scheme))
 	utilruntime.Must(mcv1.AddToScheme(scheme))
 	utilruntime.Must(velerov1.AddToScheme(scheme))
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
@@ -120,12 +122,9 @@ func init() {
 
 func main() {
 	var metricsAddr string
-	var metricsCertDir string
 	var enableLeaderElection bool
 	var probeAddr string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&metricsCertDir, "metrics-tls-cert-dir", "",
-		"The directory containing the tls.crt and tls.key.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -137,27 +136,20 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 
-	scheme.AddKnownTypes(ocpV1.GroupVersion,
-		&ocpV1.ClusterVersion{},
-		&ocpV1.Ingress{},
-		&ocpV1.ImageDigestMirrorSet{},
-		&ocpV1.Infrastructure{},
+	scheme.AddKnownTypes(ocpv1.GroupVersion,
+		&ocpv1.ClusterVersion{},
+		&ocpv1.Ingress{},
+		&ocpv1.ImageDigestMirrorSet{},
+		&ocpv1.Infrastructure{},
 	)
 
-	le := leaderelection.LeaderElectionSNOConfig(ocpV1.LeaderElection{})
+	le := leaderelection.LeaderElectionSNOConfig(ocpv1.LeaderElection{})
 
 	mux := &sync.Mutex{}
 
-	tlsOpts := []func(*tls.Config){
-		func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		},
-	}
-
 	cfg := ctrl.GetConfigOrDie()
-	cfg.Wrap(lcautils.RetryMiddleware(log.WithName("ibu-manager-client"))) // allow all client calls to be retriable
+	cfg.Wrap(lcautils.RetryMiddleware(ctrl.Log.WithName("lca-manager-client"))) // allow all client calls to be retriable
 
 	// OLM installs the default-deny, operator API egress NetworkPolicies
 	// Operator installs policies for the jobs, for metrics
@@ -167,13 +159,32 @@ func main() {
 	}
 	msg, err := np.InstallPolicies(cfg)
 	if err != nil {
-		setupLog.Error(err, "unable to create network policy:")
+		setupLog.Error(err, "unable to create network policy")
 		os.Exit(1)
 	}
 	setupLog.Info(msg)
 
 	if msg := networkpolicies.Check(cfg, common.LcaNamespace); msg != "" {
 		setupLog.Info("NetworkPolicies", "msg", msg)
+	}
+
+	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes client")
+		os.Exit(1)
+	}
+
+	// Fetch the TLS profile from the APIServer resource.
+	tlsSecurityProfileSpec, err := utiltls.FetchAPIServerTLSProfile(context.Background(), k8sClient)
+	if err != nil {
+		setupLog.Error(err, "unable to get TLS profile from API server")
+		os.Exit(1)
+	}
+
+	// Create the TLS configuration function for the server endpoints.
+	tlsConfig, unsupportedCiphers := utiltls.NewTLSConfigFromProfile(tlsSecurityProfileSpec)
+	if len(unsupportedCiphers) > 0 {
+		setupLog.Info("TLS configuration contains unsupported ciphers that will be ignored", "ciphers", unsupportedCiphers)
 	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -187,10 +198,9 @@ func main() {
 		LeaderElectionReleaseOnCancel: true,
 		Metrics: server.Options{
 			BindAddress:    metricsAddr,
-			SecureServing:  metricsCertDir != "",
-			CertDir:        metricsCertDir,
-			TLSOpts:        tlsOpts,
+			SecureServing:  true,
 			FilterProvider: filters.WithAuthenticationAndAuthorization,
+			TLSOpts:        []func(*tls.Config){tlsConfig},
 		},
 		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
 			ByObject: map[client.Object]cache.ByObject{
@@ -216,6 +226,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	log := ctrl.Log.WithName("controllers").WithName("ImageBasedUpgrade")
 	chrootExecutor := ops.NewChrootExecutor(newLogger, true, common.Host)
 	chrootOp := ops.NewOps(newLogger, chrootExecutor)
 	nsenterExecutor := ops.NewNsenterExecutor(newLogger, true)
@@ -388,9 +399,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create a context that can be cancelled when there is a need to shut down the manager	.
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	// Ensure the context is cancelled when the program exits.
+	defer cancel()
+
+	// Set up the TLS security profile watcher controller.
+	// This will trigger a graceful shutdown when the TLS profile changes.
+	if err := (&utiltls.SecurityProfileWatcher{
+		Client:                mgr.GetClient(),
+		InitialTLSProfileSpec: tlsSecurityProfileSpec,
+		OnProfileChange: func(ctx context.Context, oldTLSProfileSpec, newTLSProfileSpec ocpv1.TLSProfileSpec) {
+			setupLog.Info("TLS profile has changed, initiating a shutdown to reload it",
+				"old profile", oldTLSProfileSpec,
+				"new profile", newTLSProfileSpec,
+			)
+			cancel()
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create TLS security profile watcher controller")
+	}
+
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
+		//nolint:gocritic,exitAfterDefer
 		os.Exit(1)
 	}
 }
