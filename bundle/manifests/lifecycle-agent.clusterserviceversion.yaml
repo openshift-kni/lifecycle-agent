@@ -425,13 +425,7 @@ spec:
         - apiGroups:
           - config.openshift.io
           resources:
-          - clusteroperators
-          verbs:
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
+          - apiservers
           - clusterversions
           - imagedigestmirrorsets
           - infrastructures
@@ -439,6 +433,13 @@ spec:
           - proxies
           verbs:
           - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - clusteroperators
+          verbs:
           - list
           - watch
         - apiGroups:
@@ -640,7 +641,6 @@ spec:
               containers:
               - args:
                 - --metrics-bind-address=:6443
-                - --metrics-tls-cert-dir=/secrets/tls/metrics
                 command:
                 - /usr/local/bin/manager
                 env:
@@ -683,8 +683,6 @@ spec:
                 volumeMounts:
                 - mountPath: /host
                   name: host-root
-                - mountPath: /secrets/tls/metrics
-                  name: metrics-tls
               hostPID: true
               serviceAccountName: lifecycle-agent-controller-manager
               terminationGracePeriodSeconds: 10
@@ -693,10 +691,6 @@ spec:
                   path: /
                   type: Directory
                 name: host-root
-              - name: metrics-tls
-                secret:
-                  defaultMode: 420
-                  secretName: controller-manager-metrics-tls
       permissions:
       - rules:
         - apiGroups:
