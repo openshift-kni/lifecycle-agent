@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -184,6 +185,102 @@ func TestLoadGroupedManifestsFromPath(t *testing.T) {
 	assert.Equal(t, 2, len(manifests[0]))
 	assert.Equal(t, 1, len(manifests[1]))
 
+}
+
+func TestLoadGroupedManifestsFromPathWithNumericSorting(t *testing.T) {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "restore-numeric-test")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create restores directory
+	restoreDir := filepath.Join(tmpDir, "manifests")
+	if err := os.MkdirAll(restoreDir, 0755); err != nil {
+		t.Fatalf("Failed to create restore directory: %v", err)
+	}
+
+	// Create 12 subdirectories to test numeric sorting (restore1 through restore12)
+	// This tests the bug where restore10, restore11, restore12 would come before restore2 with alphabetical sorting
+	for i := 1; i <= 12; i++ {
+		restoreSubDir := filepath.Join(restoreDir, fmt.Sprintf("restore%d", i))
+		if err := os.Mkdir(restoreSubDir, 0755); err != nil {
+			t.Fatalf("Failed to create restore subdirectory %d: %v", i, err)
+		}
+
+		// Create a restore file in each subdirectory
+		restoreFile := filepath.Join(restoreSubDir, fmt.Sprintf("1_default-restore%d.yaml", i))
+		content := fmt.Sprintf("apiVersion: velero.io/v1\nkind: Restore\nmetadata:\n  name: restore%d\nspec:\n  backupName: backup%d\n", i, i)
+		if err := os.WriteFile(restoreFile, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to create restore file %d: %v", i, err)
+		}
+	}
+
+	manifests, err := LoadGroupedManifestsFromPath(restoreDir, &logr.Logger{})
+	if err != nil {
+		t.Fatalf("Failed to load restores: %v", err)
+	}
+
+	// Verify we have 12 groups
+	assert.Equal(t, 12, len(manifests), "Expected 12 restore groups")
+
+	// Verify each group has 1 manifest and they are in the correct numeric order
+	for i := 0; i < 12; i++ {
+		assert.Equal(t, 1, len(manifests[i]), "Expected 1 manifest in group %d", i)
+
+		// Verify the restore name matches the expected numeric order
+		expectedName := fmt.Sprintf("restore%d", i+1)
+		actualName := manifests[i][0].GetName()
+		assert.Equal(t, expectedName, actualName,
+			"Expected restore at index %d to be %s but got %s", i, expectedName, actualName)
+	}
+}
+
+func TestExtractTrailingNumber(t *testing.T) {
+	testcases := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{
+			name:     "single digit",
+			input:    "restore1",
+			expected: 1,
+		},
+		{
+			name:     "double digit",
+			input:    "restore10",
+			expected: 10,
+		},
+		{
+			name:     "triple digit",
+			input:    "restore123",
+			expected: 123,
+		},
+		{
+			name:     "no number",
+			input:    "restore",
+			expected: 0,
+		},
+		{
+			name:     "number in middle",
+			input:    "restore1test",
+			expected: 0,
+		},
+		{
+			name:     "group prefix",
+			input:    "group2",
+			expected: 2,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractTrailingNumber(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }
 
 func TestReadSeedReconfigurationFromFile(t *testing.T) {
