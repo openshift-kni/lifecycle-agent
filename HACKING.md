@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- go >=1.18
+- go >=1.24
 - Spoke SNO cluster with pull-secret containing credentials to quay.io/${MY_REPO_ID}/
 
 ## Makefile targets
