@@ -11,7 +11,6 @@ entries:
   - entries:
       # v4.14.0
       - name: lifecycle-agent.v4.14.0
-        skipRange: '>=4.14.0 <4.14.0'
       # v4.14.1
       - name: lifecycle-agent.v4.14.1
         replaces: lifecycle-agent.v4.14.0
@@ -43,7 +42,6 @@ entries:
   - entries:
       # v4.14.0
       - name: lifecycle-agent.v4.14.0
-        skipRange: '>=4.14.0 <4.14.0'
       # v4.14.1
       - name: lifecycle-agent.v4.14.1
         replaces: lifecycle-agent.v4.14.0
