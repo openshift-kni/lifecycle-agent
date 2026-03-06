@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"text/template"
 
 	"github.com/samber/lo"
@@ -465,6 +467,12 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 		return nil, fmt.Errorf("failed to read manifest groups subdirs in %s: %w", basePath, err)
 	}
 
+	// Sort directories numerically by extracting trailing numbers from names
+	// This fixes the issue where restore10, restore11 come before restore2 when sorted alphabetically
+	sort.Slice(groupSubDirs, func(i, j int) bool {
+		return extractTrailingNumber(groupSubDirs[i].Name()) < extractTrailingNumber(groupSubDirs[j].Name())
+	})
+
 	for _, groupSubDir := range groupSubDirs {
 		if !groupSubDir.IsDir() {
 			log.Info("Unexpected file found, skipping...", "file",
@@ -500,6 +508,22 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 	}
 
 	return sortedManifests, nil
+}
+
+// extractTrailingNumber extracts the numeric suffix from a string.
+// For example: "restore1" -> 1, "restore10" -> 10, "group2" -> 2.
+// Returns 0 if no trailing number is found.
+func extractTrailingNumber(s string) int {
+	re := regexp.MustCompile(`\d+$`)
+	match := re.FindString(s)
+	if match == "" {
+		return 0
+	}
+	num, err := strconv.Atoi(match)
+	if err != nil {
+		return 0
+	}
+	return num
 }
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
