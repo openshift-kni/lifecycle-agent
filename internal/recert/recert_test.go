@@ -1,6 +1,8 @@
 package recert
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
@@ -127,6 +129,93 @@ func TestRecertConfig_DualStackFields(t *testing.T) {
 	assert.Equal(t, []string{"192.168.1.0/24", "2001:db8::/64"}, config.MachineNetworkCidr)
 	assert.Equal(t, "test-node", config.Hostname)
 	assert.Equal(t, "test-cluster:example.com", config.ClusterRename)
+}
+
+func TestAppendCertManagerCryptoRules(t *testing.T) {
+	tests := []struct {
+		name              string
+		setupDir          func(t *testing.T) string
+		existingCertRules []string
+		expectedRuleCount int
+	}{
+		{
+			name: "directory does not exist",
+			setupDir: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "nonexistent")
+			},
+			expectedRuleCount: 0,
+		},
+		{
+			name: "empty directory",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				return dir
+			},
+			expectedRuleCount: 0,
+		},
+		{
+			name: "directory with cert files",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "default_my-cert-tls.crt"),
+					[]byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "openshift-config_api-cert.crt"),
+					[]byte("-----BEGIN CERTIFICATE-----\ntest2\n-----END CERTIFICATE-----\n"), 0o600))
+				return dir
+			},
+			expectedRuleCount: 2,
+		},
+		{
+			name: "non-crt files are ignored",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "default_my-cert-tls.crt"),
+					[]byte("cert"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "default_my-cert-tls.key"),
+					[]byte("key"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"),
+					[]byte("readme"), 0o600))
+				return dir
+			},
+			expectedRuleCount: 1,
+		},
+		{
+			name: "appends to existing rules",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "default_my-cert-tls.crt"),
+					[]byte("cert"), 0o600))
+				return dir
+			},
+			existingCertRules: []string{"/path/admin-kubeconfig-client-ca.crt"},
+			expectedRuleCount: 2,
+		},
+		{
+			name: "empty dir path",
+			setupDir: func(t *testing.T) string {
+				return ""
+			},
+			expectedRuleCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tt.setupDir(t)
+			config := &RecertConfig{}
+			if tt.existingCertRules != nil {
+				config.UseCertRules = tt.existingCertRules
+			}
+
+			err := appendCertManagerCryptoRules(config, dir)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedRuleCount, len(config.UseCertRules))
+		})
+	}
 }
 
 func TestCreateBaseRecertConfig(t *testing.T) {

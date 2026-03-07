@@ -40,6 +40,20 @@ func (m *MockUpgradeClusterConfigGatherer) EXPECT() *MockUpgradeClusterConfigGat
 	return m.recorder
 }
 
+// FetchCertManagerConfig mocks base method.
+func (m *MockUpgradeClusterConfigGatherer) FetchCertManagerConfig(ctx context.Context, ostreeVarDir string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchCertManagerConfig", ctx, ostreeVarDir)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FetchCertManagerConfig indicates an expected call of FetchCertManagerConfig.
+func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchCertManagerConfig(ctx, ostreeVarDir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchCertManagerConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchCertManagerConfig), ctx, ostreeVarDir)
+}
+
 // FetchClusterConfig mocks base method.
 func (m *MockUpgradeClusterConfigGatherer) FetchClusterConfig(ctx context.Context, ostreeVarDir string) error {
 	m.ctrl.T.Helper()

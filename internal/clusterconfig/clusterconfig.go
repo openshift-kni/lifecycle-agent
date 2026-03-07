@@ -32,7 +32,8 @@ import (
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigs,verbs=get;list;watch
 
 const (
-	manifestDir = "manifests"
+	// ManifestDir is the subdirectory name for cluster configuration manifests.
+	ManifestDir = "manifests"
 
 	pullSecretName = "pull-secret"
 
@@ -53,6 +54,7 @@ var (
 type UpgradeClusterConfigGatherer interface {
 	FetchClusterConfig(ctx context.Context, ostreeVarDir string) error
 	FetchLvmConfig(ctx context.Context, ostreeVarDir string) error
+	FetchCertManagerConfig(ctx context.Context, ostreeVarDir string) error
 }
 
 // UpgradeClusterConfigGather Gather ClusterConfig attributes from the kube-api
@@ -71,7 +73,7 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 	if err != nil {
 		return err
 	}
-	manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+	manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
 		return err
@@ -435,8 +437,8 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 func (r *UpgradeClusterConfigGather) configDir(ostreeVarDir string) (string, error) {
 	filesDir := filepath.Join(ostreeVarDir, common.OptOpenshift, common.ClusterConfigDir)
 	r.Log.Info("Creating cluster configuration folder and subfolder", "folder", filesDir)
-	if err := os.MkdirAll(filepath.Join(filesDir, manifestDir), 0o700); err != nil {
-		return "", fmt.Errorf("failed to create cluster configuration folder and subfolder in %s: %w", manifestDir, err)
+	if err := os.MkdirAll(filepath.Join(filesDir, ManifestDir), 0o700); err != nil {
+		return "", fmt.Errorf("failed to create cluster configuration folder and subfolder in %s: %w", ManifestDir, err)
 	}
 	return filesDir, nil
 }
