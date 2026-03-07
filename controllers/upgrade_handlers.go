@@ -199,7 +199,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return requeueWithError(fmt.Errorf("error while exporting manifests: %w", err))
 	}
 
-	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster and LVM configuration")
+	utils.SetUpgradeStatusInProgress(ibu, "Exporting Cluster, LVM, and cert-manager configuration")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
@@ -213,6 +213,14 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	if err := u.ClusterConfig.FetchLvmConfig(ctx, staterootVarPath); err != nil {
 		return requeueWithError(fmt.Errorf("error while fetching LVM configuration: %w", err))
 	}
+
+	u.Log.Info("Writing cert-manager configuration into new stateroot")
+	if err := u.ClusterConfig.FetchCertManagerConfig(ctx, staterootVarPath); err != nil {
+		return requeueWithError(fmt.Errorf("error while fetching cert-manager configuration: %w", err))
+	}
+
+	// Log all manifest files before pivot for debugging
+	u.logManifestFiles(staterootVarPath)
 
 	// Clear any error status that may have been previously set
 	u.resetProgressMessage(ctx, ibu)
@@ -566,4 +574,24 @@ func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
 	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
 
 	return doNotRequeue(), nil
+}
+
+// logManifestFiles lists all files in the manifests directory before pivot for debugging.
+func (u *UpgHandler) logManifestFiles(staterootVarPath string) {
+	manifestsDir := filepath.Join(staterootVarPath, common.OptOpenshift, common.ClusterConfigDir, clusterconfig.ManifestDir)
+	entries, err := os.ReadDir(manifestsDir)
+	if err != nil {
+		u.Log.Error(err, "Pre-pivot: failed to read manifests directory", "dir", manifestsDir)
+		return
+	}
+	for _, entry := range entries {
+		info, _ := entry.Info()
+		size := int64(0)
+		if info != nil {
+			size = info.Size()
+		}
+		u.Log.Info("Pre-pivot manifest file", "file", entry.Name(), "size", size)
+	}
+	u.Log.Info("Pre-pivot manifests directory listing complete",
+		"dir", manifestsDir, "totalFiles", len(entries))
 }

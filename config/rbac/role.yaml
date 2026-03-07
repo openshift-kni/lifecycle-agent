@@ -114,6 +114,16 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - clusterissuers
+  - issuers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - certificates.k8s.io
   resources:
   - certificatesigningrequests

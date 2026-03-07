@@ -43,7 +43,8 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    containerImage: quay.io/openshift-kni/lifecycle-agent-operator
+    containerImage: quay.io/bapalm/lifecycle-agent-operator:cert-manager-v3
+    createdAt: "2026-03-07T00:01:38Z"
     description: The Lifecycle Agent for OpenShift provides local lifecycle management
       services for Single Node Openshift (SNO) clusters.
     features.operators.openshift.io/cnf: "false"
@@ -70,10 +71,10 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
-    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
+    operators.openshift.io/must-gather-image: $(PRECACHE_WORKLOAD_IMG)
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
-    operators.operatorframework.io/builder: operator-sdk-v1.40.0
+    operators.operatorframework.io/builder: operator-sdk-v1.42.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     provider: Red Hat
     repository: https://github.com/openshift-kni/lifecycle-agent
@@ -415,6 +416,16 @@ spec:
           verbs:
           - get
         - apiGroups:
+          - cert-manager.io
+          resources:
+          - certificates
+          - clusterissuers
+          - issuers
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - certificates.k8s.io
           resources:
           - certificatesigningrequests
@@ -612,13 +623,33 @@ spec:
           - get
           - list
           - watch
-        serviceAccountName: lifecycle-agent-controller-manager
+        serviceAccountName: controller-manager
       deployments:
+      - name: controller-manager
+        spec:
+          selector: null
+          strategy: {}
+          template:
+            metadata: {}
+            spec:
+              containers:
+              - args:
+                - --config=controller_manager_config.yaml
+                name: manager
+                resources: {}
+                volumeMounts:
+                - mountPath: /controller_manager_config.yaml
+                  name: manager-config
+                  subPath: controller_manager_config.yaml
+              volumes:
+              - configMap:
+                  name: manager-config
+                name: manager-config
       - label:
           app.kubernetes.io/component: lifecycle-agent
           app.kubernetes.io/name: lifecycle-agent-operator
           control-plane: controller-manager
-        name: lifecycle-agent-controller-manager
+        name: controller-manager
         spec:
           replicas: 1
           selector:
@@ -644,8 +675,6 @@ spec:
                 command:
                 - /usr/local/bin/manager
                 env:
-                - name: PRECACHE_WORKLOAD_IMG
-                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
                 - name: MY_POD_NAME
                   valueFrom:
                     fieldRef:
@@ -654,7 +683,7 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.namespace
-                image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
+                image: controller:latest
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -684,13 +713,39 @@ spec:
                 - mountPath: /host
                   name: host-root
               hostPID: true
-              serviceAccountName: lifecycle-agent-controller-manager
+              serviceAccountName: controller-manager
               terminationGracePeriodSeconds: 10
               volumes:
               - hostPath:
                   path: /
                   type: Directory
                 name: host-root
+      - name: controller-manager
+        spec:
+          selector: null
+          strategy: {}
+          template:
+            metadata: {}
+            spec:
+              containers:
+              - env:
+                - name: PRECACHE_WORKLOAD_IMG
+                  value: $PRECACHE_WORKLOAD_IMG
+                name: manager
+                resources: {}
+      - name: controller-manager
+        spec:
+          selector: null
+          strategy: {}
+          template:
+            metadata: {}
+            spec:
+              containers:
+              - env:
+                - name: PRECACHE_WORKLOAD_IMG
+                  value: quay.io/bapalm/lifecycle-agent-operator:cert-manager-test
+                name: manager
+                resources: {}
       permissions:
       - rules:
         - apiGroups:
@@ -724,7 +779,7 @@ spec:
           verbs:
           - create
           - patch
-        serviceAccountName: lifecycle-agent-controller-manager
+        serviceAccountName: controller-manager
     strategy: deployment
   installModes:
   - supported: true
@@ -743,5 +798,5 @@ spec:
   maturity: alpha
   provider:
     name: Red Hat
-  replaces: lifecycle-agent.v0.0.0
-  version: 4.22.0
+
+  version: 0.0.1
