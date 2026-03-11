@@ -1,6 +1,8 @@
 package recert
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
@@ -127,6 +129,104 @@ func TestRecertConfig_DualStackFields(t *testing.T) {
 	assert.Equal(t, []string{"192.168.1.0/24", "2001:db8::/64"}, config.MachineNetworkCidr)
 	assert.Equal(t, "test-node", config.Hostname)
 	assert.Equal(t, "test-cluster:example.com", config.ClusterRename)
+}
+
+func TestAppendCertManagerCryptoRules(t *testing.T) {
+	tests := []struct {
+		name              string
+		setupDir          func(t *testing.T) string
+		existingKeyRules  []string
+		expectedRuleCount int
+		validateRules     func(t *testing.T, rules []string)
+	}{
+		{
+			name: "directory does not exist",
+			setupDir: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "nonexistent")
+			},
+			expectedRuleCount: 0,
+		},
+		{
+			name: "empty directory",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				return dir
+			},
+			expectedRuleCount: 0,
+		},
+		{
+			name: "directory with key files",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "CN=my-cert.example.com__default_my-cert-tls.key"),
+					[]byte("-----BEGIN EC PRIVATE KEY-----\ntest\n-----END EC PRIVATE KEY-----\n"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "CN=api.example.com__openshift-config_api-cert.key"),
+					[]byte("-----BEGIN EC PRIVATE KEY-----\ntest2\n-----END EC PRIVATE KEY-----\n"), 0o600))
+				return dir
+			},
+			expectedRuleCount: 2,
+			validateRules: func(t *testing.T, rules []string) {
+				// ReadDir returns alphabetical order: api... before my-cert...
+				assert.Contains(t, rules[0], "api.example.com ")
+				assert.Contains(t, rules[1], "my-cert.example.com ")
+			},
+		},
+		{
+			name: "non-key files and files without CN= prefix are ignored",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "CN=my-cert.example.com__default_my-cert-tls.key"),
+					[]byte("key"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "default_my-cert-tls.crt"),
+					[]byte("cert"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"),
+					[]byte("readme"), 0o600))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "no-cn-prefix.key"),
+					[]byte("key"), 0o600))
+				return dir
+			},
+			expectedRuleCount: 1,
+		},
+		{
+			name: "appends to existing rules",
+			setupDir: func(t *testing.T) string {
+				dir := filepath.Join(t.TempDir(), "certmanager-crypto")
+				assert.NoError(t, os.MkdirAll(dir, 0o700))
+				assert.NoError(t, os.WriteFile(filepath.Join(dir, "CN=my-cert.example.com__default_my-cert-tls.key"),
+					[]byte("key"), 0o600))
+				return dir
+			},
+			existingKeyRules:  []string{"kube-apiserver-lb-signer /path/loadbalancer-serving-signer.key"},
+			expectedRuleCount: 2,
+		},
+		{
+			name: "empty dir path",
+			setupDir: func(t *testing.T) string {
+				return ""
+			},
+			expectedRuleCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tt.setupDir(t)
+			config := &RecertConfig{}
+			if tt.existingKeyRules != nil {
+				config.UseKeyRules = tt.existingKeyRules
+			}
+
+			err := appendCertManagerCryptoRules(config, dir)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedRuleCount, len(config.UseKeyRules))
+			if tt.validateRules != nil {
+				tt.validateRules(t, config.UseKeyRules)
+			}
+		})
+	}
 }
 
 func TestCreateBaseRecertConfig(t *testing.T) {

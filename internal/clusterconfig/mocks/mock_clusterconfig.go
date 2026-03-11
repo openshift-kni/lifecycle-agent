@@ -67,3 +67,17 @@ func (mr *MockUpgradeClusterConfigGathererMockRecorder) FetchLvmConfig(ctx, ostr
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchLvmConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).FetchLvmConfig), ctx, ostreeVarDir)
 }
+
+// PreserveCertManagerConfig mocks base method.
+func (m *MockUpgradeClusterConfigGatherer) PreserveCertManagerConfig(ctx context.Context, ostreeVarDir string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PreserveCertManagerConfig", ctx, ostreeVarDir)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PreserveCertManagerConfig indicates an expected call of PreserveCertManagerConfig.
+func (mr *MockUpgradeClusterConfigGathererMockRecorder) PreserveCertManagerConfig(ctx, ostreeVarDir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PreserveCertManagerConfig", reflect.TypeOf((*MockUpgradeClusterConfigGatherer)(nil).PreserveCertManagerConfig), ctx, ostreeVarDir)
+}
