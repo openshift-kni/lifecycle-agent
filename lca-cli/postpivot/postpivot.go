@@ -264,8 +264,9 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		return fmt.Errorf("failed to populate crypto dir from seed reconfiguration: %w", err)
 	}
 
+	certManagerCryptoDir := path.Join(p.workingDir, common.ClusterConfigDir, common.CertManagerCryptoDir)
 	if err := recert.CreateRecertConfigFile(seedReconfiguration, seedClusterInfo, kubeconfigCryptoDir,
-		p.workingDir); err != nil {
+		p.workingDir, certManagerCryptoDir); err != nil {
 		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 

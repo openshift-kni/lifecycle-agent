@@ -311,7 +311,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
@@ -359,7 +359,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
@@ -454,7 +454,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				dir, err := os.ReadDir(filepath.Join(filesDir, manifestDir))
+				dir, err := os.ReadDir(filepath.Join(filesDir, ManifestDir))
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -501,7 +501,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
