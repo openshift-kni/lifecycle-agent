@@ -63,6 +63,7 @@ const (
 	NmstateConfigFileName             = "nmstate.yaml"
 	SeedDataDir                       = "/var/seed_data"
 	KubeconfigCryptoDir               = "kubeconfig-crypto"
+	CertManagerCryptoDir              = "certmanager-crypto"
 	ClusterConfigDir                  = "cluster-configuration"
 	ContainersListFileName            = "containers.list"
 	SeedClusterInfoFileName           = "manifest.json"

@@ -111,7 +111,7 @@ func SetRecertTrustedCaBundleFromSeedReconfigAdditionaTrustBundle(recertConfig *
 // CreateRecertConfigFile function to create recert config file
 // those params will be provided to an installation script after reboot
 // that will run recert command with them
-func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder string) error {
+func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo, cryptoDir, recertConfigFolder, certManagerCryptoDir string) error {
 	config := createBaseRecertConfig()
 
 	config.ClusterRename = fmt.Sprintf("%s:%s", seedReconfig.ClusterName, seedReconfig.BaseDomain)
@@ -166,6 +166,11 @@ func CreateRecertConfigFile(seedReconfig *seedreconfig.SeedReconfiguration, seed
 			fmt.Sprintf("%s %s/%s", seedClusterInfo.IngressCertificateCN, cryptoDir, ingressKeyFile),
 		}
 		config.UseCertRules = []string{filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt")}
+	}
+
+	// Append cert-manager crypto rules if present
+	if err := appendCertManagerCryptoRules(&config, certManagerCryptoDir); err != nil {
+		return fmt.Errorf("failed to append cert-manager crypto rules: %w", err)
 	}
 
 	config.CNSanReplaceRules = []string{
@@ -314,6 +319,44 @@ func CreateRecertConfigFileForIPConfig(
 	}
 
 	return &config, nil
+}
+
+// appendCertManagerCryptoRules scans the certmanager-crypto directory for .key files
+// and appends them as use_key rules to the recert config. This preserves cert-manager-managed
+// key material through recert's re-keying process. The CN is encoded in the filename
+// (format: "CN=<cn>__<namespace>_<name>.key") and used to construct the "CN path" rule
+// format that recert expects.
+func appendCertManagerCryptoRules(config *RecertConfig, certManagerCryptoDir string) error {
+	if certManagerCryptoDir == "" {
+		return nil
+	}
+
+	entries, err := os.ReadDir(certManagerCryptoDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read certmanager crypto dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".key") {
+			continue
+		}
+		// Parse CN from filename format "CN=<cn>__<namespace>_<name>.key"
+		name := entry.Name()
+		if !strings.HasPrefix(name, "CN=") {
+			continue
+		}
+		cn := strings.SplitN(strings.TrimPrefix(name, "CN="), "__", 2)[0]
+		if cn == "" {
+			continue
+		}
+		config.UseKeyRules = append(config.UseKeyRules,
+			fmt.Sprintf("%s %s", cn, filepath.Join(certManagerCryptoDir, name)))
+	}
+
+	return nil
 }
 
 func getIngressKeyPath(certsFolder string) (string, error) {

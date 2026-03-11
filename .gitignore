@@ -36,3 +36,6 @@ __debug_bin
 
 # tmp directory
 tmp
+
+# Demo dependencies
+.cert-manager-scripts

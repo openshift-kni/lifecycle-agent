@@ -353,6 +353,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		extractAndExportManifestFromPoliciesToDirReturn func() error
 		fetchClusterConfigReturn                        func() error
 		fetchLvmConfigReturn                            func() error
+		fetchCertManagerConfigReturn                    func() error
 		exportIBUCRNew                                  bool
 		exportIBUCROrig                                 bool
 		rebootToNewStateRootReturn                      func() error
@@ -680,7 +681,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.InProgress),
 					Status:  metav1.ConditionTrue,
-					Message: "Exporting Cluster and LVM configuration",
+					Message: "Exporting Cluster, LVM, and cert-manager configuration",
 				},
 			},
 		},
@@ -715,6 +716,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil
 			},
 			fetchLvmConfigReturn: func() error {
+				return nil
+			},
+			fetchCertManagerConfigReturn: func() error {
 				return nil
 			},
 			exportIBUCRNew:  true,
@@ -777,6 +781,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.fetchLvmConfigReturn != nil {
 				mockClusterconfig.EXPECT().FetchLvmConfig(gomock.Any(), gomock.Any()).Return(tt.fetchLvmConfigReturn()).Times(1)
+			}
+			if tt.fetchCertManagerConfigReturn != nil {
+				mockClusterconfig.EXPECT().PreserveCertManagerConfig(gomock.Any(), gomock.Any()).Return(tt.fetchCertManagerConfigReturn()).Times(1)
 			}
 
 			oldHC := CheckHealth
