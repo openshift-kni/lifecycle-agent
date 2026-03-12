@@ -12,7 +12,7 @@ BASHATE_VERSION ?= 2.1.1
 CONTROLLER_GEN_VERSION ?= v0.19.0
 
 # GOLANGCI_LINT_VERSION defines the golangci-lint version to download from GitHub releases.
-GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_VERSION ?= v2.0.2
 
 # KUSTOMIZE_VERSION defines the kustomize version to download from go modules.
 KUSTOMIZE_VERSION ?= v5@v5.1.1
@@ -381,7 +381,7 @@ golangci-lint-download: sync-git-submodules $(LOCALBIN) ## Download golangci-lin
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
 		download-go-tool \
 		TOOL_NAME=golangci-lint \
-		GO_MODULE=github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) \
+		GO_MODULE=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) \
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 	@echo "Golangci-lint downloaded successfully."
 
