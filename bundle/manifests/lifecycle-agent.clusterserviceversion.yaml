@@ -415,6 +415,14 @@ spec:
           verbs:
           - get
         - apiGroups:
+          - cert-manager.io
+          resources:
+          - certificates
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - certificates.k8s.io
           resources:
           - certificatesigningrequests
