@@ -71,12 +71,6 @@ func mustGetIPCConfig(t *testing.T, c client.Reader, name string) *ipcv1.IPConfi
 	return got
 }
 
-func ensureWritableIPConfigPaths(t *testing.T) {
-	t.Helper()
-
-	// Tests should mock filesystem I/O via ops.Ops; nothing to do here.
-}
-
 func mkConfigIPC(t *testing.T, withHistory bool) *ipcv1.IPConfig {
 	t.Helper()
 	ipc := &ipcv1.IPConfig{

@@ -116,7 +116,7 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 
 	// Generate ConfigMap for list of images to be pre-cached
 	cm := renderConfigMap(config.ImageList)
-	if err := h.Client.Create(ctx, cm); err != nil {
+	if err := h.Create(ctx, cm); err != nil {
 		if !k8serrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create configMap for precache: %w", err)
 		}
@@ -126,7 +126,7 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 	if err != nil {
 		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}
-	if err := h.Client.Create(ctx, job); err != nil {
+	if err := h.Create(ctx, job); err != nil {
 		if !k8serrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create precache job: %w", err)
 		}

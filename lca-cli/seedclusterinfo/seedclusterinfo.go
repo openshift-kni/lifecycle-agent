@@ -34,6 +34,7 @@ type SeedClusterInfo struct {
 	ClusterName string `json:"cluster_name,omitempty"`
 
 	// The IP address of the seed cluster's SNO node.
+	//
 	// Deprecated: Use NodeIPs instead.
 	NodeIP string `json:"node_ip,omitempty"`
 

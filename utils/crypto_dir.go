@@ -17,7 +17,7 @@ const (
 )
 
 func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) error {
-	if err := os.MkdirAll(cryptoDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(cryptoDir, os.ModePerm); err != nil { //nolint:gosec // intentional permissions for crypto directory
 		return fmt.Errorf("error creating %s: %w", cryptoDir, err)
 	}
 
@@ -92,7 +92,7 @@ func SeedReconfigurationKubeconfigRetentionFromCluster(ctx context.Context, clie
 }
 
 func BackupKubeconfigCrypto(ctx context.Context, client runtimeclient.Client, cryptoDir string) error {
-	if err := os.MkdirAll(cryptoDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(cryptoDir, os.ModePerm); err != nil { //nolint:gosec // intentional permissions for crypto directory
 		return fmt.Errorf("error creating %s: %w", cryptoDir, err)
 	}
 
@@ -154,7 +154,7 @@ func LoadKubeadminPasswordHash(cryptoDir string) (string, error) {
 		return "", fmt.Errorf("failed to check if kubeadmin password hash exists: %w", err)
 	}
 
-	password, err := os.ReadFile(path.Join(cryptoDir, pwHashFile))
+	password, err := os.ReadFile(path.Join(cryptoDir, pwHashFile)) //nolint:gosec // cryptoDir path is validated
 	if err != nil {
 		return "", fmt.Errorf("failed to read kubeadmin password hash: %w", err)
 	}

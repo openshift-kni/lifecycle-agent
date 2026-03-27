@@ -154,7 +154,7 @@ func TestPostDeployment(t *testing.T) {
 
 	file, err := os.Create(postSH)
 	assert.Nil(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	// Test case when the post deployment script exists and executes without error
 	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", nil).Times(1)
 	err = ibi.postDeployment(postSH)

@@ -29,7 +29,7 @@ type executor struct {
 
 func (e *executor) execute(liveLogger io.Writer, root, command string, args ...string) (string, error) {
 	e.log.Infof("Executing %s with args %s", command, args)
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, args...) //nolint:gosec // command is validated by caller
 	var stdoutBytes bytes.Buffer
 	if liveLogger != nil {
 		cmd.Stdout = io.MultiWriter(liveLogger, &stdoutBytes)
@@ -60,11 +60,11 @@ func NewRegularExecutor(logger *logrus.Logger, verbose bool) Execute {
 }
 
 func (e *regularExecutor) Execute(command string, args ...string) (string, error) {
-	return e.executor.execute(nil, "", command, args...)
+	return e.execute(nil, "", command, args...)
 }
 
 func (e *regularExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.executor.execute(e.executor.log.Writer(), "", command, args...)
+	return e.execute(e.log.Writer(), "", command, args...)
 }
 
 type nsenterExecutor struct {
@@ -76,7 +76,7 @@ func NewNsenterExecutor(logger *logrus.Logger, verbose bool) Execute {
 }
 
 func (e *nsenterExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.baseExecute(e.executor.log.Writer(), command, args...)
+	return e.baseExecute(e.log.Writer(), command, args...)
 }
 
 func (e *nsenterExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
@@ -84,7 +84,7 @@ func (e *nsenterExecutor) baseExecute(writer io.Writer, command string, args ...
 	// and behave as if they're running on the host directly rather than inside the container
 	arguments := append(nsenterArgs(), command)
 	arguments = append(arguments, args...)
-	return e.executor.execute(writer, "", nsenter, arguments...)
+	return e.execute(writer, "", nsenter, arguments...)
 }
 
 func (e *nsenterExecutor) Execute(command string, args ...string) (string, error) {
@@ -106,7 +106,7 @@ func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute
 func (e *chrootExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
 	commandBase := "/usr/bin/env"
 	args = append([]string{"--", command}, args...)
-	return e.executor.execute(writer, e.root, commandBase, args...)
+	return e.execute(writer, e.root, commandBase, args...)
 }
 
 func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
@@ -114,7 +114,7 @@ func (e *chrootExecutor) Execute(command string, args ...string) (string, error)
 }
 
 func (e *chrootExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.baseExecute(e.executor.log.Writer(), command, args...)
+	return e.baseExecute(e.log.Writer(), command, args...)
 }
 
 func nsenterArgs() []string {

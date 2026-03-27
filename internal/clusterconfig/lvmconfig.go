@@ -77,7 +77,7 @@ func (r *UpgradeClusterConfigGather) fetchLocalVolumes(ctx context.Context, mani
 	r.Log.Info("Fetching local volumes and associated storage classes")
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: "localvolumes.local.storage.openshift.io"}, crd); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: "localvolumes.local.storage.openshift.io"}, crd); err != nil {
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("LocalVolume CRD is not found. Skipping")
 			return nil

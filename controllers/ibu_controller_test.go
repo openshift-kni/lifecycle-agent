@@ -31,7 +31,6 @@ import (
 	"go.uber.org/mock/gomock"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -56,7 +55,7 @@ func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 
 type Condition struct {
 	Type   utils.ConditionType
-	Status v1.ConditionStatus
+	Status metav1.ConditionStatus
 	Reason utils.ConditionReason
 }
 
@@ -306,7 +305,7 @@ func TestIsTransitionRequested(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			var ibu = &ibuv1.ImageBasedUpgrade{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: utils.IBUName,
 				},
 			}
@@ -325,7 +324,7 @@ func TestValidateStageTransisions(t *testing.T) {
 	type ExpectedCondition struct {
 		ConditionType   utils.ConditionType
 		ConditionReason utils.ConditionReason
-		ConditionStatus v1.ConditionStatus
+		ConditionStatus metav1.ConditionStatus
 		Message         string
 	}
 	testcases := []struct {
@@ -783,7 +782,7 @@ func TestValidateStageTransisions(t *testing.T) {
 	for _, tc := range testcases {
 
 		var ibu = &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: utils.IBUName,
 			},
 			Spec: ibuv1.ImageBasedUpgradeSpec{
@@ -830,7 +829,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 		{
 			name: "idle IBU",
 			ibu: &ibuv1.ImageBasedUpgrade{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: utils.IBUName,
 				},
 				Spec: ibuv1.ImageBasedUpgradeSpec{
@@ -840,7 +839,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			// Ensure IBU gating does not requeue early due to a missing IPConfig CR.
 			// (If IPConfig exists but is not initialized yet, reconciliation is allowed to proceed.)
 			ipc: &ipcv1.IPConfig{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:       common.IPConfigName,
 					Generation: 5,
 				},
@@ -1047,7 +1046,7 @@ func Test_getValidNextStageList(t *testing.T) {
 func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 	t.Run("ipconfig not found => requeues soon (no status update)", func(t *testing.T) {
 		ibuObj := &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       utils.IBUName,
 				Generation: 7,
 			},
@@ -1077,7 +1076,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 
 	t.Run("ipconfig exists but has no conditions => allowed (ipconfig not initialized)", func(t *testing.T) {
 		ibuObj := &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       utils.IBUName,
 				Generation: 7,
 			},
@@ -1087,7 +1086,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 		}
 
 		ipcObj := &ipcv1.IPConfig{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       common.IPConfigName,
 				Generation: 5,
 			},
@@ -1117,7 +1116,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 
 	t.Run("ipconfig exists and is not idle => blocked and requeues short interval", func(t *testing.T) {
 		ibuObj := &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       utils.IBUName,
 				Generation: 7,
 			},
@@ -1127,7 +1126,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 		}
 
 		ipcObj := &ipcv1.IPConfig{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       common.IPConfigName,
 				Generation: 5,
 			},
@@ -1162,7 +1161,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 
 	t.Run("ipconfig not idle but blocked => still blocked (no deadlock avoidance)", func(t *testing.T) {
 		ibuObj := &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       utils.IBUName,
 				Generation: 7,
 			},
@@ -1173,7 +1172,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 		utils.SetIBUStatusBlocked(ibuObj, "Blocked by gating: previous")
 
 		ipcObj := &ipcv1.IPConfig{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       common.IPConfigName,
 				Generation: 5,
 			},
@@ -1206,7 +1205,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 
 	t.Run("ipconfig idle => allowed and unblocks self", func(t *testing.T) {
 		ibuObj := &ibuv1.ImageBasedUpgrade{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       utils.IBUName,
 				Generation: 7,
 			},
@@ -1217,7 +1216,7 @@ func TestImageBasedUpgradeReconciler_gateIBUByIPConfig(t *testing.T) {
 		utils.SetIBUStatusBlocked(ibuObj, "Blocked by gating: previous")
 
 		ipcObj := &ipcv1.IPConfig{
-			ObjectMeta: v1.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name:       common.IPConfigName,
 				Generation: 5,
 			},

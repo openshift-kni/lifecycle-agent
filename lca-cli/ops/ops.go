@@ -264,7 +264,7 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 				o.log.Infof("Waiting for etcd: %s", err)
 				continue
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
 				o.log.Infof("Waiting for etcd, status: %d", resp.StatusCode)
@@ -332,7 +332,7 @@ func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create copy of tar with install_exec_t attribute: %w", err)
 	}
-	defer os.Remove(tarExec) // Cleanup temporary tar copy afterwards
+	defer func() { _ = os.Remove(tarExec) }() // Cleanup temporary tar copy afterwards
 
 	// Path as seen inside the chroot (without /host prepended)
 	tarExecInsideChroot, err := common.PathInsideChroot(tarExec)
@@ -460,7 +460,7 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 		return fmt.Errorf("failed to run etcd, err: %w", err)
 	}
 
-	defer o.StopEtcdServer(authFile, common.EtcdContainerName)
+	defer func() { _ = o.StopEtcdServer(authFile, common.EtcdContainerName) }()
 
 	if preRecertOperations != nil {
 		if err := preRecertOperations(); err != nil {
@@ -530,12 +530,12 @@ func (o *ops) Chroot(chrootPath string) (func() error, error) {
 	}
 
 	if err := syscall.Chroot(chrootPath); err != nil {
-		root.Close()
+		_ = root.Close()
 		return nil, fmt.Errorf("failed to chroot to %s, err: %w", chrootPath, err)
 	}
 
 	return func() error {
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		if err := root.Chdir(); err != nil {
 			return fmt.Errorf("failed to change directory to root: %w", err)
 		}
@@ -557,7 +557,7 @@ func (o *ops) RunListOfCommands(cmds []*CMD) error {
 
 // nolint: wrapcheck // this method intentionally returns the underlying os error directly
 func (o *ops) ReadFile(filename string) ([]byte, error) {
-	return os.ReadFile(filename)
+	return os.ReadFile(filename) //nolint:gosec // filename is validated by caller
 }
 
 // nolint: wrapcheck // this method intentionally returns the underlying os error directly
@@ -671,11 +671,11 @@ func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionByte
 		return fmt.Errorf("failed to create reader for rhcos iso: %w", err)
 	}
 	log.Info("Creating IBI ISO with embedded ignition")
-	file, err := os.Create(outputIsoPath)
+	file, err := os.Create(outputIsoPath) //nolint:gosec // outputIsoPath is validated by caller
 	if err != nil {
 		return fmt.Errorf("failed to create ibi iso file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := io.Copy(file, reader); err != nil {
 		return fmt.Errorf("failed to copy reader to file: %w", err)
 	}
