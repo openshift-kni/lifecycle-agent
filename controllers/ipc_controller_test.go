@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"testing"
 
@@ -23,16 +22,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-type reconcileTestDirEntry struct {
-	name  string
-	isDir bool
-}
-
-func (e reconcileTestDirEntry) Name() string               { return e.name }
-func (e reconcileTestDirEntry) IsDir() bool                { return e.isDir }
-func (e reconcileTestDirEntry) Type() fs.FileMode          { return 0 }
-func (e reconcileTestDirEntry) Info() (fs.FileInfo, error) { return nil, errors.New("not implemented") }
 
 func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
 	workspaceDir := common.PathOutsideChroot(common.LCAWorkspaceDir)

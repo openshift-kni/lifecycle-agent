@@ -61,7 +61,7 @@ func removeETCDeletions(mountpoint, deploymentDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open etc.deletions: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -94,7 +94,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	rpmOstreeClient rpmostreeclient.IClient, seedImage, expectedVersion string, ibi bool) error {
 	log.Info("Start setupstateroot")
 
-	defer ops.UnmountAndRemoveImage(seedImage)
+	defer func() { _ = ops.UnmountAndRemoveImage(seedImage) }()
 
 	workspaceOutsideChroot, err := os.MkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
 	if err != nil {

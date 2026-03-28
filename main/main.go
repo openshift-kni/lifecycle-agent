@@ -532,12 +532,12 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	}
 
 	// Rename files for debugging in case of error
-	os.Remove(seedgenFilePath + bakExt)
+	_ = os.Remove(seedgenFilePath + bakExt)
 	if err := os.Rename(seedgenFilePath, seedgenFilePath+bakExt); err != nil {
 		return fmt.Errorf("failed to rename %s: %w", seedgenFilePath, err)
 	}
 
-	os.Remove(secretFilePath + bakExt)
+	_ = os.Remove(secretFilePath + bakExt)
 	if err := os.Rename(secretFilePath, secretFilePath+bakExt); err != nil {
 		return fmt.Errorf("failed to rename %s: %w", secretFilePath, err)
 	}

@@ -33,13 +33,11 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/healthcheck"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
-	commonUtils "github.com/openshift-kni/lifecycle-agent/utils"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -151,10 +149,11 @@ func getPhase(seedgen *seedgenv1.SeedGenerator) seedgenReconcilerPhase {
 	// If the InProgress condition is set to True, check the status message to determine the reconciler phase
 	if seedgenInProgressCondition != nil && seedgenInProgressCondition.Status == metav1.ConditionTrue {
 		msg := seedgenInProgressCondition.Message
-		if msg == msgLaunchingImager {
+		switch msg {
+		case msgLaunchingImager:
 			// Reconciler phase is phaseFinalizing
 			return phases.PhaseFinalizing
-		} else if msg == "" {
+		case "":
 			return phases.PhaseInitial
 		}
 	}
@@ -166,7 +165,7 @@ func getPhase(seedgen *seedgenv1.SeedGenerator) seedgenReconcilerPhase {
 // Get a list of ACM addon namespaces present on the cluster
 func (r *SeedGeneratorReconciler) currentAcmAddonNamespaces(ctx context.Context) (acmNsList []string) {
 	namespaces := &corev1.NamespaceList{}
-	if err := r.Client.List(ctx, namespaces); err != nil {
+	if err := r.List(ctx, namespaces); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
 		}
@@ -176,8 +175,8 @@ func (r *SeedGeneratorReconciler) currentAcmAddonNamespaces(ctx context.Context)
 	// Find all namespaces that start with "open-cluster-management-addon-" prefix
 	re := regexp.MustCompile(`^open-cluster-management-addon-`)
 	for _, ns := range namespaces.Items {
-		if re.MatchString(ns.ObjectMeta.Name) {
-			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
+		if re.MatchString(ns.Name) {
+			acmNsList = append(acmNsList, ns.Name)
 		}
 	}
 	return
@@ -186,7 +185,7 @@ func (r *SeedGeneratorReconciler) currentAcmAddonNamespaces(ctx context.Context)
 // Get a list of existing ACM namespaces on the cluster
 func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acmNsList []string) {
 	namespaces := &corev1.NamespaceList{}
-	if err := r.Client.List(ctx, namespaces); err != nil {
+	if err := r.List(ctx, namespaces); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
 		}
@@ -195,8 +194,8 @@ func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acm
 
 	re := regexp.MustCompile(`^open-cluster-management-agent`)
 	for _, ns := range namespaces.Items {
-		if re.MatchString(ns.ObjectMeta.Name) {
-			acmNsList = append(acmNsList, ns.ObjectMeta.Name)
+		if re.MatchString(ns.Name) {
+			acmNsList = append(acmNsList, ns.Name)
 		}
 	}
 	return
@@ -205,7 +204,7 @@ func (r *SeedGeneratorReconciler) currentAcmNamespaces(ctx context.Context) (acm
 // Get a list of existing ACM CRDs on the cluster
 func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdList []string) {
 	crds := &apiextensionsv1.CustomResourceDefinitionList{}
-	if err := r.Client.List(ctx, crds); err != nil {
+	if err := r.List(ctx, crds); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			r.Log.Info(fmt.Sprintf("Error when checking namespaces: %s", err.Error()))
 		}
@@ -214,8 +213,8 @@ func (r *SeedGeneratorReconciler) currentAcmCrds(ctx context.Context) (acmCrdLis
 
 	re := regexp.MustCompile(`\.open-cluster-management\.io$`)
 	for _, crd := range crds.Items {
-		if re.MatchString(crd.ObjectMeta.Name) {
-			acmCrdList = append(acmCrdList, crd.ObjectMeta.Name)
+		if re.MatchString(crd.Name) {
+			acmCrdList = append(acmCrdList, crd.Name)
 		}
 	}
 	return
@@ -253,7 +252,7 @@ func (r *SeedGeneratorReconciler) waitForPullSecretOverride(ctx context.Context,
 func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.Context) error {
 	r.Log.Info("Cleaning old machine configs")
 	mcps := &mcv1.MachineConfigPoolList{}
-	err := r.Client.List(ctx, mcps)
+	err := r.List(ctx, mcps)
 	if err != nil {
 		return fmt.Errorf("failed to list machine config pools, err: %w", err)
 	}
@@ -263,7 +262,7 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 	}
 
 	mcs := &mcv1.MachineConfigList{}
-	err = r.Client.List(ctx, mcs)
+	err = r.List(ctx, mcs)
 	if err != nil {
 		return fmt.Errorf("failed to list machine configs, err: %w", err)
 	}
@@ -272,7 +271,7 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 			continue
 		}
 		r.Log.Info(fmt.Sprintf("Deleting machine config %s", mc.Name))
-		if err := r.Client.Delete(ctx, mc.DeepCopy()); err != nil {
+		if err := r.Delete(ctx, mc.DeepCopy()); err != nil {
 			return fmt.Errorf("failed to delete machine config %s, err: %w", mc.Name, err)
 		}
 	}
@@ -300,7 +299,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 					Name: crdName,
 				}}
 			r.Log.Info(fmt.Sprintf("Deleting CRD %s", crdName))
-			if err := r.Client.Delete(ctx, crd, deleteOpts...); client.IgnoreNotFound(err) != nil {
+			if err := r.Delete(ctx, crd, deleteOpts...); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("failed to delete CRD %s: %w", crdName, err)
 			}
 		}
@@ -330,7 +329,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 					Name: nsName,
 				}}
 			r.Log.Info(fmt.Sprintf("Deleting namespace %s", nsName))
-			if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+			if err := r.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("failed to delete namespace %s: %w", nsName, err)
 			}
 		}
@@ -356,7 +355,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "assisted-installer",
 		}}
-	if err := r.Client.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
+	if err := r.Delete(ctx, ns, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete assisted-installer namespace: %w", err)
 	}
 
@@ -370,7 +369,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 			ObjectMeta: metav1.ObjectMeta{
 				Name: role,
 			}}
-		if err := r.Client.Delete(ctx, roleStruct, deleteOpts...); client.IgnoreNotFound(err) != nil {
+		if err := r.Delete(ctx, roleStruct, deleteOpts...); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("failed to delete clusterrole %s: %w", role, err)
 		}
 	}
@@ -379,7 +378,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "klusterlet",
 		}}
-	if err := r.Client.Delete(ctx, roleBinding, deleteOpts...); client.IgnoreNotFound(err) != nil {
+	if err := r.Delete(ctx, roleBinding, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete klusterlet clusterrolebinding: %w", err)
 	}
 
@@ -389,7 +388,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 			Namespace: "openshift-monitoring",
 			Name:      "observability-alertmanager-accessor",
 		}}
-	if err := r.Client.Delete(ctx, observabilitySecret, deleteOpts...); client.IgnoreNotFound(err) != nil {
+	if err := r.Delete(ctx, observabilitySecret, deleteOpts...); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete observability secret: %w", err)
 	}
 
@@ -400,7 +399,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 // TODO: Is there a better way to access the image ref?
 func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}
@@ -678,8 +677,8 @@ func (r *SeedGeneratorReconciler) restoreSeedgenCRIfNeeded(ctx context.Context, 
 	// Save status as the seedgen structure gets over-written by the create call
 	// with the result which has no status
 	status := seedgen.Status
-	if err := r.Client.Create(ctx, seedgen); err != nil {
-		if !k8serrors.IsAlreadyExists(err) {
+	if err := r.Create(ctx, seedgen); err != nil {
+		if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create seedgen during restore: %w", err)
 		}
 	}
@@ -700,8 +699,8 @@ func (r *SeedGeneratorReconciler) restoreSeedgenSecretCR(ctx context.Context, se
 	// Strip the ResourceVersion, otherwise the restore fails
 	secret.SetResourceVersion("")
 
-	if err := r.Client.Create(ctx, secret); err != nil {
-		if !k8serrors.IsAlreadyExists(err) {
+	if err := r.Create(ctx, secret); err != nil {
+		if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create seedgen secret: %w", err)
 		}
 	}
@@ -781,14 +780,14 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
 		rc = fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
 
 	// Save the seedgen secret CR in order to restore it after the imager is complete
-	if err := commonUtils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(utils.SeedGenStoredSecretCR)); err != nil {
+	if err := lcautils.MarshalToFile(seedGenSecret, common.PathOutsideChroot(utils.SeedGenStoredSecretCR)); err != nil {
 		rc = fmt.Errorf("failed to write secret to %s: %w", utils.SeedGenStoredSecretCR, err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -858,7 +857,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// In the success case, the pod will block until terminated by the imager container.
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
-	defer r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData))
+	defer func() { _ = r.waitForPullSecretOverride(ctx, []byte(originalPullSecretData)) }()
 
 	if err := r.cleanupOldRenderedMachineConfigs(ctx); err != nil {
 		rc = fmt.Errorf("failed to cleanup old machine configs, err: %w", err)
@@ -875,14 +874,14 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	// Save the seedgen CR in order to restore it after the imager is complete
-	if err := commonUtils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
+	if err := lcautils.MarshalToFile(seedgen, common.PathOutsideChroot(utils.SeedGenStoredCR)); err != nil {
 		rc = fmt.Errorf("failed to write CR to %s: %w", utils.SeedGenStoredCR, err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
 
 	r.Log.Info("Deleting seedgen secret CR")
-	if err := r.Client.Delete(ctx, seedGenSecret); err != nil {
+	if err := r.Delete(ctx, seedGenSecret); err != nil {
 		rc = fmt.Errorf("unable to delete seedgen secret CR: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -890,10 +889,10 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// In the success case, the pod will block until terminated by the imager container.
 	// Create a deferred function to restore the secret CR in the case where a failure happens
 	// before that point.
-	defer r.restoreSeedgenSecretCR(ctx, seedGenSecret)
+	defer func() { _ = r.restoreSeedgenSecretCR(ctx, seedGenSecret) }()
 
 	r.Log.Info("Deleting seedgen CR")
-	if err := r.Client.Delete(ctx, seedgen); err != nil {
+	if err := r.Delete(ctx, seedgen); err != nil {
 		rc = fmt.Errorf("unable to delete seedgen CR: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -901,14 +900,14 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	// In the success case, the pod will block until terminated by the imager container.
 	// Create a deferred function to restore the seedgen CR in the case where a failure happens
 	// before that point.
-	defer r.restoreSeedgenCRIfNeeded(ctx, seedgen)
+	defer func() { _ = r.restoreSeedgenCRIfNeeded(ctx, seedgen) }()
 
 	// Delete the IBU CR prior to launching the imager, so it's not in the seed image
 	ibu := &ibuv1.ImageBasedUpgrade{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: utils.IBUName,
 		}}
-	if err := r.Client.Delete(ctx, ibu); client.IgnoreNotFound(err) != nil {
+	if err := r.Delete(ctx, ibu); client.IgnoreNotFound(err) != nil {
 		rc = fmt.Errorf("failed to delete IBU CR: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -1083,7 +1082,7 @@ func setSeedGenStatusCompleted(seedgen *seedgenv1.SeedGenerator) {
 }
 
 func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
-	seedgen.Status.ObservedGeneration = seedgen.ObjectMeta.Generation
+	seedgen.Status.ObservedGeneration = seedgen.Generation
 	if err := r.Status().Update(ctx, seedgen); err != nil {
 		return fmt.Errorf("failed to update seedgen status: %w", err)
 	}

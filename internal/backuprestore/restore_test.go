@@ -31,7 +31,6 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,7 +46,7 @@ func init() {
 func fakeRestoreCr(name, applyWave, backupName string) *velerov1.Restore {
 	restoreGvk := common.RestoreGvk
 	restore := &velerov1.Restore{
-		TypeMeta: v1.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       restoreGvk.Kind,
 			APIVersion: restoreGvk.Group + "/" + restoreGvk.Version,
 		},
@@ -152,7 +151,7 @@ func TestTriggerRestore(t *testing.T) {
 	}
 
 	ns := &corev1.Namespace{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: OadpNs,
 		},
 	}
@@ -209,7 +208,7 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create restores directory
 	restoreDir := filepath.Join(tmpDir, OadpRestorePath)
@@ -272,11 +271,11 @@ func TestLoadRestoresFromDir(t *testing.T) {
 	expectedRestores := [][]*velerov1.Restore{
 		{
 			{
-				TypeMeta: v1.TypeMeta{
+				TypeMeta: metav1.TypeMeta{
 					Kind:       "Restore",
 					APIVersion: "velero.io/v1",
 				},
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: "restore1",
 				},
 				Spec: velerov1.RestoreSpec{
@@ -284,11 +283,11 @@ func TestLoadRestoresFromDir(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: v1.TypeMeta{
+				TypeMeta: metav1.TypeMeta{
 					Kind:       "Restore",
 					APIVersion: "velero.io/v1",
 				},
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: "restore2",
 				},
 				Spec: velerov1.RestoreSpec{
@@ -298,11 +297,11 @@ func TestLoadRestoresFromDir(t *testing.T) {
 		},
 		{
 			{
-				TypeMeta: v1.TypeMeta{
+				TypeMeta: metav1.TypeMeta{
 					Kind:       "Restore",
 					APIVersion: "velero.io/v1",
 				},
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name: "restore3",
 				},
 				Spec: velerov1.RestoreSpec{
@@ -384,7 +383,7 @@ func TestEnsureOadpConfigurations(t *testing.T) {
 
 func fakeBackupStorageBackendWithStatus(name string, phase velerov1.BackupStorageLocationPhase) *velerov1.BackupStorageLocation {
 	return &velerov1.BackupStorageLocation{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: OadpNs,
 		},

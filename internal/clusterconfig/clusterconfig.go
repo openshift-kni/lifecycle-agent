@@ -35,8 +35,6 @@ const (
 	// ManifestDir is the subdirectory name for cluster configuration manifests.
 	ManifestDir = "manifests"
 
-	pullSecretName = "pull-secret"
-
 	idmsFileName  = "image-digest-mirror-set.json"
 	icspsFileName = "image-content-source-policy-list.json"
 
@@ -103,7 +101,7 @@ func (r *UpgradeClusterConfigGather) getPullSecret(ctx context.Context) (string,
 }
 
 func (r *UpgradeClusterConfigGather) getSSHPublicKey() (string, error) {
-	sshKey, err := os.ReadFile(filepath.Join(hostPath, sshKeyFile))
+	sshKey, err := os.ReadFile(filepath.Join(hostPath, sshKeyFile)) //nolint:gosec // hostPath is a const
 	if err != nil {
 		return "", fmt.Errorf("failed to read sshKey: %w", err)
 	}
@@ -115,7 +113,7 @@ func (r *UpgradeClusterConfigGather) getSSHPublicKey() (string, error) {
 // possible reasons for missing chrony configuration:
 // cluster is not installed with assisted-service or user removed the configuration
 func (r *UpgradeClusterConfigGather) getChronyConfig() (string, error) {
-	chronyConfig, err := os.ReadFile(filepath.Join(hostPath, common.ChronyConfig))
+	chronyConfig, err := os.ReadFile(filepath.Join(hostPath, common.ChronyConfig)) //nolint:gosec // hostPath is a const
 	if os.IsNotExist(err) {
 		r.Log.Info(fmt.Sprintf("chrony configuration %s doesn't exist, "+
 			"skipping copy of it", common.ChronyConfig))
@@ -170,7 +168,7 @@ func (r *UpgradeClusterConfigGather) GetServerSSHKeys(ctx context.Context) ([]Se
 	}
 
 	for _, match := range matches {
-		fileContent, err := os.ReadFile(match)
+		fileContent, err := os.ReadFile(match) //nolint:gosec // match comes from filepath.Glob
 		if err != nil {
 			return nil, fmt.Errorf("failed to read server SSH key file %s: %w", match, err)
 		}
@@ -215,7 +213,7 @@ func (r *UpgradeClusterConfigGather) GetAdditionalTrustBundle(ctx context.Contex
 	}
 
 	proxy := v1.Proxy{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
 		return nil, fmt.Errorf("failed to get proxy: %w", err)
 
 	}
@@ -250,7 +248,7 @@ func (r *UpgradeClusterConfigGather) GetAdditionalTrustBundle(ctx context.Contex
 
 func (r *UpgradeClusterConfigGather) GetProxy(ctx context.Context) (*seedreconfig.Proxy, *seedreconfig.Proxy, error) {
 	proxy := v1.Proxy{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: common.OpenshiftProxyCRName}, &proxy); err != nil {
 		return nil, nil, fmt.Errorf("failed to get proxy: %w", err)
 	}
 
@@ -274,7 +272,7 @@ func (r *UpgradeClusterConfigGather) GetProxy(ctx context.Context) (*seedreconfi
 
 func (r *UpgradeClusterConfigGather) GetInstallConfig(ctx context.Context) (string, error) {
 	configmap := corev1.ConfigMap{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: common.InstallConfigCMNamespace, Name: common.InstallConfigCM}, &configmap); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: common.InstallConfigCMNamespace, Name: common.InstallConfigCM}, &configmap); err != nil {
 		return "", fmt.Errorf("failed to get install-config configmap: %w", err)
 	}
 	return configmap.Data[common.InstallConfigCMInstallConfigDataKey], nil
@@ -463,7 +461,7 @@ func (r *UpgradeClusterConfigGather) typeMetaForObject(o runtime.Object) (*metav
 func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDigestMirrorSetList, error) {
 	idmsList := v1.ImageDigestMirrorSetList{}
 	currentIdms := v1.ImageDigestMirrorSetList{}
-	if err := r.Client.List(ctx, &currentIdms); err != nil {
+	if err := r.List(ctx, &currentIdms); err != nil {
 		return v1.ImageDigestMirrorSetList{}, fmt.Errorf("failed to list ImageDigestMirrorSet: %w", err)
 	}
 
@@ -480,8 +478,8 @@ func (r *UpgradeClusterConfigGather) getIDMSs(ctx context.Context) (v1.ImageDige
 			return v1.ImageDigestMirrorSetList{}, err
 		}
 		obj.TypeMeta = *typeMeta
-		obj.ObjectMeta.Labels = idms.Labels
-		obj.ObjectMeta.Annotations = idms.Annotations
+		obj.Labels = idms.Labels
+		obj.Annotations = idms.Annotations
 		idmsList.Items = append(idmsList.Items, obj)
 	}
 	typeMeta, err := r.typeMetaForObject(&idmsList)
@@ -497,7 +495,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	r.Log.Info("Fetching ICSPs")
 	iscpsList := &operatorv1alpha1.ImageContentSourcePolicyList{}
 	currentIcps := &operatorv1alpha1.ImageContentSourcePolicyList{}
-	if err := r.Client.List(ctx, currentIcps); err != nil {
+	if err := r.List(ctx, currentIcps); err != nil {
 		return fmt.Errorf("failed list ImageContentSourcePolicy: %w", err)
 	}
 
@@ -519,8 +517,8 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 			return err
 		}
 		obj.TypeMeta = *typeMeta
-		obj.ObjectMeta.Labels = icp.Labels
-		obj.ObjectMeta.Annotations = icp.Annotations
+		obj.Labels = icp.Labels
+		obj.Annotations = icp.Annotations
 		iscpsList.Items = append(iscpsList.Items, obj)
 	}
 	typeMeta, err := r.typeMetaForObject(iscpsList)

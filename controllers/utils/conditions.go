@@ -564,13 +564,13 @@ func UpdateIBUStatus(ctx context.Context, c client.Client, ibu *ibuv1.ImageBased
 		return nil
 	}
 
-	ibu.Status.ObservedGeneration = ibu.ObjectMeta.Generation
+	ibu.Status.ObservedGeneration = ibu.Generation
 
 	for i := range ibu.Status.Conditions {
 		condition := &ibu.Status.Conditions[i]
 		if condition.Type == string(GetCompletedConditionType(ibu.Spec.Stage)) ||
 			condition.Type == string(GetInProgressConditionType(ibu.Spec.Stage)) {
-			condition.ObservedGeneration = ibu.ObjectMeta.Generation
+			condition.ObservedGeneration = ibu.Generation
 		}
 	}
 
@@ -761,13 +761,13 @@ func UpdateIPCStatus(ctx context.Context, c client.Client, ipc *ipcv1.IPConfig) 
 		return fmt.Errorf("client is nil")
 	}
 
-	ipc.Status.ObservedGeneration = ipc.ObjectMeta.Generation
+	ipc.Status.ObservedGeneration = ipc.Generation
 
 	for i := range ipc.Status.Conditions {
 		condition := &ipc.Status.Conditions[i]
 		if condition.Type == string(GetIPCompletedConditionType(ipc.Spec.Stage)) ||
 			condition.Type == string(GetIPInProgressConditionType(ipc.Spec.Stage)) {
-			condition.ObservedGeneration = ipc.ObjectMeta.Generation
+			condition.ObservedGeneration = ipc.Generation
 		}
 	}
 
