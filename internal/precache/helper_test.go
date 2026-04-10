@@ -41,7 +41,7 @@ import (
 )
 
 func init() {
-	os.Setenv(EnvLcaPrecacheImage, precacheWorkloadImage)
+	_ = os.Setenv(EnvLcaPrecacheImage, precacheWorkloadImage)
 }
 
 func generateImageList() ([]string, string) {

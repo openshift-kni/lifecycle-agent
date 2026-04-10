@@ -27,7 +27,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
 
@@ -176,7 +175,7 @@ func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) err
 		}
 	}
 
-	_, err = os.Create(doneFile)
+	_, err = os.Create(doneFile) //nolint:gosec // doneFile path is validated
 	if err != nil {
 		return fmt.Errorf("failed to create RunOnce file: %w", err)
 	}
@@ -234,14 +233,14 @@ func CopyToTempFile(sourceFileName, directory, pattern string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer destinationFile.Close()
+	defer func() { _ = destinationFile.Close() }()
 	destinationFileName := destinationFile.Name()
 
-	sourceFile, err := os.Open(sourceFileName)
+	sourceFile, err := os.Open(sourceFileName) //nolint:gosec // sourceFileName path is validated by caller
 	if err != nil {
 		return "", fmt.Errorf("failed to open %s: %w", sourceFileName, err)
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
 		return "", fmt.Errorf("failed to copy %s to temporary file %s: %w", sourceFileName, destinationFileName, err)
@@ -289,7 +288,7 @@ func GetMCDManagedVarLibFiles(mcdConfigPath string) ([]string, error) {
 	var filelist []string
 	varlibRegex := regexp.MustCompile(`^/var/lib/`)
 
-	data, err := os.ReadFile(mcdConfigPath)
+	data, err := os.ReadFile(mcdConfigPath) //nolint:gosec // always set to the constant common.MCDCurrentConfig
 	if err != nil {
 		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
 	}
@@ -318,7 +317,7 @@ func GetMCDManagedVarLibFiles(mcdConfigPath string) ([]string, error) {
 	return filelist, nil
 }
 
-func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
+func InitIBU(ctx context.Context, c runtimeclient.Client, log *logr.Logger) error {
 	ibu := &ibuv1.ImageBasedUpgrade{}
 	filePath := common.PathOutsideChroot(utils.IBUFilePath)
 	if err := ReadYamlOrJSONFile(filePath, ibu); err != nil {
@@ -375,7 +374,7 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 	return nil
 }
 
-func InitIPConfig(ctx context.Context, c client.Client, log *logr.Logger) error {
+func InitIPConfig(ctx context.Context, c runtimeclient.Client, log *logr.Logger) error {
 	savedIPCPath := common.PathOutsideChroot(common.IPCFilePath)
 	restored := false
 	ipc := &ipcv1.IPConfig{}
@@ -438,7 +437,7 @@ func ConvertToRawExtension(config any) (runtime.RawExtension, error) {
 	}, nil
 }
 
-func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
+func UpdatePullSecretFromDockerConfig(ctx context.Context, c runtimeclient.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
 	newPullSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      common.PullSecretName,

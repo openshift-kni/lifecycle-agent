@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
-	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -187,7 +186,7 @@ func (s *SeedCreator) handleServices() error {
 	})
 }
 
-func GetSeedAdditionalTrustBundleState(ctx context.Context, client runtimeclient.Client) (*seedclusterinfo.AdditionalTrustBundle, error) {
+func GetSeedAdditionalTrustBundleState(ctx context.Context, client runtime.Client) (*seedclusterinfo.AdditionalTrustBundle, error) {
 	hasUserCaBundle, proxyConfigmapName, err := utils.GetClusterAdditionalTrustBundleState(ctx, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster additional trust bundle state: %w", err)
@@ -238,7 +237,7 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		clusterInfo.IngressCertificateCN,
 	)
 
-	if err := os.MkdirAll(common.SeedDataDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(common.SeedDataDir, 0700); err != nil {
 		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)
 	}
 
@@ -471,7 +470,7 @@ func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	if err != nil {
 		return fmt.Errorf("error creating temporary file: %w", err)
 	}
-	defer os.Remove(tmpfile.Name()) // Clean up the temporary file
+	defer func() { _ = os.Remove(tmpfile.Name()) }() // Clean up the temporary file
 
 	// Write the content to the temporary file
 	_, err = tmpfile.WriteString(containerFileContent)

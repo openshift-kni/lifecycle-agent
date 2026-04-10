@@ -81,8 +81,8 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	logger := log.FromContext(ctx).WithName("IPConfig")
 	logger.Info(
 		"Start reconciling IPConfig",
-		"name", req.NamespacedName.Name,
-		"namespace", req.NamespacedName.Namespace,
+		"name", req.Name,
+		"namespace", req.Namespace,
 	)
 
 	// Ensure the workspace directory exists once at the start of reconcile
@@ -116,8 +116,8 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 
 		logger.Info(
 			"Finish reconciling IPConfig",
-			"name", req.NamespacedName.Name,
-			"namespace", req.NamespacedName.Namespace,
+			"name", req.Name,
+			"namespace", req.Namespace,
 		)
 	}()
 
@@ -148,7 +148,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	if annotations != nil && annotations[controllerutils.TriggerReconcileAnnotation] != "" {
 		delete(annotations, controllerutils.TriggerReconcileAnnotation)
 		ipc.SetAnnotations(annotations)
-		if err := r.Client.Update(ctx, ipc); err != nil {
+		if err := r.Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig annotations: %w", err))
 		}
 	}
@@ -532,7 +532,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 
 	annotations[controllerutils.RecertCachedImageAnnotation] = image
 	ipc.SetAnnotations(annotations)
-	if err := r.Client.Update(ctx, ipc); err != nil {
+	if err := r.Update(ctx, ipc); err != nil {
 		return fmt.Errorf("failed to update annotations after caching recert image: %w", err)
 	}
 
@@ -544,8 +544,8 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 func isIPTransitionRequested(ipc *ipcv1.IPConfig) bool {
 	desiredStage := ipc.Spec.Stage
 	return controllerutils.IsIPStageStatusInvalidTransition(ipc, desiredStage) ||
-		!(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
-			controllerutils.IsIPStageInProgress(ipc, desiredStage))
+		(!controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) &&
+			!controllerutils.IsIPStageInProgress(ipc, desiredStage))
 }
 
 func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {

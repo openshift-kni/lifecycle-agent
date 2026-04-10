@@ -60,7 +60,7 @@ func (r *UpgradeClusterConfigGather) PreserveCertManagerConfig(ctx context.Conte
 
 	// Check if cert-manager is installed by looking for the Certificate CRD
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: certManagerCRDName}, crd); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: certManagerCRDName}, crd); err != nil {
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("cert-manager CRD not found, skipping cert-manager configuration export",
 				"crdName", certManagerCRDName)
