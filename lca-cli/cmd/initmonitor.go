@@ -54,8 +54,7 @@ func init() {
 }
 
 func initMonitor() error {
-	var hostCommandsExecutor ops.Execute
-	hostCommandsExecutor = ops.NewRegularExecutor(log, true)
+	hostCommandsExecutor := ops.NewRegularExecutor(log, true)
 
 	if data, err := os.ReadFile(common.PathOutsideChroot(common.InitMonitorModeFile)); err == nil {
 		if val := strings.TrimSpace(string(data)); val != "" {

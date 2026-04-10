@@ -366,7 +366,6 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg str
 	}
 
 	// Should never get here
-	return
 }
 
 // PostPivot executes all the post-upgrade steps after the cluster is rebooted to the new stateroot.

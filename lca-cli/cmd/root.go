@@ -50,7 +50,7 @@ func addCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&skipCleanup, "skip-cleanup", "", false, "Skips cleanup.")
 
 	// Mark flags as required
-	cmd.MarkFlagRequired("image")
+	_ = cmd.MarkFlagRequired("image")
 }
 
 func init() {

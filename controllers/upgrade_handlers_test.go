@@ -134,7 +134,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			//setup
+			// setup
 
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
 			mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
@@ -287,7 +287,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			//setup
+			// setup
 			mockBackuprestore.EXPECT().LoadRestoresFromOadpRestorePath().Return(tt.inputVelero, nil).Times(1)
 
 			for _, track := range tt.trackers {
@@ -812,7 +812,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				getStaterootPath = func(stateroot string) string {
 					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, common.LCAConfigDir), 0777)
 					file, _ := os.OpenFile(filepath.Join(ibuTempDirNew, utils.IBUFilePath), os.O_CREATE, 0777)
-					file.Close()
+					_ = file.Close()
 					return ibuTempDirNew
 				}
 
@@ -825,7 +825,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				}()
 				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, common.LCAConfigDir), 0777)
 				file, _ := os.OpenFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath), os.O_CREATE, 0777)
-				file.Close()
+				_ = file.Close()
 				ibuPreStaterootPath = filepath.Join(ibuTempDirOrig, utils.IBUFilePath)
 			}
 			if tt.isOstreeAdminSetDefaultFeatureEnabledReturn != nil {
