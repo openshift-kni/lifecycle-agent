@@ -2,7 +2,6 @@ package seedcreator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -10,8 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	ignconfig "github.com/coreos/ignition/v2/config"
-	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
 	"github.com/samber/lo"
@@ -338,40 +335,6 @@ func (s *SeedCreator) stopServices() error {
 	return nil
 }
 
-// getVarLibFilelist parses the MCD currentconfig to get the list of managed files under /var/lib
-func (s *SeedCreator) getVarLibFilelist() ([]string, error) {
-	var filelist []string
-	varlibRegex := regexp.MustCompile(`^/var/lib/`)
-
-	data, err := os.ReadFile(common.MCDCurrentConfig)
-	if err != nil {
-		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
-	}
-
-	var mc mcv1.MachineConfig
-
-	if err := json.Unmarshal(data, &mc); err != nil {
-		return filelist, fmt.Errorf("unable to parse MCD currentconfig: %w", err)
-	}
-
-	if mc.Spec.Config.Raw == nil {
-		return filelist, fmt.Errorf("unable to find config in MCD currentconfig")
-	}
-
-	ign, _, err := ignconfig.Parse(mc.Spec.Config.Raw)
-	if err != nil {
-		return filelist, fmt.Errorf("unable to parse ignition config from MCD currentconfig: %w", err)
-	}
-
-	for _, f := range ign.Storage.Files {
-		if varlibRegex.MatchString(f.Path) {
-			filelist = append(filelist, f.Path)
-		}
-	}
-
-	return filelist, nil
-}
-
 func (s *SeedCreator) backupVar() error {
 	varTarFile := path.Join(s.backupDir, "var.tgz")
 
@@ -392,7 +355,7 @@ func (s *SeedCreator) backupVar() error {
 	tarArgs := []string{"czf", varTarFile}
 
 	// Ensure all MCD-managed files in /var/lib are explicitly included, to avoid accidental exclusion
-	if managedfiles, err := s.getVarLibFilelist(); err != nil {
+	if managedfiles, err := utils.GetMCDManagedVarLibFiles(common.MCDCurrentConfig); err != nil {
 		return fmt.Errorf("unable to get list of MCD managed files: %w", err)
 	} else {
 		for _, fname := range managedfiles {
