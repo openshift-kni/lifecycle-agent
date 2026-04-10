@@ -29,6 +29,7 @@ import (
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
 
+	ignconfig "github.com/coreos/ignition/v2/config"
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
@@ -278,6 +279,41 @@ func RemoveListOfFiles(log *logrus.Logger, files []string) error {
 		}
 	}
 	return nil
+}
+
+// GetMCDManagedVarLibFiles parses the MCD currentconfig to get the list of
+// managed files under /var/lib.
+func GetMCDManagedVarLibFiles(mcdConfigPath string) ([]string, error) {
+	var filelist []string
+	varlibRegex := regexp.MustCompile(`^/var/lib/`)
+
+	data, err := os.ReadFile(mcdConfigPath)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
+	}
+
+	var mc mcfgv1.MachineConfig
+
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return filelist, fmt.Errorf("unable to parse MCD currentconfig: %w", err)
+	}
+
+	if mc.Spec.Config.Raw == nil {
+		return filelist, fmt.Errorf("unable to find config in MCD currentconfig")
+	}
+
+	ign, _, err := ignconfig.Parse(mc.Spec.Config.Raw)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to parse ignition config from MCD currentconfig: %w", err)
+	}
+
+	for _, f := range ign.Storage.Files {
+		if varlibRegex.MatchString(f.Path) {
+			filelist = append(filelist, f.Path)
+		}
+	}
+
+	return filelist, nil
 }
 
 func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
