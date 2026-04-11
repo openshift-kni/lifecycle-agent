@@ -12,6 +12,6 @@ variables:
   manager_version: "lifecycle-agent.v4.22.0"
   # min_kube_version should match ocp
   # https://access.redhat.com/solutions/4870701
-  min_kube_version: "1.32.0"
+  min_kube_version: "1.35.0"
   recert_image: PLACEHOLDER_RECERT_IMAGE
   version: "4.22.0"
