@@ -152,6 +152,6 @@ linters-settings:
       - .WrapPrefixf(
 run:
   concurrency: 6
-  timeout: 10m
+  timeout: 5m
   skip-files:
     - ".*_test\\.go"
