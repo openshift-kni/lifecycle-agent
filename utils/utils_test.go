@@ -130,7 +130,7 @@ func TestLoadGroupedManifestsFromPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create restores directory
 	restoreDir := filepath.Join(tmpDir, "manifests")
@@ -292,7 +292,7 @@ func TestReadSeedReconfigurationFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	data := &dummySeedReconfiguration{
 		SeedReconfiguration: seedreconfig.SeedReconfiguration{
@@ -370,7 +370,7 @@ func TestGetKernelArgumentsFromMCOFile(t *testing.T) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			defer os.Remove(f.Name())
+			defer func() { _ = os.Remove(f.Name()) }()
 			if _, err := f.Write([]byte(tc.data)); err != nil {
 				log.Fatal(err)
 			}

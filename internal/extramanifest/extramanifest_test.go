@@ -177,7 +177,7 @@ func TestExportExtraManifests(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(toDir)
+	defer func() { _ = os.RemoveAll(toDir) }()
 
 	// Create two configmaps
 	cms := []*corev1.ConfigMap{
@@ -715,7 +715,7 @@ func TestExportPolicyManifests(t *testing.T) {
 			if err != nil {
 				t.Errorf("Failed to create temporary directory: %v", err)
 			}
-			defer os.RemoveAll(toDir)
+			defer func() { _ = os.RemoveAll(toDir) }()
 
 			crd := &apiextensionsv1.CustomResourceDefinition{
 				ObjectMeta: metav1.ObjectMeta{

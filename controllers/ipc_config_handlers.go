@@ -156,7 +156,7 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 		return requeueWithError(fmt.Errorf("failed to check if unbooted stateroot is available: %w", err))
 	}
 
-	if !(lo.FromPtr(targetStaterootBooted) && lo.FromPtr(isUnbootedStaterootAvailable)) {
+	if !lo.FromPtr(targetStaterootBooted) || !lo.FromPtr(isUnbootedStaterootAvailable) {
 		logger.Info(
 			"Config stage handler: running pre-pivot",
 			"targetStaterootBooted", lo.FromPtr(targetStaterootBooted),
@@ -674,7 +674,7 @@ func (h *IPCConfigTwoPhaseHandler) writeIPConfigPrePivotConfig(ipc *ipcv1.IPConf
 	cfg.InstallIPConfigurationService = true
 	cfg.NewStaterootName = buildIPConfigStaterootName(ipc)
 
-	data, err := json.Marshal(cfg)
+	data, err := json.Marshal(cfg) //nolint:gosec // false positive - field name contains "secret" but not actually a secret
 	if err != nil {
 		return fmt.Errorf("failed to marshal ip-config pre-pivot config: %w", err)
 	}
@@ -871,7 +871,7 @@ func (h *IPCConfigStageHandler) validateClusterAndNetworkSpecCompatability(
 
 	if ipc.Spec.DNSFilterOutFamily != "" &&
 		ipc.Spec.DNSFilterOutFamily != common.DNSFamilyNone &&
-		!(clusterHasIPv4 && clusterHasIPv6) {
+		(!clusterHasIPv4 || !clusterHasIPv6) {
 		return fmt.Errorf("dnsFilterOutFamily is supported only on dual-stack clusters")
 	}
 

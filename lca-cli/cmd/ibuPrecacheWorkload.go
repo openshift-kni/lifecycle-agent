@@ -63,13 +63,13 @@ func readPrecacheSpecFile() (precacheSpec []string, err error) {
 	}
 
 	// Check if precacheSpecFile exists
-	if _, err := os.Stat(precacheSpecFile); os.IsNotExist(err) {
+	if _, err := os.Stat(precacheSpecFile); os.IsNotExist(err) { //nolint:gosec // path is validated
 		return precacheSpec, fmt.Errorf("missing precache spec file")
 	}
 	log.Info("Precache spec file found.")
 
 	var content []byte
-	content, err = os.ReadFile(precacheSpecFile)
+	content, err = os.ReadFile(precacheSpecFile) // nolint:gosec // path is validated
 	if err != nil {
 		return
 	}

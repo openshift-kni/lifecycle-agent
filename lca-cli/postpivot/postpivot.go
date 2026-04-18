@@ -98,8 +98,9 @@ func seedClusterInfoNodeIPs(seedClusterInfo *seedclusterinfo.SeedClusterInfo) []
 		return seedClusterInfo.NodeIPs
 	}
 
+	//nolint:staticcheck // backwards compatibility with deprecated field
 	if seedClusterInfo.NodeIP != "" {
-		return []string{seedClusterInfo.NodeIP}
+		return []string{seedClusterInfo.NodeIP} //nolint:staticcheck // backwards compatibility with deprecated field
 	}
 
 	return []string{}
@@ -112,8 +113,9 @@ func seedReconfigurationNodeIPs(seedReconfiguration *clusterconfig_api.SeedRecon
 		return seedReconfiguration.NodeIPs
 	}
 
+	//nolint:staticcheck // backwards compatibility with deprecated field
 	if seedReconfiguration.NodeIP != "" {
-		return []string{seedReconfiguration.NodeIP}
+		return []string{seedReconfiguration.NodeIP} //nolint:staticcheck // backwards compatibility with deprecated field
 	}
 
 	return []string{}
@@ -947,12 +949,12 @@ func (p *PostPivot) setupConfigurationFolder(deviceName, mountFolder, configFold
 	if err := os.MkdirAll(configFolder, 0o700); err != nil {
 		return fmt.Errorf("failed to create %s, err: %w", configFolder, err)
 	}
-	defer os.RemoveAll(mountFolder)
+	defer func() { _ = os.RemoveAll(mountFolder) }()
 
 	if err := p.ops.Mount(deviceName, mountFolder); err != nil {
 		return fmt.Errorf("failed to mount %s: %w", mountFolder, err)
 	}
-	defer p.ops.Umount(deviceName)
+	defer func() { _ = p.ops.Umount(deviceName) }()
 
 	if err := utils.CopyFileIfExists(mountFolder, configFolder); err != nil {
 		return fmt.Errorf("failed to copy contert of %s to %s, err: %w", mountFolder, configFolder, err)
@@ -1132,8 +1134,9 @@ func getMachineNetworksFromSeedReconfig(seedReconfig *clusterconfig_api.SeedReco
 		return seedReconfig.MachineNetworks
 	}
 	// Fall back to the old single field for backward compatibility
+	//nolint:staticcheck // backwards compatibility with deprecated field
 	if seedReconfig.MachineNetwork != "" {
-		return []string{seedReconfig.MachineNetwork}
+		return []string{seedReconfig.MachineNetwork} //nolint:staticcheck // backwards compatibility with deprecated field
 	}
 	return []string{}
 }

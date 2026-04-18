@@ -49,6 +49,7 @@ type SeedReconfiguration struct {
 	InfraID string `json:"infra_id,omitempty"`
 
 	// The desired IP address of the SNO node.
+	//
 	// Deprecated: Use NodeIPs instead.
 	NodeIP string `json:"node_ip,omitempty"`
 
@@ -109,6 +110,7 @@ type SeedReconfiguration struct {
 	// MachineNetwork is the subnet provided by user for the ocp cluster.
 	// This will be used to create the node network and choose ip address for the node.
 	// Equivalent to install-config.yaml's machineNetwork.
+	//
 	// Deprecated: Use MachineNetworks instead.
 	MachineNetwork string `json:"machine_network,omitempty"`
 
