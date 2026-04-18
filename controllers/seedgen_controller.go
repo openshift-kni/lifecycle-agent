@@ -281,14 +281,14 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 
 func (r *SeedGeneratorReconciler) deletePodsWithPhase(ctx context.Context, phase corev1.PodPhase) error {
 	podList := &corev1.PodList{}
-	if err := r.Client.List(ctx, podList); err != nil {
+	if err := r.List(ctx, podList); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
 	for i := range podList.Items {
 		if podList.Items[i].Status.Phase != phase {
 			continue
 		}
-		if err := r.Client.Delete(ctx, &podList.Items[i]); err != nil {
+		if err := r.Delete(ctx, &podList.Items[i]); err != nil {
 			return fmt.Errorf("failed to delete pod %s/%s: %w", podList.Items[i].Namespace, podList.Items[i].Name, err)
 		}
 	}
