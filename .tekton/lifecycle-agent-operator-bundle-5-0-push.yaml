@@ -12,34 +12,26 @@ metadata:
     pipelinesascode.tekton.dev/on-cel-expression: |
       event == "push" &&
       target_branch == "main" &&
+      !event_title.contains("[BRANCH-CUT]") &&
       (
         '.konflux/container_build_args.conf'.pathChanged() ||
-        '.konflux/lock-runtime/***'.pathChanged() ||
+        '.konflux/Dockerfile.bundle'.pathChanged() ||
+        '.konflux/overlay/***'.pathChanged() ||
         '.tekton/build-pipeline.yaml'.pathChanged() ||
-        '.tekton/lifecycle-agent-4-22-push.yaml'.pathChanged() ||
-        'api/***'.pathChanged() ||
+        '.tekton/lifecycle-agent-operator-bundle-5-0-push.yaml'.pathChanged() ||
+        'bundle/***'.pathChanged() ||
         'config/***'.pathChanged() ||
-        'controllers/***'.pathChanged() ||
-        'Dockerfile'.pathChanged() ||
-        'go.mod'.pathChanged() ||
-        'go.sum'.pathChanged() ||
         'hack/***'.pathChanged() ||
-        'internal/***'.pathChanged() ||
-        'lca-cli'.pathChanged() ||
-        'main/***'.pathChanged() ||
-        'must-gather/***'.pathChanged() ||
-        'pkg/***'.pathChanged() ||
+        'manifests/***'.pathChanged() ||
         'telco5g-konflux'.pathChanged() ||
-        'telco5g-konflux/***'.pathChanged() ||
-        'utils/***'.pathChanged() ||
-        'vendor/***'.pathChanged()
+        'telco5g-konflux/***'.pathChanged()
       )
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: lifecycle-agent-4-22
-    appstudio.openshift.io/component: lifecycle-agent-4-22
+    appstudio.openshift.io/application: lifecycle-agent-5-0
+    appstudio.openshift.io/component: lifecycle-agent-operator-bundle-5-0
     pipelines.appstudio.openshift.io/type: build
-  name: lifecycle-agent-4-22-on-push
+  name: lifecycle-agent-operator-bundle-5-0-on-push
   namespace: telco-5g-tenant
 spec:
   params:
@@ -48,34 +40,38 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-22:{{revision}}
+      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-5-0:{{revision}}
+    # Bundles are explicitly not allowed to be multi arch, so we only build x86_64
     - name: build-platforms
       value:
         - linux/x86_64
-        - linux/arm64
     - name: dockerfile
-      value: Dockerfile
+      value: .konflux/Dockerfile.bundle
     - name: build-args-file
       value: .konflux/container_build_args.conf
     - name: hermetic
       value: "true"
-    - name: dev-package-managers
-      value: "true"
     - name: prefetch-input
-      value: '[{"type": "rpm", "path": ".konflux/lock-runtime/"}, {"type": "gomod", "path": "."}]'
+      value: gomod
     - name: build-source-image
       value: "true"
+    - name: skip-preflight
+      value: "true"
+    - name: build-image-index
+      value: "false"
+    - name: image-append-platform
+      value: "false"
     - name: skip-sast-coverity
       value: "true"
     - name: additional-tags
       value: ["latest"]
     - name: additional-labels
       value:
-        - name=openshift4/lifecycle-agent-rhel9-operator
+        - name=openshift4/lifecycle-agent-operator-bundle
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
-    serviceAccountName: build-pipeline-lifecycle-agent-4-22
+    serviceAccountName: build-pipeline-lifecycle-agent-operator-bundle-5-0
   workspaces:
     - name: git-auth
       secret:
