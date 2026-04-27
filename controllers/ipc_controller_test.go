@@ -34,8 +34,8 @@ func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
 }
 
 func mockTargetStaterootNotBooted(mockRPM *rpmostreeclient.MockIClient) {
-	mockRPM.EXPECT().IsStaterootBooted(gomock.Any()).Return(false, nil).AnyTimes()
-	mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).AnyTimes()
+	mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
+	mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).AnyTimes()
 }
 
 func reconcileTestMinimalNmstateJSON() string {
@@ -192,7 +192,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -252,7 +252,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -317,7 +317,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -369,7 +369,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -423,7 +423,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -475,7 +475,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -489,7 +489,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		rollbackHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
-				// validNextStages() depends on status conditions; simulate what the real rollback handler does.
+				// validNextStages(context.Background(), ) depends on status conditions; simulate what the real rollback handler does.
 				controllerutils.SetIPRollbackStatusInProgress(got, "Rollback is in progress")
 				return doNotRequeue(), nil
 			}).
@@ -537,7 +537,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -586,7 +586,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -638,7 +638,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -692,7 +692,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -706,7 +706,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 		rollbackHandler.EXPECT().
 			Handle(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, got *ipcv1.IPConfig) (ctrl.Result, error) {
-				// validNextStages() depends on status conditions; simulate what the real rollback handler does.
+				// validNextStages(context.Background(), ) depends on status conditions; simulate what the real rollback handler does.
 				controllerutils.SetIPRollbackStatusInProgress(got, "Rollback is in progress")
 				return ctrl.Result{}, fmt.Errorf("boom")
 			}).
@@ -754,7 +754,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -859,7 +859,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			AnyTimes()
 
@@ -906,7 +906,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			AnyTimes()
 
@@ -947,7 +947,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return("{invalid json", nil).
 			Times(1)
 
@@ -997,7 +997,7 @@ func TestIPConfigReconciler_Reconcile_Full(t *testing.T) {
 
 		nsenterOps := ops.NewMockOps(gc)
 		nsenterOps.EXPECT().
-			RunInHostNamespace("nmstatectl", "show", "--json", "-q").
+			RunInHostNamespace(gomock.Any(), "nmstatectl", "show", "--json", "-q").
 			Return(reconcileTestMinimalNmstateJSON(), nil).
 			Times(1)
 
@@ -1096,10 +1096,10 @@ func TestValidNextStages(t *testing.T) {
 		controllerutils.SetIPRollbackStatusInProgress(ipc, "in progress")
 
 		// validNextStages queries rpm-ostree even for rollback stages.
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Empty(t, stages)
 	})
@@ -1113,10 +1113,10 @@ func TestValidNextStages(t *testing.T) {
 		controllerutils.SetIPRollbackStatusFailed(ipc, "failed")
 
 		// validNextStages queries rpm-ostree even for rollback stages.
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Empty(t, stages)
 	})
@@ -1131,10 +1131,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc.Spec.DNSFilterOutFamily = common.IPv6FamilyName
 		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
 
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("some-unbooted", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Rollback}, stages)
 	})
@@ -1148,10 +1148,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
 		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
 
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("some-unbooted", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
 	})
@@ -1164,10 +1164,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPConfigStatusCompleted(ipc, "done")
 
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("some-unbooted", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle, ipcv1.IPStages.Rollback}, stages)
 	})
@@ -1180,10 +1180,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusCompleted(ipc, "done")
 
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
 	})
@@ -1198,10 +1198,10 @@ func TestValidNextStages(t *testing.T) {
 				Conditions: []metav1.Condition{},
 			},
 		}
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
 	})
@@ -1211,7 +1211,7 @@ func TestValidNextStages(t *testing.T) {
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
 		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
 
-		_, err := validNextStages(ipc, nil)
+		_, err := validNextStages(context.Background(), ipc, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "rpmOstreeClient is nil")
 	})
@@ -1225,10 +1225,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
 		controllerutils.SetIPConfigStatusInProgress(ipc, "in progress")
 
-		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
-		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+		mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", nil).Times(1)
 
-		stages, err := validNextStages(ipc, mockRPM)
+		stages, err := validNextStages(context.Background(), ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Equal(t, []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, stages)
 	})
@@ -1315,10 +1315,10 @@ func TestValidNextStages_DoesNotMutateIPC(t *testing.T) {
 	controllerutils.SetIPConfigStatusCompleted(ipc, "done")
 	before := ipc.DeepCopy()
 
-	mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
-	mockRPM.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
+	mockRPM.EXPECT().IsStaterootBooted(gomock.Any(), buildIPConfigStaterootName(ipc)).Return(true, nil).Times(1)
+	mockRPM.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("some-unbooted", nil).Times(1)
 
-	_, err := validNextStages(ipc, mockRPM)
+	_, err := validNextStages(context.Background(), ipc, mockRPM)
 	assert.NoError(t, err)
 	assert.Equal(t, before, ipc, "validNextStages should be pure and not mutate IPC")
 }

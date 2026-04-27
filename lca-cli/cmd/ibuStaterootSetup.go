@@ -37,7 +37,7 @@ var ibuStaterootSetupCmd = &cobra.Command{
 	Short:   "Setup a new stateroot during IBU",
 	Long:    `Setup stateroot during IBU. This is meant to be used as k8s job!`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ibuStaterootSetupRun(); err != nil {
+		if err := ibuStaterootSetupRun(cmd.Context()); err != nil {
 			log.Error(err)
 			os.Exit(1)
 		}
@@ -49,13 +49,13 @@ func init() {
 }
 
 // ibuStaterootSetupRun main function to do stateroot setup
-func ibuStaterootSetupRun() error {
+func ibuStaterootSetupRun(parentCtx context.Context) error {
 	var (
 		hostCommandsExecutor = ops.NewChrootExecutor(log, true, common.Host)
 		opsClient            = ops.NewOps(log, hostCommandsExecutor)
 		rpmOstreeClient      = ostree.NewClient("lca-cli-stateroot-setup", hostCommandsExecutor)
 		ostreeClient         = ostreeclient.NewClient(hostCommandsExecutor, false)
-		ctx, cancelCtx       = context.WithCancel(context.Background())
+		ctx, cancelCtx       = context.WithCancel(parentCtx)
 	)
 
 	// additional logger setup
@@ -86,7 +86,7 @@ func ibuStaterootSetupRun() error {
 	}
 
 	logger.Info("Setting up stateroot")
-	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
+	if err := prep.SetupStateroot(ctx, logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
 		return fmt.Errorf("failed to complete stateroot setup: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			logger.Error(fmt.Errorf("unexpected SIGTERM received to stop stateroot setup"), "")
 
 			// we consider all the steps after image pull as critical and must be allowed to proceed until SIGKILL arrives. The time between SIGTERM and SIGKILL is controlled with StaterootSetupTerminationGracePeriodSeconds
-			if seedImageExists, _ := opsClient.ImageExists(seedImage); seedImageExists {
+			if seedImageExists, _ := opsClient.ImageExists(context.Background(), seedImage); seedImageExists {
 				sigkillArrivesIn := time.Duration(prep.StaterootSetupTerminationGracePeriodSeconds) * time.Second
 				logger.Error(fmt.Errorf("seed image exists. prepare to shut down in at most %s", sigkillArrivesIn.String()), "")
 				time.Sleep(sigkillArrivesIn) // likely anything beyond this point won't be executed since job should be done before this wakes up

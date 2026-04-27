@@ -1,6 +1,7 @@
 package reboot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,12 +42,12 @@ type AutoRollbackConfig struct {
 //go:generate mockgen -source=reboot.go -package=reboot -destination=mock_reboot.go
 type RebootIntf interface {
 	ReadAutoRollbackConfigFile() (*AutoRollbackConfig, error)
-	DisableInitMonitor() error
-	Reboot(rationale string) error
-	RebootToNewStateRoot(rationale string) error
-	IsOrigStaterootBooted(identifier string) (bool, error)
-	InitiateRollback(msg string) error
-	AutoRollbackIfEnabled(component, msg string)
+	DisableInitMonitor(ctx context.Context) error
+	Reboot(ctx context.Context, rationale string) error
+	RebootToNewStateRoot(ctx context.Context, rationale string) error
+	IsOrigStaterootBooted(ctx context.Context, identifier string) (bool, error)
+	InitiateRollback(ctx context.Context, msg string) error
+	AutoRollbackIfEnabled(ctx context.Context, component, msg string)
 }
 
 type IBURebootClient struct {
@@ -143,19 +144,19 @@ func (c *IBURebootClient) ReadAutoRollbackConfigFile() (*AutoRollbackConfig, err
 	return rollbackCfg, nil
 }
 
-func (c *IBURebootClient) DisableInitMonitor() error {
+func (c *IBURebootClient) DisableInitMonitor(ctx context.Context) error {
 	// Check whether service-unit is active before stopping. The "stop" command will exit with 0 if already stopped,
 	// but would return a failure if the service-unit doesn't exist (for whatever reason).
-	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-active", common.IBUInitMonitorService); err == nil {
-		if _, err := c.hostCommandsExecutor.Execute("systemctl", "stop", common.IBUInitMonitorService); err != nil {
+	if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "is-active", common.IBUInitMonitorService); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "stop", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to stop %s: %w", common.IBUInitMonitorService, err)
 		}
 	}
 
 	// Check whether service-unit is enabled before dsiabling. The "disable" command will exit with 0 if already disabled,
 	// but would return a failure if the service-unit doesn't exist (for whatever reason).
-	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
-		if _, err := c.hostCommandsExecutor.Execute("systemctl", "disable", common.IBUInitMonitorService); err != nil {
+	if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "is-enabled", common.IBUInitMonitorService); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "disable", common.IBUInitMonitorService); err != nil {
 			return fmt.Errorf("failed to disable %s: %w", common.IBUInitMonitorService, err)
 		}
 	}
@@ -164,20 +165,20 @@ func (c *IBURebootClient) DisableInitMonitor() error {
 		return fmt.Errorf("failed to delete %s: %w", common.IBUInitMonitorServiceFile, err)
 	}
 
-	if _, err := c.hostCommandsExecutor.Execute("systemctl", "daemon-reload"); err != nil {
+	if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload failed after deleting %s: %w", common.IBUInitMonitorServiceFile, err)
 	}
 
 	return nil
 }
 
-func (c *IBURebootClient) RebootToNewStateRoot(rationale string) error {
+func (c *IBURebootClient) RebootToNewStateRoot(ctx context.Context, rationale string) error {
 	c.log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
-	return c.Reboot(rationale)
+	return c.Reboot(ctx, rationale)
 }
 
-func (c *IBURebootClient) Reboot(rationale string) error {
-	_, err := c.hostCommandsExecutor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
+func (c *IBURebootClient) Reboot(ctx context.Context, rationale string) error {
+	_, err := c.hostCommandsExecutor.Execute(ctx, "systemd-run", "--unit", "lifecycle-agent-reboot",
 		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
 		"systemctl", "--message=\"Image Based Upgrade\"", "reboot")
 	if err != nil {
@@ -190,8 +191,8 @@ func (c *IBURebootClient) Reboot(rationale string) error {
 	return fmt.Errorf("failed to reboot. This should never happen! Please check the system")
 }
 
-func (c *IBURebootClient) IsOrigStaterootBooted(identifier string) (bool, error) {
-	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName()
+func (c *IBURebootClient) IsOrigStaterootBooted(ctx context.Context, identifier string) (bool, error) {
+	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to get current stateroot name: %w", err)
 	}
@@ -204,18 +205,20 @@ func (c *IBURebootClient) IsOrigStaterootBooted(identifier string) (bool, error)
 	return currentStaterootName != common.GetStaterootName(identifier), nil
 }
 
-func (c *IBURebootClient) InitiateRollback(msg string) error {
-	if !c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+func (c *IBURebootClient) InitiateRollback(ctx context.Context, msg string) error {
+	if enabled, err := c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		return fmt.Errorf("failed to check ostree set-default feature: %w", err)
+	} else if !enabled {
 		return fmt.Errorf("automatic rollback not supported in this release")
 	}
 
 	c.log.Info("Updating saved IBU CR with status msg for rollback")
-	stateroot, err := c.rpmOstreeClient.GetUnbootedStaterootName()
+	stateroot, err := c.rpmOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to determine stateroot path for rollback: %w", err)
 	}
 
-	if err := c.ops.RemountSysroot(); err != nil {
+	if err := c.ops.RemountSysroot(ctx); err != nil {
 		return fmt.Errorf("unable to remount sysroot: %w", err)
 	}
 
@@ -234,20 +237,20 @@ func (c *IBURebootClient) InitiateRollback(msg string) error {
 
 	c.log.Info("Iniating rollback")
 
-	deploymentIndex, err := c.rpmOstreeClient.GetUnbootedDeploymentIndex()
+	deploymentIndex, err := c.rpmOstreeClient.GetUnbootedDeploymentIndex(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get unbooted deployment for automatic rollback: %w", err)
 	}
 
-	if err = c.ostreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+	if err = c.ostreeClient.SetDefaultDeployment(ctx, deploymentIndex); err != nil {
 		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 	}
 
-	err = c.RebootToNewStateRoot("rollback")
+	err = c.RebootToNewStateRoot(ctx, "rollback")
 	return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 }
 
-func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
+func (c *IBURebootClient) AutoRollbackIfEnabled(ctx context.Context, component, msg string) {
 	rollbackCfg, err := c.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -265,7 +268,7 @@ func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("Auto-rollback is enabled for component: %s", component))
-	if err = c.InitiateRollback(msg); err != nil {
+	if err = c.InitiateRollback(ctx, msg); err != nil {
 		c.log.Info(fmt.Sprintf("Unable to initiate rollback: %s", err))
 	}
 
@@ -368,9 +371,9 @@ func (c *IPCRebootClient) ReadAutoRollbackConfigFile() (*AutoRollbackConfig, err
 }
 
 // DisableInitMonitor stops the transient init-monitor unit for IP config if running.
-func (c *IPCRebootClient) DisableInitMonitor() error {
-	if _, err := c.hostCommandsExecutor.Execute("systemctl", "is-active", common.IPCInitMonitorService); err == nil {
-		if _, err := c.hostCommandsExecutor.Execute("systemctl", "stop", common.IPCInitMonitorService); err != nil {
+func (c *IPCRebootClient) DisableInitMonitor(ctx context.Context) error {
+	if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "is-active", common.IPCInitMonitorService); err == nil {
+		if _, err := c.hostCommandsExecutor.Execute(ctx, "systemctl", "stop", common.IPCInitMonitorService); err != nil {
 			return fmt.Errorf("failed to stop %s: %w", common.IPCInitMonitorService, err)
 		}
 	}
@@ -378,27 +381,29 @@ func (c *IPCRebootClient) DisableInitMonitor() error {
 }
 
 // InitiateRollback for IP config simply sets default to the unbooted deployment and reboots.
-func (c *IPCRebootClient) InitiateRollback(msg string) error {
-	if !c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+func (c *IPCRebootClient) InitiateRollback(ctx context.Context, msg string) error {
+	if enabled, err := c.ostreeClient.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		return fmt.Errorf("failed to check ostree set-default feature: %w", err)
+	} else if !enabled {
 		return fmt.Errorf("automatic rollback not supported in this release")
 	}
 
 	c.log.Info("Initiating IPConfig rollback", "reason", msg)
 
-	deploymentIndex, err := c.rpmOstreeClient.GetUnbootedDeploymentIndex()
+	deploymentIndex, err := c.rpmOstreeClient.GetUnbootedDeploymentIndex(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get unbooted deployment for automatic IPConfig rollback: %w", err)
 	}
 
-	if err = c.ostreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+	if err = c.ostreeClient.SetDefaultDeployment(ctx, deploymentIndex); err != nil {
 		return fmt.Errorf("unable to set default deployment for automatic IPConfig rollback: %w", err)
 	}
 
-	if err := c.ops.RemountSysroot(); err != nil {
+	if err := c.ops.RemountSysroot(ctx); err != nil {
 		return fmt.Errorf("failed to remount sysroot: %w", err)
 	}
 
-	oldStateroot, err := c.rpmOstreeClient.GetUnbootedStaterootName()
+	oldStateroot, err := c.rpmOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get unbooted stateroot name: %w", err)
 	}
@@ -415,11 +420,11 @@ func (c *IPCRebootClient) InitiateRollback(msg string) error {
 		return fmt.Errorf("unable to save updated IPC CR to %s: %w", savedIPCPath, err)
 	}
 
-	return c.RebootToNewStateRoot("ip-config rollback")
+	return c.RebootToNewStateRoot(ctx, "ip-config rollback")
 }
 
 // AutoRollbackIfEnabled reads the IPC config and triggers rollback if enabled for the component.
-func (c *IPCRebootClient) AutoRollbackIfEnabled(component, msg string) {
+func (c *IPCRebootClient) AutoRollbackIfEnabled(ctx context.Context, component, msg string) {
 	rollbackCfg, err := c.ReadAutoRollbackConfigFile() // reads IPC path
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -435,13 +440,13 @@ func (c *IPCRebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("IPConfig auto-rollback is enabled for component: %s", component))
-	if err = c.InitiateRollback(msg); err != nil {
+	if err = c.InitiateRollback(ctx, msg); err != nil {
 		c.log.Info(fmt.Sprintf("Unable to initiate IPConfig rollback: %s", err))
 	}
 }
 
-func (c *IPCRebootClient) IsOrigStaterootBooted(identifier string) (bool, error) {
-	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName()
+func (c *IPCRebootClient) IsOrigStaterootBooted(ctx context.Context, identifier string) (bool, error) {
+	currentStaterootName, err := c.rpmOstreeClient.GetCurrentStaterootName(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to get current stateroot name: %w", err)
 	}
@@ -454,13 +459,13 @@ func (c *IPCRebootClient) IsOrigStaterootBooted(identifier string) (bool, error)
 	return currentStaterootName != common.GetStaterootName(identifier), nil
 }
 
-func (c *IPCRebootClient) RebootToNewStateRoot(rationale string) error {
+func (c *IPCRebootClient) RebootToNewStateRoot(ctx context.Context, rationale string) error {
 	c.log.Info(fmt.Sprintf("rebooting to a new stateroot: %s", rationale))
-	return c.Reboot(rationale)
+	return c.Reboot(ctx, rationale)
 }
 
-func (c *IPCRebootClient) Reboot(rationale string) error {
-	_, err := c.hostCommandsExecutor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
+func (c *IPCRebootClient) Reboot(ctx context.Context, rationale string) error {
+	_, err := c.hostCommandsExecutor.Execute(ctx, "systemd-run", "--unit", "lifecycle-agent-reboot",
 		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
 		"systemctl", "--message=\"IP Config\"", "reboot")
 	if err != nil {

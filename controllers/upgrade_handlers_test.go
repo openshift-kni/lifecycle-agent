@@ -764,7 +764,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				tt.args.ibu.Spec.OADPContent = []ibuv1.ConfigMapRef{{Name: "atleast-one-oadp-to-proceed-with-export"}}
 			}
 			if tt.remountSysrootReturn != nil {
-				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
+				mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(tt.remountSysrootReturn())
 			}
 			if tt.exportRestoresToDirReturn != nil {
 				mockBackuprestore.EXPECT().ExportRestoresToDir(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.exportRestoresToDirReturn()).Times(1)
@@ -829,10 +829,10 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				ibuPreStaterootPath = filepath.Join(ibuTempDirOrig, utils.IBUFilePath)
 			}
 			if tt.isOstreeAdminSetDefaultFeatureEnabledReturn != nil {
-				ostreeclientMock.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(*tt.isOstreeAdminSetDefaultFeatureEnabledReturn).Times(1)
+				ostreeclientMock.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(*tt.isOstreeAdminSetDefaultFeatureEnabledReturn, nil).Times(1)
 			}
 			if tt.rebootToNewStateRootReturn != nil {
-				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
+				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any(), gomock.Any()).Return(tt.rebootToNewStateRootReturn()).Times(1)
 			}
 
 			uh := &UpgHandler{
@@ -1121,10 +1121,10 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)
 			}
 			if tt.initiateRollbackReturn != nil {
-				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
+				mockRebootClient.EXPECT().InitiateRollback(gomock.Any(), gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
 			}
 			if tt.disableInitMonitorReturn != nil {
-				mockRebootClient.EXPECT().DisableInitMonitor().Return(tt.disableInitMonitorReturn()).Times(1)
+				mockRebootClient.EXPECT().DisableInitMonitor(gomock.Any()).Return(tt.disableInitMonitorReturn()).Times(1)
 			}
 
 			got, err := uh.PostPivot(tt.args.ctx, tt.args.ibu)

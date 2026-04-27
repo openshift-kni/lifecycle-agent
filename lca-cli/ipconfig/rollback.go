@@ -17,6 +17,7 @@ limitations under the License.
 package ipconfig
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/sirupsen/logrus"
@@ -41,15 +42,17 @@ func NewRollbackHandler(log *logrus.Logger, ops ops.Ops, ostree intOstree.IClien
 
 // Run performs the rollback by setting the default deployment to the one
 // associated with the provided stateroot, if the OSTree feature is available.
-func (h *RollbackHandler) Run(stateroot string) error {
+func (h *RollbackHandler) Run(ctx context.Context, stateroot string) error {
 	h.log.Infof("IP config rollback started with stateroot: %s", stateroot)
 
-	if h.ostree.IsOstreeAdminSetDefaultFeatureEnabled() {
-		idx, err := h.rpm.GetDeploymentIndex(stateroot)
+	if enabled, err := h.ostree.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		return fmt.Errorf("failed to check ostree set-default feature: %w", err)
+	} else if enabled {
+		idx, err := h.rpm.GetDeploymentIndex(ctx, stateroot)
 		if err != nil {
 			return fmt.Errorf("failed to get deployment index for %s: %w", stateroot, err)
 		}
-		if err := h.ostree.SetDefaultDeployment(idx); err != nil {
+		if err := h.ostree.SetDefaultDeployment(ctx, idx); err != nil {
 			return fmt.Errorf("failed to set default deployment: %w", err)
 		}
 	}
