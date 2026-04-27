@@ -75,6 +75,8 @@ func runIPConfigPostPivot() (retErr error) {
 		return err
 	}
 
+	ctx := context.Background()
+
 	rpmClient := rpmOstree.NewClient("lca-cli-ip-config-post-pivot", hostCommandsExecutor)
 	ostreeClient := intOstree.NewClient(hostCommandsExecutor, false)
 	rbClient := reboot.NewIPCRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmClient, ostreeClient, opsInterface)
@@ -84,7 +86,7 @@ func runIPConfigPostPivot() (retErr error) {
 			return
 		}
 
-		rbClient.AutoRollbackIfEnabled(
+		rbClient.AutoRollbackIfEnabled(ctx,
 			reboot.IPConfigRunComponent,
 			fmt.Sprintf("automatic rollback: ip-config post-pivot failed: %v", retErr),
 		)
@@ -107,8 +109,6 @@ func runIPConfigPostPivot() (retErr error) {
 	pkgLog.WithFields(logrus.Fields{
 		recertImageFlag: recertImage,
 	}).Info("IP config post-pivot flags")
-
-	ctx := context.Background()
 
 	postPivotHandler := ipconfig.NewIPConfigPostPivotHandler(
 		pkgLog,

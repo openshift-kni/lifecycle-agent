@@ -9,6 +9,7 @@
 package rpmostreeclient
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -38,143 +39,143 @@ func (m *MockIClient) EXPECT() *MockIClientMockRecorder {
 }
 
 // GetCurrentStaterootName mocks base method.
-func (m *MockIClient) GetCurrentStaterootName() (string, error) {
+func (m *MockIClient) GetCurrentStaterootName(ctx context.Context) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetCurrentStaterootName")
+	ret := m.ctrl.Call(m, "GetCurrentStaterootName", ctx)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetCurrentStaterootName indicates an expected call of GetCurrentStaterootName.
-func (mr *MockIClientMockRecorder) GetCurrentStaterootName() *gomock.Call {
+func (mr *MockIClientMockRecorder) GetCurrentStaterootName(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentStaterootName", reflect.TypeOf((*MockIClient)(nil).GetCurrentStaterootName))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentStaterootName", reflect.TypeOf((*MockIClient)(nil).GetCurrentStaterootName), ctx)
 }
 
 // GetDeploymentID mocks base method.
-func (m *MockIClient) GetDeploymentID(osname string) (string, error) {
+func (m *MockIClient) GetDeploymentID(ctx context.Context, osname string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDeploymentID", osname)
+	ret := m.ctrl.Call(m, "GetDeploymentID", ctx, osname)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetDeploymentID indicates an expected call of GetDeploymentID.
-func (mr *MockIClientMockRecorder) GetDeploymentID(osname any) *gomock.Call {
+func (mr *MockIClientMockRecorder) GetDeploymentID(ctx, osname any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentID", reflect.TypeOf((*MockIClient)(nil).GetDeploymentID), osname)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentID", reflect.TypeOf((*MockIClient)(nil).GetDeploymentID), ctx, osname)
 }
 
 // GetDeploymentIndex mocks base method.
-func (m *MockIClient) GetDeploymentIndex(osname string) (int, error) {
+func (m *MockIClient) GetDeploymentIndex(ctx context.Context, osname string) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDeploymentIndex", osname)
+	ret := m.ctrl.Call(m, "GetDeploymentIndex", ctx, osname)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetDeploymentIndex indicates an expected call of GetDeploymentIndex.
-func (mr *MockIClientMockRecorder) GetDeploymentIndex(osname any) *gomock.Call {
+func (mr *MockIClientMockRecorder) GetDeploymentIndex(ctx, osname any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetDeploymentIndex), osname)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetDeploymentIndex), ctx, osname)
 }
 
 // GetUnbootedDeploymentIndex mocks base method.
-func (m *MockIClient) GetUnbootedDeploymentIndex() (int, error) {
+func (m *MockIClient) GetUnbootedDeploymentIndex(ctx context.Context) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUnbootedDeploymentIndex")
+	ret := m.ctrl.Call(m, "GetUnbootedDeploymentIndex", ctx)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetUnbootedDeploymentIndex indicates an expected call of GetUnbootedDeploymentIndex.
-func (mr *MockIClientMockRecorder) GetUnbootedDeploymentIndex() *gomock.Call {
+func (mr *MockIClientMockRecorder) GetUnbootedDeploymentIndex(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetUnbootedDeploymentIndex))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedDeploymentIndex", reflect.TypeOf((*MockIClient)(nil).GetUnbootedDeploymentIndex), ctx)
 }
 
 // GetUnbootedStaterootName mocks base method.
-func (m *MockIClient) GetUnbootedStaterootName() (string, error) {
+func (m *MockIClient) GetUnbootedStaterootName(ctx context.Context) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUnbootedStaterootName")
+	ret := m.ctrl.Call(m, "GetUnbootedStaterootName", ctx)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetUnbootedStaterootName indicates an expected call of GetUnbootedStaterootName.
-func (mr *MockIClientMockRecorder) GetUnbootedStaterootName() *gomock.Call {
+func (mr *MockIClientMockRecorder) GetUnbootedStaterootName(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedStaterootName", reflect.TypeOf((*MockIClient)(nil).GetUnbootedStaterootName))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnbootedStaterootName", reflect.TypeOf((*MockIClient)(nil).GetUnbootedStaterootName), ctx)
 }
 
 // IsStaterootBooted mocks base method.
-func (m *MockIClient) IsStaterootBooted(stateroot string) (bool, error) {
+func (m *MockIClient) IsStaterootBooted(ctx context.Context, stateroot string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsStaterootBooted", stateroot)
+	ret := m.ctrl.Call(m, "IsStaterootBooted", ctx, stateroot)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IsStaterootBooted indicates an expected call of IsStaterootBooted.
-func (mr *MockIClientMockRecorder) IsStaterootBooted(stateroot any) *gomock.Call {
+func (mr *MockIClientMockRecorder) IsStaterootBooted(ctx, stateroot any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsStaterootBooted", reflect.TypeOf((*MockIClient)(nil).IsStaterootBooted), stateroot)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsStaterootBooted", reflect.TypeOf((*MockIClient)(nil).IsStaterootBooted), ctx, stateroot)
 }
 
 // QueryStatus mocks base method.
-func (m *MockIClient) QueryStatus() (*Status, error) {
+func (m *MockIClient) QueryStatus(ctx context.Context) (*Status, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "QueryStatus")
+	ret := m.ctrl.Call(m, "QueryStatus", ctx)
 	ret0, _ := ret[0].(*Status)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // QueryStatus indicates an expected call of QueryStatus.
-func (mr *MockIClientMockRecorder) QueryStatus() *gomock.Call {
+func (mr *MockIClientMockRecorder) QueryStatus(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryStatus", reflect.TypeOf((*MockIClient)(nil).QueryStatus))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryStatus", reflect.TypeOf((*MockIClient)(nil).QueryStatus), ctx)
 }
 
 // RpmOstreeCleanup mocks base method.
-func (m *MockIClient) RpmOstreeCleanup() error {
+func (m *MockIClient) RpmOstreeCleanup(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RpmOstreeCleanup")
+	ret := m.ctrl.Call(m, "RpmOstreeCleanup", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RpmOstreeCleanup indicates an expected call of RpmOstreeCleanup.
-func (mr *MockIClientMockRecorder) RpmOstreeCleanup() *gomock.Call {
+func (mr *MockIClientMockRecorder) RpmOstreeCleanup(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RpmOstreeCleanup", reflect.TypeOf((*MockIClient)(nil).RpmOstreeCleanup))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RpmOstreeCleanup", reflect.TypeOf((*MockIClient)(nil).RpmOstreeCleanup), ctx)
 }
 
 // RpmOstreeVersion mocks base method.
-func (m *MockIClient) RpmOstreeVersion() (*VersionData, error) {
+func (m *MockIClient) RpmOstreeVersion(ctx context.Context) (*VersionData, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RpmOstreeVersion")
+	ret := m.ctrl.Call(m, "RpmOstreeVersion", ctx)
 	ret0, _ := ret[0].(*VersionData)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RpmOstreeVersion indicates an expected call of RpmOstreeVersion.
-func (mr *MockIClientMockRecorder) RpmOstreeVersion() *gomock.Call {
+func (mr *MockIClientMockRecorder) RpmOstreeVersion(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RpmOstreeVersion", reflect.TypeOf((*MockIClient)(nil).RpmOstreeVersion))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RpmOstreeVersion", reflect.TypeOf((*MockIClient)(nil).RpmOstreeVersion), ctx)
 }
 
 // newCmd mocks base method.
-func (m *MockIClient) newCmd(args ...string) ([]byte, error) {
+func (m *MockIClient) newCmd(ctx context.Context, args ...string) ([]byte, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{}
+	varargs := []any{ctx}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -185,7 +186,8 @@ func (m *MockIClient) newCmd(args ...string) ([]byte, error) {
 }
 
 // newCmd indicates an expected call of newCmd.
-func (mr *MockIClientMockRecorder) newCmd(args ...any) *gomock.Call {
+func (mr *MockIClientMockRecorder) newCmd(ctx any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "newCmd", reflect.TypeOf((*MockIClient)(nil).newCmd), args...)
+	varargs := append([]any{ctx}, args...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "newCmd", reflect.TypeOf((*MockIClient)(nil).newCmd), varargs...)
 }

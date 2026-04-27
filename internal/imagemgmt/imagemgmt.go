@@ -1,6 +1,7 @@
 package imagemgmt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -18,10 +19,10 @@ import (
 //go:generate mockgen -source=imagemgmt.go -package=imagemgmt -destination=mock_imagemgmt.go
 type ImageMgmtIntf interface {
 	CheckDiskUsageAgainstThreshold(thresholdPercent int) (bool, error)
-	GetInuseImages() (inUse []string, rc error)
-	GetPinnedImages() (pinned []string, rc error)
-	GetRemovalCandidates() (removalCandidates []imageMgmtImageInfo, rc error)
-	CleanupUnusedImages(thresholdPercent int) error
+	GetInuseImages(ctx context.Context) (inUse []string, rc error)
+	GetPinnedImages(ctx context.Context) (pinned []string, rc error)
+	GetRemovalCandidates(ctx context.Context) (removalCandidates []imageMgmtImageInfo, rc error)
+	CleanupUnusedImages(ctx context.Context, thresholdPercent int) error
 }
 
 type ImageMgmtClient struct {
@@ -93,9 +94,9 @@ func (c *ImageMgmtClient) CheckDiskUsageAgainstThreshold(thresholdPercent int) (
 }
 
 // GetInuseImages gets the list of images in use by cri-o or podman containers
-func (c *ImageMgmtClient) GetInuseImages() (inUse []string, rc error) {
+func (c *ImageMgmtClient) GetInuseImages(ctx context.Context) (inUse []string, rc error) {
 	// Get the list of containers via crictl
-	output, err := c.Executor.Execute("crictl", "ps", "-a", "-o", "json")
+	output, err := c.Executor.Execute(ctx, "crictl", "ps", "-a", "-o", "json")
 	if err != nil {
 		rc = fmt.Errorf("failed to run crictl ps: %w", err)
 		return
@@ -112,7 +113,7 @@ func (c *ImageMgmtClient) GetInuseImages() (inUse []string, rc error) {
 	}
 
 	// Get the list of containers via podman
-	output, err = c.Executor.Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error")
+	output, err = c.Executor.Execute(ctx, "podman", "ps", "-a", "--format", "json", "--log-level", "error")
 	if err != nil {
 		rc = fmt.Errorf("failed to run podman ps: %w", err)
 		return
@@ -132,9 +133,9 @@ func (c *ImageMgmtClient) GetInuseImages() (inUse []string, rc error) {
 }
 
 // GetPinnedImages gets the list of pinned images, from crictl
-func (c *ImageMgmtClient) GetPinnedImages() (pinned []string, rc error) {
+func (c *ImageMgmtClient) GetPinnedImages(ctx context.Context) (pinned []string, rc error) {
 	// Get the list of containers via crictl
-	output, err := c.Executor.Execute("crictl", "images", "-o", "json")
+	output, err := c.Executor.Execute(ctx, "crictl", "images", "-o", "json")
 	if err != nil {
 		rc = fmt.Errorf("failed to run crictl images: %w", err)
 		return
@@ -183,14 +184,14 @@ func isImageUsed(inUse []string, image imageMgmtImageInfo) bool {
 }
 
 // GetRemovalCandidates gets the list of images sorted by creation timestamp, filtering out in-use and pinned images
-func (c *ImageMgmtClient) GetRemovalCandidates() (removalCandidates []imageMgmtImageInfo, rc error) {
-	inUse, err := c.GetInuseImages()
+func (c *ImageMgmtClient) GetRemovalCandidates(ctx context.Context) (removalCandidates []imageMgmtImageInfo, rc error) {
+	inUse, err := c.GetInuseImages(ctx)
 	if err != nil {
 		rc = fmt.Errorf("failure getting list of in-use images: %w", err)
 		return
 	}
 
-	pinned, err := c.GetPinnedImages()
+	pinned, err := c.GetPinnedImages(ctx)
 	if err != nil {
 		rc = fmt.Errorf("failure getting list of pinned images: %w", err)
 		return
@@ -200,7 +201,7 @@ func (c *ImageMgmtClient) GetRemovalCandidates() (removalCandidates []imageMgmtI
 
 	var images []imageMgmtImageInfo
 
-	output, err := c.Executor.Execute("podman", "images", "--format", "json", "--log-level", "error")
+	output, err := c.Executor.Execute(ctx, "podman", "images", "--format", "json", "--log-level", "error")
 	if err != nil {
 		rc = fmt.Errorf("failed to run podman images command: %w", err)
 		return
@@ -236,8 +237,8 @@ func (c *ImageMgmtClient) GetRemovalCandidates() (removalCandidates []imageMgmtI
 
 // CleanupUnusedImages iterates through the image removal candidates,
 // deleting in sets of 5 until the container storage disk usage threshold is met
-func (c *ImageMgmtClient) CleanupUnusedImages(thresholdPercent int) error {
-	removalCandidates, err := c.GetRemovalCandidates()
+func (c *ImageMgmtClient) CleanupUnusedImages(ctx context.Context, thresholdPercent int) error {
+	removalCandidates, err := c.GetRemovalCandidates(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get removal candidates: %w", err)
 	}
@@ -256,7 +257,7 @@ func (c *ImageMgmtClient) CleanupUnusedImages(thresholdPercent int) error {
 			args = append(args, toRemove...)
 
 			// Ignore errors, as images may be in use by transient containers or other images
-			output, _ := c.Executor.Execute("podman", args...)
+			output, _ := c.Executor.Execute(ctx, "podman", args...)
 			c.Log.Info("Deleted unused images", "output", output)
 
 			// Check container storage disk usage

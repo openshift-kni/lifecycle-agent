@@ -124,10 +124,10 @@ func TestGetDNSOverrideIP(t *testing.T) {
 func TestDetectBrExNetworkInterface(t *testing.T) {
 	t.Run("returns_physical_interface", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("ens3\npatch-br-ex-test", nil)
 
-		iface, err := handler.detectBrExNetworkInterface()
+		iface, err := handler.detectBrExNetworkInterface(context.Background())
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -136,19 +136,19 @@ func TestDetectBrExNetworkInterface(t *testing.T) {
 
 	t.Run("errors_when_only_patch_ports", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("patch-br-ex-test", nil)
 
-		_, err := handler.detectBrExNetworkInterface()
+		_, err := handler.detectBrExNetworkInterface(context.Background())
 		assert.Error(t, err)
 	})
 
 	t.Run("errors_when_command_fails", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("", errors.New("boom"))
 
-		_, err := handler.detectBrExNetworkInterface()
+		_, err := handler.detectBrExNetworkInterface(context.Background())
 		assert.Error(t, err)
 	})
 }
@@ -172,10 +172,10 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 				CurrentGateway: "2001::254",
 			},
 		}
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("ens3\npatch-br-ex", nil)
 
-		nmstate, err := handler.prepareNetworkConfiguration()
+		nmstate, err := handler.prepareNetworkConfiguration(context.Background())
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -217,10 +217,10 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				handler, ops, _, _ := newTestHandler(t)
 				handler.ipConfigs = tc.configs
-				ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).AnyTimes().
+				ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).AnyTimes().
 					Return("", errors.New("not needed"))
 
-				_, err := handler.prepareNetworkConfiguration()
+				_, err := handler.prepareNetworkConfiguration(context.Background())
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tc.expect)
 			})
@@ -230,10 +230,10 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 	t.Run("propagates_interface_detection_error", func(t *testing.T) {
 		handler, ops, _, _ := newTestHandler(t)
 		handler.ipConfigs = []*NetworkIPConfig{{IP: "10.0.0.1", MachineNetwork: "10.0.0.0/24"}}
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("", errors.New("fail"))
 
-		_, err := handler.prepareNetworkConfiguration()
+		_, err := handler.prepareNetworkConfiguration(context.Background())
 		assert.Error(t, err)
 	})
 
@@ -249,10 +249,10 @@ func TestPrepareNetworkConfiguration(t *testing.T) {
 				CurrentGateway: "10.1.1.1",
 			},
 		}
-		ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).
+		ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).
 			Return("ens3\npatch-br-ex", nil)
 
-		nmstate, err := handler.prepareNetworkConfiguration()
+		nmstate, err := handler.prepareNetworkConfiguration(context.Background())
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -267,11 +267,11 @@ func TestSetDefaultDeploymentIfEnabled(t *testing.T) {
 		handler.ostree = ostree
 		handler.rpm = rpm
 
-		ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-		rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-		ostree.EXPECT().SetDefaultDeployment(1).Return(nil)
+		ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+		rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+		ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(nil)
 
-		assert.NoError(t, handler.setDefaultDeploymentIfEnabled("new"))
+		assert.NoError(t, handler.setDefaultDeploymentIfEnabled(context.Background(), "new"))
 	})
 
 	t.Run("feature_disabled", func(t *testing.T) {
@@ -279,9 +279,9 @@ func TestSetDefaultDeploymentIfEnabled(t *testing.T) {
 		handler.ostree = ostree
 		handler.rpm = rpm
 
-		ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(false)
+		ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(false, nil)
 
-		err := handler.setDefaultDeploymentIfEnabled("new")
+		err := handler.setDefaultDeploymentIfEnabled(context.Background(), "new")
 		assert.Error(t, err)
 	})
 }
@@ -293,12 +293,12 @@ func TestCopyVar(t *testing.T) {
 	newPath := "/new"
 	expectedCmd := fmt.Sprintf("cp -ar --preserve=context '%s/' '%s/'", filepath.Join(oldPath, "var"), newPath)
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", nil)
 
-	assert.NoError(t, handler.copyVar(oldPath, newPath))
+	assert.NoError(t, handler.copyVar(context.Background(), oldPath, newPath))
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", errors.New("fail"))
-	err := handler.copyVar(oldPath, newPath)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", errors.New("fail"))
+	err := handler.copyVar(context.Background(), oldPath, newPath)
 	assert.Error(t, err)
 }
 
@@ -309,11 +309,11 @@ func TestCopyEtc(t *testing.T) {
 	newDir := "/new/deploy"
 	expectedCmd := fmt.Sprintf("cp -ar --preserve=context '%s/' '%s/'", filepath.Join(oldDir, "etc"), newDir)
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", nil)
-	assert.NoError(t, handler.copyEtc(oldDir, newDir))
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", nil)
+	assert.NoError(t, handler.copyEtc(context.Background(), oldDir, newDir))
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", errors.New("fail"))
-	assert.Error(t, handler.copyEtc(oldDir, newDir))
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", errors.New("fail"))
+	assert.Error(t, handler.copyEtc(context.Background(), oldDir, newDir))
 }
 
 func TestCopyDeploymentOrigin(t *testing.T) {
@@ -329,30 +329,30 @@ func TestCopyDeploymentOrigin(t *testing.T) {
 		filepath.Join(newPath, "deploy", fmt.Sprintf("%s.origin", newName)),
 	)
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", nil)
-	assert.NoError(t, handler.copyDeploymentOrigin(oldPath, newPath, oldName, newName))
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", nil)
+	assert.NoError(t, handler.copyDeploymentOrigin(context.Background(), oldPath, newPath, oldName, newName))
 
-	ops.EXPECT().RunInHostNamespace("bash", "-c", expectedCmd).Return("", errors.New("fail"))
-	assert.Error(t, handler.copyDeploymentOrigin(oldPath, newPath, oldName, newName))
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", expectedCmd).Return("", errors.New("fail"))
+	assert.Error(t, handler.copyDeploymentOrigin(context.Background(), oldPath, newPath, oldName, newName))
 }
 
 func TestEnsureSysrootWritable(t *testing.T) {
 	handler, ops, _, _ := newTestHandler(t)
-	ops.EXPECT().RemountSysroot().Return(nil)
-	assert.NoError(t, handler.ensureSysrootWritable())
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	assert.NoError(t, handler.ensureSysrootWritable(context.Background()))
 
-	ops.EXPECT().RemountSysroot().Return(errors.New("ro"))
-	assert.Error(t, handler.ensureSysrootWritable())
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(errors.New("ro"))
+	assert.Error(t, handler.ensureSysrootWritable(context.Background()))
 }
 
 func TestGetBootedCommit(t *testing.T) {
 	handler, _, _, rpm := newTestHandler(t)
 	handler.rpm = rpm
 
-	rpm.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+	rpm.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 		Deployments: []rpmostreeclient.Deployment{{Checksum: "abc", Booted: true}},
 	}, nil)
-	commit, err := handler.getBootedCommit()
+	commit, err := handler.getBootedCommit(context.Background())
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -361,10 +361,10 @@ func TestGetBootedCommit(t *testing.T) {
 	}
 	assert.Equal(t, "abc", *commit)
 
-	rpm.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+	rpm.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 		Deployments: []rpmostreeclient.Deployment{{Checksum: "abc", Booted: false}},
 	}, nil)
-	_, err = handler.getBootedCommit()
+	_, err = handler.getBootedCommit(context.Background())
 	assert.Error(t, err)
 }
 
@@ -375,12 +375,12 @@ func TestDeployNewStateroot(t *testing.T) {
 
 	data := &OstreeData{NewStateroot: &StaterootData{Name: "new"}}
 
-	ostree.EXPECT().OSInit("new").Return(nil)
-	ostree.EXPECT().Deploy("new", "commit", []string{"karg"}, rpm, false).Return(nil)
-	ostree.EXPECT().GetDeployment("new").Return("deploy1", nil)
-	ostree.EXPECT().GetDeploymentDir("new").Return("/deployment/dir", nil)
+	ostree.EXPECT().OSInit(gomock.Any(), "new").Return(nil)
+	ostree.EXPECT().Deploy(gomock.Any(), "new", "commit", []string{"karg"}, rpm, false).Return(nil)
+	ostree.EXPECT().GetDeployment(gomock.Any(), "new").Return("deploy1", nil)
+	ostree.EXPECT().GetDeploymentDir(gomock.Any(), "new").Return("/deployment/dir", nil)
 
-	assert.NoError(t, handler.deployNewStateroot(data, "commit", []string{"karg"}))
+	assert.NoError(t, handler.deployNewStateroot(context.Background(), data, "commit", []string{"karg"}))
 	assert.Equal(t, "deploy1", data.NewStateroot.DeploymentName)
 	assert.Equal(t, "/deployment/dir", data.NewStateroot.DeploymentDir)
 }
@@ -401,20 +401,20 @@ func TestPrepareNewStaterootDeploysWhenMissing(t *testing.T) {
 		},
 	}
 
-	ops.EXPECT().RemountSysroot().Return(nil)
-	rpm.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	rpm.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 		Deployments: []rpmostreeclient.Deployment{{Checksum: "abc", Booted: true}},
 	}, nil)
-	ostree.EXPECT().OSInit("new").Return(nil)
-	ostree.EXPECT().Deploy("new", "abc", []string{"karg"}, rpm, false).Return(nil)
-	ostree.EXPECT().GetDeployment("new").Return("newdep", nil)
-	ostree.EXPECT().GetDeploymentDir("new").Return("/new/deploy", nil)
-	ops.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return("", nil)
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-	ostree.EXPECT().SetDefaultDeployment(1).Return(nil)
+	ostree.EXPECT().OSInit(gomock.Any(), "new").Return(nil)
+	ostree.EXPECT().Deploy(gomock.Any(), "new", "abc", []string{"karg"}, rpm, false).Return(nil)
+	ostree.EXPECT().GetDeployment(gomock.Any(), "new").Return("newdep", nil)
+	ostree.EXPECT().GetDeploymentDir(gomock.Any(), "new").Return("/new/deploy", nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return("", nil)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(nil)
 
-	err := handler.prepareNewStateroot(handler.ostreeData, []string{"karg"})
+	err := handler.prepareNewStateroot(context.Background(), handler.ostreeData, []string{"karg"})
 	assert.NoError(t, err)
 	assert.Equal(t, "newdep", handler.ostreeData.NewStateroot.DeploymentName)
 }
@@ -437,14 +437,14 @@ func TestPrepareNewStaterootSkipsDeployWhenAlreadyPresent(t *testing.T) {
 		},
 	}
 
-	ops.EXPECT().RemountSysroot().Return(nil)
-	ostree.EXPECT().Deploy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	ops.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return("", nil)
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-	ostree.EXPECT().SetDefaultDeployment(1).Return(nil)
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	ostree.EXPECT().Deploy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return("", nil)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(nil)
 
-	assert.NoError(t, handler.prepareNewStateroot(handler.ostreeData, nil))
+	assert.NoError(t, handler.prepareNewStateroot(context.Background(), handler.ostreeData, nil))
 }
 
 func TestUpdateDNSMasqOverrideIPInNewStateroot(t *testing.T) {
@@ -515,8 +515,8 @@ func TestPrepareNewStaterootErrorsPropagate(t *testing.T) {
 		NewStateroot: &StaterootData{Name: "new", Path: "/new"},
 	}
 
-	ops.EXPECT().RemountSysroot().Return(errors.New("ro"))
-	err := handler.prepareNewStateroot(handler.ostreeData, nil)
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(errors.New("ro"))
+	err := handler.prepareNewStateroot(context.Background(), handler.ostreeData, nil)
 	assert.Error(t, err)
 }
 
@@ -615,18 +615,18 @@ func TestRunStopsAndReenablesOnFailure(t *testing.T) {
 	ops.EXPECT().MkdirAll(filepath.Join(handler.hostWorkspaceDir, common.KubeconfigCryptoDir), os.FileMode(0o755)).Return(nil)
 
 	// Network config
-	ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
 
 	// Stop/enable services
-	ops.EXPECT().StopClusterServices().Return(nil)
-	ops.EXPECT().EnableClusterServices().Return(nil)
+	ops.EXPECT().StopClusterServices(gomock.Any()).Return(nil)
+	ops.EXPECT().EnableClusterServices(gomock.Any()).Return(nil)
 
 	// New stateroot prep (no deploy)
-	ops.EXPECT().RemountSysroot().Return(nil)
-	ops.EXPECT().RunInHostNamespace("bash", "-c", gomock.Any()).AnyTimes().Return("", nil)
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-	ostree.EXPECT().SetDefaultDeployment(1).Return(nil)
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", gomock.Any()).AnyTimes().Return("", nil)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(nil)
 
 	// Writes to new stateroot workspace
 	ops.EXPECT().WriteFile(
@@ -666,8 +666,8 @@ func TestRunFailsBeforeStoppingServices(t *testing.T) {
 	}
 	ops.EXPECT().ReadFile(handler.mcdCurrentConfigPath).Return(nil, os.ErrNotExist)
 
-	ops.EXPECT().StopClusterServices().Times(0)
-	ops.EXPECT().EnableClusterServices().Times(0)
+	ops.EXPECT().StopClusterServices(gomock.Any()).Times(0)
+	ops.EXPECT().EnableClusterServices(gomock.Any()).Times(0)
 
 	err := handler.Run(context.Background())
 	assert.Error(t, err)
@@ -716,16 +716,16 @@ func TestRunDoesNotPersistOrDeleteACMHubKubeconfigSecretWhenPresent(t *testing.T
 
 	ops.EXPECT().ReadFile(common.ImageRegistryAuthFile).Return([]byte("ps"), nil)
 	ops.EXPECT().MkdirAll(filepath.Join(handler.hostWorkspaceDir, common.KubeconfigCryptoDir), os.FileMode(0o755)).Return(nil)
-	ops.EXPECT().RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "ovs-vsctl", "list-ports", BridgeExternalName).Return("ens3\npatch-br-ex", nil)
 
-	ops.EXPECT().StopClusterServices().Return(nil)
-	ops.EXPECT().EnableClusterServices().Return(nil)
+	ops.EXPECT().StopClusterServices(gomock.Any()).Return(nil)
+	ops.EXPECT().EnableClusterServices(gomock.Any()).Return(nil)
 
-	ops.EXPECT().RemountSysroot().Return(nil)
-	ops.EXPECT().RunInHostNamespace("bash", "-c", gomock.Any()).AnyTimes().Return("", nil)
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-	ostree.EXPECT().SetDefaultDeployment(1).Return(nil)
+	ops.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	ops.EXPECT().RunInHostNamespace(gomock.Any(), "bash", "-c", gomock.Any()).AnyTimes().Return("", nil)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(nil)
 
 	ops.EXPECT().WriteFile(
 		filepath.Join(handler.ostreeData.NewStateroot.Path, common.IPConfigPullSecretFile),
@@ -918,8 +918,8 @@ func TestRestoreMCDManagedVarLibFiles(t *testing.T) {
 			return os.MkdirAll(path, perm)
 		})
 
-	mockOps.EXPECT().RunInHostNamespace("cp", "-a", "--preserve=context", gomock.Any(), gomock.Any()).
-		DoAndReturn(func(command string, args ...string) (string, error) {
+	mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "cp", "-a", "--preserve=context", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, command string, args ...string) (string, error) {
 			src := args[2]
 			dst := args[3]
 			data, err := os.ReadFile(src)
@@ -929,7 +929,7 @@ func TestRestoreMCDManagedVarLibFiles(t *testing.T) {
 			return "", os.WriteFile(dst, data, 0o644)
 		}).Times(2)
 
-	err := handler.restoreMCDManagedVarLibFiles()
+	err := handler.restoreMCDManagedVarLibFiles(context.Background())
 	assert.NoError(t, err)
 
 	// Verify both files were restored
@@ -1033,8 +1033,8 @@ func TestRemoveStaleAndRestorePreservesOvnMCDFiles(t *testing.T) {
 
 	srcPath := filepath.Join(oldSR, common.OvnIcEtcFolder, "enable_dynamic_cpu_affinity")
 	dstPath := filepath.Join(newSR, common.OvnIcEtcFolder, "enable_dynamic_cpu_affinity")
-	mockOps.EXPECT().RunInHostNamespace("cp", "-a", "--preserve=context", srcPath, dstPath).
-		DoAndReturn(func(command string, args ...string) (string, error) {
+	mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "cp", "-a", "--preserve=context", srcPath, dstPath).
+		DoAndReturn(func(_ context.Context, command string, args ...string) (string, error) {
 			data, err := os.ReadFile(srcPath)
 			if err != nil {
 				return "", err
@@ -1042,7 +1042,7 @@ func TestRemoveStaleAndRestorePreservesOvnMCDFiles(t *testing.T) {
 			return "", os.WriteFile(dstPath, data, 0o644)
 		})
 
-	err = handler.restoreMCDManagedVarLibFiles()
+	err = handler.restoreMCDManagedVarLibFiles(context.Background())
 	assert.NoError(t, err)
 
 	// Verify MCO-managed file was restored

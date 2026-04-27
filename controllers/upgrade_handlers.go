@@ -76,7 +76,7 @@ var (
 func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	r.Log.Info("Starting handleUpgrade")
 
-	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu.Spec.SeedImageRef.Version)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ctx, ibu.Spec.SeedImageRef.Version)
 
 	if err != nil {
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -93,7 +93,7 @@ func (r *ImageBasedUpgradeReconciler) handleUpgrade(ctx context.Context, ibu *ib
 	} else {
 		if ibu.Status.RollbackAvailabilityExpiration.IsZero() {
 			// Set the rollback availability expiration field
-			if expiry, err := r.getRollbackAvailabilityExpiration(); err == nil {
+			if expiry, err := r.getRollbackAvailabilityExpiration(ctx); err == nil {
 				ibu.Status.RollbackAvailabilityExpiration.Time = expiry
 			} else {
 				r.Log.Error(err, "unable to determine rollback availability expiration")
@@ -162,7 +162,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	}
 
 	u.Log.Info("Remounting sysroot")
-	if err := u.Ops.RemountSysroot(); err != nil {
+	if err := u.Ops.RemountSysroot(ctx); err != nil {
 		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
 	}
 
@@ -238,13 +238,13 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return requeueWithError(fmt.Errorf("error while exporting for uncontrolled rollback: %w", err))
 	}
 
-	if err := u.setDefaultDeploymentToNewStateroot(stateroot); err != nil {
+	if err := u.setDefaultDeploymentToNewStateroot(ctx, stateroot); err != nil {
 		return requeueWithError(fmt.Errorf("error while setting default deployment: %w", err))
 	}
 
 	// Write an event to indicate reboot attempt
 	u.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
-	err = u.RebootClient.RebootToNewStateRoot("upgrade")
+	err = u.RebootClient.RebootToNewStateRoot(ctx, "upgrade")
 	if err != nil {
 		u.Log.Error(err, "Failed to reboot to new stateroot")
 		utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -299,14 +299,16 @@ func (u *UpgHandler) extractAndExportExtraManifests(ctx context.Context, ibu *ib
 	return nil
 }
 
-func (u *UpgHandler) setDefaultDeploymentToNewStateroot(stateroot string) error {
+func (u *UpgHandler) setDefaultDeploymentToNewStateroot(ctx context.Context, stateroot string) error {
 	// Set the new default deployment
-	if u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
-		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(stateroot)
+	if enabled, err := u.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		return fmt.Errorf("failed to check ostree set-default feature: %w", err)
+	} else if enabled {
+		deploymentIndex, err := u.RPMOstreeClient.GetDeploymentIndex(ctx, stateroot)
 		if err != nil {
 			return fmt.Errorf("failed to get deployment index for stateroot %s: %w", stateroot, err)
 		}
-		if err := u.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+		if err := u.OstreeClient.SetDefaultDeployment(ctx, deploymentIndex); err != nil {
 			return fmt.Errorf("failed to set default deployment at index %d: %w", deploymentIndex, err)
 		}
 	}
@@ -349,7 +351,7 @@ var getStaterootVarPath = func(stateroot string) string {
 // CheckHealth helper func to call HealthChecks
 var CheckHealth = healthcheck.HealthChecks
 
-func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg string) {
+func (u *UpgHandler) autoRollbackIfEnabled(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, msg string) {
 	// Check whether auto-rollback is disabled using annotation
 	if val, exists := ibu.GetAnnotations()[common.AutoRollbackOnFailureUpgradeCompletionAnnotation]; exists {
 		if val == common.AutoRollbackDisableValue {
@@ -360,7 +362,7 @@ func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg str
 
 	u.Log.Info("Automatically rolling back due to failure")
 
-	if err := u.RebootClient.InitiateRollback(msg); err != nil {
+	if err := u.RebootClient.InitiateRollback(ctx, msg); err != nil {
 		u.Log.Info(fmt.Sprintf("Unable to auto rollback: %s", err))
 		return
 	}
@@ -387,7 +389,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		if backuprestore.IsBRStorageBackendUnavailableError(err) {
 			u.Log.Error(err, "Failed to ensure OADP configuration")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to missing DataProtectionApplication: %s", err))
+			u.autoRollbackIfEnabled(ctx, ibu, fmt.Sprintf("Rollback due to missing DataProtectionApplication: %s", err))
 			return doNotRequeue(), nil
 		}
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Checking Application Configuration: Failure occurred: %s", err.Error()))
@@ -405,7 +407,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		if extramanifest.IsEMFailedError(err) {
 			u.Log.Error(err, "Failed to apply policy manifests")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying policy manifests: %s", err))
+			u.autoRollbackIfEnabled(ctx, ibu, fmt.Sprintf("Rollback due to failure applying policy manifests: %s", err))
 			return doNotRequeue(), nil
 		}
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Applying Policy Manifests: Failure occurred: %s", err.Error()))
@@ -422,7 +424,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		if extramanifest.IsEMFailedError(err) {
 			u.Log.Error(err, "Failed to apply config manifests")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to failure applying config manifests: %s", err))
+			u.autoRollbackIfEnabled(ctx, ibu, fmt.Sprintf("Rollback due to failure applying config manifests: %s", err))
 			return doNotRequeue(), nil
 		}
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Applying Config Manifests: Failure occurred: %s", err.Error()))
@@ -441,7 +443,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		if backuprestore.IsBRFailedError(err) {
 			u.Log.Error(err, "Failed to handle restore")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
+			u.autoRollbackIfEnabled(ctx, ibu, fmt.Sprintf("Rollback due to restore failure: %s", err))
 			return doNotRequeue(), nil
 		}
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Restoring Application Data: Failure occurred: %s", err))
@@ -453,7 +455,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return result, nil
 	}
 
-	if err := u.RebootClient.DisableInitMonitor(); err != nil {
+	if err := u.RebootClient.DisableInitMonitor(ctx); err != nil {
 		// Don't fail the upgrade on failure here, just log it
 		u.Log.Error(err, "Unable to disable LCA init monitor")
 	}
