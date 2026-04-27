@@ -18,7 +18,7 @@ metadata:
         '.konflux/Dockerfile.bundle'.pathChanged() ||
         '.konflux/overlay/***'.pathChanged() ||
         '.tekton/build-pipeline.yaml'.pathChanged() ||
-        '.tekton/lifecycle-agent-operator-bundle-4-22-pull-request.yaml'.pathChanged() ||
+        '.tekton/lifecycle-agent-operator-bundle-5-0-pull-request.yaml'.pathChanged() ||
         'bundle/***'.pathChanged() ||
         'config/***'.pathChanged() ||
         'hack/***'.pathChanged() ||
@@ -28,10 +28,10 @@ metadata:
       )
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: lifecycle-agent-4-22
-    appstudio.openshift.io/component: lifecycle-agent-operator-bundle-4-22
+    appstudio.openshift.io/application: lifecycle-agent-5-0
+    appstudio.openshift.io/component: lifecycle-agent-operator-bundle-5-0
     pipelines.appstudio.openshift.io/type: build
-  name: lifecycle-agent-operator-bundle-4-22-on-pull-request
+  name: lifecycle-agent-operator-bundle-5-0-on-pull-request
   namespace: telco-5g-tenant
 spec:
   params:
@@ -40,7 +40,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-4-22:on-pr-{{revision}}
+      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-5-0:on-pr-{{revision}}
     - name: image-expires-after
       value: 5d
     # Bundles are explicitly not allowed to be multi arch, so we only build x86_64
@@ -73,7 +73,7 @@ spec:
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
-    serviceAccountName: build-pipeline-lifecycle-agent-operator-bundle-4-22
+    serviceAccountName: build-pipeline-lifecycle-agent-operator-bundle-5-0
   workspaces:
     - name: git-auth
       secret:
