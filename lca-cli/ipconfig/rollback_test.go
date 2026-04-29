@@ -1,6 +1,7 @@
 package ipconfig
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -29,21 +30,21 @@ func newRollbackHandler(t *testing.T) (*RollbackHandler, *opsmock.MockOps, *ostr
 func TestRollbackRunFeatureEnabledSuccess(t *testing.T) {
 	handler, _, ostree, rpm := newRollbackHandler(t)
 
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(3, nil)
-	ostree.EXPECT().SetDefaultDeployment(3).Return(nil)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(3, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 3).Return(nil)
 
-	assert.NoError(t, handler.Run("new"))
+	assert.NoError(t, handler.Run(context.Background(), "new"))
 }
 
 func TestRollbackRunGetDeploymentIndexError(t *testing.T) {
 	handler, _, ostree, rpm := newRollbackHandler(t)
 
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(0, errors.New("idx-fail"))
-	ostree.EXPECT().SetDefaultDeployment(gomock.Any()).Times(0)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(0, errors.New("idx-fail"))
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), gomock.Any()).Times(0)
 
-	err := handler.Run("new")
+	err := handler.Run(context.Background(), "new")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get deployment index")
 }
@@ -51,11 +52,11 @@ func TestRollbackRunGetDeploymentIndexError(t *testing.T) {
 func TestRollbackRunSetDefaultDeploymentError(t *testing.T) {
 	handler, _, ostree, rpm := newRollbackHandler(t)
 
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(true)
-	rpm.EXPECT().GetDeploymentIndex("new").Return(1, nil)
-	ostree.EXPECT().SetDefaultDeployment(1).Return(errors.New("set-fail"))
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(true, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), "new").Return(1, nil)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), 1).Return(errors.New("set-fail"))
 
-	err := handler.Run("new")
+	err := handler.Run(context.Background(), "new")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to set default deployment")
 }
@@ -63,9 +64,9 @@ func TestRollbackRunSetDefaultDeploymentError(t *testing.T) {
 func TestRollbackRunFeatureDisabledNoop(t *testing.T) {
 	handler, _, ostree, rpm := newRollbackHandler(t)
 
-	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(false)
-	rpm.EXPECT().GetDeploymentIndex(gomock.Any()).Times(0)
-	ostree.EXPECT().SetDefaultDeployment(gomock.Any()).Times(0)
+	ostree.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(false, nil)
+	rpm.EXPECT().GetDeploymentIndex(gomock.Any(), gomock.Any()).Times(0)
+	ostree.EXPECT().SetDefaultDeployment(gomock.Any(), gomock.Any()).Times(0)
 
-	assert.NoError(t, handler.Run("new"))
+	assert.NoError(t, handler.Run(context.Background(), "new"))
 }

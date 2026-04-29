@@ -54,11 +54,11 @@ var podmanRecertArgs = []string{
 //
 //go:generate mockgen -source=ops.go -package=ops -destination=mock_ops.go
 type Ops interface {
-	SystemctlAction(action string, args ...string) (string, error)
-	RunSystemdAction(args ...string) (string, error)
-	RunInHostNamespace(command string, args ...string) (string, error)
-	RunBashInHostNamespace(command string, args ...string) (string, error)
-	RunListOfCommands(cmds []*CMD) error
+	SystemctlAction(ctx context.Context, action string, args ...string) (string, error)
+	RunSystemdAction(ctx context.Context, args ...string) (string, error)
+	RunInHostNamespace(ctx context.Context, command string, args ...string) (string, error)
+	RunBashInHostNamespace(ctx context.Context, command string, args ...string) (string, error)
+	RunListOfCommands(ctx context.Context, cmds []*CMD) error
 	ReadFile(filename string) ([]byte, error)
 	WriteFile(filename string, data []byte, perm os.FileMode) error
 	CopyFile(src, dest string, perm os.FileMode) error
@@ -68,32 +68,32 @@ type Ops interface {
 	ReadDir(path string) ([]os.DirEntry, error)
 	StatFile(name string) (os.FileInfo, error)
 	IsNotExist(err error) bool
-	ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error
-	RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error
-	RunUnauthenticatedEtcdServer(authFile, name string) error
-	StopEtcdServer(authfile, name string) error
-	waitForEtcd(healthzEndpoint string) error
-	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
-	ExtractTarWithSELinux(srcPath, destPath string) error
-	RemountSysroot() error
-	RemountBoot() error
-	ImageExists(img string) (bool, error)
-	IsImageMounted(img string) (bool, error)
-	UnmountAndRemoveImage(img string) error
-	MountImage(img string) (string, error)
-	RecertFullFlow(recertContainerImage, authFile, configFile string,
+	ForceExpireSeedCrypto(ctx context.Context, recertContainerImage, authFile string, hasKubeAdminPassword bool) error
+	RestoreOriginalSeedCrypto(ctx context.Context, recertContainerImage, authFile string) error
+	RunUnauthenticatedEtcdServer(ctx context.Context, authFile, name string) error
+	StopEtcdServer(ctx context.Context, authfile, name string) error
+	waitForEtcd(ctx context.Context, healthzEndpoint string) error
+	RunRecert(ctx context.Context, recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
+	ExtractTarWithSELinux(ctx context.Context, srcPath, destPath string) error
+	RemountSysroot(ctx context.Context) error
+	RemountBoot(ctx context.Context) error
+	ImageExists(ctx context.Context, img string) (bool, error)
+	IsImageMounted(ctx context.Context, img string) (bool, error)
+	UnmountAndRemoveImage(ctx context.Context, img string) error
+	MountImage(ctx context.Context, img string) (string, error)
+	RecertFullFlow(ctx context.Context, recertContainerImage, authFile, configFile string,
 		preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error
-	ListBlockDevices() ([]BlockDevice, error)
-	Mount(deviceName, mountFolder string) error
-	Umount(deviceName string) error
+	ListBlockDevices(ctx context.Context) ([]BlockDevice, error)
+	Mount(ctx context.Context, deviceName, mountFolder string) error
+	Umount(ctx context.Context, deviceName string) error
 	Chroot(chrootPath string) (func() error, error)
-	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
-	SetupContainersFolderCommands() error
+	CreateExtraPartition(ctx context.Context, installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
+	SetupContainersFolderCommands(ctx context.Context) error
 	GetHostname() (string, error)
 	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
-	GetContainerStorageTarget() (string, error)
-	StopClusterServices() error
-	EnableClusterServices() error
+	GetContainerStorageTarget(ctx context.Context) (string, error)
+	StopClusterServices(ctx context.Context) error
+	EnableClusterServices(ctx context.Context) error
 }
 
 type CMD struct {
@@ -120,41 +120,41 @@ func NewOps(log *logrus.Logger, hostCommandsExecutor Execute) Ops {
 	return &ops{hostCommandsExecutor: hostCommandsExecutor, log: log}
 }
 
-func (o *ops) SystemctlAction(action string, args ...string) (string, error) {
+func (o *ops) SystemctlAction(ctx context.Context, action string, args ...string) (string, error) {
 	o.log.Infof("Running systemctl %s %s", action, args)
-	output, err := o.hostCommandsExecutor.Execute("systemctl", append([]string{action}, args...)...)
+	output, err := o.hostCommandsExecutor.Execute(ctx, "systemctl", append([]string{action}, args...)...)
 	if err != nil {
 		err = fmt.Errorf("failed executing systemctl %s %s: %w", action, args, err)
 	}
 	return output, err
 }
 
-func (o *ops) RunSystemdAction(args ...string) (string, error) {
+func (o *ops) RunSystemdAction(ctx context.Context, args ...string) (string, error) {
 	o.log.Infof("Running systemd-run %s", args)
-	output, err := o.hostCommandsExecutor.Execute("systemd-run", args...)
+	output, err := o.hostCommandsExecutor.Execute(ctx, "systemd-run", args...)
 	if err != nil {
 		err = fmt.Errorf("failed executing systemd-run with args %s: %w", args, err)
 	}
 	return output, err
 }
-func (o *ops) RunBashInHostNamespace(command string, args ...string) (string, error) {
+func (o *ops) RunBashInHostNamespace(ctx context.Context, command string, args ...string) (string, error) {
 	args = append([]string{command}, args...)
-	execute, err := o.hostCommandsExecutor.Execute("bash", "-c", strings.Join(args, " "))
+	execute, err := o.hostCommandsExecutor.Execute(ctx, "bash", "-c", strings.Join(args, " "))
 	if err != nil {
 		return "", fmt.Errorf("failed to run bash in host namespace with args %s: %w", args, err)
 	}
 	return execute, nil
 }
 
-func (o *ops) RunInHostNamespace(command string, args ...string) (string, error) {
-	execute, err := o.hostCommandsExecutor.Execute(command, args...)
+func (o *ops) RunInHostNamespace(ctx context.Context, command string, args ...string) (string, error) {
+	execute, err := o.hostCommandsExecutor.Execute(ctx, command, args...)
 	if err != nil {
 		return "", fmt.Errorf("failed to run %q in host namespace with args %s: %w", command, args, err)
 	}
 	return execute, nil
 }
 
-func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
+func (o *ops) ForceExpireSeedCrypto(ctx context.Context, recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
 	o.log.Info("Running recert --force-expire tool and saving a summary without sensitive data")
 	// Run recert tool to force expiration of seed cluster certificates, and save a summary without sensitive data.
 	// This pre-check is also useful for validating that a cluster can be re-certified error-free before turning it
@@ -165,7 +165,7 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKu
 		return fmt.Errorf("failed to create %s file: %w", recertConfigFile, err)
 	}
 
-	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, nil); err != nil {
+	if err := o.RecertFullFlow(ctx, recertContainerImage, authFile, recertConfigFile, nil, nil); err != nil {
 		return err
 	}
 
@@ -173,7 +173,7 @@ func (o *ops) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKu
 	return nil
 }
 
-func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
+func (o *ops) RestoreOriginalSeedCrypto(ctx context.Context, recertContainerImage, authFile string) error {
 	o.log.Info("Running recert --extend-expiration tool to restore original seed crypto")
 	o.log.Info("Run recert --extend-expiration tool")
 	recertConfigFile := path.Join(common.BackupCertsDir, recert.RecertConfigFile)
@@ -195,7 +195,7 @@ func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) e
 		return nil
 	}
 
-	if err := o.RecertFullFlow(recertContainerImage, authFile, recertConfigFile, nil, postRecertOp); err != nil {
+	if err := o.RecertFullFlow(ctx, recertContainerImage, authFile, recertConfigFile, nil, postRecertOp); err != nil {
 		return err
 	}
 
@@ -206,7 +206,7 @@ func (o *ops) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) e
 // RunUnauthenticatedEtcdServer Run unauthenticated etcd server for the recert tool.
 // This runs a small (fake) unauthenticated etcd server backed by the actual etcd database,
 // which is required before running the recert tool.
-func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
+func (o *ops) RunUnauthenticatedEtcdServer(ctx context.Context, authFile, name string) error {
 	// Get etcdImage available for the current release, this is needed by recert to
 	// run an unauthenticated etcd server for running successfully.
 	o.log.Infof("Getting image from %s static pod file", common.EtcdStaticPodFile)
@@ -228,12 +228,12 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 		"--name", "editor", "--data-dir", "/store")
 
 	// Run the command and return an error if it occurs
-	if _, err := o.RunInHostNamespace(command, args...); err != nil {
+	if _, err := o.RunInHostNamespace(ctx, command, args...); err != nil {
 		return err
 	}
 
 	o.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
-	if err := o.waitForEtcd("http://" + common.EtcdDefaultEndpoint + "/health"); err != nil {
+	if err := o.waitForEtcd(ctx, "http://"+common.EtcdDefaultEndpoint+"/health"); err != nil {
 		return fmt.Errorf("failed to wait for unauthenticated etcd server: %w", err)
 	}
 	o.log.Info("Unauthenticated etcd server for recert is up and running")
@@ -241,15 +241,15 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 	return nil
 }
 
-func (o *ops) StopEtcdServer(authfile, name string) error {
+func (o *ops) StopEtcdServer(ctx context.Context, authfile, name string) error {
 	o.log.Info("Stopping the unauthenticated etcd server")
-	if _, err := o.RunInHostNamespace(podman, "stop", common.EtcdContainerName); err != nil {
+	if _, err := o.RunInHostNamespace(ctx, podman, "stop", common.EtcdContainerName); err != nil {
 		o.log.WithError(err).Errorf("failed to stop %s container.", common.EtcdContainerName)
 	}
 	return nil
 }
 
-func (o *ops) waitForEtcd(healthzEndpoint string) error {
+func (o *ops) waitForEtcd(ctx context.Context, healthzEndpoint string) error {
 	timeout := time.After(1 * time.Minute)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -276,7 +276,7 @@ func (o *ops) waitForEtcd(healthzEndpoint string) error {
 	}
 }
 
-func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
+func (o *ops) RunRecert(ctx context.Context, recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
 	o.log.Info("Start running recert")
 	command := podman
 
@@ -297,7 +297,7 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 
 	args = append(args, additionalPodmanParams...)
 	args = append(args, recertContainerImage)
-	if _, err := o.hostCommandsExecutor.Execute(command, args...); err != nil {
+	if _, err := o.hostCommandsExecutor.Execute(ctx, command, args...); err != nil {
 		return fmt.Errorf("failed to run recert tool container: %w", err)
 	}
 
@@ -306,7 +306,7 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 
 // prepareSELinuxTar prepares a copy of tar executable with install_exec_t context.
 // This type allows SELinux labeling of non-existing labels
-func (o *ops) prepareSELinuxTar() (string, error) {
+func (o *ops) prepareSELinuxTar(ctx context.Context) (string, error) {
 	tarPath := common.PathOutsideChroot("/usr/bin/tar")
 	destDir := common.PathOutsideChroot("/var/tmp")
 	newTarPath, err := utils.CopyToTempFile(tarPath, destDir, "tar-")
@@ -320,15 +320,15 @@ func (o *ops) prepareSELinuxTar() (string, error) {
 	}
 
 	// Set SELinux attribute
-	if _, err := o.hostCommandsExecutor.Execute("chcon", "-t", "install_exec_t", newTarPathInsideChroot); err != nil {
+	if _, err := o.hostCommandsExecutor.Execute(ctx, "chcon", "-t", "install_exec_t", newTarPathInsideChroot); err != nil {
 		return "", fmt.Errorf("failed to set SELinux context install_exec_t to %s: %w", newTarPath, err)
 	}
 	return newTarPath, nil
 }
 
-func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
+func (o *ops) ExtractTarWithSELinux(ctx context.Context, srcPath, destPath string) error {
 	// Create a copy of /usr/bin/tar with extended permissions
-	tarExec, err := o.prepareSELinuxTar()
+	tarExec, err := o.prepareSELinuxTar(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create copy of tar with install_exec_t attribute: %w", err)
 	}
@@ -343,28 +343,28 @@ func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
 	tarArgs := []string{"xzf", srcPath, "-C", destPath}
 	tarArgs = append(tarArgs, common.TarOpts...)
 
-	if _, err = o.hostCommandsExecutor.Execute(tarExecInsideChroot, tarArgs...); err != nil {
+	if _, err = o.hostCommandsExecutor.Execute(ctx, tarExecInsideChroot, tarArgs...); err != nil {
 		return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 	}
 	return nil
 }
 
-func (o *ops) RemountSysroot() error {
-	if _, err := o.hostCommandsExecutor.Execute("mount", "/sysroot", "-o", "remount,rw"); err != nil {
+func (o *ops) RemountSysroot(ctx context.Context) error {
+	if _, err := o.hostCommandsExecutor.Execute(ctx, "mount", "/sysroot", "-o", "remount,rw"); err != nil {
 		return fmt.Errorf("failed to remount sysroot: %w", err)
 	}
 	return nil
 }
 
-func (o *ops) RemountBoot() error {
-	if _, err := o.hostCommandsExecutor.Execute("mount", "/boot", "-o", "remount,rw"); err != nil {
+func (o *ops) RemountBoot(ctx context.Context) error {
+	if _, err := o.hostCommandsExecutor.Execute(ctx, "mount", "/boot", "-o", "remount,rw"); err != nil {
 		return fmt.Errorf("failed to remount boot: %w", err)
 	}
 	return nil
 }
 
-func (o *ops) ImageExists(img string) (bool, error) {
-	_, err := o.hostCommandsExecutor.Execute(podman, "image", "exists", img)
+func (o *ops) ImageExists(ctx context.Context, img string) (bool, error) {
+	_, err := o.hostCommandsExecutor.Execute(ctx, podman, "image", "exists", img)
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -385,8 +385,8 @@ type PodmanImage struct {
 
 // IsImageMounted checkes whether certain image is mounted
 // pass in the full address with tag e.g: quay.io/openshift/lifecycle-agent-operator:latest
-func (o *ops) IsImageMounted(imgName string) (bool, error) {
-	output, err := o.hostCommandsExecutor.Execute(podman, "image", "mount", "--format", "json", "--log-level", "error")
+func (o *ops) IsImageMounted(ctx context.Context, imgName string) (bool, error) {
+	output, err := o.hostCommandsExecutor.Execute(ctx, podman, "image", "mount", "--format", "json", "--log-level", "error")
 	if err != nil {
 		return false, fmt.Errorf("failed to mount podamn image: %w", err)
 	}
@@ -404,8 +404,8 @@ func (o *ops) IsImageMounted(imgName string) (bool, error) {
 	return false, nil
 }
 
-func (o *ops) removeImage(img string) error {
-	exist, err := o.ImageExists(img)
+func (o *ops) removeImage(ctx context.Context, img string) error {
+	exist, err := o.ImageExists(ctx, img)
 	if err != nil {
 		return fmt.Errorf("failed to check if image exist: %w", err)
 	}
@@ -413,28 +413,28 @@ func (o *ops) removeImage(img string) error {
 		return nil
 	}
 	if _, err := o.hostCommandsExecutor.Execute(
-		podman, "rmi", img,
+		ctx, podman, "rmi", img,
 	); err != nil {
 		return fmt.Errorf("failed to remove image: %w", err)
 	}
 	return nil
 }
 
-func (o *ops) UnmountAndRemoveImage(img string) error {
-	if mounted, err := o.IsImageMounted(img); err != nil {
+func (o *ops) UnmountAndRemoveImage(ctx context.Context, img string) error {
+	if mounted, err := o.IsImageMounted(ctx, img); err != nil {
 		return fmt.Errorf("failed to check if image is mounted: %w", err)
 	} else if mounted {
 		if _, err := o.hostCommandsExecutor.Execute(
-			podman, "image", "umount", img,
+			ctx, podman, "image", "umount", img,
 		); err != nil {
 			return fmt.Errorf("failed to unmount image: %w", err)
 		}
 	}
 
-	return o.removeImage(img)
+	return o.removeImage(ctx, img)
 }
 
-func (o *ops) MountImage(img string) (string, error) {
+func (o *ops) MountImage(ctx context.Context, img string) (string, error) {
 	command := podman
 	args := []string{"image", "mount", img}
 
@@ -447,20 +447,20 @@ func (o *ops) MountImage(img string) (string, error) {
 		command = nsenter
 	}
 
-	mountpoint, err := o.hostCommandsExecutor.Execute(command, args...)
+	mountpoint, err := o.hostCommandsExecutor.Execute(ctx, command, args...)
 	if err != nil {
 		return mountpoint, fmt.Errorf("failed to mount seed image: %w", err)
 	}
 	return mountpoint, nil
 }
 
-func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
+func (o *ops) RecertFullFlow(ctx context.Context, recertContainerImage, authFile, configFile string,
 	preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error {
-	if err := o.RunUnauthenticatedEtcdServer(authFile, common.EtcdContainerName); err != nil {
+	if err := o.RunUnauthenticatedEtcdServer(ctx, authFile, common.EtcdContainerName); err != nil {
 		return fmt.Errorf("failed to run etcd, err: %w", err)
 	}
 
-	defer func() { _ = o.StopEtcdServer(authFile, common.EtcdContainerName) }()
+	defer func() { _ = o.StopEtcdServer(ctx, authFile, common.EtcdContainerName) }()
 
 	if preRecertOperations != nil {
 		if err := preRecertOperations(); err != nil {
@@ -468,7 +468,7 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 		}
 	}
 
-	if err := o.RunRecert(recertContainerImage, authFile, configFile,
+	if err := o.RunRecert(ctx, recertContainerImage, authFile, configFile,
 		additionalPodmanParams...); err != nil {
 		return err
 	}
@@ -484,9 +484,9 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 
 // ListBlockDevices runs lsblk command and not using go library cause
 // each library that i was looking into doesn't show label for block device and shows labels only for partitions
-func (o *ops) ListBlockDevices() ([]BlockDevice, error) {
+func (o *ops) ListBlockDevices(ctx context.Context) ([]BlockDevice, error) {
 	o.log.Info("Listing block devices")
-	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f",
+	lsblkOutput, err := o.RunInHostNamespace(ctx, "lsblk", "-f",
 		"--json", "--output", "NAME,LABEL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to run lsblk, err: %w", err)
@@ -504,20 +504,20 @@ func (o *ops) ListBlockDevices() ([]BlockDevice, error) {
 	return blockDeviceList, nil
 }
 
-func (o *ops) Mount(deviceName, mountFolder string) error {
+func (o *ops) Mount(ctx context.Context, deviceName, mountFolder string) error {
 	o.log.Infof("Mounting %s into %s", deviceName, mountFolder)
 	if err := os.MkdirAll(mountFolder, 0o700); err != nil {
 		return fmt.Errorf("failed to create %s, err: %w", mountFolder, err)
 	}
-	if _, err := o.RunInHostNamespace("mount", fmt.Sprintf("/dev/%s", deviceName), mountFolder); err != nil {
+	if _, err := o.RunInHostNamespace(ctx, "mount", fmt.Sprintf("/dev/%s", deviceName), mountFolder); err != nil {
 		return fmt.Errorf("failed to mount %s into %s, err: %w", deviceName, mountFolder, err)
 	}
 	return nil
 }
 
-func (o *ops) Umount(deviceName string) error {
+func (o *ops) Umount(ctx context.Context, deviceName string) error {
 	o.log.Infof("Unmounting %s", deviceName)
-	if _, err := o.RunInHostNamespace("umount", fmt.Sprintf("/dev/%s", deviceName)); err != nil {
+	if _, err := o.RunInHostNamespace(ctx, "umount", fmt.Sprintf("/dev/%s", deviceName)); err != nil {
 		return fmt.Errorf("failed to unmount %s, err: %w", deviceName, err)
 	}
 	return nil
@@ -546,9 +546,9 @@ func (o *ops) Chroot(chrootPath string) (func() error, error) {
 	}, nil
 }
 
-func (o *ops) RunListOfCommands(cmds []*CMD) error {
+func (o *ops) RunListOfCommands(ctx context.Context, cmds []*CMD) error {
 	for _, c := range cmds {
-		if _, err := o.hostCommandsExecutor.Execute(c.command, c.args...); err != nil {
+		if _, err := o.hostCommandsExecutor.Execute(ctx, c.command, c.args...); err != nil {
 			return fmt.Errorf("failed to run %s with args %s: %w", c.command, c.args, err)
 		}
 	}
@@ -599,20 +599,20 @@ func (o *ops) IsNotExist(err error) bool {
 	return os.IsNotExist(err)
 }
 
-func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
+func (o *ops) CreateExtraPartition(ctx context.Context, installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	o.log.Info("Creating extra partition")
-	if _, err := o.RunBashInHostNamespace(
+	if _, err := o.RunBashInHostNamespace(ctx,
 		"echo", "write", "|", "sfdisk", installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
-	if _, err := o.RunInHostNamespace("sgdisk", "--new",
+	if _, err := o.RunInHostNamespace(ctx, "sgdisk", "--new",
 		fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionStart),
 		"--change-name", fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionLabel),
 		installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
 
-	extraPartitionPath, err := o.RunBashInHostNamespace("lsblk", installationDisk, "--json", "-O", "|", "jq",
+	extraPartitionPath, err := o.RunBashInHostNamespace(ctx, "lsblk", installationDisk, "--json", "-O", "|", "jq",
 		fmt.Sprintf(".blockdevices[0].children[%d].path", extraPartitionNumber-1), "-r")
 	if err != nil {
 		return fmt.Errorf("failed to get extra partition path: %w", err)
@@ -624,14 +624,14 @@ func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraP
 	cmds = append(cmds, NewCMD("mount",
 		fmt.Sprintf("/dev/disk/by-partlabel/%s", extraPartitionLabel), common.ContainerStoragePath),
 		NewCMD("restorecon", "-R", common.ContainerStoragePath))
-	if err := o.RunListOfCommands(cmds); err != nil {
+	if err := o.RunListOfCommands(ctx, cmds); err != nil {
 		return fmt.Errorf("failed to grow root partition: %w", err)
 	}
 
 	return nil
 }
 
-func (o *ops) SetupContainersFolderCommands() error {
+func (o *ops) SetupContainersFolderCommands(ctx context.Context) error {
 	o.log.Info("Setting up containers folder")
 	var cmds []*CMD
 	cmds = append(cmds, NewCMD("chattr", "-i", "/mnt/"),
@@ -639,7 +639,7 @@ func (o *ops) SetupContainersFolderCommands() error {
 		NewCMD("chattr", "+i", "/mnt/"),
 		NewCMD("mount", "-o", "bind", "/mnt/containers", common.ContainerStoragePath),
 		NewCMD("restorecon", "-R", common.ContainerStoragePath))
-	if err := o.RunListOfCommands(cmds); err != nil {
+	if err := o.RunListOfCommands(ctx, cmds); err != nil {
 		return fmt.Errorf("failed to setup containers folder: %w", err)
 	}
 	return nil
@@ -686,14 +686,14 @@ func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionByte
 	return nil
 }
 
-func (o *ops) GetContainerStorageTarget() (string, error) {
+func (o *ops) GetContainerStorageTarget(ctx context.Context) (string, error) {
 	const containerStorageMountUnit = "var-lib-containers.mount"
-	if _, err := o.SystemctlAction("is-active", containerStorageMountUnit); err != nil {
+	if _, err := o.SystemctlAction(ctx, "is-active", containerStorageMountUnit); err != nil {
 		// No active mount, return nil
 		return "", nil
 	}
 
-	output, err := o.SystemctlAction("cat", containerStorageMountUnit)
+	output, err := o.SystemctlAction(ctx, "cat", containerStorageMountUnit)
 	if err != nil {
 		return "", fmt.Errorf("unable to systemctl cat %s: %w", containerStorageMountUnit, err)
 	}
@@ -711,21 +711,21 @@ func (o *ops) GetContainerStorageTarget() (string, error) {
 }
 
 // StopClusterServices stops kubelet and crio services with proper container cleanup
-func (o *ops) StopClusterServices() error {
+func (o *ops) StopClusterServices(ctx context.Context) error {
 	o.log.Info("Stop kubelet service")
-	_, err := o.SystemctlAction("stop", "kubelet.service")
+	_, err := o.SystemctlAction(ctx, "stop", "kubelet.service")
 	if err != nil {
 		return fmt.Errorf("failed to stop kubelet: %w", err)
 	}
 
 	o.log.Info("Disabling kubelet service")
-	_, err = o.SystemctlAction("disable", "kubelet.service")
+	_, err = o.SystemctlAction(ctx, "disable", "kubelet.service")
 	if err != nil {
 		return fmt.Errorf("failed to disable kubelet: %w", err)
 	}
 
 	o.log.Info("Stopping containers and CRI-O runtime.")
-	crioSystemdStatus, err := o.SystemctlAction("is-active", "crio")
+	crioSystemdStatus, err := o.SystemctlAction(ctx, "is-active", "crio")
 	var exitErr *exec.ExitError
 	// If ExitCode is 3, the command succeeded and told us that crio is down
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() != 3 {
@@ -734,10 +734,10 @@ func (o *ops) StopClusterServices() error {
 	o.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
 		// CRI-O is active, so stop running containers with retry
-		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
+		_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
 			o.log.Info("Stop running containers")
 			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-			_, err = o.RunBashInHostNamespace("crictl", args...)
+			_, err = o.RunBashInHostNamespace(ctx, "crictl", args...)
 			if err != nil {
 				return false, fmt.Errorf("failed to stop running containers: %w", err)
 			}
@@ -746,7 +746,7 @@ func (o *ops) StopClusterServices() error {
 
 		// Execute a D-Bus call to stop the CRI-O runtime
 		o.log.Debug("Stopping CRI-O engine")
-		_, err = o.SystemctlAction("stop", "crio.service")
+		_, err = o.SystemctlAction(ctx, "stop", "crio.service")
 		if err != nil {
 			return fmt.Errorf("failed to stop crio engine: %w", err)
 		}
@@ -758,8 +758,8 @@ func (o *ops) StopClusterServices() error {
 	return nil
 }
 
-func (o *ops) EnableClusterServices() error {
-	_, err := o.SystemctlAction("enable", "kubelet.service")
+func (o *ops) EnableClusterServices(ctx context.Context) error {
+	_, err := o.SystemctlAction(ctx, "enable", "kubelet.service")
 	if err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}

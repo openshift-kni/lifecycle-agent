@@ -117,7 +117,7 @@ func (h *IPCIdleStageHandler) Handle(
 		}
 	}
 
-	if err := h.cleanup(logger); err != nil {
+	if err := h.cleanup(ctx, logger); err != nil {
 		controllerutils.SetIPIdleStatusFalse(
 			ipc,
 			controllerutils.ConditionReasons.Failed,
@@ -146,12 +146,12 @@ func (h *IPCIdleStageHandler) Handle(
 	return doNotRequeue(), nil
 }
 
-func (h *IPCIdleStageHandler) cleanup(logger logr.Logger) error {
-	if err := h.ChrootOps.RemountSysroot(); err != nil {
+func (h *IPCIdleStageHandler) cleanup(ctx context.Context, logger logr.Logger) error {
+	if err := h.ChrootOps.RemountSysroot(ctx); err != nil {
 		return fmt.Errorf("failed to remount sysroot: %w", err)
 	}
 
-	if err := h.cleanuoUnbootedStateroots(logger); err != nil {
+	if err := h.cleanuoUnbootedStateroots(ctx, logger); err != nil {
 		return fmt.Errorf("failed to clean up unbooted stateroots: %w", err)
 	}
 
@@ -192,14 +192,14 @@ func (h *IPCIdleStageHandler) checkIPManualCleanup(
 	return false, nil
 }
 
-func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) error {
-	staterootsToRemove, err := getStaterootsToRemove(h.RPMOstreeClient)
+func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(ctx context.Context, logger logr.Logger) error {
+	staterootsToRemove, err := getStaterootsToRemove(ctx, h.RPMOstreeClient)
 	if err != nil {
 		return fmt.Errorf("failed to determine stateroots to remove: %w", err)
 	}
 	logger.Info("Stateroots to remove", "stateroots", staterootsToRemove)
 
-	if err := h.ChrootOps.RemountBoot(); err != nil {
+	if err := h.ChrootOps.RemountBoot(ctx); err != nil {
 		return fmt.Errorf("failed to remount boot: %w", err)
 	}
 
@@ -207,7 +207,7 @@ func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) erro
 		return err
 	}
 
-	if err := CleanupUnbootedStateroots(logger, h.ChrootOps, h.OstreeClient, h.RPMOstreeClient); err != nil {
+	if err := CleanupUnbootedStateroots(ctx, logger, h.ChrootOps, h.OstreeClient, h.RPMOstreeClient); err != nil {
 		return fmt.Errorf("failed to clean up unbooted stateroots: %w", err)
 	}
 
@@ -250,8 +250,8 @@ func removeBootDirsByStaterootPrefixes(
 	return nil
 }
 
-func getStaterootsToRemove(rpmOstreeClient rpmostreeclient.IClient) ([]string, error) {
-	status, err := rpmOstreeClient.QueryStatus()
+func getStaterootsToRemove(ctx context.Context, rpmOstreeClient rpmostreeclient.IClient) ([]string, error) {
+	status, err := rpmOstreeClient.QueryStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query status with rpmostree: %w", err)
 	}

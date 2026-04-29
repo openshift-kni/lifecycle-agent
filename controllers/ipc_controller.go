@@ -96,7 +96,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	}
 
 	defer func() {
-		validNextStages, ierr := validNextStages(ipc, r.RPMOstreeClient)
+		validNextStages, ierr := validNextStages(ctx, ipc, r.RPMOstreeClient)
 		if ierr != nil {
 			if err != nil {
 				err = fmt.Errorf("%w; also failed to validate next stages: %s", err, ierr.Error())
@@ -122,7 +122,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	}()
 
 	if ipc.Status.ValidNextStages == nil {
-		validNextStages, err := validNextStages(ipc, r.RPMOstreeClient)
+		validNextStages, err := validNextStages(ctx, ipc, r.RPMOstreeClient)
 		if err != nil {
 			return requeueWithError(fmt.Errorf("failed to get valid next stages: %w", err))
 		}
@@ -244,19 +244,19 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 	return requeueWithShortInterval(), nil
 }
 
-func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
+func validNextStages(ctx context.Context, ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
 	inProgressStage := controllerutils.GetIPInProgressStage(ipc)
 
 	if inProgressStage == ipcv1.IPStages.Idle {
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 
-	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
+	isTargetStaterootBooted, err := isTargetStaterootBooted(ctx, ipc, rpmOstreeClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
 	}
 
-	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(rpmOstreeClient)
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(ctx, rpmOstreeClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
 	}
@@ -306,7 +306,7 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 
 // isTargetStaterootBooted determines whether the stateroot prepared for this IP change is currently booted.
 // It reconstructs the expected stateroot name from the spec (matching the lca-cli prepare logic) and queries rpm-ostree.
-func isTargetStaterootBooted(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) (*bool, error) {
+func isTargetStaterootBooted(ctx context.Context, ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) (*bool, error) {
 	if rpmOstreeClient == nil {
 		return nil, fmt.Errorf("rpmOstreeClient is nil")
 	}
@@ -316,7 +316,7 @@ func isTargetStaterootBooted(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclien
 		return nil, fmt.Errorf("failed to build target stateroot name")
 	}
 
-	booted, err := rpmOstreeClient.IsStaterootBooted(targetStaterootName)
+	booted, err := rpmOstreeClient.IsStaterootBooted(ctx, targetStaterootName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if target stateroot is booted: %w", err)
 	}
@@ -324,12 +324,12 @@ func isTargetStaterootBooted(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclien
 	return lo.ToPtr(booted), nil
 }
 
-func isUnbootedStaterootAvailable(rpmOstreeClient rpmostreeclient.IClient) (*bool, error) {
+func isUnbootedStaterootAvailable(ctx context.Context, rpmOstreeClient rpmostreeclient.IClient) (*bool, error) {
 	if rpmOstreeClient == nil {
 		return nil, fmt.Errorf("rpmOstreeClient is nil")
 	}
 
-	unbootedStaterootName, err := rpmOstreeClient.GetUnbootedStaterootName()
+	unbootedStaterootName, err := rpmOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil || unbootedStaterootName == "" {
 		return lo.ToPtr(false), nil
 	}
@@ -520,7 +520,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		authFile = tmpPath
 	}
 
-	if _, err := r.ChrootOps.RunBashInHostNamespace(
+	if _, err := r.ChrootOps.RunBashInHostNamespace(ctx,
 		"podman",
 		"pull",
 		"--authfile",
@@ -549,7 +549,7 @@ func isIPTransitionRequested(ipc *ipcv1.IPConfig) bool {
 }
 
 func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {
-	output, err := r.nmstateShowJSON()
+	output, err := r.nmstateShowJSON(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get nmstate output: %w", err)
 	}
@@ -628,8 +628,8 @@ func (r *IPConfigReconciler) inferDNSFilterOutFamily() (*string, error) {
 	return nil, fmt.Errorf("unknown filter file contents: %q", content)
 }
 
-func (r *IPConfigReconciler) nmstateShowJSON() (string, error) {
-	output, err := r.NsenterOps.RunInHostNamespace("nmstatectl", "show", "--json", "-q")
+func (r *IPConfigReconciler) nmstateShowJSON(ctx context.Context) (string, error) {
+	output, err := r.NsenterOps.RunInHostNamespace(ctx, "nmstatectl", "show", "--json", "-q")
 	if err != nil {
 		return "", fmt.Errorf("failed to run nmstatectl show --json: %w", err)
 	}

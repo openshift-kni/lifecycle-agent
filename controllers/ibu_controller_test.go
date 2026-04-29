@@ -875,7 +875,7 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 
 			ctrl := gomock.NewController(t)
 			mockClient := rpmostreeclient.NewMockIClient(ctrl)
-			mockClient.EXPECT().IsStaterootBooted("rhcos_").Return(false, nil)
+			mockClient.EXPECT().IsStaterootBooted(gomock.Any(), "rhcos_").Return(false, nil)
 
 			r := &ImageBasedUpgradeReconciler{
 				Client:          fakeClient,
