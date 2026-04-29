@@ -399,6 +399,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
 		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
 		mockRpm.EXPECT().QueryStatus().Return(nil, errors.New("rpm error")).Times(1)
 
 		res, err := h.Handle(ctx, ipc)
@@ -436,15 +437,20 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
+		oldOsReadDir := osReadDir
+		defer func() { osReadDir = oldOsReadDir }()
+		osReadDir = func(name string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil }
+
 		status := &rpmostreeclient.Status{
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
 		}
 
 		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
-		// getStaterootsToRemove + CleanupUnbootedStateroots
-		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(2)
+		// getStaterootsToRemove + removeOrphanedBootEntries + CleanupUnbootedStateroots
+		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(3)
 		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
-		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(1)
+		// removeBootDirsByStaterootPrefixes + removeOrphanedBootEntries
+		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(2)
 		mockRpm.EXPECT().RpmOstreeCleanup().Return(nil).Times(1)
 		mockOps.EXPECT().StatFile(gomock.Any()).Return(fakeFileInfo{}, nil).Times(1)
 		mockOps.EXPECT().RemoveAllFiles(gomock.Any()).Return(errors.New("rm failed")).Times(1)
@@ -501,14 +507,20 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
+		oldOsReadDir := osReadDir
+		defer func() { osReadDir = oldOsReadDir }()
+		osReadDir = func(name string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil }
+
 		status := &rpmostreeclient.Status{
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
 		}
 
 		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
-		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(2) // getStaterootsToRemove + CleanupUnbootedStateroots
+		// getStaterootsToRemove + removeOrphanedBootEntries + CleanupUnbootedStateroots
+		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(3)
 		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
-		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(1)
+		// removeBootDirsByStaterootPrefixes + removeOrphanedBootEntries
+		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(2)
 		mockRpm.EXPECT().RpmOstreeCleanup().Return(nil).Times(1)
 		mockOps.EXPECT().StatFile(gomock.Any()).Return(nil, errors.New("not exist")).Times(1)
 		mockOps.EXPECT().RemoveAllFiles(gomock.Any()).Times(0)
@@ -789,5 +801,90 @@ func TestRemoveBootDirsByStaterootPrefixes_NoBootDir(t *testing.T) {
 	mockOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).Times(1)
 
 	err := removeBootDirsByStaterootPrefixes(logger, mockOps, []string{"rhcos"})
+	assert.NoError(t, err)
+}
+
+func TestRemoveOrphanedBootEntries(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockOps := ops.NewMockOps(gc)
+	mockRpm := rpmostreeclient.NewMockIClient(gc)
+	logger := logr.Logger{}
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+
+	status := &rpmostreeclient.Status{
+		Deployments: []rpmostreeclient.Deployment{
+			{OSName: "rhcos_4.22.0_ec.5", Booted: true},
+		},
+	}
+	mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(1)
+
+	entries := []os.DirEntry{
+		idleCleanupTestDirEntry{name: "rhcos-d1aaeead2ad0571c", isDir: true},                // orphaned, no matching deployment
+		idleCleanupTestDirEntry{name: "rhcos_192-168-128-80-d1aaeead2ad0571c", isDir: true}, // orphaned, no matching deployment
+		idleCleanupTestDirEntry{name: "rhcos_4.22.0_ec.5-d1aaeead2ad0571c", isDir: true},    // matches booted stateroot, keep
+		idleCleanupTestDirEntry{name: "somefile", isDir: false},                             // not a dir, ignore
+	}
+	mockOps.EXPECT().ReadDir(bootOstreePath).Return(entries, nil).Times(1)
+
+	mockOps.EXPECT().RemoveAllFiles(filepath.Join(bootOstreePath, "rhcos-d1aaeead2ad0571c")).Return(nil).Times(1)
+	mockOps.EXPECT().RemoveAllFiles(filepath.Join(bootOstreePath, "rhcos_192-168-128-80-d1aaeead2ad0571c")).Return(nil).Times(1)
+
+	err := removeOrphanedBootEntries(logger, mockOps, mockRpm)
+	assert.NoError(t, err)
+}
+
+func TestRemoveOrphanedBootEntries_NoBootDir(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockOps := ops.NewMockOps(gc)
+	mockRpm := rpmostreeclient.NewMockIClient(gc)
+	logger := logr.Logger{}
+
+	status := &rpmostreeclient.Status{
+		Deployments: []rpmostreeclient.Deployment{
+			{OSName: "rhcos", Booted: true},
+		},
+	}
+	mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(1)
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+	mockOps.EXPECT().ReadDir(bootOstreePath).Return(nil, os.ErrNotExist).Times(1)
+	mockOps.EXPECT().IsNotExist(os.ErrNotExist).Return(true).Times(1)
+
+	err := removeOrphanedBootEntries(logger, mockOps, mockRpm)
+	assert.NoError(t, err)
+}
+
+func TestRemoveOrphanedBootEntries_MultipleDeployments(t *testing.T) {
+	gc := gomock.NewController(t)
+	defer gc.Finish()
+
+	mockOps := ops.NewMockOps(gc)
+	mockRpm := rpmostreeclient.NewMockIClient(gc)
+	logger := logr.Logger{}
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+
+	status := &rpmostreeclient.Status{
+		Deployments: []rpmostreeclient.Deployment{
+			{OSName: "rhcos_4.22.0", Booted: true},
+			{OSName: "rhcos_4.21.0", Booted: false},
+		},
+	}
+	mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(1)
+
+	entries := []os.DirEntry{
+		idleCleanupTestDirEntry{name: "rhcos_4.22.0-aaa", isDir: true}, // matches deployed, keep
+		idleCleanupTestDirEntry{name: "rhcos_4.21.0-bbb", isDir: true}, // matches deployed, keep
+		idleCleanupTestDirEntry{name: "rhcos-old-ccc", isDir: true},    // orphaned, remove
+	}
+	mockOps.EXPECT().ReadDir(bootOstreePath).Return(entries, nil).Times(1)
+	mockOps.EXPECT().RemoveAllFiles(filepath.Join(bootOstreePath, "rhcos-old-ccc")).Return(nil).Times(1)
+
+	err := removeOrphanedBootEntries(logger, mockOps, mockRpm)
 	assert.NoError(t, err)
 }
