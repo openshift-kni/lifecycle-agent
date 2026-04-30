@@ -74,6 +74,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
+	"github.com/openshift-kni/lifecycle-agent/version"
 	utiltls "github.com/openshift/controller-runtime-common/pkg/tls"
 	"github.com/openshift/library-go/pkg/config/leaderelection"
 	"github.com/sirupsen/logrus"
@@ -136,6 +137,8 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	setupLog.Info("Starting Lifecycle Agent", "version", version.String())
 
 	scheme.AddKnownTypes(ocpv1.GroupVersion,
 		&ocpv1.ClusterVersion{},
