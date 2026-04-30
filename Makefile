@@ -38,6 +38,13 @@ YQ_VERSION ?= v4.45.4
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
+# Version injection via ldflags
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS = -X github.com/openshift-kni/lifecycle-agent/version.Version=$(VERSION) \
+          -X github.com/openshift-kni/lifecycle-agent/version.GitCommit=$(GIT_COMMIT) \
+          -X github.com/openshift-kni/lifecycle-agent/version.BuildTime=$(BUILD_TIME)
+
 # The registry auth file is mounted into the container to allow for private registry pulls.
 # This is automatically detected and mounted into the container if it exists on the host.
 # If it does not exist, a warning is printed and the registry pulls may fail if not public.
@@ -240,7 +247,7 @@ mock-gen: sync-git-submodules $(LOCALBIN) ## Download mockgen locally if necessa
 ##@ Build
 
 build: generate fmt vet ## Build manager binary.
-	go build -o bin/manager main/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/manager main/main.go
 
 run: manifests generate fmt vet ## Run a controller from your host.
 	PRECACHE_WORKLOAD_IMG=${IMG} go run ./main/main.go
@@ -249,7 +256,11 @@ debug: manifests generate fmt vet ## Run a controller from your host that accept
 	PRECACHE_WORKLOAD_IMG=${IMG} dlv debug --headless --listen 127.0.0.1:2345 --api-version 2 --accept-multiclient ./main.go
 
 docker-build: ## Build container image with the manager.
-	${ENGINE} build --platform=linux/${GOARCH} -t ${IMG} -f Dockerfile .
+	${ENGINE} build --platform=linux/${GOARCH} \
+		--build-arg VERSION="$(VERSION)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg BUILD_TIME="$(BUILD_TIME)" \
+		-t ${IMG} -f Dockerfile .
 
 docker-push: docker-build ## Push container image with the manager.
 	${ENGINE} push ${IMG}
@@ -337,7 +348,7 @@ cli-run: common-deps-update fmt vet ## Run the lca-cli tool from your host.
 	go run main/lca-cli/main.go
 
 cli-build: common-deps-update fmt vet ## Build the lca-cli tool from your host.
-	go build -o bin/lca-cli main/lca-cli/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/lca-cli main/lca-cli/main.go
 
 # Unittests variables
 TEST_FORMAT ?= standard-verbose
