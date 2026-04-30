@@ -157,4 +157,3 @@ run:
   tests: false
 
 issues:
-  # No exclude-rules needed - using inline nolint directives instead
