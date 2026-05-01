@@ -305,7 +305,7 @@ func (r *IPCRollbackTwoPhaseHandler) scheduleIPConfigRollback(
 
 func (h *IPCRollbackStageHandler) validateRollbackStart() error {
 	if err := h.validateUnbootedStaterootAvailable(); err != nil {
-		return err
+		return fmt.Errorf("failed to validate unbooted stateroot availability: %w", err)
 	}
 
 	return nil
