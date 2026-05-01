@@ -69,22 +69,22 @@ func (r *UpgradeClusterConfigGather) FetchClusterConfig(ctx context.Context, ost
 
 	clusterConfigPath, err := r.configDir(ostreeVarDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get cluster config directory: %w", err)
 	}
 	manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 	if err := r.fetchIDMS(ctx, manifestsDir); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch IDMS: %w", err)
 	}
 
 	if err := r.fetchClusterInfo(ctx, clusterConfigPath); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch cluster info: %w", err)
 	}
 	if err := r.fetchICSPs(ctx, manifestsDir); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch ICSPs: %w", err)
 	}
 	if err := r.fetchNetworkConfig(ostreeVarDir); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch network config: %w", err)
 	}
 
 	r.Log.Info("Successfully fetched cluster configuration")
@@ -350,42 +350,42 @@ func (r *UpgradeClusterConfigGather) fetchClusterInfo(ctx context.Context, clust
 
 	infraID, err := r.getInfraID(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get infra ID: %w", err)
 	}
 
 	pullSecret, err := r.getPullSecret(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get pull secret: %w", err)
 	}
 
 	kubeadminPasswordHash, err := r.GetKubeadminPasswordHash(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get kubeadmin password hash: %w", err)
 	}
 
 	serverSSHKeys, err := r.GetServerSSHKeys(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get server SSH keys: %w", err)
 	}
 
 	proxy, statusProxy, err := r.GetProxy(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get proxy config: %w", err)
 	}
 
 	additionalTrustBundle, err := r.GetAdditionalTrustBundle(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get additional trust bundle: %w", err)
 	}
 
 	installConfig, err := r.GetInstallConfig(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get install config: %w", err)
 	}
 
 	chronyConfig, err := r.getChronyConfig()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get chrony config: %w", err)
 	}
 
 	seedReconfiguration := SeedReconfigurationFromClusterInfo(clusterInfo, seedReconfigurationKubeconfigRetention,
@@ -414,7 +414,7 @@ func (r *UpgradeClusterConfigGather) fetchIDMS(ctx context.Context, manifestsDir
 	r.Log.Info("Fetching IDMS")
 	idms, err := r.getIDMSs(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to fetch IDMS")
+		return fmt.Errorf("failed to fetch IDMS: %w", err)
 	}
 
 	if len(idms.Items) < 1 {
@@ -514,7 +514,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 		}
 		typeMeta, err := r.typeMetaForObject(&icp) //nolint:gosec
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get type meta for ICSP %s: %w", icp.Name, err)
 		}
 		obj.TypeMeta = *typeMeta
 		obj.Labels = icp.Labels
@@ -523,7 +523,7 @@ func (r *UpgradeClusterConfigGather) fetchICSPs(ctx context.Context, manifestsDi
 	}
 	typeMeta, err := r.typeMetaForObject(iscpsList)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get type meta for ICSP list: %w", err)
 	}
 	iscpsList.TypeMeta = *typeMeta
 
