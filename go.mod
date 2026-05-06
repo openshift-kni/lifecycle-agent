@@ -1,14 +1,14 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.21
+go 1.24.0
 
 require (
 	github.com/containers/image v3.0.2+incompatible
 	github.com/containers/image/v5 v5.5.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.19.0
-	github.com/go-logr/logr v1.4.2
-	github.com/google/go-cmp v0.6.0
+	github.com/go-logr/logr v1.4.3
+	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.2.0
 	github.com/openshift/api v0.0.0-20240423014330-2cb60a113ad1
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
@@ -25,7 +25,7 @@ require (
 	github.com/vmware-tanzu/velero v1.13.2
 	go.etcd.io/etcd/client/v3 v3.5.14
 	go.uber.org/mock v0.4.0
-	golang.org/x/crypto v0.26.0
+	golang.org/x/crypto v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.5
 	k8s.io/apiextensions-apiserver v0.29.5
@@ -52,6 +52,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
+	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 	gopkg.in/djherbis/times.v1 v1.3.0 // indirect
 	k8s.io/component-base v0.29.5 // indirect
 	k8s.io/gengo v0.0.0-20230829151522-9cce18d56c01 // indirect
@@ -85,7 +86,7 @@ require (
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/glog v1.2.4 // indirect
+	github.com/golang/glog v1.2.5 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/gnostic-models v0.6.9-0.20230804172637-c7be7c783f49 // indirect
@@ -123,20 +124,20 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go4.org v0.0.0-20200104003542-c7e774b10ea0 // indirect
 	golang.org/x/exp v0.0.0-20240525044651-4c93da0ed11d // indirect
-	golang.org/x/mod v0.17.0 // indirect
-	golang.org/x/net v0.26.0 // indirect
-	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.23.0 // indirect
-	golang.org/x/term v0.23.0 // indirect
-	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/oauth2 v0.34.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/term v0.38.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
-	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
+	golang.org/x/tools v0.39.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240528184218-531527333157 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 // indirect
-	google.golang.org/grpc v1.65.0 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/grpc v1.79.3 // indirect
+	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
