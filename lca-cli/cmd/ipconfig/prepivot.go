@@ -271,7 +271,7 @@ func installMonitorInitializationServiceInNewStateroot(
 	destinationFilePath := filepath.Join(ostreeData.NewStateroot.DeploymentDir, "etc/systemd/system", common.IPCInitMonitorService)
 	logger.Infof("Creating service %s", common.IPCInitMonitorService)
 
-	if err := os.MkdirAll(path.Dir(destinationFilePath), 0o755); err != nil {
+	if err := os.MkdirAll(path.Dir(destinationFilePath), 0o755); err != nil { //nolint:gosec // intentional permissions for systemd directory
 		return fmt.Errorf("failed to create destination directory for %s: %w", common.IPCInitMonitorService, err)
 	}
 	if err := os.WriteFile(destinationFilePath, []byte(lcacli.LcaInitMonitorServiceFile), common.FileMode0600); err != nil {
@@ -447,7 +447,7 @@ func validateClusterAPIAndUserIPSpec(
 	}
 
 	if dnsIPFamily != "" && dnsIPFamily != common.DNSFamilyNone {
-		if !(clusterHasIPv4 && clusterHasIPv6) {
+		if !clusterHasIPv4 || !clusterHasIPv6 {
 			return fmt.Errorf("dns-ip-family is supported only on dual-stack clusters")
 		}
 	}
@@ -619,7 +619,7 @@ func installIpConfigurationServiceInNewStateroot(
 	)
 	logger.Infof("Creating service %s", common.IPConfigurationService)
 
-	if err := os.MkdirAll(path.Dir(destinationFilePath), 0o755); err != nil {
+	if err := os.MkdirAll(path.Dir(destinationFilePath), 0o755); err != nil { //nolint:gosec // intentional permissions for systemd directory
 		return fmt.Errorf("failed to create destination directory for %s: %w", common.IPConfigurationService, err)
 	}
 

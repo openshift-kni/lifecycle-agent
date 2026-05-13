@@ -63,6 +63,7 @@ const (
 	NmstateConfigFileName             = "nmstate.yaml"
 	SeedDataDir                       = "/var/seed_data"
 	KubeconfigCryptoDir               = "kubeconfig-crypto"
+	CertManagerCryptoDir              = "certmanager-crypto"
 	ClusterConfigDir                  = "cluster-configuration"
 	ContainersListFileName            = "containers.list"
 	SeedClusterInfoFileName           = "manifest.json"
@@ -161,6 +162,10 @@ const (
 	IPv4FamilyName = "ipv4"
 	IPv6FamilyName = "ipv6"
 	DNSFamilyNone  = "none"
+
+	OvsBridgeInterfaceType = "ovs-bridge"
+	OvsInterfaceType       = "ovs-interface"
+	OvsBridgeExternalName  = "br-ex"
 )
 
 // DNSMasq-related constants

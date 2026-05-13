@@ -65,7 +65,7 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
 			return err
 		}
-		defer os.Remove(common.PathOutsideChroot(pullSecretFilename))
+		defer func() { _ = os.Remove(common.PathOutsideChroot(pullSecretFilename)) }()
 	}
 
 	if _, err := ops.Execute("podman", "pull", "--authfile", pullSecretFilename, ibu.Spec.SeedImageRef.Image); err != nil {
@@ -191,7 +191,7 @@ func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(ctx context.Context,
 			err = fmt.Errorf("failed to write seed image pull-secret to file %s, err: %w", pullSecretFilename, err)
 			return nil, err
 		}
-		defer os.Remove(common.PathOutsideChroot(pullSecretFilename))
+		defer func() { _ = os.Remove(common.PathOutsideChroot(pullSecretFilename)) }()
 	}
 
 	inspectArgs := []string{
@@ -345,7 +345,7 @@ func (r *ImageBasedUpgradeReconciler) validateSeedOcpVersion(seedOcpVersion stri
 
 func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVars []corev1.EnvVar, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Client.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}

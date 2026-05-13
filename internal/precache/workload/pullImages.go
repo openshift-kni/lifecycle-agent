@@ -110,7 +110,7 @@ func GetAuthFile() (string, error) {
 	}
 
 	// Check if authFile exists
-	if _, err := os.Stat(authFile); os.IsNotExist(err) {
+	if _, err := os.Stat(authFile); os.IsNotExist(err) { //nolint:gosec // authFile path is validated
 		return "", fmt.Errorf("failed to get authfile for podman: %w", err)
 	}
 	log.Info("Auth file for podman found.")

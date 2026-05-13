@@ -134,7 +134,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			//setup
+			// setup
 
 			mockBackuprestore.EXPECT().GetSortedBackupsFromConfigmap(gomock.Any(), gomock.Any()).Return(tt.inputVelero, nil)
 			mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
@@ -287,7 +287,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			//setup
+			// setup
 			mockBackuprestore.EXPECT().LoadRestoresFromOadpRestorePath().Return(tt.inputVelero, nil).Times(1)
 
 			for _, track := range tt.trackers {
@@ -353,6 +353,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		extractAndExportManifestFromPoliciesToDirReturn func() error
 		fetchClusterConfigReturn                        func() error
 		fetchLvmConfigReturn                            func() error
+		fetchCertManagerConfigReturn                    func() error
 		exportIBUCRNew                                  bool
 		exportIBUCROrig                                 bool
 		rebootToNewStateRootReturn                      func() error
@@ -680,7 +681,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
 					Reason:  string(utils.ConditionReasons.InProgress),
 					Status:  metav1.ConditionTrue,
-					Message: "Exporting Cluster and LVM configuration",
+					Message: "Exporting Cluster, LVM, and cert-manager configuration",
 				},
 			},
 		},
@@ -715,6 +716,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil
 			},
 			fetchLvmConfigReturn: func() error {
+				return nil
+			},
+			fetchCertManagerConfigReturn: func() error {
 				return nil
 			},
 			exportIBUCRNew:  true,
@@ -778,6 +782,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			if tt.fetchLvmConfigReturn != nil {
 				mockClusterconfig.EXPECT().FetchLvmConfig(gomock.Any(), gomock.Any()).Return(tt.fetchLvmConfigReturn()).Times(1)
 			}
+			if tt.fetchCertManagerConfigReturn != nil {
+				mockClusterconfig.EXPECT().PreserveCertManagerConfig(gomock.Any(), gomock.Any()).Return(tt.fetchCertManagerConfigReturn()).Times(1)
+			}
 
 			oldHC := CheckHealth
 			defer func() {
@@ -805,7 +812,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				getStaterootPath = func(stateroot string) string {
 					_ = os.MkdirAll(filepath.Join(ibuTempDirNew, common.LCAConfigDir), 0777)
 					file, _ := os.OpenFile(filepath.Join(ibuTempDirNew, utils.IBUFilePath), os.O_CREATE, 0777)
-					file.Close()
+					_ = file.Close()
 					return ibuTempDirNew
 				}
 
@@ -818,7 +825,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				}()
 				_ = os.MkdirAll(filepath.Join(ibuTempDirOrig, common.LCAConfigDir), 0777)
 				file, _ := os.OpenFile(filepath.Join(ibuTempDirOrig, utils.IBUFilePath), os.O_CREATE, 0777)
-				file.Close()
+				_ = file.Close()
 				ibuPreStaterootPath = filepath.Join(ibuTempDirOrig, utils.IBUFilePath)
 			}
 			if tt.isOstreeAdminSetDefaultFeatureEnabledReturn != nil {

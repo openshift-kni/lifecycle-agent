@@ -112,7 +112,7 @@ func (c *ImageMgmtClient) GetInuseImages() (inUse []string, rc error) {
 	}
 
 	// Get the list of containers via podman
-	output, err = c.Executor.Execute("podman", "ps", "-a", "--format", "json")
+	output, err = c.Executor.Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error")
 	if err != nil {
 		rc = fmt.Errorf("failed to run podman ps: %w", err)
 		return
@@ -200,7 +200,7 @@ func (c *ImageMgmtClient) GetRemovalCandidates() (removalCandidates []imageMgmtI
 
 	var images []imageMgmtImageInfo
 
-	output, err := c.Executor.Execute("podman", "images", "--format", "json")
+	output, err := c.Executor.Execute("podman", "images", "--format", "json", "--log-level", "error")
 	if err != nil {
 		rc = fmt.Errorf("failed to run podman images command: %w", err)
 		return

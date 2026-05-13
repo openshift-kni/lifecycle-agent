@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 4.22.0
+VERSION ?= 5.0.0
 
 # BASHATE_VERSION defines the bashate version to download from GitHub releases.
 BASHATE_VERSION ?= 2.1.1
@@ -12,7 +12,7 @@ BASHATE_VERSION ?= 2.1.1
 CONTROLLER_GEN_VERSION ?= v0.19.0
 
 # GOLANGCI_LINT_VERSION defines the golangci-lint version to download from GitHub releases.
-GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_VERSION ?= v2.11.3
 
 # KUSTOMIZE_VERSION defines the kustomize version to download from go modules.
 KUSTOMIZE_VERSION ?= v5@v5.1.1
@@ -52,7 +52,7 @@ CATALOG_OUTPUT_FORMAT = json
 CATALOG_KONFLUX = .konflux/catalog/$(PACKAGE_NAME_KONFLUX)/catalog.$(CATALOG_OUTPUT_FORMAT)
 
 # Konflux bundle image configuration
-BUNDLE_NAME_SUFFIX = operator-bundle-4-22
+BUNDLE_NAME_SUFFIX = operator-bundle-5-0
 PRODUCTION_BUNDLE_NAME = operator-bundle
 
 # By default we build the same architecture we are running
@@ -188,7 +188,7 @@ vet: ## Run go vet against code.
 .PHONY: unittest
 unittest:
 	@echo "Running unit tests"
-	go test -coverprofile=coverage.out -v ./...
+	GOTOOLCHAIN=go1.25.0+auto go test -coverprofile=coverage.out -v ./...
 
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
@@ -295,8 +295,8 @@ bundle-check: bundle
 
 .PHONY: bundle-run
 bundle-run: # Install bundle on cluster using operator sdk.
-	oc create ns openshift-lifecycle-agent
-	$(OPERATOR_SDK) --security-context-config restricted -n openshift-lifecycle-agent run bundle $(BUNDLE_IMG)
+	OPERATOR_SDK="$(OPERATOR_SDK)" BUNDLE_IMG="$(BUNDLE_IMG)" \
+		bash $(PROJECT_DIR)/hack/bundle-run.sh
 
 .PHONY: bundle-upgrade
 bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
@@ -381,7 +381,7 @@ golangci-lint-download: sync-git-submodules $(LOCALBIN) ## Download golangci-lin
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
 		download-go-tool \
 		TOOL_NAME=golangci-lint \
-		GO_MODULE=github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) \
+		GO_MODULE=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) \
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 	@echo "Golangci-lint downloaded successfully."
 
@@ -585,7 +585,7 @@ konflux-compare-catalog: sync-git-submodules ## Compare generated catalog with u
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-compare-catalog \
 		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
 		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
-		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-4-22:latest
+		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-5-0:latest
 
 .PHONY: konflux-all
 konflux-all: konflux-filter-unused-redhat-repos konflux-update-tekton-task-refs konflux-generate-catalog-production konflux-validate-catalog ## Run all Konflux-related targets

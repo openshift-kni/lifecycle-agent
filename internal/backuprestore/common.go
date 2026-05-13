@@ -545,7 +545,7 @@ func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
 
 	// Check if OADP CRDs are installed
 	crds := &apiextensionsv1.CustomResourceDefinitionList{}
-	if err := h.Client.List(ctx, crds); err != nil {
+	if err := h.List(ctx, crds); err != nil {
 		h.Log.Error(err, "could not list CRDs to verify if OADP is installed")
 		return false
 	}
@@ -560,7 +560,7 @@ func (h *BRHandler) IsOadpInstalled(ctx context.Context) bool {
 	var oadpCrds []string
 	for _, crd := range crds.Items {
 		if strings.HasSuffix(crd.GetName(), "oadp.openshift.io") {
-			oadpCrds = append(oadpCrds, crd.ObjectMeta.Name)
+			oadpCrds = append(oadpCrds, crd.Name)
 		}
 	}
 
@@ -585,7 +585,7 @@ func (h *BRHandler) GetDataProtectionApplicationList(ctx context.Context) (*unst
 // CheckOadpMinimumVersion checks the minimum supported version for the OADP operator version from the installed CSV.
 func (h *BRHandler) CheckOadpMinimumVersion(ctx context.Context) (bool, error) {
 	oadpCsvList := &operatorsv1alpha1.ClusterServiceVersionList{}
-	if err := h.Client.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
+	if err := h.List(ctx, oadpCsvList, &client.ListOptions{Namespace: OadpNs}); err != nil {
 		return false, fmt.Errorf("failed to list ClusterServiceVersions in namespace %s: %w", OadpNs, err)
 	}
 

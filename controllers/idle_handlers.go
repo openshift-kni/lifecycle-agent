@@ -96,7 +96,7 @@ func (r *ImageBasedUpgradeReconciler) handleAbortFailure(ctx context.Context, ib
 func (r *ImageBasedUpgradeReconciler) checkManualCleanup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (bool, error) {
 	if _, ok := ibu.Annotations[utils.ManualCleanupAnnotation]; ok {
 		delete(ibu.Annotations, utils.ManualCleanupAnnotation)
-		if err := r.Client.Update(ctx, ibu); err != nil {
+		if err := r.Update(ctx, ibu); err != nil {
 			return false, fmt.Errorf("failed to remove manual cleanup annotation from ibu: %w", err)
 		}
 		return true, nil

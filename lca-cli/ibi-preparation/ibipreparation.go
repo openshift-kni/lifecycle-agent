@@ -236,7 +236,7 @@ func (i *IBIPrepare) cleanupRhcosSysroot() error {
 }
 
 func mirrorRegistrySourceRegistries(registriesConfFile string) ([]string, error) {
-	content, err := os.ReadFile(registriesConfFile)
+	content, err := os.ReadFile(registriesConfFile) //nolint:gosec // registriesConfFile path is validated
 	if err != nil {
 		return nil, fmt.Errorf("failed to read registry config file: %w", err)
 	}

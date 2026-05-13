@@ -256,7 +256,7 @@ func (h *EMHandler) ValidateExtraManifestConfigmaps(ctx context.Context, content
 	// A namespace set saves all created namespaces for dryrun
 	fakedNamespacesForDryrun := make(map[string]bool)
 	// Cleanup any faked namespaces at the end of validation
-	defer deleteFakedNamespacesForDryrun(ctx, h.Client, h.Log, fakedNamespacesForDryrun)
+	defer func() { _ = deleteFakedNamespacesForDryrun(ctx, h.Client, h.Log, fakedNamespacesForDryrun) }()
 
 	nsManifestsSet := make(map[string]bool) // A namespace set collects appeared namespaces in configmaps
 	for _, manifestGroup := range sortedManifests {
@@ -502,7 +502,7 @@ func (h *EMHandler) ApplyExtraManifests(ctx context.Context, fromDir string) err
 	if err != nil {
 		return fmt.Errorf("failed to read extra manifests from path: %w", err)
 	}
-	if manifests == nil || len(manifests) == 0 {
+	if len(manifests) == 0 {
 		h.Log.Info(fmt.Sprintf("No extra manifests to apply in path %s", fromDir))
 		return nil
 	}

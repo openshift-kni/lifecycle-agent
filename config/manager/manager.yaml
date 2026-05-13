@@ -45,7 +45,6 @@ spec:
         - /usr/local/bin/manager
         args:
         - --metrics-bind-address=:6443
-        - --metrics-tls-cert-dir=/secrets/tls/metrics
         env:
         - name: MY_POD_NAME
           valueFrom:
@@ -68,8 +67,6 @@ spec:
         volumeMounts:
         - mountPath: /host
           name: host-root
-        - name: metrics-tls
-          mountPath: /secrets/tls/metrics
         livenessProbe:
           httpGet:
             path: /healthz
@@ -94,7 +91,3 @@ spec:
           path: /
           type: Directory
         name: host-root
-      - name: metrics-tls
-        secret:
-          defaultMode: 420
-          secretName: controller-manager-metrics-tls

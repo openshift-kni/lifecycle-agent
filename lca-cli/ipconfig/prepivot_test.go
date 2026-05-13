@@ -852,6 +852,208 @@ func mustSelfSignedCertPEM(t *testing.T, cn string) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}))
 }
 
+func TestRestoreMCDManagedVarLibFiles(t *testing.T) {
+	handler, mockOps, _, _ := newTestHandler(t)
+
+	// Set up old and new stateroot paths
+	oldSR := t.TempDir()
+	newSR := t.TempDir()
+	handler.ostreeData.OldStateroot.Path = oldSR
+	handler.ostreeData.NewStateroot.Path = newSR
+
+	// Create old stateroot files to be restored
+	oldOvnDir := filepath.Join(oldSR, common.OvnIcEtcFolder)
+	if err := os.MkdirAll(oldOvnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldOvnDir, "enable_dynamic_cpu_affinity"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create another MCO-managed file outside ovn-ic/etc
+	oldOtherDir := filepath.Join(oldSR, "var/lib/other")
+	if err := os.MkdirAll(oldOtherDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldOtherDir, "managed-file"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create MCD currentconfig with ignition file entries for both /var/lib/ files
+	mcdConfigDir := filepath.Dir(handler.mcdCurrentConfigPath)
+	if err := os.MkdirAll(mcdConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mcdConfig := `{
+		"apiVersion": "machineconfiguration.openshift.io/v1",
+		"kind": "MachineConfig",
+		"metadata": {"name": "rendered-master"},
+		"spec": {
+			"config": {
+				"ignition": {"version": "3.2.0"},
+				"storage": {
+					"files": [
+						{"path": "/var/lib/ovn-ic/etc/enable_dynamic_cpu_affinity"},
+						{"path": "/var/lib/other/managed-file"},
+						{"path": "/etc/some-other-file"}
+					]
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(handler.mcdCurrentConfigPath, []byte(mcdConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up mock expectations for both files
+	ovnDstDir := filepath.Join(newSR, common.OvnIcEtcFolder)
+	otherDstDir := filepath.Join(newSR, "var/lib/other")
+
+	mockOps.EXPECT().MkdirAll(ovnDstDir, os.FileMode(0o755)).
+		DoAndReturn(func(path string, perm os.FileMode) error {
+			return os.MkdirAll(path, perm)
+		})
+	mockOps.EXPECT().MkdirAll(otherDstDir, os.FileMode(0o755)).
+		DoAndReturn(func(path string, perm os.FileMode) error {
+			return os.MkdirAll(path, perm)
+		})
+
+	mockOps.EXPECT().RunInHostNamespace("cp", "-a", "--preserve=context", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(command string, args ...string) (string, error) {
+			src := args[2]
+			dst := args[3]
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return "", err
+			}
+			return "", os.WriteFile(dst, data, 0o644)
+		}).Times(2)
+
+	err := handler.restoreMCDManagedVarLibFiles()
+	assert.NoError(t, err)
+
+	// Verify both files were restored
+	ovnDstPath := filepath.Join(newSR, common.OvnIcEtcFolder, "enable_dynamic_cpu_affinity")
+	_, err = os.Stat(ovnDstPath)
+	assert.NoError(t, err, "OVN MCO-managed file should be restored")
+
+	otherDstPath := filepath.Join(newSR, "var/lib/other/managed-file")
+	_, err = os.Stat(otherDstPath)
+	assert.NoError(t, err, "Other MCO-managed /var/lib/ file should be restored")
+}
+
+func TestRemoveStaleAndRestorePreservesOvnMCDFiles(t *testing.T) {
+	handler, mockOps, _, _ := newTestHandler(t)
+
+	// Set up old and new stateroot paths
+	oldSR := t.TempDir()
+	newSR := t.TempDir()
+	deploymentDir := filepath.Join(newSR, "deploy")
+	handler.ostreeData.OldStateroot.Path = oldSR
+	handler.ostreeData.NewStateroot.Path = newSR
+	handler.ostreeData.NewStateroot.DeploymentDir = deploymentDir
+
+	// Create OVN dirs with both certs (should be removed) and MCO file (should survive)
+	newOvnDir := filepath.Join(newSR, common.OvnIcEtcFolder)
+	newCertsDir := filepath.Join(newSR, common.OvnNodeCerts)
+	if err := os.MkdirAll(newCertsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newCertsDir, "cert.pem"), []byte("cert"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	enableFile := filepath.Join(newOvnDir, "enable_dynamic_cpu_affinity")
+	if err := os.WriteFile(enableFile, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create other stale files
+	if err := os.MkdirAll(filepath.Join(deploymentDir, common.MultusCerts), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ovsDir := filepath.Dir(filepath.Join(deploymentDir, common.OvsConfDb))
+	if err := os.MkdirAll(ovsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, common.OvsConfDb), []byte("db"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create old stateroot file to be restored
+	oldOvnDir := filepath.Join(oldSR, common.OvnIcEtcFolder)
+	if err := os.MkdirAll(oldOvnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldOvnDir, "enable_dynamic_cpu_affinity"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create MCD currentconfig
+	mcdConfigDir := filepath.Dir(handler.mcdCurrentConfigPath)
+	if err := os.MkdirAll(mcdConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mcdConfig := `{
+		"apiVersion": "machineconfiguration.openshift.io/v1",
+		"kind": "MachineConfig",
+		"metadata": {"name": "rendered-master"},
+		"spec": {
+			"config": {
+				"ignition": {"version": "3.2.0"},
+				"storage": {
+					"files": [
+						{"path": "/var/lib/ovn-ic/etc/enable_dynamic_cpu_affinity"}
+					]
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(handler.mcdCurrentConfigPath, []byte(mcdConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: Remove stale files
+	err := handler.removeStaleFilesInNewStaterootForRegeneration()
+	assert.NoError(t, err)
+
+	// Verify OVN dir was removed (including MCO file)
+	_, err = os.Stat(newOvnDir)
+	assert.True(t, os.IsNotExist(err), "OVN IC etc dir should be removed")
+
+	// Verify MultusCerts was removed
+	_, err = os.Stat(filepath.Join(deploymentDir, common.MultusCerts))
+	assert.True(t, os.IsNotExist(err), "MultusCerts should be removed")
+
+	// Step 2: Restore MCO-managed files
+	dstDir := filepath.Join(newSR, common.OvnIcEtcFolder)
+	mockOps.EXPECT().MkdirAll(dstDir, os.FileMode(0o755)).
+		DoAndReturn(func(path string, perm os.FileMode) error {
+			return os.MkdirAll(path, perm)
+		})
+
+	srcPath := filepath.Join(oldSR, common.OvnIcEtcFolder, "enable_dynamic_cpu_affinity")
+	dstPath := filepath.Join(newSR, common.OvnIcEtcFolder, "enable_dynamic_cpu_affinity")
+	mockOps.EXPECT().RunInHostNamespace("cp", "-a", "--preserve=context", srcPath, dstPath).
+		DoAndReturn(func(command string, args ...string) (string, error) {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return "", err
+			}
+			return "", os.WriteFile(dstPath, data, 0o644)
+		})
+
+	err = handler.restoreMCDManagedVarLibFiles()
+	assert.NoError(t, err)
+
+	// Verify MCO-managed file was restored
+	_, err = os.Stat(dstPath)
+	assert.NoError(t, err, "MCO-managed file should be restored after removal+restore cycle")
+
+	// Verify certs dir is still gone
+	_, err = os.Stat(filepath.Join(newSR, common.OvnNodeCerts))
+	assert.True(t, os.IsNotExist(err), "OVN node certs should remain removed")
+}
+
 func minimalMachineConfigYAML(kernelArgs []string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: machineconfiguration.openshift.io/v1\n")

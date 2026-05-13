@@ -16,7 +16,6 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	ocp_config_v1 "github.com/openshift/api/config/v1"
-	v1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
@@ -27,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -354,7 +352,7 @@ func HasFIPS(ctx context.Context, client runtimeclient.Client) (bool, error) {
 	return machineConfig.Spec.FIPS, nil
 }
 
-func GetAdditionalTrustBundleFromConfigmap(ctx context.Context, client client.Client, configmapName string) (string, error) {
+func GetAdditionalTrustBundleFromConfigmap(ctx context.Context, client runtimeclient.Client, configmapName string) (string, error) {
 	userCaBundleConfigmap := corev1.ConfigMap{}
 	if err := client.Get(ctx, types.NamespacedName{Name: configmapName,
 		Namespace: common.OpenshiftConfigNamespace}, &userCaBundleConfigmap); err != nil {
@@ -376,7 +374,7 @@ func GetAdditionalTrustBundleFromConfigmap(ctx context.Context, client client.Cl
 	return userCaBundleConfigmap.Data[common.CaBundleDataKey], nil
 }
 
-func GetClusterAdditionalTrustBundleState(ctx context.Context, client client.Client) (bool, string, error) {
+func GetClusterAdditionalTrustBundleState(ctx context.Context, client runtimeclient.Client) (bool, string, error) {
 	clusterAdditionalTrustBundle, err := GetAdditionalTrustBundleFromConfigmap(ctx, client, common.ClusterAdditionalTrustBundleName)
 	if err != nil {
 		return false, "", fmt.Errorf("failed to get additional trust bundle from configmap: %w", err)
@@ -486,7 +484,7 @@ func GetInstallConfig(ctx context.Context, client runtimeclient.Reader) (string,
 }
 
 // getLocalNodeName returns the current node's name from the hostname.
-func GetLocalNodeName(ctx context.Context, client client.Reader) (string, error) {
+func GetLocalNodeName(ctx context.Context, client runtimeclient.Reader) (string, error) {
 	nodeList := &corev1.NodeList{}
 	if err := client.List(ctx, nodeList); err != nil {
 		return "", fmt.Errorf("failed to list nodes: %w", err)
@@ -499,7 +497,7 @@ func GetLocalNodeName(ctx context.Context, client client.Reader) (string, error)
 	return nodeList.Items[0].Name, nil
 }
 
-func GetNodeInternalIPs(ctx context.Context, client client.Reader) ([]string, error) {
+func GetNodeInternalIPs(ctx context.Context, client runtimeclient.Reader) ([]string, error) {
 	nodeName, err := GetLocalNodeName(ctx, client)
 	if err != nil {
 		return nil, err
@@ -562,7 +560,7 @@ func WaitForApi(ctx context.Context, client runtimeclient.Client, log *logrus.Lo
 	log.Info("Start waiting for api")
 	_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
 		log.Info("waiting for api")
-		nodes := &v1.NodeList{}
+		nodes := &corev1.NodeList{}
 		if err = client.List(ctx, nodes); err == nil {
 			return true, nil
 		}

@@ -1,5 +1,5 @@
 # Build arguments
-ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.24
+ARG BUILDER_IMAGE=quay.io/projectquay/golang:1.25
 ARG RUNTIME_IMAGE=registry.access.redhat.com/ubi9-minimal:latest
 ARG OPENSHIFT_CLI_IMAGE=registry.redhat.io/openshift4/ose-cli-rhel9:latest
 

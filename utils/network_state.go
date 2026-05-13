@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/samber/lo"
 )
 
@@ -16,8 +18,10 @@ type NmAddr struct {
 
 // NmIPConf represents IPv4/IPv6 configuration for an interface.
 type NmIPConf struct {
-	Enabled bool     `json:"enabled"`
-	Address []NmAddr `json:"address"`
+	Enabled  bool     `json:"enabled"`
+	DHCP     bool     `json:"dhcp"`
+	Autoconf bool     `json:"autoconf,omitempty"`
+	Address  []NmAddr `json:"address"`
 }
 
 // NmIf represents a network interface in nmstate output.
@@ -108,14 +112,15 @@ func FindDefaultGateways(state NmState, bridgeName, defaultRouteV4, defaultRoute
 }
 
 // ExtractBrExVLANID inspects the bridge uplink port; if it's a VLAN interface, returns its VLAN ID.
-func ExtractBrExVLANID(state NmState, bridgeName string) (*int, error) {
-	uplink, err := ExtractBrExUplinkName(state, bridgeName)
+func ExtractBrExVLANID(state NmState) (*int, error) {
+	uplink, err := ExtractBrExUplinkName(state)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, intf := range state.Interfaces {
-		if intf.Name == uplink && intf.Type == "vlan" && intf.VLAN != nil {
+		if intf.Name == uplink && intf.Type == "vlan" &&
+			intf.VLAN != nil {
 			return &intf.VLAN.ID, nil
 		}
 	}
@@ -125,17 +130,51 @@ func ExtractBrExVLANID(state NmState, bridgeName string) (*int, error) {
 
 // ExtractBrExUplinkName returns the uplink port name connected to the given bridge
 // (excluding the bridge internal and patch ports).
-func ExtractBrExUplinkName(state NmState, bridgeName string) (string, error) {
-	for _, intf := range state.Interfaces {
-		if intf.Name == bridgeName && intf.Type == "ovs-bridge" {
-			for _, p := range intf.Bridge.Port {
-				if p.Name != "" && p.Name != bridgeName {
-					return p.Name, nil
-				}
-			}
+func ExtractBrExUplinkName(state NmState) (string, error) {
+	bridgeIf, err := getBrExBridgeInterface(state)
+	if err != nil {
+		return "", err
+	}
+
+	for _, p := range bridgeIf.Bridge.Port {
+		if !strings.Contains(p.Name, "patch") &&
+			p.Name != common.OvsBridgeExternalName {
+			return p.Name, nil
 		}
 	}
-	return "", fmt.Errorf("%s uplink port not found", bridgeName)
+
+	return "", fmt.Errorf(
+		"%s uplink interface not found",
+		common.OvsBridgeExternalName,
+	)
+}
+
+func getBrExBridgeInterface(state NmState) (*NmIf, error) {
+	for _, intf := range state.Interfaces {
+		if intf.Name == common.OvsBridgeExternalName &&
+			intf.Type == common.OvsBridgeInterfaceType {
+			return &intf, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"%s bridge interface not found",
+		common.OvsBridgeExternalName,
+	)
+}
+
+func GetBrExInterface(state NmState) (*NmIf, error) {
+	for _, intf := range state.Interfaces {
+		if intf.Name == common.OvsBridgeExternalName &&
+			intf.Type == common.OvsInterfaceType {
+			return &intf, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"%s interface not found",
+		common.OvsBridgeExternalName,
+	)
 }
 
 // FindMatchingCIDR returns the first CIDR from the list that matches the given IP's

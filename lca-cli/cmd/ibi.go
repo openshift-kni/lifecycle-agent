@@ -49,7 +49,7 @@ func init() {
 	rootCmd.AddCommand(ibi)
 	ibi.Flags().StringVarP(&configurationFile, "configuration-file", "f", "", "The path to the configuration file.")
 
-	rootCmd.MarkFlagRequired("configuration-file")
+	_ = rootCmd.MarkFlagRequired("configuration-file")
 }
 
 func runIBI() {

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"text/template"
 
 	"github.com/samber/lo"
@@ -25,10 +27,10 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
 
+	ignconfig "github.com/coreos/ignition/v2/config"
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
@@ -173,7 +175,7 @@ func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) err
 		}
 	}
 
-	_, err = os.Create(doneFile)
+	_, err = os.Create(doneFile) //nolint:gosec // doneFile path is validated
 	if err != nil {
 		return fmt.Errorf("failed to create RunOnce file: %w", err)
 	}
@@ -231,14 +233,14 @@ func CopyToTempFile(sourceFileName, directory, pattern string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer destinationFile.Close()
+	defer func() { _ = destinationFile.Close() }()
 	destinationFileName := destinationFile.Name()
 
-	sourceFile, err := os.Open(sourceFileName)
+	sourceFile, err := os.Open(sourceFileName) //nolint:gosec // sourceFileName path is validated by caller
 	if err != nil {
 		return "", fmt.Errorf("failed to open %s: %w", sourceFileName, err)
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
 		return "", fmt.Errorf("failed to copy %s to temporary file %s: %w", sourceFileName, destinationFileName, err)
@@ -280,7 +282,42 @@ func RemoveListOfFiles(log *logrus.Logger, files []string) error {
 	return nil
 }
 
-func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
+// GetMCDManagedVarLibFiles parses the MCD currentconfig to get the list of
+// managed files under /var/lib.
+func GetMCDManagedVarLibFiles(mcdConfigPath string) ([]string, error) {
+	var filelist []string
+	varlibRegex := regexp.MustCompile(`^/var/lib/`)
+
+	data, err := os.ReadFile(mcdConfigPath) //nolint:gosec // always set to the constant common.MCDCurrentConfig
+	if err != nil {
+		return filelist, fmt.Errorf("unable to read MCD currentconfig: %w", err)
+	}
+
+	var mc mcfgv1.MachineConfig
+
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return filelist, fmt.Errorf("unable to parse MCD currentconfig: %w", err)
+	}
+
+	if mc.Spec.Config.Raw == nil {
+		return filelist, fmt.Errorf("unable to find config in MCD currentconfig")
+	}
+
+	ign, _, err := ignconfig.Parse(mc.Spec.Config.Raw)
+	if err != nil {
+		return filelist, fmt.Errorf("unable to parse ignition config from MCD currentconfig: %w", err)
+	}
+
+	for _, f := range ign.Storage.Files {
+		if varlibRegex.MatchString(f.Path) {
+			filelist = append(filelist, f.Path)
+		}
+	}
+
+	return filelist, nil
+}
+
+func InitIBU(ctx context.Context, c runtimeclient.Client, log *logr.Logger) error {
 	ibu := &ibuv1.ImageBasedUpgrade{}
 	filePath := common.PathOutsideChroot(utils.IBUFilePath)
 	if err := ReadYamlOrJSONFile(filePath, ibu); err != nil {
@@ -337,7 +374,7 @@ func InitIBU(ctx context.Context, c client.Client, log *logr.Logger) error {
 	return nil
 }
 
-func InitIPConfig(ctx context.Context, c client.Client, log *logr.Logger) error {
+func InitIPConfig(ctx context.Context, c runtimeclient.Client, log *logr.Logger) error {
 	savedIPCPath := common.PathOutsideChroot(common.IPCFilePath)
 	restored := false
 	ipc := &ipcv1.IPConfig{}
@@ -400,7 +437,7 @@ func ConvertToRawExtension(config any) (runtime.RawExtension, error) {
 	}, nil
 }
 
-func UpdatePullSecretFromDockerConfig(ctx context.Context, c client.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
+func UpdatePullSecretFromDockerConfig(ctx context.Context, c runtimeclient.Client, dockerConfigJSON []byte) (*corev1.Secret, error) {
 	newPullSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      common.PullSecretName,
@@ -465,6 +502,12 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 		return nil, fmt.Errorf("failed to read manifest groups subdirs in %s: %w", basePath, err)
 	}
 
+	// Sort directories numerically by extracting trailing numbers from names
+	// This fixes the issue where restore10, restore11 come before restore2 when sorted alphabetically
+	sort.Slice(groupSubDirs, func(i, j int) bool {
+		return extractTrailingNumber(groupSubDirs[i].Name()) < extractTrailingNumber(groupSubDirs[j].Name())
+	})
+
 	for _, groupSubDir := range groupSubDirs {
 		if !groupSubDir.IsDir() {
 			log.Info("Unexpected file found, skipping...", "file",
@@ -500,6 +543,22 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 	}
 
 	return sortedManifests, nil
+}
+
+// extractTrailingNumber extracts the numeric suffix from a string.
+// For example: "restore1" -> 1, "restore10" -> 10, "group2" -> 2.
+// Returns 0 if no trailing number is found.
+func extractTrailingNumber(s string) int {
+	re := regexp.MustCompile(`\d+$`)
+	match := re.FindString(s)
+	if match == "" {
+		return 0
+	}
+	num, err := strconv.Atoi(match)
+	if err != nil {
+		return 0
+	}
+	return num
 }
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file

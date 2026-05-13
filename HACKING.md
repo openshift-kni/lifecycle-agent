@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- go >=1.18
+- go >=1.24
 - Spoke SNO cluster with pull-secret containing credentials to quay.io/${MY_REPO_ID}/
 
 ## Makefile targets
@@ -162,7 +162,7 @@ skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTR
 
 ## Setup dev backup steps
 
-### minio + oadp oprator
+### minio + oadp operator
 
 Consider using podman if you have a HV
 

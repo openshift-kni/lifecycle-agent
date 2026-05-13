@@ -720,7 +720,7 @@ func TestCreatePullSecretFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			log := &logrus.Logger{}
 			pullSecretFile := path.Join(tmpDir, "config.json")
-			clientgoscheme.AddToScheme(scheme)
+			_ = clientgoscheme.AddToScheme(scheme)
 			pp := NewPostPivot(scheme, log, mockOps, "", tmpDir, "")
 			err := pp.createPullSecretFile(tc.pullSecret, pullSecretFile)
 			assert.Equal(t, err != nil, tc.expectedError)
@@ -963,7 +963,7 @@ func fakeManifests(tmpDir string) error {
 		},
 	}
 	if err := utils.MarshalToFile(cm, filepath.Join(tmpDir, "user-ca-bundle.json")); err != nil {
-		return fmt.Errorf("Unexpected error: %v", err)
+		return fmt.Errorf("Unexpected error: %w", err)
 	}
 
 	icspList := &operatorv1alpha1.ImageContentSourcePolicyList{}
@@ -973,7 +973,7 @@ func fakeManifests(tmpDir string) error {
 	icsp2.SetLabels(map[string]string{"test-label": "true"})
 	icspList.Items = append(icspList.Items, *icsp1, *icsp2)
 	if err := utils.MarshalToFile(icspList, filepath.Join(tmpDir, "icsps.json")); err != nil {
-		return fmt.Errorf("Unexpected error: %v", err)
+		return fmt.Errorf("Unexpected error: %w", err)
 	}
 	return nil
 }

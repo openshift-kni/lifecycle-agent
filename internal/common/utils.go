@@ -177,7 +177,7 @@ func LogPodLogs(job *kbatch.Job, log logr.Logger, clientset *kubernetes.Clientse
 			log.Info("Failed to get pod log", "err", err.Error())
 			return
 		}
-		defer podLogs.Close()
+		defer func() { _ = podLogs.Close() }()
 
 		buf := new(bytes.Buffer)
 		if _, err := io.Copy(buf, podLogs); err != nil {

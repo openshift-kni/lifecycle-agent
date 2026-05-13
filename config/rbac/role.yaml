@@ -114,6 +114,14 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - certificates.k8s.io
   resources:
   - certificatesigningrequests
@@ -124,13 +132,7 @@ rules:
 - apiGroups:
   - config.openshift.io
   resources:
-  - clusteroperators
-  verbs:
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
+  - apiservers
   - clusterversions
   - imagedigestmirrorsets
   - infrastructures
@@ -138,6 +140,13 @@ rules:
   - proxies
   verbs:
   - get
+  - list
+  - watch
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - clusteroperators
+  verbs:
   - list
   - watch
 - apiGroups:

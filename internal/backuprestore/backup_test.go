@@ -36,7 +36,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -237,7 +236,7 @@ func TestCleanupBackupLabels(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		sch := apiruntime.NewScheme()
-		objs := []runtime.Object{
+		objs := []apiruntime.Object{
 			newUnstructuredWithLabel("group/version", "resource", "namespace", "name", backupLabel, "true"),
 			newUnstructuredWithLabel("group/version", "resource", "", "name", backupLabel, "true"),
 			newUnstructuredWithLabel("group/version", "resource", "", "name2", backupLabel, "true"),
@@ -284,7 +283,7 @@ func TestCleanupBackupLabels(t *testing.T) {
 
 func TestApplyBackupLabelsPreservereLabels(t *testing.T) {
 	sch := apiruntime.NewScheme()
-	objs := []runtime.Object{
+	objs := []apiruntime.Object{
 		newUnstructuredWithLabel("group/version", "resource", "namespace", "name", "label", "value"),
 	}
 	client := dynamicfake.NewSimpleDynamicClient(sch, objs...)
@@ -354,7 +353,7 @@ func TestApplyBackupLabels(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		sch := apiruntime.NewScheme()
-		objs := []runtime.Object{
+		objs := []apiruntime.Object{
 			newUnstructured("group/version", "resource", "namespace", "name"),
 			newUnstructured("group/version", "resource", "", "name"),
 			newUnstructured("group/version", "resource", "", "name2"),
@@ -646,7 +645,7 @@ func TestExportRestoresToDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(toDir)
+	defer func() { _ = os.RemoveAll(toDir) }()
 
 	// Create fake configmaps
 	cm1 := fakeConfigmap("configmap1", "1", 2, 1, false)
@@ -701,7 +700,7 @@ func TestExportOadpConfigurationToDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(toDir)
+	defer func() { _ = os.RemoveAll(toDir) }()
 
 	handler := &BRHandler{
 		Client: c,

@@ -90,6 +90,8 @@ var clusterCmData = `
 var (
 	testscheme = scheme.Scheme
 
+	pullSecretName = "pull-secret"
+
 	validMasterNode = &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{"node-role.kubernetes.io/master": "", "test": "test"},
@@ -97,19 +99,6 @@ var (
 		Status: corev1.NodeStatus{
 			Addresses: []corev1.NodeAddress{
 				{Type: corev1.NodeInternalIP, Address: "192.168.121.10"},
-				{Type: corev1.NodeHostName, Address: "seed"},
-			},
-		},
-	}
-
-	validDualStackMasterNode = &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{"node-role.kubernetes.io/master": "", "test": "test"},
-		},
-		Status: corev1.NodeStatus{
-			Addresses: []corev1.NodeAddress{
-				{Type: corev1.NodeInternalIP, Address: "192.168.121.10"},
-				{Type: corev1.NodeInternalIP, Address: "2001:db8::10"},
 				{Type: corev1.NodeHostName, Address: "seed"},
 			},
 		},
@@ -311,7 +300,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
@@ -359,7 +348,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}
@@ -454,7 +443,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				dir, err := os.ReadDir(filepath.Join(filesDir, manifestDir))
+				dir, err := os.ReadDir(filepath.Join(filesDir, ManifestDir))
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
@@ -501,7 +490,7 @@ func TestClusterConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				manifestsDir := filepath.Join(clusterConfigPath, manifestDir)
+				manifestsDir := filepath.Join(clusterConfigPath, ManifestDir)
 
 				// validate pull idms
 				idms := &ocpV1.ImageDigestMirrorSetList{}

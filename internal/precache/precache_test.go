@@ -46,7 +46,7 @@ var (
 )
 
 func init() {
-	os.Setenv(EnvLcaPrecacheImage, precacheWorkloadImage)
+	_ = os.Setenv(EnvLcaPrecacheImage, precacheWorkloadImage)
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {

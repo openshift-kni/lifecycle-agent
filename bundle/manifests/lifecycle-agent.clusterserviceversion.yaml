@@ -56,7 +56,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=4.14.0 <4.22.0'
+    olm.skipRange: '>=4.14.0 <5.0.0'
     operatorframework.io/suggested-namespace: openshift-lifecycle-agent
     operatorframework.io/suggested-namespace-template: |-
       {
@@ -70,7 +70,7 @@ metadata:
         }
       }
     operators.openshift.io/infrastructure-features: '["disconnected"]'
-    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
+    operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:5.0.0
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
     operators.operatorframework.io/builder: operator-sdk-v1.40.0
@@ -80,7 +80,7 @@ metadata:
     support: Red Hat
   labels:
     operatorframework.io/arch.amd64: supported
-  name: lifecycle-agent.v4.22.0
+  name: lifecycle-agent.v5.0.0
   namespace: openshift-lifecycle-agent
 spec:
   apiservicedefinitions: {}
@@ -176,18 +176,62 @@ spec:
       specDescriptors:
       - displayName: Stage
         path: stage
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:select
       - displayName: IPv4
         path: ipv4
+      - displayName: Address
+        path: ipv4.address
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
+      - displayName: Machine Network
+        path: ipv4.machineNetwork
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
+      - displayName: Gateway
+        path: ipv4.gateway
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv4
       - displayName: IPv6
         path: ipv6
+      - displayName: Address
+        path: ipv6.address
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
+      - displayName: Machine Network
+        path: ipv6.machineNetwork
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
+      - displayName: Gateway
+        path: ipv6.gateway
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:IPv6
       - displayName: DNS Servers
         path: dnsServers
+      - displayName: DNS Server 1
+        path: dnsServers[0]
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:DNS Servers
+      - displayName: DNS Server 2
+        path: dnsServers[1]
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:DNS Servers
       - displayName: VLAN ID
         path: vlanID
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
       - displayName: DNS Filter-Out Family
         path: dnsFilterOutFamily
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:select
       - displayName: Auto Rollback On Failure
         path: autoRollbackOnFailure
       - description: |-
@@ -197,6 +241,7 @@ spec:
         path: autoRollbackOnFailure.initMonitorTimeoutSeconds
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
+        - urn:alm:descriptor:com.tectonic.ui:fieldGroup:Auto Rollback On Failure
       statusDescriptors:
       - displayName: Observed Generation
         path: observedGeneration
@@ -370,6 +415,14 @@ spec:
           verbs:
           - get
         - apiGroups:
+          - cert-manager.io
+          resources:
+          - certificates
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
           - certificates.k8s.io
           resources:
           - certificatesigningrequests
@@ -380,13 +433,7 @@ spec:
         - apiGroups:
           - config.openshift.io
           resources:
-          - clusteroperators
-          verbs:
-          - list
-          - watch
-        - apiGroups:
-          - config.openshift.io
-          resources:
+          - apiservers
           - clusterversions
           - imagedigestmirrorsets
           - infrastructures
@@ -394,6 +441,13 @@ spec:
           - proxies
           verbs:
           - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - clusteroperators
+          verbs:
           - list
           - watch
         - apiGroups:
@@ -595,12 +649,11 @@ spec:
               containers:
               - args:
                 - --metrics-bind-address=:6443
-                - --metrics-tls-cert-dir=/secrets/tls/metrics
                 command:
                 - /usr/local/bin/manager
                 env:
                 - name: PRECACHE_WORKLOAD_IMG
-                  value: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
+                  value: quay.io/openshift-kni/lifecycle-agent-operator:5.0.0
                 - name: MY_POD_NAME
                   valueFrom:
                     fieldRef:
@@ -609,7 +662,7 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.namespace
-                image: quay.io/openshift-kni/lifecycle-agent-operator:4.22.0
+                image: quay.io/openshift-kni/lifecycle-agent-operator:5.0.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -638,8 +691,6 @@ spec:
                 volumeMounts:
                 - mountPath: /host
                   name: host-root
-                - mountPath: /secrets/tls/metrics
-                  name: metrics-tls
               hostPID: true
               serviceAccountName: lifecycle-agent-controller-manager
               terminationGracePeriodSeconds: 10
@@ -648,10 +699,6 @@ spec:
                   path: /
                   type: Directory
                 name: host-root
-              - name: metrics-tls
-                secret:
-                  defaultMode: 420
-                  secretName: controller-manager-metrics-tls
       permissions:
       - rules:
         - apiGroups:
@@ -705,4 +752,4 @@ spec:
   provider:
     name: Red Hat
   replaces: lifecycle-agent.v0.0.0
-  version: 4.22.0
+  version: 5.0.0

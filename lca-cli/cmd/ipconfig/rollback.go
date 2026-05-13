@@ -42,7 +42,7 @@ const (
 func init() {
 	// subcommand is added by NewIPConfigCmd after globals are initialized
 	ipConfigRollbackCmd.Flags().StringVar(&rollbackStateroot, staterootFlag, "", "Target stateroot to roll back to")
-	ipConfigRollbackCmd.MarkFlagRequired(staterootFlag)
+	_ = ipConfigRollbackCmd.MarkFlagRequired(staterootFlag)
 }
 
 var ipConfigRollbackCmd = &cobra.Command{

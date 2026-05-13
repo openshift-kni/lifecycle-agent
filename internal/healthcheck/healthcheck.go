@@ -319,7 +319,7 @@ func IsNodeReady(ctx context.Context, c client.Reader, l logr.Logger) error {
 		}
 
 		// Verify the node has the expected node-role labels for SNO
-		labels := node.ObjectMeta.GetLabels()
+		labels := node.GetLabels()
 		requiredLabels := []string{NodeRoleControlPlane, NodeRoleMaster, NodeRoleWorker}
 		for _, label := range requiredLabels {
 			if _, found := labels[label]; !found {

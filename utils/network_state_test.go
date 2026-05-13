@@ -90,14 +90,14 @@ func TestExtractBrExUplinkName_Success(t *testing.T) {
 		},
 	}
 
-	uplink, err := ExtractBrExUplinkName(state, "br-ex")
+	uplink, err := ExtractBrExUplinkName(state)
 	assert.NoError(t, err)
 	assert.Equal(t, "ens3", uplink)
 }
 
 func TestExtractBrExUplinkName_NotFound(t *testing.T) {
 	state := NmState{}
-	_, err := ExtractBrExUplinkName(state, "br-ex")
+	_, err := ExtractBrExUplinkName(state)
 	assert.Error(t, err)
 }
 
@@ -127,7 +127,7 @@ func TestExtractBrExVLANID_Found(t *testing.T) {
 		},
 	}
 
-	id, err := ExtractBrExVLANID(state, "br-ex")
+	id, err := ExtractBrExVLANID(state)
 	assert.NoError(t, err)
 	if assert.NotNil(t, id) {
 		assert.Equal(t, 123, *id)
@@ -156,7 +156,7 @@ func TestExtractBrExVLANID_NoVLAN(t *testing.T) {
 		},
 	}
 
-	id, err := ExtractBrExVLANID(state, "br-ex")
+	id, err := ExtractBrExVLANID(state)
 	assert.NoError(t, err)
 	assert.Nil(t, id)
 }

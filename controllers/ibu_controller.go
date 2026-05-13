@@ -35,7 +35,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
-	controllerutils "github.com/openshift-kni/lifecycle-agent/controllers/utils"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -322,7 +321,7 @@ func getValidNextStageList(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) []ib
 	}
 
 	// blocked by IBU, allow same stage only
-	if idleCondition.Reason == string(controllerutils.ConditionReasons.Blocked) {
+	if idleCondition.Reason == string(utils.ConditionReasons.Blocked) {
 		return []ibuv1.ImageBasedUpgradeStage{ibu.Spec.Stage}
 	}
 
@@ -332,9 +331,9 @@ func getValidNextStageList(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) []ib
 func isTransitionRequested(ibu *ibuv1.ImageBasedUpgrade) bool {
 	desiredStage := ibu.Spec.Stage
 	if desiredStage == ibuv1.Stages.Idle {
-		return !(utils.IsStageCompleted(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
+		return !utils.IsStageCompleted(ibu, desiredStage) && !utils.IsStageInProgress(ibu, desiredStage)
 	}
-	return !(utils.IsStageCompletedOrFailed(ibu, desiredStage) || utils.IsStageInProgress(ibu, desiredStage))
+	return !utils.IsStageCompletedOrFailed(ibu, desiredStage) && !utils.IsStageInProgress(ibu, desiredStage)
 }
 
 func (r *ImageBasedUpgradeReconciler) handleStage(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, stage ibuv1.ImageBasedUpgradeStage) (nextReconcile ctrl.Result, err error) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"testing"
 
@@ -23,16 +22,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-type reconcileTestDirEntry struct {
-	name  string
-	isDir bool
-}
-
-func (e reconcileTestDirEntry) Name() string               { return e.name }
-func (e reconcileTestDirEntry) IsDir() bool                { return e.isDir }
-func (e reconcileTestDirEntry) Type() fs.FileMode          { return 0 }
-func (e reconcileTestDirEntry) Info() (fs.FileInfo, error) { return nil, errors.New("not implemented") }
 
 func expectReconcileTestFSDefaults(chrootOps *ops.MockOps) {
 	workspaceDir := common.PathOutsideChroot(common.LCAWorkspaceDir)
@@ -1106,6 +1095,10 @@ func TestValidNextStages(t *testing.T) {
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusInProgress(ipc, "in progress")
 
+		// validNextStages queries rpm-ostree even for rollback stages.
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
+
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)
 		assert.Empty(t, stages)
@@ -1118,6 +1111,10 @@ func TestValidNextStages(t *testing.T) {
 
 		ipc := &ipcv1.IPConfig{}
 		controllerutils.SetIPRollbackStatusFailed(ipc, "failed")
+
+		// validNextStages queries rpm-ostree even for rollback stages.
+		mockRPM.EXPECT().IsStaterootBooted(buildIPConfigStaterootName(ipc)).Return(false, nil).Times(1)
+		mockRPM.EXPECT().GetUnbootedStaterootName().Return("", nil).Times(1)
 
 		stages, err := validNextStages(ipc, mockRPM)
 		assert.NoError(t, err)

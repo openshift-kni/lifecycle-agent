@@ -161,7 +161,7 @@ func TestFetchLvmConfig(t *testing.T) {
 	for _, tc := range testcases {
 		tmpDir := t.TempDir()
 		lvmConfigDir := filepath.Join(tmpDir, common.OptOpenshift, common.LvmConfigDir)
-		manifestsDir := filepath.Join(tmpDir, common.OptOpenshift, common.ClusterConfigDir, manifestDir)
+		manifestsDir := filepath.Join(tmpDir, common.OptOpenshift, common.ClusterConfigDir, ManifestDir)
 
 		t.Run(tc.name, func(t *testing.T) {
 			// Create the original files
@@ -175,7 +175,7 @@ func TestFetchLvmConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				file.Close()
+				_ = file.Close()
 			}
 
 			if err := os.MkdirAll(manifestsDir, 0o700); err != nil {

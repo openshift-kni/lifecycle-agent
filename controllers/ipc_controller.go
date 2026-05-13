@@ -81,8 +81,8 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	logger := log.FromContext(ctx).WithName("IPConfig")
 	logger.Info(
 		"Start reconciling IPConfig",
-		"name", req.NamespacedName.Name,
-		"namespace", req.NamespacedName.Namespace,
+		"name", req.Name,
+		"namespace", req.Namespace,
 	)
 
 	// Ensure the workspace directory exists once at the start of reconcile
@@ -116,8 +116,8 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 
 		logger.Info(
 			"Finish reconciling IPConfig",
-			"name", req.NamespacedName.Name,
-			"namespace", req.NamespacedName.Namespace,
+			"name", req.Name,
+			"namespace", req.Namespace,
 		)
 	}()
 
@@ -148,7 +148,7 @@ func (r *IPConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	if annotations != nil && annotations[controllerutils.TriggerReconcileAnnotation] != "" {
 		delete(annotations, controllerutils.TriggerReconcileAnnotation)
 		ipc.SetAnnotations(annotations)
-		if err := r.Client.Update(ctx, ipc); err != nil {
+		if err := r.Update(ctx, ipc); err != nil {
 			return requeueWithError(fmt.Errorf("failed to update ipconfig annotations: %w", err))
 		}
 	}
@@ -247,9 +247,8 @@ func (r *IPConfigReconciler) gateIPConfigByIBU(
 func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClient) ([]ipcv1.IPConfigStage, error) {
 	inProgressStage := controllerutils.GetIPInProgressStage(ipc)
 
-	if inProgressStage == ipcv1.IPStages.Rollback ||
-		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
-		return []ipcv1.IPConfigStage{}, nil
+	if inProgressStage == ipcv1.IPStages.Idle {
+		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
 	}
 
 	isTargetStaterootBooted, err := isTargetStaterootBooted(ipc, rpmOstreeClient)
@@ -269,6 +268,11 @@ func validNextStages(ipc *ipcv1.IPConfig, rpmOstreeClient rpmostreeclient.IClien
 		}
 
 		return []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}, nil
+	}
+
+	if inProgressStage == ipcv1.IPStages.Rollback ||
+		controllerutils.IsIPStageFailed(ipc, ipcv1.IPStages.Rollback) {
+		return []ipcv1.IPConfigStage{}, nil
 	}
 
 	// no in progress stage, check completed stages in reverse order
@@ -528,7 +532,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 
 	annotations[controllerutils.RecertCachedImageAnnotation] = image
 	ipc.SetAnnotations(annotations)
-	if err := r.Client.Update(ctx, ipc); err != nil {
+	if err := r.Update(ctx, ipc); err != nil {
 		return fmt.Errorf("failed to update annotations after caching recert image: %w", err)
 	}
 
@@ -540,8 +544,8 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 func isIPTransitionRequested(ipc *ipcv1.IPConfig) bool {
 	desiredStage := ipc.Spec.Stage
 	return controllerutils.IsIPStageStatusInvalidTransition(ipc, desiredStage) ||
-		!(controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) ||
-			controllerutils.IsIPStageInProgress(ipc, desiredStage))
+		(!controllerutils.IsIPStageCompletedOrFailed(ipc, desiredStage) &&
+			!controllerutils.IsIPStageInProgress(ipc, desiredStage))
 }
 
 func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv1.IPConfig) error {
@@ -561,7 +565,7 @@ func (r *IPConfigReconciler) refreshNetworkStatus(ctx context.Context, ipc *ipcv
 		controllerutils.DefaultRouteV4,
 		controllerutils.DefaultRouteV6,
 	)
-	vlanID, err := lcautils.ExtractBrExVLANID(state, controllerutils.BridgeExternalName)
+	vlanID, err := lcautils.ExtractBrExVLANID(state)
 	if err != nil {
 		return fmt.Errorf("failed to extract BrEx VLAN ID: %w", err)
 	}

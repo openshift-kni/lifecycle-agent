@@ -48,7 +48,7 @@ func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeD
 		return err
 	}
 
-	manifestsDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir, manifestDir)
+	manifestsDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir, ManifestDir)
 	if err := r.fetchLocalVolumes(ctx, manifestsDir); err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (r *UpgradeClusterConfigGather) fetchLocalVolumes(ctx context.Context, mani
 	r.Log.Info("Fetching local volumes and associated storage classes")
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Name: "localvolumes.local.storage.openshift.io"}, crd); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: "localvolumes.local.storage.openshift.io"}, crd); err != nil {
 		if k8serrors.IsNotFound(err) {
 			r.Log.Info("LocalVolume CRD is not found. Skipping")
 			return nil
@@ -98,9 +98,7 @@ func (r *UpgradeClusterConfigGather) fetchLocalVolumes(ctx context.Context, mani
 
 	var scNameSet = make(map[string]bool)
 	for _, lv := range lvsList.Items {
-		// Unset uid and resource version
-		lv.SetUID("")
-		lv.SetResourceVersion("")
+		CleanResource(&lv)
 
 		lvFileName := fmt.Sprintf("%s_%s_%s.json", lv.GetKind(), lv.GetName(), lv.GetNamespace())
 		filePath := filepath.Join(manifestsDir, lvFileName)
