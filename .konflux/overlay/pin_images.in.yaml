@@ -2,12 +2,12 @@
 # Manager
 - key: manager
   source: quay.io/openshift-kni/lifecycle-agent-operator:4.16.0
-  target: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-16@sha256:9e32559797756b5b0492ddaa1e076a53f536ae6b28d893919da495e1633a277f
+  target: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-4-16@sha256:9626c25311ca98a0ea4a3b811e004084bf7d77e058341618933a6adf1cf9f56a
 #
 # Recert
 - key: recert_image
   source: quay.io/edge-infrastructure/recert:v0
-  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-16@sha256:03d1b2282fdef686195a635d96c9656ae554685f66b3fce7a0ab77433bb9afdd
+  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-16@sha256:f6b193f73ae72454718c9f600e93c995ff85af80b3c80cfc40375abce3695050
 #
 # Kube RBAC Proxy
 - key: kube_rbac
