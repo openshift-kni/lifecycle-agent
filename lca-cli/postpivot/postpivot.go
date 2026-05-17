@@ -144,7 +144,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	seedReconfiguration.NodeIPs = seedReconfigurationNodeIPs(seedReconfiguration)
 	p.log.Infof("Seed reconfiguration node IPs: %v", seedReconfiguration.NodeIPs)
 
-	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
+	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey, ctx,
 		seedReconfiguration.SSHKey, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
 	}
@@ -172,7 +172,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	// NOTE: This must be done before we run recert, as otherwise recert could
 	// fail to pull in absence of a precached recert image
-	if err := p.establishEarlyCertificateTrust(seedReconfiguration); err != nil {
+	if err := p.establishEarlyCertificateTrust(ctx, seedReconfiguration); err != nil {
 		return fmt.Errorf("failed copy cluster config files: %w", err)
 	}
 
@@ -180,7 +180,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
 	}
 
-	if err := p.restartChronydService(seedReconfiguration.ChronyConfig); err != nil {
+	if err := p.restartChronydService(ctx, seedReconfiguration.ChronyConfig); err != nil {
 		return fmt.Errorf("failed to restart chronyd service: %w", err)
 	}
 
@@ -201,7 +201,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to create k8s dynamic client, err: %w", err)
 	}
 
-	if _, err := p.ops.SystemctlAction("enable", "kubelet", "--now"); err != nil {
+	if _, err := p.ops.SystemctlAction(ctx, "enable", "kubelet", "--now"); err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}
 	utils.WaitForApi(ctx, client, p.log)
@@ -243,11 +243,11 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	// Restore lvm devices
-	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices); err != nil {
+	if err := utils.RunOnce("recover_lvm_devices", p.workingDir, p.log, p.recoverLvmDevices, ctx); err != nil {
 		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
 	}
 
-	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
+	if _, err = p.ops.SystemctlAction(ctx, "disable", "installation-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
 
@@ -272,7 +272,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 
-	if _, err := p.ops.RunInHostNamespace("podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err != nil {
+	if _, err := p.ops.RunInHostNamespace(ctx, "podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err != nil {
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
@@ -283,7 +283,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 					seedReconfiguration.Proxy.HTTPProxy, seedReconfiguration.Proxy.HTTPSProxy,
 					seedReconfiguration.Proxy.NoProxy, command)
 			}
-			if _, err := p.ops.RunBashInHostNamespace(command, "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
+			if _, err := p.ops.RunBashInHostNamespace(ctx, command, "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
 				p.log.Warnf("failed to pull recert image, will retry, err: %s", err.Error())
 				return false, nil
 			}
@@ -291,10 +291,10 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		})
 	}
 
-	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
+	err := p.ops.RecertFullFlow(ctx, seedClusterInfo.RecertImagePullSpec, p.authFile,
 		path.Join(p.workingDir, recert.RecertConfigFile),
 		nil,
-		func() error { return p.postRecertCommands() },
+		func() error { return p.postRecertCommands(ctx) },
 		"-v", fmt.Sprintf("%s:%s", p.workingDir, p.workingDir))
 	if err != nil {
 		return fmt.Errorf("failed recert full flow: %w", err)
@@ -410,22 +410,22 @@ func (p *PostPivot) setProxyAndProxyStatus(seedReconfig *clusterconfig_api.SeedR
 	return nil
 }
 
-func (p *PostPivot) postRecertCommands() error {
+func (p *PostPivot) postRecertCommands(ctx context.Context) error {
 	// changing seed ip to new ip in all static pod files
-	_, err := p.ops.RunBashInHostNamespace("update-ca-trust")
+	_, err := p.ops.RunBashInHostNamespace(ctx, "update-ca-trust")
 	if err != nil {
 		return fmt.Errorf("failed to run update-ca-trust after recert: %w", err)
 	}
 	return nil
 }
 
-func (p *PostPivot) restartChronydService(chronyConfig string) error {
+func (p *PostPivot) restartChronydService(ctx context.Context, chronyConfig string) error {
 	if chronyConfig == "" {
 		p.log.Info("Chrony config is empty, skipping restart of chronyd service")
 		return nil
 	}
 	p.log.Info("Restarting chronyd service")
-	if _, err := p.ops.SystemctlAction("restart", "chronyd"); err != nil {
+	if _, err := p.ops.SystemctlAction(ctx, "restart", "chronyd"); err != nil {
 		return fmt.Errorf("failed to restart chronyd: %w", err)
 	}
 	return nil
@@ -488,7 +488,7 @@ func (p *PostPivot) handleManifest(ctx context.Context, mPath string, dynamicCli
 	return nil
 }
 
-func (p *PostPivot) recoverLvmDevices() error {
+func (p *PostPivot) recoverLvmDevices(ctx context.Context) error {
 	lvmConfigPath := path.Join(p.workingDir, common.LvmConfigDir)
 	lvmDevicesPath := path.Join(lvmConfigPath, path.Base(common.LvmDevicesPath))
 
@@ -500,7 +500,7 @@ func (p *PostPivot) recoverLvmDevices() error {
 	}
 
 	// Update the online record of PVs and activate all lvm devices in the VGs
-	_, err := p.ops.RunInHostNamespace("pvscan", "--cache", "--activate", "ay")
+	_, err := p.ops.RunInHostNamespace(ctx, "pvscan", "--cache", "--activate", "ay")
 	if err != nil {
 		return fmt.Errorf("failed to scan and active lvm devices, err: %w", err)
 	}
@@ -570,14 +570,14 @@ func (p *PostPivot) restoreOadpDataProtectionApplication(ctx context.Context, cl
 // which might require trusting the registry's certificate. This is actually
 // somewhat redundant because recert itself already does the same thing (among
 // other things), but we need to do it before we can even run recert.
-func (p *PostPivot) establishEarlyCertificateTrust(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+func (p *PostPivot) establishEarlyCertificateTrust(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	if seedReconfiguration.AdditionalTrustBundle.UserCaBundle != "" {
 		if err := os.WriteFile(common.CABundleFilePath, []byte(seedReconfiguration.AdditionalTrustBundle.UserCaBundle), 0o600); err != nil {
 			return fmt.Errorf("failed to write user ca bundle to %s: %w", common.CABundleFilePath, err)
 		}
 	}
 
-	_, err := p.ops.RunBashInHostNamespace("update-ca-trust")
+	_, err := p.ops.RunBashInHostNamespace(ctx, "update-ca-trust")
 	if err != nil {
 		return fmt.Errorf("failed to run update-ca-trust after early certificate trust: %w", err)
 	}
@@ -747,7 +747,7 @@ func (p *PostPivot) setNodeIPsIfNotProvided(
 	// See: https://github.com/openshift/baremetal-runtimecfg/blob/e898adc576b343a214aff860e349f9bba3a125d4/cmd/runtimecfg/node-ip.go#L107
 	// and: https://github.com/openshift/baremetal-runtimecfg/blob/e898adc576b343a214aff860e349f9bba3a125d4/cmd/runtimecfg/node-ip.go#L148
 	if _, err := os.Stat(nodePrimaryIPFile); err != nil {
-		_, err := p.ops.SystemctlAction("start", "nodeip-configuration")
+		_, err := p.ops.SystemctlAction(ctx, "start", "nodeip-configuration")
 		if err != nil {
 			return fmt.Errorf("failed to start nodeip-configuration service, err %w", err)
 		}
@@ -814,7 +814,7 @@ func parseKubeletNodeIPs(content string) ([]string, error) {
 // setSSHKey  sets ssh public key provided by user in 2 operations:
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
-func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
+func (p *PostPivot) setSSHKey(ctx context.Context, sshKey, sshKeyFile string) error {
 	if sshKey == "" {
 		p.log.Infof("No ssh public key was provided, skipping")
 		return nil
@@ -826,7 +826,7 @@ func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
 	}
 
 	p.log.Infof("Setting %s user ownership on %s", userCore, sshKeyFile)
-	if _, err := p.ops.RunInHostNamespace("chown", userCore, sshKeyFile); err != nil {
+	if _, err := p.ops.RunInHostNamespace(ctx, "chown", userCore, sshKeyFile); err != nil {
 		return fmt.Errorf("failed to set %s user ownership on %s, err :%w", userCore, sshKeyFile, err)
 	}
 
@@ -877,7 +877,7 @@ func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 
 // applyNMStateConfiguration is applying nmstate yaml provided as string in seedReconfiguration.
 // It uses nmstatectl apply <file> command that will return error in case configuration is not successful
-func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+func (p *PostPivot) applyNMStateConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	if seedReconfiguration.RawNMStateConfig == "" {
 		p.log.Infof("NMState config is empty, skipping")
 		return nil
@@ -887,7 +887,7 @@ func (p *PostPivot) applyNMStateConfiguration(seedReconfiguration *clusterconfig
 	if err := os.WriteFile(nmFile, []byte(seedReconfiguration.RawNMStateConfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write nmstate config to %s, err %w", nmFile, err)
 	}
-	if _, err := p.ops.RunInHostNamespace("nmstatectl", "apply", nmFile); err != nil {
+	if _, err := p.ops.RunInHostNamespace(ctx, "nmstatectl", "apply", nmFile); err != nil {
 		return fmt.Errorf("failed to apply nmstate config %s, err: %w", seedReconfiguration.RawNMStateConfig, err)
 	}
 
@@ -918,7 +918,7 @@ func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, bloc
 		if _, err := os.Stat(configFolder); err == nil {
 			return true, nil
 		}
-		blockDevices, err := p.ops.ListBlockDevices()
+		blockDevices, err := p.ops.ListBlockDevices(ctx)
 		if err != nil {
 			p.log.Infof("Failed to list block devices with error %s, will retry", err.Error())
 			return false, nil
@@ -927,7 +927,7 @@ func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, bloc
 			// TODO: change after all the components will move to clusterconfig_api.BlockDeviceLabel
 			if lo.Contains([]string{clusterconfig_api.BlockDeviceLabel, OldblockDeviceLabel}, bd.Label) {
 				// in case of error while mounting device we exit wait and return the error
-				if err := p.setupConfigurationFolder(bd.Name, blockDeviceMountFolder, filepath.Dir(configFolder)); err != nil {
+				if err := p.setupConfigurationFolder(ctx, bd.Name, blockDeviceMountFolder, filepath.Dir(configFolder)); err != nil {
 					return true, err
 				}
 				return true, nil
@@ -944,17 +944,17 @@ func (p *PostPivot) waitForConfiguration(ctx context.Context, configFolder, bloc
 }
 
 // setupConfigurationFolder mounts device to mountFolder and copies everything to configFolder
-func (p *PostPivot) setupConfigurationFolder(deviceName, mountFolder, configFolder string) error {
+func (p *PostPivot) setupConfigurationFolder(ctx context.Context, deviceName, mountFolder, configFolder string) error {
 	p.log.Infof("Running setup of configuration folder")
 	if err := os.MkdirAll(configFolder, 0o700); err != nil {
 		return fmt.Errorf("failed to create %s, err: %w", configFolder, err)
 	}
 	defer func() { _ = os.RemoveAll(mountFolder) }()
 
-	if err := p.ops.Mount(deviceName, mountFolder); err != nil {
+	if err := p.ops.Mount(ctx, deviceName, mountFolder); err != nil {
 		return fmt.Errorf("failed to mount %s: %w", mountFolder, err)
 	}
-	defer func() { _ = p.ops.Umount(deviceName) }()
+	defer func() { _ = p.ops.Umount(context.Background(), deviceName) }()
 
 	if err := utils.CopyFileIfExists(mountFolder, configFolder); err != nil {
 		return fmt.Errorf("failed to copy contert of %s to %s, err: %w", mountFolder, configFolder, err)
@@ -965,10 +965,10 @@ func (p *PostPivot) setupConfigurationFolder(deviceName, mountFolder, configFold
 
 // setHostname set provided hostname in case it was provided, in case it was not provided we will get hostname from kernel
 // retuning error in case hostname is localhost
-func (p *PostPivot) setHostname(hostname string) (string, error) {
+func (p *PostPivot) setHostname(ctx context.Context, hostname string) (string, error) {
 	if hostname != "" && hostname != localhost {
 		p.log.Infof("Setting new hostname %s", hostname)
-		if _, err := p.ops.RunInHostNamespace("hostnamectl", "set-hostname", hostname); err != nil {
+		if _, err := p.ops.RunInHostNamespace(ctx, "hostnamectl", "set-hostname", hostname); err != nil {
 			return "", fmt.Errorf("failed to set hostname %s, err %w", hostname, err)
 		}
 		return hostname, nil
@@ -1044,16 +1044,16 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if err := utils.RunOnce("apply-static-network", p.workingDir, p.log, p.applyNMStateConfiguration,
+	if err := utils.RunOnce("apply-static-network", p.workingDir, p.log, p.applyNMStateConfiguration, ctx,
 		seedReconfiguration); err != nil {
 		return fmt.Errorf("failed to apply static network: %w", err)
 	}
 
-	if _, err := p.ops.SystemctlAction("restart", nmService); err != nil {
+	if _, err := p.ops.SystemctlAction(ctx, "restart", nmService); err != nil {
 		return fmt.Errorf("failed to restart network manager service, err %w", err)
 	}
 
-	seedReconfiguration.Hostname, err = p.setHostname(seedReconfiguration.Hostname)
+	seedReconfiguration.Hostname, err = p.setHostname(ctx, seedReconfiguration.Hostname)
 	if err != nil {
 		return err
 	}
@@ -1070,7 +1070,7 @@ func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguratio
 		return err
 	}
 
-	if _, err := p.ops.SystemctlAction("restart", dnsmasqService); err != nil {
+	if _, err := p.ops.SystemctlAction(ctx, "restart", dnsmasqService); err != nil {
 		return fmt.Errorf("failed to restart dnsmasq service, err %w", err)
 	}
 

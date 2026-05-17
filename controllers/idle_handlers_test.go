@@ -117,13 +117,13 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 			executorMock := ops.NewMockExecute(ctrl)
 			mockOps := ops.NewMockOps(ctrl)
 
-			rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+			rpmostreeclientMock.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 				Deployments: tt.deployments}, nil)
 			for _, x := range tt.undeployIndices {
-				ostreeclientMock.EXPECT().Undeploy(x)
+				ostreeclientMock.EXPECT().Undeploy(gomock.Any(), x)
 			}
 			if tt.expectToRemove != "" {
-				mockOps.EXPECT().RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
+				mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), "unshare", "-m", "/bin/sh", "-c",
 					fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf /ostree/deploy/%s\"",
 						tt.expectToRemove))
 			}
@@ -138,8 +138,8 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroot(t *testing.T) {
 				return os.Stat(".")
 			}
 
-			if err := cleanupUnbootedStateroot(tt.input, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
-				t.Errorf("ImageBasedUpgradeReconciler.cleanupUnbootedStateroot() error = %v, wantErr %v", err, tt.wantErr)
+			if err := cleanupUnbootedStateroot(context.Background(), tt.input, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
+				t.Errorf("ImageBasedUpgradeReconciler.cleanupUnbootedStateroot(context.Background(), ) error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -276,19 +276,19 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 			executorMock := ops.NewMockExecute(ctrl)
 			mockOps := ops.NewMockOps(ctrl)
 
-			rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+			rpmostreeclientMock.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 				Deployments: tt.deployments}, nil)
 			for _, x := range tt.undeployIndices {
-				ostreeclientMock.EXPECT().Undeploy(x)
+				ostreeclientMock.EXPECT().Undeploy(gomock.Any(), x)
 			}
 			for _, stateroot := range tt.staterootsToRemove {
-				rpmostreeclientMock.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+				rpmostreeclientMock.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 					Deployments: tt.deployments}, nil)
-				mockOps.EXPECT().RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
+				mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), "unshare", "-m", "/bin/sh", "-c",
 					fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf /ostree/deploy/%s\"",
 						stateroot))
 			}
-			rpmostreeclientMock.EXPECT().RpmOstreeCleanup().Return(nil)
+			rpmostreeclientMock.EXPECT().RpmOstreeCleanup(gomock.Any()).Return(nil)
 			r := &ImageBasedUpgradeReconciler{
 				Log:             logr.Discard(),
 				RPMOstreeClient: rpmostreeclientMock,
@@ -297,7 +297,7 @@ func TestImageBasedUpgradeReconciler_cleanupUnbootedStateroots(t *testing.T) {
 				Ops:             mockOps,
 			}
 
-			if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
+			if err := CleanupUnbootedStateroots(context.Background(), r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); (err != nil) != tt.wantErr {
 				t.Errorf("ImageBasedUpgradeReconciler.cleanupUnbootedStateroots() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

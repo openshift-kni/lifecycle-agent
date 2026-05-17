@@ -432,8 +432,8 @@ func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string
 }
 
 // Delete the previous imager container, if it exists
-func (r *SeedGeneratorReconciler) rmPreviousImagerContainer() error {
-	_, err := r.Executor.Execute("podman", "rm", "-i", "-f", imagerContainerName)
+func (r *SeedGeneratorReconciler) rmPreviousImagerContainer(ctx context.Context) error {
+	_, err := r.Executor.Execute(ctx, "podman", "rm", "-i", "-f", imagerContainerName)
 	if err != nil {
 		return fmt.Errorf("failed to run podman rm command: %w", err)
 	}
@@ -458,10 +458,10 @@ func (r *SeedGeneratorReconciler) getRecertImagePullSpec(seedgen *seedgenv1.Seed
 	return
 }
 
-func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
-	_, err := r.Executor.Execute("podman", "pull", "--authfile", common.ImageRegistryAuthFile, recertImage)
+	_, err := r.Executor.Execute(ctx, "podman", "pull", "--authfile", common.ImageRegistryAuthFile, recertImage)
 	if err != nil {
 		return fmt.Errorf("failed to pull recertImage (%s): %w", recertImage, err)
 	}
@@ -470,7 +470,7 @@ func (r *SeedGeneratorReconciler) pullRecertImagePullSpec(seedgen *seedgenv1.See
 }
 
 // Launch a container to run the imager
-func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator) error {
+func (r *SeedGeneratorReconciler) launchImager(ctx context.Context, seedgen *seedgenv1.SeedGenerator) error {
 	r.Log.Info("Launching imager")
 	recertImage := r.getRecertImagePullSpec(seedgen)
 
@@ -533,7 +533,7 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 		"--setenv", "NO_PROXY",
 	}
 
-	if _, err := r.Executor.Execute("systemd-run", append(systemdRunOpts, imagerCmdArgs...)...); err != nil {
+	if _, err := r.Executor.Execute(ctx, "systemd-run", append(systemdRunOpts, imagerCmdArgs...)...); err != nil {
 		return fmt.Errorf("failed to run imager container: %w", err)
 	}
 
@@ -542,7 +542,7 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 }
 
 // checkImagerStatus examines the lca_cli container, returning nil if it exited successfully
-func (r *SeedGeneratorReconciler) checkImagerStatus() error {
+func (r *SeedGeneratorReconciler) checkImagerStatus(ctx context.Context) error {
 	type ContainerState struct {
 		Status   string `json:"Status"`
 		ExitCode int    `json:"ExitCode"`
@@ -557,7 +557,7 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 
 	r.Log.Info("Checking status of lca_cli container")
 
-	output, err := r.Executor.Execute("podman", "inspect", "--format", "json", "--log-level", "error", imagerContainerName)
+	output, err := r.Executor.Execute(ctx, "podman", "inspect", "--format", "json", "--log-level", "error", imagerContainerName)
 	if err != nil {
 		return fmt.Errorf("failed to run podman inspect command: %w", err)
 	}
@@ -587,7 +587,10 @@ func (r *SeedGeneratorReconciler) checkImagerStatus() error {
 // Check whether the system can be used for seed generation
 func (r *SeedGeneratorReconciler) validateSystem(ctx context.Context) (msg string) {
 	// Check that the "ostree admin set-default" feature is available
-	if !ostreeclient.NewClient(r.Executor, false).IsOstreeAdminSetDefaultFeatureEnabled() {
+	if enabled, err := ostreeclient.NewClient(r.Executor, false).IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		msg = fmt.Sprintf("Failure occurred during ostree admin set-default feature check: %v", err)
+		return
+	} else if !enabled {
 		msg = "Rejected: Installed release does not support \"ostree admin set-default\" feature"
 		return
 	}
@@ -734,12 +737,12 @@ func (r *SeedGeneratorReconciler) wipeExistingWorkspace() error {
 	return nil
 }
 
-func (r *SeedGeneratorReconciler) setupWorkspace() error {
+func (r *SeedGeneratorReconciler) setupWorkspace(ctx context.Context) error {
 	if err := r.wipeExistingWorkspace(); err != nil {
 		return fmt.Errorf("failed to wipe previous workspace: %w", err)
 	}
 
-	if err := r.rmPreviousImagerContainer(); err != nil {
+	if err := r.rmPreviousImagerContainer(ctx); err != nil {
 		return fmt.Errorf("failed to delete previous imager container: %w", err)
 	}
 
@@ -769,7 +772,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 	}
 
 	nextReconcile = doNotRequeue()
-	if err := r.setupWorkspace(); err != nil {
+	if err := r.setupWorkspace(ctx); err != nil {
 		rc = err
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -782,7 +785,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return
 	}
 
-	if err := r.pullRecertImagePullSpec(seedgen); err != nil {
+	if err := r.pullRecertImagePullSpec(ctx, seedgen); err != nil {
 		rc = fmt.Errorf("failed to pull recert image: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -927,7 +930,7 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return
 	}
 
-	if err := r.launchImager(seedgen); err != nil {
+	if err := r.launchImager(ctx, seedgen); err != nil {
 		rc = fmt.Errorf("imager failed: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
@@ -940,9 +943,9 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 }
 
 // finishSeedgen runs after the imager container completes and restores kubelet, once the LCA operator restarts
-func (r *SeedGeneratorReconciler) finishSeedgen() error {
+func (r *SeedGeneratorReconciler) finishSeedgen(ctx context.Context) error {
 	// Check exit status of lca_cli container
-	if err := r.checkImagerStatus(); err != nil {
+	if err := r.checkImagerStatus(ctx); err != nil {
 		return fmt.Errorf("imager container status check failed: %w", err)
 	}
 
@@ -1039,7 +1042,7 @@ func (r *SeedGeneratorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Log.Error(err, "failed to update seedgen CR status")
 		}
 
-		if err = r.finishSeedgen(); err != nil {
+		if err = r.finishSeedgen(ctx); err != nil {
 			r.Log.Error(err, "Seed generation failed")
 			setSeedGenStatusFailed(seedgen, fmt.Sprintf("Seed generation failed: %s", err))
 		} else {

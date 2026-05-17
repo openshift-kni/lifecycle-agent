@@ -1,6 +1,7 @@
 package ibi_preparation
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,14 +51,14 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 	}
 }
 
-func (i *IBIPrepare) Run() error {
+func (i *IBIPrepare) Run(ctx context.Context) error {
 	// Pull seed image
-	if err := i.diskPreparation(); err != nil {
+	if err := i.diskPreparation(ctx); err != nil {
 		return fmt.Errorf("failed to prepare disk: %w", err)
 	}
 
 	i.log.Info("Pulling seed image")
-	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPullSecretFilePath, i.config.SeedImage); err != nil {
+	if _, err := i.ops.RunInHostNamespace(ctx, "podman", "pull", "--authfile", common.IBIPullSecretFilePath, i.config.SeedImage); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 
@@ -65,7 +66,7 @@ func (i *IBIPrepare) Run() error {
 	log := logr.Logger{}
 	common.OstreeDeployPathPrefix = "/mnt/"
 	// Setup state root
-	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
+	if err := prep.SetupStateroot(ctx, log, i.ops, i.ostreeClient, i.rpmostreeClient,
 		i.config.SeedImage, i.config.SeedVersion, true); err != nil {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
@@ -74,15 +75,15 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to precache: %w", err)
 	}
 
-	if err := i.postDeployment(common.IBIPostDeploymentScriptPath); err != nil {
+	if err := i.postDeployment(ctx, common.IBIPostDeploymentScriptPath); err != nil {
 		return fmt.Errorf("failed to run post deployment: %w", err)
 	}
 
-	if err := i.cleanupRhcosSysroot(); err != nil {
+	if err := i.cleanupRhcosSysroot(ctx); err != nil {
 		return fmt.Errorf("failed to cleanup rhcos sysroot: %w", err)
 	}
 
-	return i.shutdownNode()
+	return i.shutdownNode(ctx)
 }
 
 func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) error {
@@ -129,20 +130,20 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort); err != nil {
+	if err := workload.Precache(context.Background(), imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
 	return unchroot()
 }
 
-func (i *IBIPrepare) shutdownNode() error {
+func (i *IBIPrepare) shutdownNode(ctx context.Context) error {
 	if !i.config.Shutdown {
 		i.log.Info("Skipping shutdown")
 		return nil
 	}
 	i.log.Info("Shutting down the host")
-	if _, err := i.ops.RunInHostNamespace("shutdown", "now"); err != nil {
+	if _, err := i.ops.RunInHostNamespace(ctx, "shutdown", "now"); err != nil {
 		return fmt.Errorf("failed to shutdown the host: %w", err)
 	}
 	return nil
@@ -179,23 +180,23 @@ func (i *IBIPrepare) cleanupDisk() {
 	}
 }
 
-func (i *IBIPrepare) diskPreparation() error {
+func (i *IBIPrepare) diskPreparation(ctx context.Context) error {
 	i.log.Info("Start preparing disk")
 
 	i.cleanupDisk()
 
 	i.log.Info("Writing image to disk")
-	if _, err := i.ops.RunInHostNamespace("coreos-installer",
+	if _, err := i.ops.RunInHostNamespace(ctx, "coreos-installer",
 		append([]string{"install", i.config.InstallationDisk}, i.config.CoreosInstallerArgs...)...); err != nil {
 		return fmt.Errorf("failed to write image to disk: %w", err)
 	}
 
 	if i.config.UseContainersFolder {
-		if err := i.ops.SetupContainersFolderCommands(); err != nil {
+		if err := i.ops.SetupContainersFolderCommands(ctx); err != nil {
 			return fmt.Errorf("failed to setup containers folder: %w", err)
 		}
 	} else {
-		if err := i.ops.CreateExtraPartition(i.config.InstallationDisk, i.config.ExtraPartitionLabel,
+		if err := i.ops.CreateExtraPartition(ctx, i.config.InstallationDisk, i.config.ExtraPartitionLabel,
 			i.config.ExtraPartitionStart, i.config.ExtraPartitionNumber); err != nil {
 			return fmt.Errorf("failed to create extra partition: %w", err)
 		}
@@ -206,10 +207,10 @@ func (i *IBIPrepare) diskPreparation() error {
 	return nil
 }
 
-func (i *IBIPrepare) postDeployment(scriptPath string) error {
+func (i *IBIPrepare) postDeployment(ctx context.Context, scriptPath string) error {
 	if _, err := os.Stat(scriptPath); err == nil {
 		i.log.Info("Running post deployment script")
-		if _, err := i.ops.RunBashInHostNamespace(scriptPath); err != nil {
+		if _, err := i.ops.RunBashInHostNamespace(ctx, scriptPath); err != nil {
 			return fmt.Errorf("failed to run post deployment script: %w", err)
 		}
 	}
@@ -219,8 +220,8 @@ func (i *IBIPrepare) postDeployment(scriptPath string) error {
 // cleanupRhcosSysroot cleanups ostree that was written by us as part of diskPreparation
 // as each new deployed ostree takes index 0, we know that the one we created earlier will be "1"
 // that's why we can set it hardcoded
-func (i *IBIPrepare) cleanupRhcosSysroot() error {
-	if err := i.ostreeClient.Undeploy(rhcosOstreeIndex); err != nil {
+func (i *IBIPrepare) cleanupRhcosSysroot(ctx context.Context) error {
+	if err := i.ostreeClient.Undeploy(ctx, rhcosOstreeIndex); err != nil {
 		return fmt.Errorf("failed to undeploy sysroot written by coreos installer command with index %d: %w", 1, err)
 	}
 	// We set hardcoded value here cause we know exact path for written sysroot
@@ -229,7 +230,7 @@ func (i *IBIPrepare) cleanupRhcosSysroot() error {
 		i.log.Warnf("rhcos sysroot %s doesn't exists but it was expected", rhcosysrootPath)
 		return nil
 	}
-	if _, err := i.ops.RunBashInHostNamespace("rm", "-rf", rhcosysrootPath); err != nil {
+	if _, err := i.ops.RunBashInHostNamespace(ctx, "rm", "-rf", rhcosysrootPath); err != nil {
 		return fmt.Errorf("removing sysroot %s failed: %w", rhcosysrootPath, err)
 	}
 	return nil

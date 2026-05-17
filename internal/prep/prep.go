@@ -2,6 +2,7 @@ package prep
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -90,11 +91,11 @@ func getDeploymentFromDeploymentID(deploymentID string) (string, error) {
 	return splitted[len(splitted)-1], nil
 }
 
-func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient,
+func SetupStateroot(ctx context.Context, log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient,
 	rpmOstreeClient rpmostreeclient.IClient, seedImage, expectedVersion string, ibi bool) error {
 	log.Info("Start setupstateroot")
 
-	defer func() { _ = ops.UnmountAndRemoveImage(seedImage) }()
+	defer func() { _ = ops.UnmountAndRemoveImage(context.Background(), seedImage) }()
 
 	workspaceOutsideChroot, err := os.MkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
 	if err != nil {
@@ -114,13 +115,13 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	log.Info("workspace:" + workspace)
 
 	if !ibi {
-		if err = ops.RemountSysroot(); err != nil {
+		if err = ops.RemountSysroot(ctx); err != nil {
 			return fmt.Errorf("failed to remount /sysroot: %w", err)
 		}
 
 	}
 
-	mountpoint, err := ops.MountImage(seedImage)
+	mountpoint, err := ops.MountImage(ctx, seedImage)
 	if err != nil {
 		return fmt.Errorf("failed to mount seed image: %w", err)
 	}
@@ -130,7 +131,7 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed to create ostree repo directory: %w", err)
 	}
 
-	if err := ops.ExtractTarWithSELinux(
+	if err := ops.ExtractTarWithSELinux(ctx,
 		fmt.Sprintf("%s/ostree.tgz", mountpoint), ostreeRepo,
 	); err != nil {
 		return fmt.Errorf("failed to extract ostree.tgz: %w", err)
@@ -162,11 +163,11 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	osname := common.GetStaterootName(expectedVersion)
 
-	if err = ostreeClient.PullLocal(ostreeRepo); err != nil {
+	if err = ostreeClient.PullLocal(ctx, ostreeRepo); err != nil {
 		return fmt.Errorf("failed ostree pull-local: %w", err)
 	}
 
-	if err = ostreeClient.OSInit(osname); err != nil {
+	if err = ostreeClient.OSInit(ctx, osname); err != nil {
 		return fmt.Errorf("failed ostree admin os-init: %w", err)
 	}
 
@@ -180,11 +181,11 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		kargs = append(kargs, "--karg", "ibu="+expectedVersion)
 	}
 
-	if err = ostreeClient.Deploy(osname, seedBootedRef, kargs, rpmOstreeClient, ibi); err != nil {
+	if err = ostreeClient.Deploy(ctx, osname, seedBootedRef, kargs, rpmOstreeClient, ibi); err != nil {
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 
-	deploymentDir, err := ostreeClient.GetDeploymentDir(osname)
+	deploymentDir, err := ostreeClient.GetDeploymentDir(ctx, osname)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment dir: %w", err)
 	}
@@ -196,14 +197,14 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 		return fmt.Errorf("failed to restore origin file: %w", err)
 	}
 
-	if err = ops.ExtractTarWithSELinux(
+	if err = ops.ExtractTarWithSELinux(ctx,
 		filepath.Join(mountpoint, "var.tgz"),
 		common.GetStaterootPath(osname),
 	); err != nil {
 		return fmt.Errorf("failed to restore var directory: %w", err)
 	}
 
-	if err := ops.ExtractTarWithSELinux(
+	if err := ops.ExtractTarWithSELinux(ctx,
 		filepath.Join(mountpoint, "etc.tgz"),
 		deploymentDir,
 	); err != nil {

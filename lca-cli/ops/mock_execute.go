@@ -9,6 +9,7 @@
 package ops
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -38,9 +39,9 @@ func (m *MockExecute) EXPECT() *MockExecuteMockRecorder {
 }
 
 // Execute mocks base method.
-func (m *MockExecute) Execute(command string, args ...string) (string, error) {
+func (m *MockExecute) Execute(ctx context.Context, command string, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{command}
+	varargs := []any{ctx, command}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -51,16 +52,16 @@ func (m *MockExecute) Execute(command string, args ...string) (string, error) {
 }
 
 // Execute indicates an expected call of Execute.
-func (mr *MockExecuteMockRecorder) Execute(command any, args ...any) *gomock.Call {
+func (mr *MockExecuteMockRecorder) Execute(ctx, command any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{command}, args...)
+	varargs := append([]any{ctx, command}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Execute", reflect.TypeOf((*MockExecute)(nil).Execute), varargs...)
 }
 
 // ExecuteWithLiveLogger mocks base method.
-func (m *MockExecute) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
+func (m *MockExecute) ExecuteWithLiveLogger(ctx context.Context, command string, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{command}
+	varargs := []any{ctx, command}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -71,8 +72,8 @@ func (m *MockExecute) ExecuteWithLiveLogger(command string, args ...string) (str
 }
 
 // ExecuteWithLiveLogger indicates an expected call of ExecuteWithLiveLogger.
-func (mr *MockExecuteMockRecorder) ExecuteWithLiveLogger(command any, args ...any) *gomock.Call {
+func (mr *MockExecuteMockRecorder) ExecuteWithLiveLogger(ctx, command any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{command}, args...)
+	varargs := append([]any{ctx, command}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecuteWithLiveLogger", reflect.TypeOf((*MockExecute)(nil).ExecuteWithLiveLogger), varargs...)
 }

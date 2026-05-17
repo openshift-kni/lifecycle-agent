@@ -1,6 +1,7 @@
 package initmonitor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -88,7 +89,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 	msg := fmt.Sprintf("Rollback due to LCA Init Monitor timeout, after %s", timeout)
 	m.log.Info(msg)
 
-	if err := m.rebootClient.InitiateRollback(msg); err != nil {
+	if err := m.rebootClient.InitiateRollback(context.Background(), msg); err != nil {
 		return fmt.Errorf("unable to auto rollback: %w", err)
 	}
 
@@ -134,7 +135,7 @@ func (m *InitMonitor) RunExitStopPostCheck() error {
 		msg := fmt.Sprintf("Rollback due to service-unit failure: component %s", m.component)
 		m.log.Info(msg)
 
-		if err := m.rebootClient.InitiateRollback(msg); err != nil {
+		if err := m.rebootClient.InitiateRollback(context.Background(), msg); err != nil {
 			return fmt.Errorf("unable to auto rollback: %w", err)
 		}
 	}
