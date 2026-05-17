@@ -39,3 +39,6 @@ tmp
 
 # CLAUDE.md
 CLAUDE.md
+
+# Demo dependencies
+.cert-manager-scripts
