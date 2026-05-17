@@ -279,6 +279,22 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 	return nil
 }
 
+func (r *SeedGeneratorReconciler) deletePodsWithPhase(ctx context.Context, phase corev1.PodPhase) error {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+	for i := range podList.Items {
+		if podList.Items[i].Status.Phase != phase {
+			continue
+		}
+		if err := r.Delete(ctx, &podList.Items[i]); err != nil {
+			return fmt.Errorf("failed to delete pod %s/%s: %w", podList.Items[i].Namespace, podList.Items[i].Name, err)
+		}
+	}
+	return nil
+}
+
 // Clean up ACM and other resources on the cluster
 func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) error {
 	// Ensure that the dependent resources are deleted
@@ -835,15 +851,13 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return
 	}
 
-	// TODO: Can this be done cleanly via client? The client.DeleteAllOf seems to require a specified namespace, so maybe loop over the namespaces
 	r.Log.Info("Cleaning completed and failed pods")
-	kubeconfigArg := fmt.Sprintf("--kubeconfig=%s", common.KubeconfigFile)
-	if _, err := r.Executor.Execute("oc", "delete", "pod", kubeconfigArg, "--field-selector=status.phase==Succeeded", "--all-namespaces"); err != nil {
+	if err := r.deletePodsWithPhase(ctx, corev1.PodSucceeded); err != nil {
 		rc = fmt.Errorf("failed to cleanup Succeeded pods: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
-	if _, err := r.Executor.Execute("oc", "delete", "pod", kubeconfigArg, "--field-selector=status.phase==Failed", "--all-namespaces"); err != nil {
+	if err := r.deletePodsWithPhase(ctx, corev1.PodFailed); err != nil {
 		rc = fmt.Errorf("failed to cleanup Failed pods: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
