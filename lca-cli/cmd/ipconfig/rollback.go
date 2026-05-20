@@ -17,6 +17,7 @@ limitations under the License.
 package ipconfigcmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -49,13 +50,13 @@ var ipConfigRollbackCmd = &cobra.Command{
 	Use:   rollbackCmd,
 	Short: "Execute IP configuration rollback",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := runIPConfigRollback(); err != nil {
+		if err := runIPConfigRollback(cmd.Context()); err != nil {
 			pkgLog.Fatalf("Error executing ip-config rollback: %v", err)
 		}
 	},
 }
 
-func runIPConfigRollback() error {
+func runIPConfigRollback(ctx context.Context) error {
 	var hostCommandsExecutor ops.Execute
 	if _, err := os.Stat(common.Host); err == nil {
 		hostCommandsExecutor = ops.NewChrootExecutor(pkgLog, true, common.Host)
@@ -65,15 +66,14 @@ func runIPConfigRollback() error {
 	opsInterface := ops.NewOps(pkgLog, hostCommandsExecutor)
 	rpmClient := rpmOstree.NewClient("lca-cli-ip-config-rollback", hostCommandsExecutor)
 	ostreeClient := intOstree.NewClient(hostCommandsExecutor, false)
-
 	rb := reboot.NewIPCRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmClient, ostreeClient, opsInterface)
 
 	exec := ipconfig.NewRollbackHandler(pkgLog, opsInterface, ostreeClient, rpmClient)
-	if err := exec.Run(rollbackStateroot); err != nil {
+	if err := exec.Run(ctx, rollbackStateroot); err != nil {
 		return fmt.Errorf("ip config rollback handler failed: %w", err)
 	}
 
-	if err := rb.RebootToNewStateRoot("ip-config rollback"); err != nil {
+	if err := rb.RebootToNewStateRoot(ctx, "ip-config rollback"); err != nil {
 		return fmt.Errorf("failed to reboot: %w", err)
 	}
 
