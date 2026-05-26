@@ -119,7 +119,7 @@ var phases = struct {
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;delete
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=pods,verbs=delete;get;list;watch
 //+kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=get;list;watch
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=delete
@@ -274,6 +274,22 @@ func (r *SeedGeneratorReconciler) cleanupOldRenderedMachineConfigs(ctx context.C
 		r.Log.Info(fmt.Sprintf("Deleting machine config %s", mc.Name))
 		if err := r.Client.Delete(ctx, mc.DeepCopy()); err != nil {
 			return fmt.Errorf("failed to delete machine config %s, err: %w", mc.Name, err)
+		}
+	}
+	return nil
+}
+
+func (r *SeedGeneratorReconciler) deletePodsWithPhase(ctx context.Context, phase corev1.PodPhase) error {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+	for i := range podList.Items {
+		if podList.Items[i].Status.Phase != phase {
+			continue
+		}
+		if err := r.Delete(ctx, &podList.Items[i]); err != nil {
+			return fmt.Errorf("failed to delete pod %s/%s: %w", podList.Items[i].Namespace, podList.Items[i].Name, err)
 		}
 	}
 	return nil
@@ -835,15 +851,13 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 		return
 	}
 
-	// TODO: Can this be done cleanly via client? The client.DeleteAllOf seems to require a specified namespace, so maybe loop over the namespaces
 	r.Log.Info("Cleaning completed and failed pods")
-	kubeconfigArg := fmt.Sprintf("--kubeconfig=%s", common.KubeconfigFile)
-	if _, err := r.Executor.Execute("oc", "delete", "pod", kubeconfigArg, "--field-selector=status.phase==Succeeded", "--all-namespaces"); err != nil {
+	if err := r.deletePodsWithPhase(ctx, corev1.PodSucceeded); err != nil {
 		rc = fmt.Errorf("failed to cleanup Succeeded pods: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}
-	if _, err := r.Executor.Execute("oc", "delete", "pod", kubeconfigArg, "--field-selector=status.phase==Failed", "--all-namespaces"); err != nil {
+	if err := r.deletePodsWithPhase(ctx, corev1.PodFailed); err != nil {
 		rc = fmt.Errorf("failed to cleanup Failed pods: %w", err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
