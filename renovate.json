@@ -38,8 +38,6 @@
                     "allow-automatic-merge"
                 ],
                 "additionalBranchPrefix": "telco5g-konflux-",
-                "autoApprove": true,
-                "automerge": true,
                 "matchPackageNames": [
                     "https://github.com/openshift-kni/telco5g-konflux.git"
                 ],
@@ -57,8 +55,6 @@
             "addLabels": [
                 "allow-automatic-merge"
             ],
-            "autoApprove": true,
-            "automerge": true,
             "enabled": true,
             "ignoreTests": false,
             "includePaths": [
@@ -76,6 +72,14 @@
             ]
         },
         {
+            "addLabels": [
+                "allow-automatic-merge"
+            ],
+            "matchManagers": [
+                "rpm-lockfile"
+            ]
+        },
+        {
             "enabled": false,
             "matchUpdateTypes": [
                 "minor"
@@ -88,8 +92,6 @@
         "addLabels": [
             "allow-automatic-merge"
         ],
-        "autoApprove": true,
-        "automerge": true,
         "enabled": true,
         "ignoreTests": false,
         "includePaths": [
