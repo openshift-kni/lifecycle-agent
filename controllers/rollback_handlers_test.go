@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 )
 
@@ -286,7 +286,7 @@ func TestStartRollback(t *testing.T) {
 				Ops:             mockOps,
 				OstreeClient:    mockOstreeClient,
 				RebootClient:    mockRebootClient,
-				Recorder:        record.NewFakeRecorder(10),
+				Recorder:        events.NewFakeRecorder(10),
 			}
 
 			ibu := &ibuv1.ImageBasedUpgrade{}
@@ -326,7 +326,7 @@ func TestStartRollback_MarshalToFileFails(t *testing.T) {
 		Ops:             mockOps,
 		OstreeClient:    mockOstreeClient,
 		RebootClient:    mockRebootClient,
-		Recorder:        record.NewFakeRecorder(10),
+		Recorder:        events.NewFakeRecorder(10),
 	}
 
 	ibu := &ibuv1.ImageBasedUpgrade{}

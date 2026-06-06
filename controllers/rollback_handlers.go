@@ -107,7 +107,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ib
 	}
 
 	// Write an event to indicate reboot attempt
-	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot for rollback")
+	r.Recorder.Eventf(ibu, nil, corev1.EventTypeNormal, "Reboot", "Reboot", "System will now reboot for rollback")
 	err = r.RebootClient.RebootToNewStateRoot("rollback")
 	if err != nil {
 		r.Log.Error(err, "")

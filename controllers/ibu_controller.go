@@ -42,7 +42,7 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -66,7 +66,7 @@ type ImageBasedUpgradeReconciler struct {
 	UpgradeHandler  UpgradeHandler
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
-	Recorder        record.EventRecorder
+	Recorder        events.EventRecorder
 	Precache        *precache.PHandler
 	BackupRestore   backuprestore.BackuperRestorer
 	ExtraManifest   extramanifest.EManifestHandler
@@ -126,7 +126,7 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs,verbs=get;list;watch
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=ipconfigs/status,verbs=get
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=prometheusrules,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -467,7 +467,7 @@ func validateStageTransition(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) bo
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("ImageBasedUpgrade")
+	r.Recorder = mgr.GetEventRecorder("ImageBasedUpgrade")
 
 	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).
