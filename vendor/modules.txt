@@ -10,6 +10,14 @@ cyphar.com/go-pathrs/procfs
 # dario.cat/mergo v1.0.2
 ## explicit; go 1.13
 dario.cat/mergo
+# github.com/Azure/ARO-RP v0.0.0-20250602035759-0693f32d5ccc
+## explicit; go 1.22.9
+github.com/Azure/ARO-RP/pkg/operator/apis/aro.openshift.io/v1alpha1
+github.com/Azure/ARO-RP/pkg/operator/apis/preview.aro.openshift.io/v1alpha1
+github.com/Azure/ARO-RP/pkg/operator/clientset/versioned
+github.com/Azure/ARO-RP/pkg/operator/clientset/versioned/scheme
+github.com/Azure/ARO-RP/pkg/operator/clientset/versioned/typed/aro.openshift.io/v1alpha1
+github.com/Azure/ARO-RP/pkg/operator/clientset/versioned/typed/preview.aro.openshift.io/v1alpha1
 # github.com/BurntSushi/toml v1.5.0
 ## explicit; go 1.18
 github.com/BurntSushi/toml
@@ -87,13 +95,14 @@ github.com/coreos/go-systemd/unit
 # github.com/coreos/go-systemd/v22 v22.6.0
 ## explicit; go 1.23
 github.com/coreos/go-systemd/v22/unit
-# github.com/coreos/ign-converter v0.0.0-20230417193809-cee89ea7d8ff
+# github.com/coreos/ign-converter v0.0.0-20241125185625-2f773079ca81
 ## explicit; go 1.18
 github.com/coreos/ign-converter/translate/v23tov30
 github.com/coreos/ign-converter/translate/v32tov22
 github.com/coreos/ign-converter/translate/v32tov31
 github.com/coreos/ign-converter/translate/v33tov32
 github.com/coreos/ign-converter/translate/v34tov33
+github.com/coreos/ign-converter/translate/v35tov34
 github.com/coreos/ign-converter/util
 # github.com/coreos/ignition v0.35.0
 ## explicit
@@ -148,7 +157,7 @@ github.com/coreos/ignition/v2/config/v3_7_experimental
 github.com/coreos/ignition/v2/config/v3_7_experimental/translate
 github.com/coreos/ignition/v2/config/v3_7_experimental/types
 github.com/coreos/ignition/v2/config/validate
-# github.com/coreos/vcontext v0.0.0-20230201181013-d72178a18687
+# github.com/coreos/vcontext v0.0.0-20231102161604-685dc7299dc5
 ## explicit; go 1.18
 github.com/coreos/vcontext/json
 github.com/coreos/vcontext/path
@@ -268,10 +277,6 @@ github.com/go-openapi/swag/typeutils
 # github.com/go-openapi/swag/yamlutils v0.26.0
 ## explicit; go 1.25.0
 github.com/go-openapi/swag/yamlutils
-# github.com/gogo/protobuf v1.3.2
-## explicit; go 1.15
-github.com/gogo/protobuf/proto
-github.com/gogo/protobuf/sortkeys
 # github.com/golang/mock v1.6.0
 ## explicit; go 1.11
 github.com/golang/mock/gomock
@@ -383,8 +388,8 @@ github.com/opencontainers/runtime-spec/specs-go
 github.com/opencontainers/selinux/go-selinux
 github.com/opencontainers/selinux/go-selinux/label
 github.com/opencontainers/selinux/pkg/pwalkdir
-# github.com/openshift/api v0.0.0-20260213155647-8fe9fe363807
-## explicit; go 1.24.0
+# github.com/openshift/api v0.0.0-20260326111139-30c2ef7a272e
+## explicit; go 1.25.0
 github.com/openshift/api
 github.com/openshift/api/annotations
 github.com/openshift/api/apiextensions
@@ -407,7 +412,6 @@ github.com/openshift/api/console
 github.com/openshift/api/console/v1
 github.com/openshift/api/etcd
 github.com/openshift/api/etcd/v1alpha1
-github.com/openshift/api/features
 github.com/openshift/api/helm
 github.com/openshift/api/helm/v1beta1
 github.com/openshift/api/image
@@ -466,8 +470,8 @@ github.com/openshift/api/user/v1
 ## explicit; go 1.21
 github.com/openshift/assisted-image-service/pkg/isoeditor
 github.com/openshift/assisted-image-service/pkg/overlay
-# github.com/openshift/client-go v0.0.0-20260108185524-48f4ccfc4e13
-## explicit; go 1.24.0
+# github.com/openshift/client-go v0.0.0-20260330134249-7e1499aaacd7
+## explicit; go 1.25.0
 github.com/openshift/client-go/build/applyconfigurations/build/v1
 github.com/openshift/client-go/build/applyconfigurations/internal
 github.com/openshift/client-go/build/clientset/versioned
@@ -496,6 +500,11 @@ github.com/openshift/client-go/image/applyconfigurations/internal
 github.com/openshift/client-go/image/clientset/versioned
 github.com/openshift/client-go/image/clientset/versioned/scheme
 github.com/openshift/client-go/image/clientset/versioned/typed/image/v1
+github.com/openshift/client-go/image/informers/externalversions
+github.com/openshift/client-go/image/informers/externalversions/image
+github.com/openshift/client-go/image/informers/externalversions/image/v1
+github.com/openshift/client-go/image/informers/externalversions/internalinterfaces
+github.com/openshift/client-go/image/listers/image/v1
 github.com/openshift/client-go/machine/applyconfigurations/internal
 github.com/openshift/client-go/machine/applyconfigurations/machine/v1
 github.com/openshift/client-go/machine/applyconfigurations/machine/v1beta1
@@ -538,11 +547,21 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/controller-runtime-common v0.0.0-20260213175913-767fef058eca
-## explicit; go 1.24.0
+github.com/openshift/client-go/route/applyconfigurations/internal
+github.com/openshift/client-go/route/applyconfigurations/route/v1
+github.com/openshift/client-go/route/clientset/versioned
+github.com/openshift/client-go/route/clientset/versioned/scheme
+github.com/openshift/client-go/route/clientset/versioned/typed/route/v1
+github.com/openshift/client-go/route/informers/externalversions
+github.com/openshift/client-go/route/informers/externalversions/internalinterfaces
+github.com/openshift/client-go/route/informers/externalversions/route
+github.com/openshift/client-go/route/informers/externalversions/route/v1
+github.com/openshift/client-go/route/listers/route/v1
+# github.com/openshift/controller-runtime-common v0.0.0-20260318085703-1812aed6dbd2
+## explicit; go 1.25.0
 github.com/openshift/controller-runtime-common/pkg/tls
-# github.com/openshift/library-go v0.0.0-20260213153706-03f1709971c5
-## explicit; go 1.24.0
+# github.com/openshift/library-go v0.0.0-20260318142011-72bf34f474bc
+## explicit; go 1.25.0
 github.com/openshift/library-go/pkg/apiserver/jsonpatch
 github.com/openshift/library-go/pkg/certs
 github.com/openshift/library-go/pkg/config/leaderelection
@@ -563,16 +582,20 @@ github.com/openshift/library-go/pkg/operator/v1helpers
 # github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 ## explicit; go 1.20
 github.com/openshift/local-storage-operator/api/v1
-# github.com/openshift/lvm-operator v0.0.0-20240627192035-bf9fc3ac7ee8
-## explicit; go 1.21
-github.com/openshift/lvm-operator/api/v1alpha1
-github.com/openshift/lvm-operator/internal/cluster
-# github.com/openshift/machine-config-operator v0.0.1-0.20250320230514-53e78f3692ee
-## explicit; go 1.23.0
+# github.com/openshift/lvm-operator/v4 v4.0.0-20260605035646-3c5c08d38149
+## explicit; go 1.25.9
+github.com/openshift/lvm-operator/v4/api/v1alpha1
+github.com/openshift/lvm-operator/v4/internal/cluster
+github.com/openshift/lvm-operator/v4/internal/controllers/constants
+github.com/openshift/lvm-operator/v4/internal/controllers/labels
+# github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3
+## explicit; go 1.25.3
 github.com/openshift/machine-config-operator/internal/clients
 github.com/openshift/machine-config-operator/pkg/apihelpers
+github.com/openshift/machine-config-operator/pkg/controller/build/constants
 github.com/openshift/machine-config-operator/pkg/controller/common
 github.com/openshift/machine-config-operator/pkg/daemon/constants
+github.com/openshift/machine-config-operator/pkg/secrets
 github.com/openshift/machine-config-operator/pkg/version
 # github.com/operator-framework/api v0.42.0
 ## explicit; go 1.25.7
@@ -1539,8 +1562,8 @@ k8s.io/gengo/v2/generator
 k8s.io/gengo/v2/namer
 k8s.io/gengo/v2/parser
 k8s.io/gengo/v2/types
-# k8s.io/klog/v2 v2.130.1
-## explicit; go 1.18
+# k8s.io/klog/v2 v2.140.0
+## explicit; go 1.21
 k8s.io/klog/v2
 k8s.io/klog/v2/internal/buffer
 k8s.io/klog/v2/internal/clock
@@ -1548,8 +1571,8 @@ k8s.io/klog/v2/internal/dbg
 k8s.io/klog/v2/internal/serialize
 k8s.io/klog/v2/internal/severity
 k8s.io/klog/v2/internal/sloghandler
-# k8s.io/kube-aggregator v0.34.1
-## explicit; go 1.24.0
+# k8s.io/kube-aggregator v0.35.1
+## explicit; go 1.25.0
 k8s.io/kube-aggregator/pkg/apis/apiregistration
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1beta1
@@ -1576,7 +1599,10 @@ k8s.io/kube-openapi/pkg/validation/errors
 k8s.io/kube-openapi/pkg/validation/spec
 k8s.io/kube-openapi/pkg/validation/strfmt
 k8s.io/kube-openapi/pkg/validation/strfmt/bson
-# k8s.io/utils v0.0.0-20260108192941-914a6e750570
+# k8s.io/kubectl v0.35.0
+## explicit; go 1.25.0
+k8s.io/kubectl/pkg/scheme
+# k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
 ## explicit; go 1.23
 k8s.io/utils/buffer
 k8s.io/utils/clock
