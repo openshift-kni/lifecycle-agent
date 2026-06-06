@@ -505,6 +505,7 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 
 	// In order to have the imager container both survive the LCA pod shutdown and have continued network access
 	// after all other pods are shutdown, we're using systemd-run to launch it as a transient service-unit
+	//nolint:goconst
 	systemdRunOpts := []string{
 		"--collect",
 		"--wait",
