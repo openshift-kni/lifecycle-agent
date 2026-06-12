@@ -118,7 +118,9 @@ const (
 	ImageCleanupDisabledValue = "Disabled"
 
 	LcaNamespace = "openshift-lifecycle-agent"
-	Host         = "/host"
+	// OperatorNamespaceEnvVar is set on the operator Deployment via downward API.
+	OperatorNamespaceEnvVar = "MY_POD_NAMESPACE"
+	Host                  = "/host"
 
 	CsvDeploymentName      = "cluster-version-operator"
 	CsvDeploymentNamespace = "openshift-cluster-version"
