@@ -893,7 +893,7 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 			v4,
 			ipc.Status.IPv4,
 		); err != nil {
-			return err
+			return fmt.Errorf("failed to validate IPv4 address changes: %w", err)
 		}
 	}
 
@@ -903,7 +903,7 @@ func validateAddressChanges(ipc *ipcv1.IPConfig) error {
 			v6,
 			ipc.Status.IPv6,
 		); err != nil {
-			return err
+			return fmt.Errorf("failed to validate IPv6 address changes: %w", err)
 		}
 	}
 
