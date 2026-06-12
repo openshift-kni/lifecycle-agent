@@ -92,8 +92,8 @@ func TestRunHappyPath(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -101,9 +101,9 @@ func TestRunHappyPath(t *testing.T) {
 			nil,
 			"-v", fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 		).Return(nil),
-		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", nil),
 		opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte(kubeconfigForLocalhost()), nil),
-		opsMock.EXPECT().SystemctlAction("disable", "ip-configuration.service").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "disable", "ip-configuration.service").Return("", nil),
 	)
 
 	// WaitForApi polls until ctx cancellation; keep test fast.
@@ -116,7 +116,7 @@ func TestRunHappyPath(t *testing.T) {
 func TestRunApplyNetworkConfigurationError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
-	opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).
+	opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).
 		Return("", errors.New("nmstate-fail"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -130,8 +130,8 @@ func TestRunRecertError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -152,8 +152,8 @@ func TestRunEnableKubeletError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -161,7 +161,7 @@ func TestRunEnableKubeletError(t *testing.T) {
 			nil,
 			"-v", fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 		).Return(nil),
-		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", errors.New("enable-fail")),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", errors.New("enable-fail")),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -177,8 +177,8 @@ func TestRunCreateKubeClientError(t *testing.T) {
 	opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte("{not a kubeconfig"), nil)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -186,7 +186,7 @@ func TestRunCreateKubeClientError(t *testing.T) {
 			nil,
 			"-v", fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 		).Return(nil),
-		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", nil),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -200,8 +200,8 @@ func TestRunDNSIPFamilyIsIgnoredInPostPivot(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -209,9 +209,9 @@ func TestRunDNSIPFamilyIsIgnoredInPostPivot(t *testing.T) {
 			nil,
 			"-v", fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 		).Return(nil),
-		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", nil),
 		opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte(kubeconfigForLocalhost()), nil),
-		opsMock.EXPECT().SystemctlAction("disable", "ip-configuration.service").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "disable", "ip-configuration.service").Return("", nil),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -224,8 +224,8 @@ func TestRunDisableServiceError(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	gomock.InOrder(
-		opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
-		opsMock.EXPECT().RecertFullFlow(
+		opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)).Return("", nil),
+		opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 			handler.recertImage,
 			filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 			filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -233,9 +233,9 @@ func TestRunDisableServiceError(t *testing.T) {
 			nil,
 			"-v", fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 		).Return(nil),
-		opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", nil),
 		opsMock.EXPECT().ReadFile(handler.kubeconfig).Return([]byte(kubeconfigForLocalhost()), nil),
-		opsMock.EXPECT().SystemctlAction("disable", "ip-configuration.service").Return("", errors.New("disable-fail")),
+		opsMock.EXPECT().SystemctlAction(gomock.Any(), "disable", "ip-configuration.service").Return("", errors.New("disable-fail")),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -248,7 +248,7 @@ func TestRunDisableServiceError(t *testing.T) {
 func TestRunRecert(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
-	opsMock.EXPECT().RecertFullFlow(
+	opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 		handler.recertImage,
 		filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 		filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -257,9 +257,9 @@ func TestRunRecert(t *testing.T) {
 		"-v",
 		fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 	).Return(nil)
-	assert.NoError(t, handler.runRecert())
+	assert.NoError(t, handler.runRecert(context.Background()))
 
-	opsMock.EXPECT().RecertFullFlow(
+	opsMock.EXPECT().RecertFullFlow(gomock.Any(),
 		handler.recertImage,
 		filepath.Join(handler.workspaceDir, filepath.Base(common.IPConfigPullSecretFile)),
 		filepath.Join(handler.workspaceDir, recert.RecertConfigFile),
@@ -268,26 +268,26 @@ func TestRunRecert(t *testing.T) {
 		"-v",
 		fmt.Sprintf("%s:%s", handler.workspaceDir, handler.workspaceDir),
 	).Return(errors.New("boom"))
-	assert.Error(t, handler.runRecert())
+	assert.Error(t, handler.runRecert(context.Background()))
 }
 
 func TestApplyNetworkConfiguration(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
 	nmstateConfigFile := filepath.Join(handler.workspaceDir, common.NmstateConfigFileName)
-	opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateConfigFile).Return("", nil)
-	assert.NoError(t, handler.applyNetworkConfiguration())
+	opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", nmstateConfigFile).Return("", nil)
+	assert.NoError(t, handler.applyNetworkConfiguration(context.Background()))
 
-	opsMock.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateConfigFile).Return("", errors.New("apply-fail"))
-	assert.Error(t, handler.applyNetworkConfiguration())
+	opsMock.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", nmstateConfigFile).Return("", errors.New("apply-fail"))
+	assert.Error(t, handler.applyNetworkConfiguration(context.Background()))
 }
 
 func TestEnableAndStartKubelet(t *testing.T) {
 	handler, opsMock := newPostPivotHandler(t)
 
-	opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", nil)
-	assert.NoError(t, handler.enableAndStartKubelet())
+	opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", nil)
+	assert.NoError(t, handler.enableAndStartKubelet(context.Background()))
 
-	opsMock.EXPECT().SystemctlAction("enable", "kubelet", "--now").Return("", errors.New("enable-fail"))
-	assert.Error(t, handler.enableAndStartKubelet())
+	opsMock.EXPECT().SystemctlAction(gomock.Any(), "enable", "kubelet", "--now").Return("", errors.New("enable-fail"))
+	assert.Error(t, handler.enableAndStartKubelet(context.Background()))
 }

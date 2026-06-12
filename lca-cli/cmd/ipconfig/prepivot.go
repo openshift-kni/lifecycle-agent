@@ -107,7 +107,7 @@ var ipConfigPrePivotCmd = &cobra.Command{
 	Use:   prePivotCmd,
 	Short: "Execute IP configuration pre-pivot",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := runIPConfigPrePivot(); err != nil {
+		if err := runIPConfigPrePivot(cmd.Context()); err != nil {
 			pkgLog.Fatalf("Error executing ip-config pre-pivot: %v", err)
 		}
 	},
@@ -118,7 +118,7 @@ var ipConfigPrePivotCmd = &cobra.Command{
 // - gathers OSTree state for old/new stateroots
 // - writes progress status, runs pre-pivot actions, optionally installs an init monitor
 // - finalizes status and reboots into the new stateroot
-func runIPConfigPrePivot() (retErr error) {
+func runIPConfigPrePivot(ctx context.Context) (retErr error) {
 	opsInterface, hostCommandsExecutor, client, err := buildOpsAndK8sClient(ipPrePivotScheme)
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func runIPConfigPrePivot() (retErr error) {
 
 	defer func() {
 		if retErr == nil {
-			if err := rbClient.RebootToNewStateRoot("ip-config pre-pivot"); err != nil {
+			if err := rbClient.RebootToNewStateRoot(ctx, "ip-config pre-pivot"); err != nil {
 				retErr = fmt.Errorf("failed to reboot to new stateroot: %w", err)
 				return
 			}
@@ -189,8 +189,6 @@ func runIPConfigPrePivot() (retErr error) {
 		dnsIPFamilyFlag:                   dnsIPFamily,
 	}).Info("ip-config pre-pivot flags")
 
-	ctx := context.Background()
-
 	if err := validatePrePivotFlags(ctx, client); err != nil {
 		return fmt.Errorf("pre-pivot flags validation failed: %w", err)
 	}
@@ -207,7 +205,7 @@ func runIPConfigPrePivot() (retErr error) {
 	)
 
 	// Build ostree data only after we have the final new stateroot name.
-	ostreeData, err := getOstreeData(newStaterootName, rpmClient, ostreeClient, pkgLog)
+	ostreeData, err := getOstreeData(ctx, newStaterootName, rpmClient, ostreeClient, pkgLog)
 	if err != nil {
 		return fmt.Errorf("failed to get ostree data: %w", err)
 	}
@@ -237,14 +235,14 @@ func runIPConfigPrePivot() (retErr error) {
 
 	if installInitMonitor {
 		if err := installMonitorInitializationServiceInNewStateroot(
-			opsInterface, ostreeData, pkgLog,
+			ctx, opsInterface, ostreeData, pkgLog,
 		); err != nil {
 			return fmt.Errorf("failed to install monitor initialization service: %w", err)
 		}
 	}
 
 	if installIpConfigurationService {
-		if err := installIpConfigurationServiceInNewStateroot(ostreeData, opsInterface, pkgLog); err != nil {
+		if err := installIpConfigurationServiceInNewStateroot(ctx, ostreeData, opsInterface, pkgLog); err != nil {
 			return fmt.Errorf("failed to install ip configuration service: %w", err)
 		}
 
@@ -264,6 +262,7 @@ func runIPConfigPrePivot() (retErr error) {
 // installMonitorInitializationServiceInNewStateroot installs and enables the IPC init monitor service
 // within the new stateroot deployment.
 func installMonitorInitializationServiceInNewStateroot(
+	ctx context.Context,
 	ops ops.Ops,
 	ostreeData *ipconfig.OstreeData,
 	logger *logrus.Logger,
@@ -279,7 +278,7 @@ func installMonitorInitializationServiceInNewStateroot(
 	}
 
 	logger.Infof("Enabling service %s", common.IPCInitMonitorService)
-	if _, err := ops.SystemctlAction(
+	if _, err := ops.SystemctlAction(ctx,
 		"enable",
 		"--root",
 		ostreeData.NewStateroot.DeploymentDir,
@@ -299,6 +298,7 @@ func installMonitorInitializationServiceInNewStateroot(
 // getOstreeData returns information about the current (old) and target (new)
 // stateroots, including names, paths, deployment names, and deployment dirs.
 func getOstreeData(
+	ctx context.Context,
 	newStaterootName string,
 	rpmOstree rpmOstree.IClient,
 	ostree intOstree.IClient,
@@ -307,13 +307,13 @@ func getOstreeData(
 	common.OstreeDeployPathPrefix = sysrootPath
 	ostreeData := &ipconfig.OstreeData{}
 
-	currentStaterootData, err := getCurrentStaterootData(rpmOstree, ostree)
+	currentStaterootData, err := getCurrentStaterootData(ctx, rpmOstree, ostree)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current stateroot data: %w", err)
 	}
 	ostreeData.OldStateroot = currentStaterootData
 
-	newStaterootData, err := getNewStaterootData(newStaterootName, ostree, logger)
+	newStaterootData, err := getNewStaterootData(ctx, newStaterootName, ostree, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get new stateroot data: %w", err)
 	}
@@ -323,10 +323,10 @@ func getOstreeData(
 }
 
 // getCurrentStaterootData queries the system for the current stateroot details.
-func getCurrentStaterootData(rpmOstree rpmOstree.IClient, ostree intOstree.IClient) (*ipconfig.StaterootData, error) {
+func getCurrentStaterootData(ctx context.Context, rpmOstree rpmOstree.IClient, ostree intOstree.IClient) (*ipconfig.StaterootData, error) {
 	staterootData := &ipconfig.StaterootData{}
 
-	currentStaterootName, err := rpmOstree.GetCurrentStaterootName()
+	currentStaterootName, err := rpmOstree.GetCurrentStaterootName(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current stateroot name: %w", err)
 	}
@@ -334,13 +334,13 @@ func getCurrentStaterootData(rpmOstree rpmOstree.IClient, ostree intOstree.IClie
 
 	staterootData.Path = common.GetStaterootPath(currentStaterootName)
 
-	oldDeploymentName, err := ostree.GetDeployment(currentStaterootName)
+	oldDeploymentName, err := ostree.GetDeployment(ctx, currentStaterootName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment for %s: %w", currentStaterootName, err)
 	}
 	staterootData.DeploymentName = oldDeploymentName
 
-	oldDeploymentDir, err := ostree.GetDeploymentDir(currentStaterootName)
+	oldDeploymentDir, err := ostree.GetDeploymentDir(ctx, currentStaterootName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment dir for %s: %w", currentStaterootName, err)
 	}
@@ -351,6 +351,7 @@ func getCurrentStaterootData(rpmOstree rpmOstree.IClient, ostree intOstree.IClie
 
 // getNewStaterootData resolves the metadata for the target new stateroot.
 func getNewStaterootData(
+	ctx context.Context,
 	newStaterootName string,
 	ostree intOstree.IClient,
 	logger *logrus.Logger,
@@ -360,7 +361,7 @@ func getNewStaterootData(
 		Path: common.GetStaterootPath(newStaterootName),
 	}
 
-	newDeploymentName, err := ostree.GetDeployment(newStaterootName)
+	newDeploymentName, err := ostree.GetDeployment(ctx, newStaterootName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment name for %s: %w", newStaterootName, err)
 	}
@@ -371,7 +372,7 @@ func getNewStaterootData(
 		return staterootData, nil
 	}
 
-	newDeploymentDir, err := ostree.GetDeploymentDir(newStaterootName)
+	newDeploymentDir, err := ostree.GetDeploymentDir(ctx, newStaterootName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment dir for %s: %w", newStaterootName, err)
 	}
@@ -608,6 +609,7 @@ func validateDNSServers(servers []string) error {
 }
 
 func installIpConfigurationServiceInNewStateroot(
+	ctx context.Context,
 	ostreeData *ipconfig.OstreeData,
 	ops ops.Ops,
 	logger *logrus.Logger,
@@ -628,7 +630,7 @@ func installIpConfigurationServiceInNewStateroot(
 	}
 
 	logger.Infof("Enabling service %s", common.IPConfigurationService)
-	if _, err := ops.SystemctlAction(
+	if _, err := ops.SystemctlAction(ctx,
 		"enable",
 		"--root",
 		ostreeData.NewStateroot.DeploymentDir,

@@ -169,7 +169,7 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 	}
 
 	p.log.Info("Preparing network configuration")
-	nmstateConfig, err := p.prepareNetworkConfiguration()
+	nmstateConfig, err := p.prepareNetworkConfiguration(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare network configuration: %w", err)
 	}
@@ -177,14 +177,14 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 	// all functions above should run before we stop the cluster services
 
 	p.log.Info("Stopping cluster services")
-	if err = p.ops.StopClusterServices(); err != nil {
+	if err = p.ops.StopClusterServices(ctx); err != nil {
 		err = fmt.Errorf("failed to stop cluster services: %w", err)
 		return
 	}
 
 	defer func() {
 		p.log.Info("Enabling cluster services in old stateroot")
-		if internalErr := p.ops.EnableClusterServices(); internalErr != nil {
+		if internalErr := p.ops.EnableClusterServices(ctx); internalErr != nil {
 			if err == nil {
 				err = internalErr
 			} else {
@@ -195,7 +195,7 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 
 	// should run after the cluster services stopped
 	p.log.Info("Preparing new stateroot")
-	if err = p.prepareNewStateroot(p.ostreeData, kargs); err != nil {
+	if err = p.prepareNewStateroot(ctx, p.ostreeData, kargs); err != nil {
 		return fmt.Errorf("failed to prepare new stateroot: %w", err)
 	}
 
@@ -232,7 +232,7 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 	}
 
 	p.log.Info("Restoring MCO-managed files under /var/lib/")
-	if err := p.restoreMCDManagedVarLibFiles(); err != nil {
+	if err := p.restoreMCDManagedVarLibFiles(ctx); err != nil {
 		return fmt.Errorf("failed to restore MCO-managed var/lib files: %w", err)
 	}
 
@@ -244,22 +244,24 @@ func (p *PrePivotHandler) Run(ctx context.Context) (err error) {
 // prepareNewStateroot deploys the new stateroot if needed, copies data, and
 // sets it as default (when supported).
 func (p *PrePivotHandler) prepareNewStateroot(
+	ctx context.Context,
 	ostreeData *OstreeData,
 	kernelArgs []string,
 ) error {
-	if err := p.ensureSysrootWritable(); err != nil {
+	if err := p.ensureSysrootWritable(ctx); err != nil {
 		return fmt.Errorf("failed to ensure sysroot writable: %w", err)
 	}
 
 	if ostreeData.NewStateroot.DeploymentName == "" {
 		p.log.Infof("New stateroot %s is not deployed, deploying it", ostreeData.NewStateroot.Name)
 
-		bootedCommit, err := p.getBootedCommit()
+		bootedCommit, err := p.getBootedCommit(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get booted commit: %w", err)
 		}
 
 		if err = p.deployNewStateroot(
+			ctx,
 			ostreeData,
 			lo.FromPtr(bootedCommit),
 			kernelArgs,
@@ -270,27 +272,27 @@ func (p *PrePivotHandler) prepareNewStateroot(
 		p.log.Infof("New stateroot %s is already deployed, skipping deploy", ostreeData.NewStateroot.Name)
 	}
 
-	if err := p.copyStateRootData(ostreeData); err != nil {
+	if err := p.copyStateRootData(ctx, ostreeData); err != nil {
 		return fmt.Errorf("failed to copy state root data: %w", err)
 	}
 
-	if err := p.setDefaultDeploymentIfEnabled(ostreeData.NewStateroot.Name); err != nil {
+	if err := p.setDefaultDeploymentIfEnabled(ctx, ostreeData.NewStateroot.Name); err != nil {
 		return fmt.Errorf("failed to set default deployment: %w", err)
 	}
 
 	return nil
 }
 
-func (p *PrePivotHandler) ensureSysrootWritable() error {
-	if err := p.ops.RemountSysroot(); err != nil {
+func (p *PrePivotHandler) ensureSysrootWritable(ctx context.Context) error {
+	if err := p.ops.RemountSysroot(ctx); err != nil {
 		return fmt.Errorf("failed to remount /sysroot rw: %w", err)
 	}
 	return nil
 }
 
 // getBootedCommit returns the checksum of the currently booted rpm-ostree deployment.
-func (p *PrePivotHandler) getBootedCommit() (*string, error) {
-	status, err := p.rpm.QueryStatus()
+func (p *PrePivotHandler) getBootedCommit(ctx context.Context) (*string, error) {
+	status, err := p.rpm.QueryStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query rpm-ostree status: %w", err)
 	}
@@ -313,25 +315,26 @@ func (p *PrePivotHandler) getBootedCommit() (*string, error) {
 // deployNewStateroot initializes OSTree for the new stateroot and deploys the
 // booted commit with the provided kernel args, updating the ostreeData fields.
 func (p *PrePivotHandler) deployNewStateroot(
+	ctx context.Context,
 	ostreeData *OstreeData,
 	bootedCommit string,
 	kargs []string,
 ) error {
-	if err := p.ostree.OSInit(ostreeData.NewStateroot.Name); err != nil {
+	if err := p.ostree.OSInit(ctx, ostreeData.NewStateroot.Name); err != nil {
 		return fmt.Errorf("failed to initialize ostree for new stateroot %s: %w", ostreeData.NewStateroot.Name, err)
 	}
 
-	if err := p.ostree.Deploy(ostreeData.NewStateroot.Name, bootedCommit, kargs, p.rpm, false); err != nil {
+	if err := p.ostree.Deploy(ctx, ostreeData.NewStateroot.Name, bootedCommit, kargs, p.rpm, false); err != nil {
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 
-	deploymentName, err := p.ostree.GetDeployment(ostreeData.NewStateroot.Name)
+	deploymentName, err := p.ostree.GetDeployment(ctx, ostreeData.NewStateroot.Name)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment for %s: %w", ostreeData.NewStateroot.Name, err)
 	}
 	ostreeData.NewStateroot.DeploymentName = deploymentName
 
-	deploymentDir, err := p.ostree.GetDeploymentDir(ostreeData.NewStateroot.Name)
+	deploymentDir, err := p.ostree.GetDeploymentDir(ctx, ostreeData.NewStateroot.Name)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment dir for %s: %w", ostreeData.NewStateroot.Name, err)
 	}
@@ -341,22 +344,22 @@ func (p *PrePivotHandler) deployNewStateroot(
 }
 
 // copyStateRootData copies important state from the old stateroot to the new one.
-func (p *PrePivotHandler) copyStateRootData(ostreeData *OstreeData) error {
-	if err := p.copyVar(
+func (p *PrePivotHandler) copyStateRootData(ctx context.Context, ostreeData *OstreeData) error {
+	if err := p.copyVar(ctx,
 		ostreeData.OldStateroot.Path,
 		ostreeData.NewStateroot.Path,
 	); err != nil {
 		return err
 	}
 
-	if err := p.copyEtc(
+	if err := p.copyEtc(ctx,
 		ostreeData.OldStateroot.DeploymentDir,
 		ostreeData.NewStateroot.DeploymentDir,
 	); err != nil {
 		return err
 	}
 
-	if err := p.copyDeploymentOrigin(
+	if err := p.copyDeploymentOrigin(ctx,
 		ostreeData.OldStateroot.Path,
 		ostreeData.NewStateroot.Path,
 		ostreeData.OldStateroot.DeploymentName,
@@ -369,17 +372,19 @@ func (p *PrePivotHandler) copyStateRootData(ostreeData *OstreeData) error {
 }
 
 // setDefaultDeploymentIfEnabled sets the given stateroot as default when supported.
-func (p *PrePivotHandler) setDefaultDeploymentIfEnabled(newStateroot string) error {
-	if !p.ostree.IsOstreeAdminSetDefaultFeatureEnabled() {
+func (p *PrePivotHandler) setDefaultDeploymentIfEnabled(ctx context.Context, newStateroot string) error {
+	if enabled, err := p.ostree.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		return fmt.Errorf("failed to check ostree set-default feature: %w", err)
+	} else if !enabled {
 		return fmt.Errorf("ostree admin set default feature is not enabled")
 	}
 
-	idx, err := p.rpm.GetDeploymentIndex(newStateroot)
+	idx, err := p.rpm.GetDeploymentIndex(ctx, newStateroot)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment index for %s: %w", newStateroot, err)
 	}
 
-	if err := p.ostree.SetDefaultDeployment(idx); err != nil {
+	if err := p.ostree.SetDefaultDeployment(ctx, idx); err != nil {
 		return fmt.Errorf("failed to set default deployment: %w", err)
 	}
 
@@ -387,9 +392,9 @@ func (p *PrePivotHandler) setDefaultDeploymentIfEnabled(newStateroot string) err
 }
 
 // copyVar copies the var directory preserving SELinux contexts and attributes
-func (p *PrePivotHandler) copyVar(oldSRPath, newSRPath string) error {
+func (p *PrePivotHandler) copyVar(ctx context.Context, oldSRPath, newSRPath string) error {
 	// Copy var directory preserving SELinux contexts and attributes
-	if _, err := p.ops.RunInHostNamespace(
+	if _, err := p.ops.RunInHostNamespace(ctx,
 		"bash", "-c",
 		fmt.Sprintf(
 			"cp -ar --preserve=context '%s/' '%s/'",
@@ -403,8 +408,8 @@ func (p *PrePivotHandler) copyVar(oldSRPath, newSRPath string) error {
 }
 
 // copyEtc copies the deployment's etc directory preserving SELinux contexts
-func (p *PrePivotHandler) copyEtc(oldDeploymentDir, newDeploymentDir string) error {
-	if _, err := p.ops.RunInHostNamespace(
+func (p *PrePivotHandler) copyEtc(ctx context.Context, oldDeploymentDir, newDeploymentDir string) error {
+	if _, err := p.ops.RunInHostNamespace(ctx,
 		"bash", "-c",
 		fmt.Sprintf(
 			"cp -ar --preserve=context '%s/' '%s/'",
@@ -418,11 +423,11 @@ func (p *PrePivotHandler) copyEtc(oldDeploymentDir, newDeploymentDir string) err
 }
 
 // copyOrigin copies the .origin file between deployments preserving SELinux context
-func (p *PrePivotHandler) copyDeploymentOrigin(oldSRPath, newSRPath, oldDeploymentName, newDeploymentName string) error {
+func (p *PrePivotHandler) copyDeploymentOrigin(ctx context.Context, oldSRPath, newSRPath, oldDeploymentName, newDeploymentName string) error {
 	oldOriginPath := filepath.Join(oldSRPath, "deploy", fmt.Sprintf("%s.origin", oldDeploymentName))
 	newOriginPath := filepath.Join(newSRPath, "deploy", fmt.Sprintf("%s.origin", newDeploymentName))
 
-	if _, err := p.ops.RunInHostNamespace(
+	if _, err := p.ops.RunInHostNamespace(ctx,
 		"bash", "-c",
 		fmt.Sprintf(
 			"cp -a --preserve=context '%s' '%s'",
@@ -580,7 +585,7 @@ func (p *PrePivotHandler) writePullSecretToNewStateroot(
 	return nil
 }
 
-func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
+func (p *PrePivotHandler) prepareNetworkConfiguration(ctx context.Context) (*string, error) {
 	if len(p.ipConfigs) == 0 {
 		return nil, fmt.Errorf("no IP configurations provided")
 	}
@@ -615,7 +620,7 @@ func (p *PrePivotHandler) prepareNetworkConfiguration() (*string, error) {
 		}
 	}
 
-	iface, err := p.detectBrExNetworkInterface()
+	iface, err := p.detectBrExNetworkInterface(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect %s network interface: %w", BridgeExternalName, err)
 	}
@@ -675,10 +680,10 @@ func ipFamilyOfString(ip string) string {
 // so we must reliably identify it before generating network MachineConfigs.
 // To do this we query `ovs-vsctl list-ports br-ex` and ignore OVS-internal
 // patch ports, returning only the real NIC that backs `br-ex`.
-func (p *PrePivotHandler) detectBrExNetworkInterface() (string, error) {
+func (p *PrePivotHandler) detectBrExNetworkInterface(ctx context.Context) (string, error) {
 	p.log.Infof("Detecting %s network interface", BridgeExternalName)
 
-	if output, err := p.ops.RunInHostNamespace("ovs-vsctl", "list-ports", BridgeExternalName); err == nil {
+	if output, err := p.ops.RunInHostNamespace(ctx, "ovs-vsctl", "list-ports", BridgeExternalName); err == nil {
 		ports := strings.Fields(output)
 		for _, port := range ports {
 			// Skip OVS patch ports; we only care about the underlying host NIC
@@ -864,7 +869,7 @@ func (p *PrePivotHandler) removeStaleFilesInNewStaterootForRegeneration() error 
 // /var/lib/ovn-ic/etc/) that won't be regenerated by the owning component.
 // This mirrors the seed creation approach where all MCO-managed /var/lib/
 // files are explicitly preserved.
-func (p *PrePivotHandler) restoreMCDManagedVarLibFiles() error {
+func (p *PrePivotHandler) restoreMCDManagedVarLibFiles(ctx context.Context) error {
 	managedFiles, err := utils.GetMCDManagedVarLibFiles(p.mcdCurrentConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to get MCD managed files: %w", err)
@@ -880,7 +885,7 @@ func (p *PrePivotHandler) restoreMCDManagedVarLibFiles() error {
 			return fmt.Errorf("failed to create directory for %s: %w", dstPath, err)
 		}
 
-		if _, err := p.ops.RunInHostNamespace(
+		if _, err := p.ops.RunInHostNamespace(ctx,
 			"cp", "-a", "--preserve=context", srcPath, dstPath,
 		); err != nil {
 			return fmt.Errorf("failed to copy MCO-managed file %s: %w", f, err)

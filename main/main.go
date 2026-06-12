@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
@@ -267,7 +268,9 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
-	containerStorageMountpointTarget, err := chrootOp.GetContainerStorageTarget()
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	containerStorageMountpointTarget, err := chrootOp.GetContainerStorageTarget(startupCtx)
+	startupCancel()
 	if err != nil {
 		setupLog.Error(err, "unable to get container storage mountpoint target")
 		os.Exit(1)

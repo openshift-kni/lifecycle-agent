@@ -31,8 +31,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func (r *ImageBasedUpgradeReconciler) getRollbackAvailabilityExpiration() (time.Time, error) {
-	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
+func (r *ImageBasedUpgradeReconciler) getRollbackAvailabilityExpiration(ctx context.Context) (time.Time, error) {
+	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("unable to determine onbooted stateroot path for rollback: %w", err)
 	}
@@ -49,19 +49,19 @@ func (r *ImageBasedUpgradeReconciler) getRollbackAvailabilityExpiration() (time.
 func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	utils.SetRollbackStatusInProgress(ibu, "Initiating rollback")
 
-	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
+	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 
-	if err := r.Ops.RemountSysroot(); err != nil {
+	if err := r.Ops.RemountSysroot(ctx); err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
 	}
 
 	r.Log.Info("Finding unbooted deployment")
-	deploymentIndex, err := r.RPMOstreeClient.GetUnbootedDeploymentIndex()
+	deploymentIndex, err := r.RPMOstreeClient.GetUnbootedDeploymentIndex(ctx)
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil
@@ -70,10 +70,13 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ib
 	// Set the new default deployment
 	r.Log.Info("Checking for set-default feature")
 
-	if r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled() {
+	if enabled, err := r.OstreeClient.IsOstreeAdminSetDefaultFeatureEnabled(ctx); err != nil {
+		utils.SetRollbackStatusFailed(ibu, fmt.Sprintf("failed to check ostree set-default feature: %s", err.Error()))
+		return doNotRequeue(), nil
+	} else if enabled {
 		r.Log.Info("set-default feature available")
 
-		if err = r.OstreeClient.SetDefaultDeployment(deploymentIndex); err != nil {
+		if err = r.OstreeClient.SetDefaultDeployment(ctx, deploymentIndex); err != nil {
 			utils.SetRollbackStatusFailed(ibu, err.Error())
 			return doNotRequeue(), nil
 		}
@@ -108,7 +111,7 @@ func (r *ImageBasedUpgradeReconciler) startRollback(ctx context.Context, ibu *ib
 
 	// Write an event to indicate reboot attempt
 	r.Recorder.Event(ibu, corev1.EventTypeNormal, "Reboot", "System will now reboot for rollback")
-	err = r.RebootClient.RebootToNewStateRoot("rollback")
+	err = r.RebootClient.RebootToNewStateRoot(ctx, "rollback")
 	if err != nil {
 		r.Log.Error(err, "")
 		utils.SetRollbackStatusFailed(ibu, err.Error())
@@ -126,7 +129,7 @@ func (r *ImageBasedUpgradeReconciler) finishRollback(ibu *ibuv1.ImageBasedUpgrad
 
 //nolint:unparam
 func (r *ImageBasedUpgradeReconciler) handleRollback(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
-	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ibu.Spec.SeedImageRef.Version)
+	origStaterootBooted, err := r.RebootClient.IsOrigStaterootBooted(ctx, ibu.Spec.SeedImageRef.Version)
 	if err != nil {
 		utils.SetRollbackStatusFailed(ibu, err.Error())
 		return doNotRequeue(), nil

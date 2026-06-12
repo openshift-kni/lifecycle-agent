@@ -1,6 +1,7 @@
 package ibi_preparation
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -110,29 +111,29 @@ func TestDiskPreparation(t *testing.T) {
 				}
 			}
 			args := append([]string{"install", "/dev/sda"}, tc.CoreosInstallerArgs...)
-			mockOps.EXPECT().RunInHostNamespace("coreos-installer", args).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "coreos-installer", args).Return("", nil).Times(1)
 
 			if !tc.UseContainersFolder {
 				if !tc.partitionError {
-					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
+					mockOps.EXPECT().CreateExtraPartition(gomock.Any(), installationDisk, extraPartitionLabel,
 						extraPartitionStart, extraPartitionNumber).Return(nil).Times(1)
 				} else {
-					mockOps.EXPECT().CreateExtraPartition(installationDisk, extraPartitionLabel,
+					mockOps.EXPECT().CreateExtraPartition(gomock.Any(), installationDisk, extraPartitionLabel,
 						extraPartitionStart, extraPartitionNumber).Return(fmt.Errorf("dummy")).Times(1)
 				}
 
-				mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(0)
+				mockOps.EXPECT().SetupContainersFolderCommands(gomock.Any()).Return(nil).Times(0)
 			} else {
-				mockOps.EXPECT().CreateExtraPartition(gomock.Any(), gomock.Any(),
+				mockOps.EXPECT().CreateExtraPartition(gomock.Any(), gomock.Any(), gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil).Times(0)
 				if !tc.setupFolderError {
-					mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+					mockOps.EXPECT().SetupContainersFolderCommands(gomock.Any()).Return(nil).Times(1)
 				} else {
-					mockOps.EXPECT().SetupContainersFolderCommands().Return(fmt.Errorf("dummy")).Times(1)
+					mockOps.EXPECT().SetupContainersFolderCommands(gomock.Any()).Return(fmt.Errorf("dummy")).Times(1)
 				}
 			}
 
-			err := ibi.diskPreparation()
+			err := ibi.diskPreparation(context.Background())
 			assert.Equal(t, err != nil, tc.partitionError || tc.setupFolderError)
 		})
 	}
@@ -148,21 +149,21 @@ func TestPostDeployment(t *testing.T) {
 	// Test case when the post deployment script does not exist
 	tmpDir := t.TempDir()
 	postSH := path.Join(tmpDir, "post.sh")
-	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any()).Return("", nil).Times(0)
-	err := ibi.postDeployment(postSH)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), gomock.Any()).Return("", nil).Times(0)
+	err := ibi.postDeployment(context.Background(), postSH)
 	assert.Nil(t, err)
 
 	file, err := os.Create(postSH)
 	assert.Nil(t, err)
 	defer func() { _ = file.Close() }()
 	// Test case when the post deployment script exists and executes without error
-	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", nil).Times(1)
-	err = ibi.postDeployment(postSH)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), postSH).Return("", nil).Times(1)
+	err = ibi.postDeployment(context.Background(), postSH)
 	assert.Nil(t, err)
 
 	// Test case when the post deployment script exists but fails to execute
-	mockOps.EXPECT().RunBashInHostNamespace(postSH).Return("", fmt.Errorf("dummy")).Times(1)
-	err = ibi.postDeployment(postSH)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), postSH).Return("", fmt.Errorf("dummy")).Times(1)
+	err = ibi.postDeployment(context.Background(), postSH)
 	assert.NotNil(t, err)
 }
 
@@ -177,28 +178,28 @@ func TestCleanupRhcosSysroot(t *testing.T) {
 	common.OstreeDeployPathPrefix = tmpDir
 
 	// Test case when rhcosOstreePath doesn't exists, we still should succeed
-	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil).Times(0)
-	err := ibi.cleanupRhcosSysroot()
+	ostreeClientMock.EXPECT().Undeploy(gomock.Any(), rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil).Times(0)
+	err := ibi.cleanupRhcosSysroot(context.Background())
 	assert.Nil(t, err)
 
 	// failed to undeploy
-	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(fmt.Errorf("dummy")).Times(1)
-	err = ibi.cleanupRhcosSysroot()
+	ostreeClientMock.EXPECT().Undeploy(gomock.Any(), rhcosOstreeIndex).Return(fmt.Errorf("dummy")).Times(1)
+	err = ibi.cleanupRhcosSysroot(context.Background())
 	assert.NotNil(t, err)
 
 	// Happy flow
 	if err := os.MkdirAll(filepath.Join(tmpDir, rhcosOstreePath), 0o700); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunBashInHostNamespace("rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", nil).Times(1)
-	err = ibi.cleanupRhcosSysroot()
+	ostreeClientMock.EXPECT().Undeploy(gomock.Any(), rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), "rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", nil).Times(1)
+	err = ibi.cleanupRhcosSysroot(context.Background())
 	assert.Nil(t, err)
 
 	// Failed to remove folder
-	ostreeClientMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunBashInHostNamespace("rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", fmt.Errorf("dummy")).Times(1)
-	err = ibi.cleanupRhcosSysroot()
+	ostreeClientMock.EXPECT().Undeploy(gomock.Any(), rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), "rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", fmt.Errorf("dummy")).Times(1)
+	err = ibi.cleanupRhcosSysroot(context.Background())
 	assert.NotNil(t, err)
 }
