@@ -30,6 +30,9 @@ const (
 	// OSImageURLOverriddenKey is used to tag a rendered machineconfig when OSImageURL has been overridden from default using machineconfig
 	OSImageURLOverriddenKey = "machineconfiguration.openshift.io/os-image-url-overridden"
 
+	// RenderedMachineConfigPrefix is the name prefix for rendered MachineConfigs
+	RenderedMachineConfigPrefix = "rendered-"
+
 	// ControllerConfigName is the name of the ControllerConfig object that controllers use
 	ControllerConfigName = "machine-config-controller"
 
@@ -60,6 +63,15 @@ const (
 	// APIServerInstanceName is a singleton name for APIServer configuration
 	APIServerInstanceName = "cluster"
 
+	// ClusterInstanceNameOSImageStream is the name of the singleton cluster-scoped OSImageStream instance.
+	ClusterInstanceNameOSImageStream = "cluster"
+
+	// InternalReleaseImageInstanceName is a singleton name for InternalReleaseImage
+	InternalReleaseImageInstanceName = "cluster"
+
+	// InternalReleaseImageTLSSecretName is the name of the secret manifest containing the InternalReleaseImage TLS certificate.
+	InternalReleaseImageTLSSecretName = "internal-release-image-tls"
+
 	// APIServerInstanceName is a singleton name for APIServer configuration
 	APIServerBootstrapFileLocation = "/etc/mcs/bootstrap/api-server/api-server.yaml"
 
@@ -83,10 +95,10 @@ const (
 
 	// InternalMCOIgnitionVersion is the ignition version that the MCO converts everything to internally. The intent here is that
 	// we should be able to update this constant when we bump the internal ignition version instead of having to hunt down all of
-	// the version references and figure out "was this supposed to be explicitly 3.4.0 or just the default version which happens
-	// to be 3.4.0 currently". Ideally if you find an explicit "3.4.0", it's supposed to be "3.4.0" version. If it's this constant,
+	// the version references and figure out "was this supposed to be explicitly 3.5.0 or just the default version which happens
+	// to be 3.5.0 currently". Ideally if you find an explicit "3.5.0", it's supposed to be "3.5.0" version. If it's this constant,
 	// it's supposed to be the internal default version.
-	InternalMCOIgnitionVersion = "3.4.0"
+	InternalMCOIgnitionVersion = "3.5.0"
 
 	// This is the minimum acceptable ignition spec required for boot image updates. This should be updated to be in line with the above.
 	MinimumAcceptableStubIgnitionSpec = "3"
@@ -108,6 +120,9 @@ const (
 
 	// MCOOperatorKnobsObjectName is the name of the global MachineConfiguration "knobs" object that the MCO watches.
 	MCOOperatorKnobsObjectName = "cluster"
+
+	// BootImageOptedInAnnotation is used for book keeping when the MCO applies a default boot image configuration
+	BootImageOptedInAnnotation = "machineconfiguration.openshift.io/boot-image-updates-opted-in-at"
 
 	ServiceCARotateAnnotation = "machineconfiguration.openshift.io/service-ca-rotate"
 
@@ -137,6 +152,23 @@ const (
 	// Stub Ignition upgrade related annotation keys
 	StubIgnitionVersionAnnotation   = "machineconfiguration.openshift.io/stub-ignition-upgraded-to"
 	StubIgnitionTimestampAnnotation = "machineconfiguration.openshift.io/stub-ignition-upgraded-at"
+
+	// NodeSizingEnabledEnvPath is the file path for the node sizing enabled environment file
+	NodeSizingEnabledEnvPath = "/etc/node-sizing-enabled.env"
+
+	// Current Boot Image Skew Limits
+	// Note: Update units in status_test.go when the following are bumped
+	RHCOSVersionBootImageSkewLimit = "9.2"
+	OCPVersionBootImageSkewLimit   = "4.13.0"
+
+	// MaxMachineConfigSize is the maximum size for a MachineConfig object in bytes.
+	// This matches etcd's default request size limit of 1.5MB (1572864 bytes).
+	// Reference: https://issues.redhat.com/browse/OCPBUGS-62619
+	MaxMachineConfigSize = 1572864
+
+	// Go GOARCH values for architecture matching
+	GoArchAMD64 = "amd64"
+	GoArchARM64 = "arm64"
 )
 
 // Commonly-used MCO ConfigMap names

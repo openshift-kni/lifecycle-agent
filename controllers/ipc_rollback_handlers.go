@@ -287,6 +287,7 @@ func (r *IPCRollbackTwoPhaseHandler) scheduleIPConfigRollback(
 	stateroot string,
 ) error {
 	logger.Info("Scheduling lca-cli ip-config rollback via systemd-run", "stateroot", stateroot)
+	//nolint:goconst
 	args := []string{
 		"--wait",
 		"--collect",

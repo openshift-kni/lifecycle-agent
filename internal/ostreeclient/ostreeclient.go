@@ -48,6 +48,7 @@ func (c *Client) PullLocal(repoPath string) error {
 }
 
 func (c *Client) OSInit(osname string) error {
+	//nolint:goconst
 	args := []string{"admin", "os-init"}
 	if c.ibi {
 		args = append(args, "--sysroot", "/mnt")

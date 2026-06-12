@@ -803,6 +803,7 @@ func (h *IPCConfigTwoPhaseHandler) RunLcaCliIPConfigPrePivot(
 ) error {
 	logger.Info("Scheduling lca-cli ip-config pre-pivot via systemd-run")
 
+	//nolint:goconst
 	args := []string{
 		"--wait",
 		"--collect",
