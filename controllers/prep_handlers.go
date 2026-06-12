@@ -345,7 +345,7 @@ func (r *ImageBasedUpgradeReconciler) validateSeedOcpVersion(seedOcpVersion stri
 
 func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVars []corev1.EnvVar, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.OperatorNamespace()}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}

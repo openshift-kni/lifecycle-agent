@@ -46,6 +46,15 @@ import (
 // TODO: Need a better way to change this but will require relatively big refactoring
 var OstreeDeployPathPrefix = ""
 
+// OperatorNamespace returns the namespace the operator pod runs in.
+// MY_POD_NAMESPACE is injected by the Deployment; LcaNamespace is used as a fallback.
+func OperatorNamespace() string {
+	if ns := os.Getenv(OperatorNamespaceEnvVar); ns != "" {
+		return ns
+	}
+	return LcaNamespace
+}
+
 // GetConfigMap retrieves the configmap from cluster
 func GetConfigMap(ctx context.Context, c client.Client, configMap ibuv1.ConfigMapRef) (*corev1.ConfigMap, error) {
 

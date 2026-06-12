@@ -6,6 +6,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestOperatorNamespace(t *testing.T) {
+	t.Setenv(OperatorNamespaceEnvVar, "")
+	assert.Equal(t, LcaNamespace, OperatorNamespace())
+
+	t.Setenv(OperatorNamespaceEnvVar, "custom-operator-ns")
+	assert.Equal(t, "custom-operator-ns", OperatorNamespace())
+}
+
 func TestRemoveDuplicates(t *testing.T) {
 	ints := []int{3, 1, 1, 2}
 	res := RemoveDuplicates[int](ints)
