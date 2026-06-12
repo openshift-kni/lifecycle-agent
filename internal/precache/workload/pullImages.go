@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -86,10 +85,6 @@ func pullImage(image, authFile string, progress *precache.Progress) error {
 		} else {
 			message := fmt.Sprintf("%v", err)
 			log.Infof("Attempt %d/%d: Failed to pull %s: %s", i+1, MaxRetries, image, message)
-			if strings.Contains(message, "manifest unknown") {
-				// no point to retry if we can reach the registry and the digest doesn't exist
-				break
-			}
 		}
 	}
 	// update precache progress tracker
