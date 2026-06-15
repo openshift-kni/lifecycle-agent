@@ -41,7 +41,7 @@ tmp
 .cert-manager-scripts
 
 # CLAUDE
-CLAUDE.md
+/CLAUDE.md
 .claude
 
 # Kaiden

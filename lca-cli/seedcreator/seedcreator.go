@@ -351,7 +351,7 @@ func (s *SeedCreator) backupVar() error {
 	}
 
 	// Build the tar command
-	tarArgs := []string{"czf", varTarFile}
+	tarArgs := []string{"czf", varTarFile} //nolint:goconst
 
 	// Ensure all MCD-managed files in /var/lib are explicitly included, to avoid accidental exclusion
 	if managedfiles, err := utils.GetMCDManagedVarLibFiles(common.MCDCurrentConfig); err != nil {
