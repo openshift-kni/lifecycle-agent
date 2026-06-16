@@ -105,7 +105,10 @@ func init() {
 
 var ipConfigPrePivotCmd = &cobra.Command{
 	Use:   prePivotCmd,
-	Short: "Execute IP configuration pre-pivot",
+	Short: "Prepare IP configuration changes before stateroot pivot",
+	Long: `Prepare IP configuration changes before the node pivots to a new OSTree
+stateroot. Copies network configuration from the current deployment to the
+target stateroot and sets up the new deployment for the IP change.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runIPConfigPrePivot(); err != nil {
 			pkgLog.Fatalf("Error executing ip-config pre-pivot: %v", err)
