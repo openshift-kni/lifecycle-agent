@@ -31,7 +31,10 @@ func NewIPConfigCmd(log *logrus.Logger) *cobra.Command {
 
 	ipConfigCmd := &cobra.Command{
 		Use:   "ip-config",
-		Short: "IP configuration commands",
+		Short: "Manage IP configuration changes during upgrades",
+		Long: `Manage IP configuration changes for Single Node OpenShift clusters during
+Image Based Upgrades. Handles pre-pivot network preparation, post-pivot
+reconfiguration, and rollback of IP settings.`,
 	}
 
 	// Subcommands are registered in their init() functions when package is imported,
