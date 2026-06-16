@@ -57,7 +57,10 @@ func init() {
 
 var ipConfigPostPivotCmd = &cobra.Command{
 	Use:   postPivotCmd,
-	Short: "Execute IP configuration post-pivot",
+	Short: "Apply IP configuration after stateroot pivot",
+	Long: `Apply IP configuration changes after the node has pivoted to the new OSTree
+stateroot. Updates cluster certificates via recert to reflect the new IP
+address and reconfigures network settings.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runIPConfigPostPivot(); err != nil {
 			pkgLog.Fatalf("Error executing ip-config post-pivot: %v", err)
