@@ -51,6 +51,7 @@ RUN if [[ ! -f /bin/nsenter ]]; then \
         microdnf -y install util-linux-core && \
         microdnf -y install rsync && \
         microdnf -y install tar && \
+        microdnf -y install gdisk && \
         microdnf clean all && \
         rm -rf /var/cache/yum ; \
     fi
