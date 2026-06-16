@@ -601,14 +601,13 @@ func (o *ops) IsNotExist(err error) bool {
 
 func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	o.log.Info("Creating extra partition")
+	// Use sfdisk to create a new partition with the specified start and label
+	// The format is: start,size,type,name
+	// extraPartitionStart format is like "-40G" which means 40GB from the end
+	// Note: We use printf with %q to safely quote the variables to prevent shell injection
 	if _, err := o.RunBashInHostNamespace(
-		"echo", "write", "|", "sfdisk", installationDisk); err != nil {
-		return fmt.Errorf("failed to create extra partition: %w", err)
-	}
-	if _, err := o.RunInHostNamespace("sgdisk", "--new",
-		fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionStart),
-		"--change-name", fmt.Sprintf("%d:%s", extraPartitionNumber, extraPartitionLabel),
-		installationDisk); err != nil {
+		"printf", fmt.Sprintf("'start=%%s,name=%%s\\n' %q %q", extraPartitionStart, extraPartitionLabel),
+		"|", "sfdisk", "--append", installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
 
