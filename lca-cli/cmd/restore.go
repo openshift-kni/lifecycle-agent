@@ -27,6 +27,12 @@ import (
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
 	Short: "Restore seed cluster configurations",
+	Long: `Restore the seed cluster to its original state after seed image creation.
+Re-applies cluster-specific configurations such as certificates, pull
+secrets, and registry settings that were removed during the seed image
+build process. Uses recert to regenerate cluster certificates.`,
+	Example: `  # Restore seed cluster after image creation
+  lca-cli restore -i quay.io/myrepo/seed:latest -a /path/to/auth.json`,
 	Run: func(cmd *cobra.Command, args []string) {
 		restore()
 	},
