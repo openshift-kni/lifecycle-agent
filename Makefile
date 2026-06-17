@@ -293,19 +293,35 @@ bundle-push: bundle-build ## Push the bundle image.
 bundle-check: bundle
 	$(PROJECT_DIR)/hack/check-git-tree.sh
 
-.PHONY: bundle-run
-bundle-run: # Install bundle on cluster using operator sdk.
+LCA_NAMESPACE ?= openshift-lifecycle-agent
+INSTALL_MODE ?= ownnamespace
+
+.PHONY: bundle-run bundle-run-ownnamespace bundle-run-allnamespaces bundle-reinstall
+bundle-run: ## Install bundle on cluster (INSTALL_MODE=ownnamespace|allnamespaces, default: ownnamespace).
+	INSTALL_MODE="$(INSTALL_MODE)" \
+	LCA_NAMESPACE="$(LCA_NAMESPACE)" \
 	OPERATOR_SDK="$(OPERATOR_SDK)" BUNDLE_IMG="$(BUNDLE_IMG)" \
 		bash $(PROJECT_DIR)/hack/bundle-run.sh
+
+bundle-run-ownnamespace: ## Install bundle in OwnNamespace mode (openshift-lifecycle-agent).
+	$(MAKE) bundle-run INSTALL_MODE=ownnamespace
+
+bundle-run-allnamespaces: ## Install bundle in AllNamespaces mode (openshift-operators).
+	$(MAKE) bundle-run INSTALL_MODE=allnamespaces
+
+bundle-reinstall: ## Uninstall then install bundle (respects INSTALL_MODE).
+	BUNDLE_CLEAN_BEFORE_INSTALL=true $(MAKE) bundle-run INSTALL_MODE="$(INSTALL_MODE)"
 
 .PHONY: bundle-upgrade
 bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
 	$(OPERATOR_SDK) run bundle-upgrade $(BUNDLE_IMG)
 
 .PHONY: bundle-clean
-bundle-clean: # Uninstall bundle on cluster using operator sdk.
-	$(OPERATOR_SDK) cleanup lifecycle-agent -n openshift-lifecycle-agent
-	oc delete ns openshift-lifecycle-agent
+bundle-clean: ## Uninstall bundle; deletes install namespace in OwnNamespace mode.
+	INSTALL_MODE="$(INSTALL_MODE)" \
+	LCA_NAMESPACE="$(LCA_NAMESPACE)" \
+	OPERATOR_SDK="$(OPERATOR_SDK)" \
+		bash $(PROJECT_DIR)/hack/bundle-clean.sh
 
 # A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
 # These images MUST exist in a registry and be pull-able.
