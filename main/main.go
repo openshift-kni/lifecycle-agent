@@ -154,10 +154,16 @@ func main() {
 	cfg := ctrl.GetConfigOrDie()
 	cfg.Wrap(lcautils.RetryMiddleware(ctrl.Log.WithName("lca-manager-client"))) // allow all client calls to be retriable
 
-	// OLM installs the default-deny, operator API egress NetworkPolicies
-	// Operator installs policies for the jobs, for metrics
+	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes client")
+		os.Exit(1)
+	}
+
+	// OLM installs the default-deny, operator API egress NetworkPolicies.
+	// Prep/precache jobs run in the operator installation namespace alongside the operator SA.
 	np := networkpolicies.Policy{
-		Namespace:  common.LcaNamespace,
+		Namespace:  common.OperatorNamespace(),
 		MetricAddr: metricsAddr,
 	}
 	msg, err := np.InstallPolicies(cfg)
@@ -167,14 +173,8 @@ func main() {
 	}
 	setupLog.Info(msg)
 
-	if msg := networkpolicies.Check(cfg, common.LcaNamespace); msg != "" {
+	if msg := networkpolicies.Check(cfg, common.OperatorNamespace()); msg != "" {
 		setupLog.Info("NetworkPolicies", "msg", msg)
-	}
-
-	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
-	if err != nil {
-		setupLog.Error(err, "unable to create Kubernetes client")
-		os.Exit(1)
 	}
 
 	// Fetch the TLS profile from the APIServer resource.
@@ -212,9 +212,9 @@ func main() {
 		},
 		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
 			ByObject: map[client.Object]cache.ByObject{
-				&kbatchv1.Job{}: { // cache all job resources in LCA ns
+				&kbatchv1.Job{}: {
 					Namespaces: map[string]cache.Config{
-						common.LcaNamespace: {}},
+						common.OperatorNamespace(): {}},
 				},
 			},
 		},

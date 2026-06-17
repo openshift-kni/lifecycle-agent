@@ -32,7 +32,7 @@ var StaterootSetupTerminationGracePeriodSeconds int64 = 1800
 
 func GetStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logger) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
-	if err := c.Get(ctx, types.NamespacedName{Name: StaterootSetupJobName, Namespace: common.LcaNamespace}, job); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: StaterootSetupJobName, Namespace: common.OperatorNamespace()}, job); err != nil {
 		return job, err //nolint:wrapcheck
 	}
 
@@ -59,8 +59,8 @@ func LaunchStaterootSetupJob(ctx context.Context, c client.Client, ibu *ibuv1.Im
 func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, log logr.Logger) (*batchv1.Job, error) {
 	log.Info("Getting lca deployment to configure stateroot setup job")
 	lcaDeployment := appsv1.Deployment{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: common.LcaNamespace, Name: "lifecycle-agent-controller-manager"}, &lcaDeployment); err != nil {
-		return nil, fmt.Errorf("failed to get lifecycle-agent-controller-manager deployment: %w", err)
+	if err := c.Get(ctx, types.NamespacedName{Namespace: common.OperatorNamespace(), Name: common.OperatorDeploymentName}, &lcaDeployment); err != nil {
+		return nil, fmt.Errorf("failed to get %s deployment: %w", common.OperatorDeploymentName, err)
 	}
 
 	log.Info("Selecting 'manager' from LCA deployment", "deployment", lcaDeployment.Name)
@@ -73,7 +73,7 @@ func constructJobForStaterootSetup(ctx context.Context, c client.Client, ibu *ib
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      StaterootSetupJobName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 			Annotations: map[string]string{
 				"app.kubernetes.io/name": StaterootSetupJobName,
 			},
@@ -139,7 +139,7 @@ func DeleteStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logg
 	stateroot := batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      StaterootSetupJobName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 		},
 	}
 	if err := c.Delete(ctx, &stateroot, common.GenerateDeleteOptions()); err != nil {
@@ -162,7 +162,7 @@ func DeleteStaterootSetupJob(ctx context.Context, c client.Client, log logr.Logg
 func waitUntilStaterootSetupPodIsRemoved(ctx context.Context, c client.Client) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, time.Duration(StaterootSetupTerminationGracePeriodSeconds)*time.Second, true, func(context.Context) (bool, error) { //nolint:wrapcheck
 		opts := []client.ListOption{
-			client.InNamespace(common.LcaNamespace),
+			client.InNamespace(common.OperatorNamespace()),
 			client.MatchingLabels{"job-name": StaterootSetupJobName},
 		}
 		podList := &corev1.PodList{}

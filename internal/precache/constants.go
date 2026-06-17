@@ -23,9 +23,8 @@ import (
 
 // LCA Resources
 const (
-	LcaPrecacheServiceAccount string = "lifecycle-agent-controller-manager"
-	LcaPrecacheResourceName   string = "lca-prep-precache"
-	LcaPrecacheFinalizer             = "lca.openshift.io/precache-finalizer"
+	LcaPrecacheResourceName = "lca-prep-precache"
+	LcaPrecacheFinalizer    = "lca.openshift.io/precache-finalizer"
 )
 
 // Image paths

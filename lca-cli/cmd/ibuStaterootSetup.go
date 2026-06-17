@@ -73,7 +73,7 @@ func ibuStaterootSetupRun() error {
 
 	logger.Info("Fetching the latest IBU cr")
 	ibu := &ibuv1.ImageBasedUpgrade{}
-	if err := c.Get(ctx, types.NamespacedName{Namespace: common.LcaNamespace, Name: utils.IBUName}, ibu); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Namespace: common.OperatorNamespace(), Name: utils.IBUName}, ibu); err != nil {
 		return fmt.Errorf("failed get IBU cr: %w", err)
 	}
 

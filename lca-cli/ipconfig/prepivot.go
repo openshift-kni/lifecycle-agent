@@ -542,16 +542,17 @@ func (p *PrePivotHandler) collectKubeConfigCrypto(ctx context.Context, cryptoDir
 func (p *PrePivotHandler) getPullSecretData(ctx context.Context) ([]byte, error) {
 	if p.pullSecretRefName != "" {
 		secret := &corev1.Secret{}
+		ns := common.OperatorNamespace()
 		if err := p.client.Get(ctx, types.NamespacedName{
-			Namespace: common.LcaNamespace,
+			Namespace: ns,
 			Name:      p.pullSecretRefName,
 		}, secret); err != nil {
-			return nil, fmt.Errorf("failed to fetch pull secret %s/%s: %w", common.LcaNamespace, p.pullSecretRefName, err)
+			return nil, fmt.Errorf("failed to fetch pull secret %s/%s: %w", ns, p.pullSecretRefName, err)
 		}
 
 		dockercfg, ok := secret.Data[corev1.DockerConfigJsonKey]
 		if !ok || len(dockercfg) == 0 {
-			return nil, fmt.Errorf("secret %s/%s missing key %s", common.LcaNamespace, p.pullSecretRefName, corev1.DockerConfigJsonKey)
+			return nil, fmt.Errorf("secret %s/%s missing key %s", ns, p.pullSecretRefName, corev1.DockerConfigJsonKey)
 		}
 
 		return dockercfg, nil

@@ -27,8 +27,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	ctrl "sigs.k8s.io/controller-runtime"
-
 	"github.com/go-logr/logr"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -40,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -48,7 +47,7 @@ func GetJob(ctx context.Context, c client.Client) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
 	if err := c.Get(ctx, types.NamespacedName{
 		Name:      LcaPrecacheResourceName,
-		Namespace: common.LcaNamespace,
+		Namespace: common.OperatorNamespace(),
 	}, job); err != nil {
 		return job, err //nolint:wrapcheck
 	}
@@ -63,7 +62,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheResourceName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 		},
 		Data: data,
 	}
@@ -71,7 +70,7 @@ func renderConfigMap(imageList []string) *corev1.ConfigMap {
 	return configMap
 }
 
-func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme) (*batchv1.Job, error) {
+func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, scheme *runtime.Scheme, serviceAccountName string) (*batchv1.Job, error) {
 
 	var ValidIoNiceClasses = []int{IoNiceClassNone, IoNiceClassRealTime, IoNiceClassBestEffort, IoNiceClassIdle}
 
@@ -146,7 +145,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheResourceName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 			Annotations: map[string]string{
 				"app.kubernetes.io/name": "lifecycle-agent-precache",
 			},
@@ -190,7 +189,7 @@ func renderJob(config *Config, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, sc
 							},
 						},
 					},
-					ServiceAccountName: LcaPrecacheServiceAccount,
+					ServiceAccountName: serviceAccountName,
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Volumes: []corev1.Volume{
 						{
@@ -235,7 +234,7 @@ func deleteConfigMap(ctx context.Context, c client.Client) error {
 	cm := corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheResourceName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 		},
 	}
 
@@ -257,7 +256,7 @@ func deleteJob(ctx context.Context, c client.Client) error {
 	precache := batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheResourceName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 		},
 	}
 	if err := c.Delete(ctx, &precache, common.GenerateDeleteOptions()); err != nil {

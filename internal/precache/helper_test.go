@@ -69,7 +69,7 @@ func TestRenderConfigMap(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: "\n",
@@ -83,7 +83,7 @@ func TestRenderConfigMap(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: imageListStr,
@@ -124,7 +124,7 @@ func getExpectedBaseJob() *batchv1.Job {
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      LcaPrecacheResourceName,
-			Namespace: common.LcaNamespace,
+			Namespace: common.OperatorNamespace(),
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backOffLimit,
@@ -169,7 +169,7 @@ func getExpectedBaseJob() *batchv1.Job {
 							},
 						},
 					},
-					ServiceAccountName: LcaPrecacheServiceAccount,
+					ServiceAccountName: "lifecycle-agent-controller-manager",
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Volumes: []corev1.Volume{
 						{
@@ -248,11 +248,17 @@ func TestRenderJob(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ibu := ibuv1.ImageBasedUpgrade{}
+			ibu := ibuv1.ImageBasedUpgrade{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "upgrade",
+					Namespace: common.OperatorNamespace(),
+					UID:       "test-ibu-uid",
+				},
+			}
 			sc := runtime.NewScheme()
 			_ = ibuv1.AddToScheme(sc)
 
-			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"), &ibu, sc)
+			renderedJob, err := renderJob(tc.config, ctrl.Log.WithName("Precache"), &ibu, sc, "lifecycle-agent-controller-manager")
 			if tc.expectedError != nil {
 				assert.NotNil(t, err)
 			} else {

@@ -122,7 +122,12 @@ func (h *PHandler) CreateJobAndConfigMap(ctx context.Context, config *Config, ib
 		}
 	}
 
-	job, err := renderJob(config, h.Log, ibu, h.Scheme)
+	saName, err := common.OperatorServiceAccountName(ctx, h.Client)
+	if err != nil {
+		return fmt.Errorf("failed to get operator service account for precache job: %w", err)
+	}
+
+	job, err := renderJob(config, h.Log, ibu, h.Scheme, saName)
 	if err != nil {
 		return fmt.Errorf("failed to render precaching job manifest %w", err)
 	}

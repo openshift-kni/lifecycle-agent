@@ -31,6 +31,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 
 	"github.com/stretchr/testify/assert"
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,11 +48,28 @@ var (
 
 func init() {
 	_ = os.Setenv(EnvLcaPrecacheImage, precacheWorkloadImage)
+	_ = appsv1.AddToScheme(testScheme)
 }
 
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 	c := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(objs...).WithStatusSubresource(objs...).Build()
 	return c, nil
+}
+
+func testOperatorDeployment() *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      common.OperatorDeploymentName,
+			Namespace: common.OperatorNamespace(),
+		},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "lifecycle-agent-controller-manager",
+				},
+			},
+		},
+	}
 }
 
 func TestCreateJobAndConfigMap(t *testing.T) {
@@ -89,7 +107,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			expectedConfigMap: &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				},
 				Data: map[string]string{
 					PrecachingSpecFilename: imageListStr,
@@ -98,7 +116,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 			expectedJob: &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				},
 				Spec: batchv1.JobSpec{
 					Template: corev1.PodTemplateSpec{
@@ -123,7 +141,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{}
+			objs := []client.Object{testOperatorDeployment()}
 			ibu := ibuv1.ImageBasedUpgrade{}
 			sc := runtime.NewScheme()
 			_ = ibuv1.AddToScheme(sc)
@@ -136,7 +154,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(tc.config, Log, &ibu, sc)
+				job, err := renderJob(tc.config, Log, &ibu, sc, "lifecycle-agent-controller-manager")
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -160,7 +178,7 @@ func TestCreateJobAndConfigMap(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, ibuv1.ConfigMapRef{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				})
 				assert.NoError(t, err)
 				assert.NotNil(t, actualConfigMap)
@@ -231,7 +249,7 @@ func TestCleanup(t *testing.T) {
 				objs = append(objs, cm)
 			}
 			if tc.inputJobName != "" {
-				job, err := renderJob(config, Log, &ibu, sc)
+				job, err := renderJob(config, Log, &ibu, sc, "lifecycle-agent-controller-manager")
 				assert.NoError(t, err)
 				objs = append(objs, job)
 			}
@@ -254,7 +272,7 @@ func TestCleanup(t *testing.T) {
 
 				actualConfigMap, err := common.GetConfigMap(context.TODO(), fakeClient, ibuv1.ConfigMapRef{
 					Name:      LcaPrecacheResourceName,
-					Namespace: common.LcaNamespace,
+					Namespace: common.OperatorNamespace(),
 				})
 				assert.Equal(t, true, k8serrors.IsNotFound(err))
 				assert.Nil(t, actualConfigMap)

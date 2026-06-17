@@ -491,7 +491,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 		pullSecret, err := lcautils.GetSecretData(
 			ctx,
 			name,
-			common.LcaNamespace,
+			common.OperatorNamespace(),
 			corev1.DockerConfigJsonKey,
 			r.Client,
 		)
@@ -499,7 +499,7 @@ func (r *IPConfigReconciler) cacheRecertImageIfNeeded(ctx context.Context, ipc *
 			return fmt.Errorf(
 				"failed to get pull-secret with the name %s in namespace %s holding the key %s: %w",
 				name,
-				common.LcaNamespace,
+				common.OperatorNamespace(),
 				corev1.DockerConfigJsonKey,
 				err,
 			)
