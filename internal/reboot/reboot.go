@@ -243,8 +243,7 @@ func (c *IBURebootClient) InitiateRollback(msg string) error {
 		return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
 	}
 
-	err = c.RebootToNewStateRoot("rollback")
-	return fmt.Errorf("unable to get set deployment for automatic rollback: %w", err)
+	return c.RebootToNewStateRoot("rollback")
 }
 
 func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
@@ -265,10 +264,9 @@ func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("Auto-rollback is enabled for component: %s", component))
-	if err = c.InitiateRollback(msg); err != nil {
+	if err := c.InitiateRollback(msg); err != nil {
 		c.log.Info(fmt.Sprintf("Unable to initiate rollback: %s", err))
 	}
-
 }
 
 type IPCRebootClient struct {
@@ -435,7 +433,7 @@ func (c *IPCRebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("IPConfig auto-rollback is enabled for component: %s", component))
-	if err = c.InitiateRollback(msg); err != nil {
+	if err := c.InitiateRollback(msg); err != nil {
 		c.log.Info(fmt.Sprintf("Unable to initiate IPConfig rollback: %s", err))
 	}
 }
