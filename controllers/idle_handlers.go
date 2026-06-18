@@ -213,7 +213,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupStateroot(ctx context.Context) erro
 	}
 
 	r.Log.Info("Cleaning up unbooted stateroot resources")
-	if err := CleanupUnbootedStateroots(r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); err != nil {
+	if err := CleanupUnbootedStateroots(ctx, r.Log, r.Ops, r.OstreeClient, r.RPMOstreeClient); err != nil {
 		return fmt.Errorf("failed to clean up host stateroot resources: %w", err)
 	}
 
@@ -231,8 +231,8 @@ func cleanupIBUFiles() error {
 	return nil
 }
 
-func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
-	status, err := rpmOstreeClient.QueryStatus()
+func CleanupUnbootedStateroots(ctx context.Context, log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
+	status, err := rpmOstreeClient.QueryStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query status with rpmostree: %w", err)
 	}
@@ -254,14 +254,14 @@ func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostree
 		if stateroot == bootedStateroot {
 			continue
 		}
-		if err := cleanupUnbootedStateroot(stateroot, ops, ostreeClient, rpmOstreeClient); err != nil {
+		if err := cleanupUnbootedStateroot(ctx, stateroot, ops, ostreeClient, rpmOstreeClient); err != nil {
 			log.Error(err, "failed to remove stateroot", "stateroot", stateroot)
 			failures += 1
 		}
 	}
 
 	// clear temporary files and reclaim disk space
-	if err := rpmOstreeClient.RpmOstreeCleanup(); err != nil {
+	if err := rpmOstreeClient.RpmOstreeCleanup(ctx); err != nil {
 		log.Error(err, "failed rpm-ostree cleanup -b")
 		failures += 1
 	}
@@ -291,8 +291,8 @@ func CleanupUnbootedStateroots(log logr.Logger, ops ops.Ops, ostreeClient ostree
 	return fmt.Errorf("failed to remove %d stateroots", failures)
 }
 
-func cleanupUnbootedStateroot(stateroot string, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
-	status, err := rpmOstreeClient.QueryStatus()
+func cleanupUnbootedStateroot(ctx context.Context, stateroot string, ops ops.Ops, ostreeClient ostreeclient.IClient, rpmOstreeClient rpmostreeclient.IClient) error {
+	status, err := rpmOstreeClient.QueryStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query status with rpmostree during stateroot cleanup: %w", err)
 	}
@@ -310,7 +310,7 @@ func cleanupUnbootedStateroot(stateroot string, ops ops.Ops, ostreeClient ostree
 		indicesToUndeploy = append(indicesToUndeploy, i)
 	}
 	for _, idx := range indicesToUndeploy {
-		if err := ostreeClient.Undeploy(idx); err != nil {
+		if err := ostreeClient.Undeploy(ctx, idx); err != nil {
 			return fmt.Errorf("failed to undeploy %s with index %d: %w", stateroot, idx, err)
 		}
 	}
@@ -318,7 +318,7 @@ func cleanupUnbootedStateroot(stateroot string, ops ops.Ops, ostreeClient ostree
 	if _, err := osStat(common.PathOutsideChroot(staterootPath)); err != nil {
 		return nil
 	}
-	if _, err := ops.RunBashInHostNamespace("unshare", "-m", "/bin/sh", "-c",
+	if _, err := ops.RunBashInHostNamespace(ctx, "unshare", "-m", "/bin/sh", "-c",
 		fmt.Sprintf("\"mount -o remount,rw /sysroot && rm -rf %s\"", staterootPath)); err != nil {
 		return fmt.Errorf("removing stateroot %s failed: %w", stateroot, err)
 	}

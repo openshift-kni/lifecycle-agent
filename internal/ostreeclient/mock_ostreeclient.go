@@ -9,6 +9,7 @@
 package ostreeclient
 
 import (
+	context "context"
 	reflect "reflect"
 
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
@@ -39,115 +40,116 @@ func (m *MockIClient) EXPECT() *MockIClientMockRecorder {
 }
 
 // Deploy mocks base method.
-func (m *MockIClient) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error {
+func (m *MockIClient) Deploy(ctx context.Context, osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Deploy", osname, refsepc, kargs, rpmOstreeClient, ibi)
+	ret := m.ctrl.Call(m, "Deploy", ctx, osname, refsepc, kargs, rpmOstreeClient, ibi)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Deploy indicates an expected call of Deploy.
-func (mr *MockIClientMockRecorder) Deploy(osname, refsepc, kargs, rpmOstreeClient, ibi any) *gomock.Call {
+func (mr *MockIClientMockRecorder) Deploy(ctx, osname, refsepc, kargs, rpmOstreeClient, ibi any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), osname, refsepc, kargs, rpmOstreeClient, ibi)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deploy", reflect.TypeOf((*MockIClient)(nil).Deploy), ctx, osname, refsepc, kargs, rpmOstreeClient, ibi)
 }
 
 // GetDeployment mocks base method.
-func (m *MockIClient) GetDeployment(osname string) (string, error) {
+func (m *MockIClient) GetDeployment(ctx context.Context, osname string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDeployment", osname)
+	ret := m.ctrl.Call(m, "GetDeployment", ctx, osname)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetDeployment indicates an expected call of GetDeployment.
-func (mr *MockIClientMockRecorder) GetDeployment(osname any) *gomock.Call {
+func (mr *MockIClientMockRecorder) GetDeployment(ctx, osname any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeployment", reflect.TypeOf((*MockIClient)(nil).GetDeployment), osname)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeployment", reflect.TypeOf((*MockIClient)(nil).GetDeployment), ctx, osname)
 }
 
 // GetDeploymentDir mocks base method.
-func (m *MockIClient) GetDeploymentDir(osname string) (string, error) {
+func (m *MockIClient) GetDeploymentDir(ctx context.Context, osname string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDeploymentDir", osname)
+	ret := m.ctrl.Call(m, "GetDeploymentDir", ctx, osname)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetDeploymentDir indicates an expected call of GetDeploymentDir.
-func (mr *MockIClientMockRecorder) GetDeploymentDir(osname any) *gomock.Call {
+func (mr *MockIClientMockRecorder) GetDeploymentDir(ctx, osname any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentDir", reflect.TypeOf((*MockIClient)(nil).GetDeploymentDir), osname)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeploymentDir", reflect.TypeOf((*MockIClient)(nil).GetDeploymentDir), ctx, osname)
 }
 
 // IsOstreeAdminSetDefaultFeatureEnabled mocks base method.
-func (m *MockIClient) IsOstreeAdminSetDefaultFeatureEnabled() bool {
+func (m *MockIClient) IsOstreeAdminSetDefaultFeatureEnabled(ctx context.Context) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsOstreeAdminSetDefaultFeatureEnabled")
+	ret := m.ctrl.Call(m, "IsOstreeAdminSetDefaultFeatureEnabled", ctx)
 	ret0, _ := ret[0].(bool)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // IsOstreeAdminSetDefaultFeatureEnabled indicates an expected call of IsOstreeAdminSetDefaultFeatureEnabled.
-func (mr *MockIClientMockRecorder) IsOstreeAdminSetDefaultFeatureEnabled() *gomock.Call {
+func (mr *MockIClientMockRecorder) IsOstreeAdminSetDefaultFeatureEnabled(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOstreeAdminSetDefaultFeatureEnabled", reflect.TypeOf((*MockIClient)(nil).IsOstreeAdminSetDefaultFeatureEnabled))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOstreeAdminSetDefaultFeatureEnabled", reflect.TypeOf((*MockIClient)(nil).IsOstreeAdminSetDefaultFeatureEnabled), ctx)
 }
 
 // OSInit mocks base method.
-func (m *MockIClient) OSInit(osname string) error {
+func (m *MockIClient) OSInit(ctx context.Context, osname string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OSInit", osname)
+	ret := m.ctrl.Call(m, "OSInit", ctx, osname)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // OSInit indicates an expected call of OSInit.
-func (mr *MockIClientMockRecorder) OSInit(osname any) *gomock.Call {
+func (mr *MockIClientMockRecorder) OSInit(ctx, osname any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OSInit", reflect.TypeOf((*MockIClient)(nil).OSInit), osname)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OSInit", reflect.TypeOf((*MockIClient)(nil).OSInit), ctx, osname)
 }
 
 // PullLocal mocks base method.
-func (m *MockIClient) PullLocal(repoPath string) error {
+func (m *MockIClient) PullLocal(ctx context.Context, repoPath string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PullLocal", repoPath)
+	ret := m.ctrl.Call(m, "PullLocal", ctx, repoPath)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PullLocal indicates an expected call of PullLocal.
-func (mr *MockIClientMockRecorder) PullLocal(repoPath any) *gomock.Call {
+func (mr *MockIClientMockRecorder) PullLocal(ctx, repoPath any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PullLocal", reflect.TypeOf((*MockIClient)(nil).PullLocal), repoPath)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PullLocal", reflect.TypeOf((*MockIClient)(nil).PullLocal), ctx, repoPath)
 }
 
 // SetDefaultDeployment mocks base method.
-func (m *MockIClient) SetDefaultDeployment(index int) error {
+func (m *MockIClient) SetDefaultDeployment(ctx context.Context, index int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetDefaultDeployment", index)
+	ret := m.ctrl.Call(m, "SetDefaultDeployment", ctx, index)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetDefaultDeployment indicates an expected call of SetDefaultDeployment.
-func (mr *MockIClientMockRecorder) SetDefaultDeployment(index any) *gomock.Call {
+func (mr *MockIClientMockRecorder) SetDefaultDeployment(ctx, index any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDefaultDeployment", reflect.TypeOf((*MockIClient)(nil).SetDefaultDeployment), index)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDefaultDeployment", reflect.TypeOf((*MockIClient)(nil).SetDefaultDeployment), ctx, index)
 }
 
 // Undeploy mocks base method.
-func (m *MockIClient) Undeploy(ostreeIndex int) error {
+func (m *MockIClient) Undeploy(ctx context.Context, ostreeIndex int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Undeploy", ostreeIndex)
+	ret := m.ctrl.Call(m, "Undeploy", ctx, ostreeIndex)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Undeploy indicates an expected call of Undeploy.
-func (mr *MockIClientMockRecorder) Undeploy(ostreeIndex any) *gomock.Call {
+func (mr *MockIClientMockRecorder) Undeploy(ctx, ostreeIndex any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Undeploy", reflect.TypeOf((*MockIClient)(nil).Undeploy), ostreeIndex)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Undeploy", reflect.TypeOf((*MockIClient)(nil).Undeploy), ctx, ostreeIndex)
 }

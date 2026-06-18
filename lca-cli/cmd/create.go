@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -69,7 +70,7 @@ var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create OCI image and push it to a container registry.",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := create(); err != nil {
+		if err := create(cmd.Context()); err != nil {
 			log.Fatalf("Error executing create command: %v", err)
 		}
 	},
@@ -84,7 +85,7 @@ func init() {
 	addCommonFlags(createCmd)
 }
 
-func create() error {
+func create(ctx context.Context) error {
 
 	var err error
 	log.Info("OCI image creation has started")
@@ -96,7 +97,7 @@ func create() error {
 	if !skipCleanup {
 		defer func() {
 			if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
-				authFile, recertContainerImage, recertSkipValidation).RestoreSeedCluster(); err != nil {
+				authFile, recertContainerImage, recertSkipValidation).RestoreSeedCluster(context.Background()); err != nil {
 				log.Fatalf("Failed to restore seed cluster: %v", err)
 			}
 			log.Info("Seed cluster restored successfully!")
@@ -115,7 +116,7 @@ func create() error {
 
 	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
 		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
-	if err = seedCreator.CreateSeedImage(); err != nil {
+	if err = seedCreator.CreateSeedImage(ctx); err != nil {
 		err = fmt.Errorf("failed to create seed image: %w", err)
 		log.Error(err)
 		return err

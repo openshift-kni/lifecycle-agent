@@ -36,7 +36,7 @@ var postPivotCmd = &cobra.Command{
 	Use:   "post-pivot",
 	Short: "post pivot configuration",
 	Run: func(cmd *cobra.Command, args []string) {
-		postPivot()
+		postPivot(cmd.Context())
 	},
 }
 
@@ -50,7 +50,7 @@ func init() {
 	postPivotCmd.Flags().BoolVarP(&inContainer, "in-container", "", false, "Use this flag if this command is being ran inside a container")
 }
 
-func postPivot() {
+func postPivot(ctx context.Context) {
 	log.Info("Post pivot operation has started")
 	var hostCommandsExecutor ops.Execute
 	if inContainer {
@@ -65,9 +65,9 @@ func postPivot() {
 
 	postPivotRunner := postpivot.NewPostPivot(scheme, log, opsClient,
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
-	if err := postPivotRunner.PostPivotConfiguration(context.TODO()); err != nil {
+	if err := postPivotRunner.PostPivotConfiguration(ctx); err != nil {
 		log.Error(err)
-		rebootClient.AutoRollbackIfEnabled(reboot.PostPivotComponent, fmt.Sprintf("Rollback due to postpivot failure: %s", err))
+		rebootClient.AutoRollbackIfEnabled(ctx, reboot.PostPivotComponent, fmt.Sprintf("Rollback due to postpivot failure: %s", err))
 		log.Fatal("Post pivot operation failed")
 	}
 
