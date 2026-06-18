@@ -22,6 +22,8 @@ import (
 	"strings"
 	"syscall"
 
+	"context"
+
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache/workload"
@@ -36,7 +38,7 @@ var ibuPrecacheWorkloadCmd = &cobra.Command{
 	Short:   "Start precache during IBU",
 	Long:    `Start precache during IBU. This is to be called from a k8s job!`,
 	Run: func(cmd *cobra.Command, args []string) {
-		ibuPrecacheWorkloadRun()
+		ibuPrecacheWorkloadRun(cmd.Context())
 	},
 }
 
@@ -86,7 +88,7 @@ func readPrecacheSpecFile() (precacheSpec []string, err error) {
 	return precacheSpec, nil
 }
 
-func ibuPrecacheWorkloadRun() {
+func ibuPrecacheWorkloadRun(ctx context.Context) {
 	log.Info("Starting to execute pre-cache workload")
 
 	bestEffort := false
@@ -111,7 +113,7 @@ func ibuPrecacheWorkloadRun() {
 	log.Infof("chroot %s successful", common.Host)
 
 	// Pre-check: Verify podman is running
-	if !workload.CheckPodman() {
+	if !workload.CheckPodman(ctx) {
 		terminateOnError(fmt.Errorf("failed to execute podman command"))
 	}
 	log.Info("podman is running, proceeding to pre-cache images!")
@@ -120,7 +122,7 @@ func ibuPrecacheWorkloadRun() {
 	if err != nil {
 		terminateOnError(err)
 	}
-	if err := workload.Precache(precacheSpec, authFile, bestEffort); err != nil {
+	if err := workload.Precache(ctx, precacheSpec, authFile, bestEffort); err != nil {
 		terminateOnError(err)
 	}
 }

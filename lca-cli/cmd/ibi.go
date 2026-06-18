@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"os"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
@@ -35,7 +37,7 @@ var ibi = &cobra.Command{
 	Use:   "ibi",
 	Short: "prepare ibi",
 	Run: func(cmd *cobra.Command, args []string) {
-		runIBI()
+		runIBI(cmd.Context())
 	},
 }
 
@@ -52,7 +54,7 @@ func init() {
 	_ = rootCmd.MarkFlagRequired("configuration-file")
 }
 
-func runIBI() {
+func runIBI(ctx context.Context) {
 
 	config, err := utils.ReadIBIConfigFile(configurationFile)
 	if err != nil {
@@ -68,15 +70,29 @@ func runIBI() {
 		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
 	}
 
-	cleanupDevice := preinstallUtils.NewCleanupDevice(log, preinstallUtils.NewDiskOps(log, hostCommandsExecutor))
+	cleanupDevice := preinstallUtils.NewCleanupDevice(log, preinstallUtils.NewDiskOps(log, &preinstallExecutorAdapter{exec: hostCommandsExecutor}))
 	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
 	ibiRunner := ibipreparation.NewIBIPrepare(log, ops.NewOps(log, hostCommandsExecutor),
 		rpmOstreeClient, ostreeClient, cleanupDevice, config)
-	if err := ibiRunner.Run(); err != nil {
+	if err := ibiRunner.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
 
 	log.Info("IBI preparation process finished successfully!")
+}
+
+// preinstallExecutorAdapter wraps ops.Execute (with context.Context) to satisfy
+// the preinstall-utils shared_ops.Execute interface (without context.Context).
+type preinstallExecutorAdapter struct {
+	exec ops.Execute
+}
+
+func (a *preinstallExecutorAdapter) Execute(command string, args ...string) (string, error) {
+	out, err := a.exec.Execute(context.Background(), command, args...)
+	if err != nil {
+		return out, fmt.Errorf("execute %s: %w", command, err)
+	}
+	return out, nil
 }

@@ -665,12 +665,12 @@ interfaces:
 			nmstateFile := path.Join(tmpDir, "nmstate.yaml")
 			pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
 			if tc.expectedError {
-				mockOps.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateFile).Return("", fmt.Errorf("Dummy"))
+				mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", nmstateFile).Return("", fmt.Errorf("Dummy"))
 			} else {
-				mockOps.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateFile).Return("", nil)
+				mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "nmstatectl", "apply", nmstateFile).Return("", nil)
 			}
 
-			err := pp.applyNMStateConfiguration(tc.seedReconfiguration)
+			err := pp.applyNMStateConfiguration(context.Background(), tc.seedReconfiguration)
 			if !tc.expectedError {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
@@ -783,13 +783,13 @@ func TestSetHostname(t *testing.T) {
 			mockOps := ops.NewMockOps(mockController)
 			pp := NewPostPivot(nil, log, mockOps, "", "", "")
 			if tc.hostname != "" && tc.hostname != localhost {
-				mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(1)
+				mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(1)
 			} else if tc.hostname == "" {
-				mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(0)
+				mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "hostnamectl", "set-hostname", tc.hostname).Return("", nil).Times(0)
 				mockOps.EXPECT().GetHostname().Return(tc.osHostname, nil).Times(1)
 			}
 
-			hostname, err := pp.setHostname(tc.hostname)
+			hostname, err := pp.setHostname(context.Background(), tc.hostname)
 			assert.Equal(t, tc.expectedError, err != nil, err)
 			if tc.hostname == "" {
 				assert.Equal(t, tc.osHostname, hostname)
@@ -851,16 +851,16 @@ func TestWaitForConfiguration(t *testing.T) {
 				}
 			}
 			if tc.listBlockDevicesSucceeds {
-				mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: deviceName,
+				mockOps.EXPECT().ListBlockDevices(gomock.Any()).Return([]ops.BlockDevice{{Name: deviceName,
 					Label: clusterconfig_api.BlockDeviceLabel}}, nil).Times(1)
 				if tc.mountSucceeds {
-					mockOps.EXPECT().Mount(deviceName, gomock.Any()).Return(nil).Times(1)
-					mockOps.EXPECT().Umount(deviceName).Return(nil).Times(1)
+					mockOps.EXPECT().Mount(gomock.Any(), deviceName, gomock.Any()).Return(nil).Times(1)
+					mockOps.EXPECT().Umount(gomock.Any(), deviceName).Return(nil).Times(1)
 				} else {
-					mockOps.EXPECT().Mount(deviceName, gomock.Any()).Return(fmt.Errorf("dummy")).Times(1)
+					mockOps.EXPECT().Mount(gomock.Any(), deviceName, gomock.Any()).Return(fmt.Errorf("dummy")).Times(1)
 				}
 			} else if !tc.configurationFolderExists {
-				mockOps.EXPECT().ListBlockDevices().Return(nil, fmt.Errorf("dummy")).Do(cancel).Times(1)
+				mockOps.EXPECT().ListBlockDevices(gomock.Any()).Return(nil, fmt.Errorf("dummy")).Do(func(_ context.Context) { cancel() }).Times(1)
 			}
 
 			err := pp.waitForConfiguration(ctx, configFolder, configFolder)
@@ -913,16 +913,16 @@ func TestNetworkConfiguration(t *testing.T) {
 			dnsmasqOverrides = path.Join(tmpDir, "dnsmasqoverrides")
 
 			if tc.restartNMSuccess {
-				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", nil).Times(1)
+				mockOps.EXPECT().SystemctlAction(gomock.Any(), "restart", nmService).Return("", nil).Times(1)
 				if tc.restartDNSMASQSuccess {
-					mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
-					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", nil).Times(1)
+					mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
+					mockOps.EXPECT().SystemctlAction(gomock.Any(), "restart", dnsmasqService).Return("", nil).Times(1)
 				} else {
-					mockOps.EXPECT().RunInHostNamespace("hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
-					mockOps.EXPECT().SystemctlAction("restart", dnsmasqService).Return("", fmt.Errorf("dummy")).Times(1)
+					mockOps.EXPECT().RunInHostNamespace(gomock.Any(), "hostnamectl", "set-hostname", "test").Return("", nil).Times(1)
+					mockOps.EXPECT().SystemctlAction(gomock.Any(), "restart", dnsmasqService).Return("", fmt.Errorf("dummy")).Times(1)
 				}
 			} else {
-				mockOps.EXPECT().SystemctlAction("restart", nmService).Return("", fmt.Errorf("dummy")).Times(1)
+				mockOps.EXPECT().SystemctlAction(gomock.Any(), "restart", nmService).Return("", fmt.Errorf("dummy")).Times(1)
 			}
 
 			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
@@ -1495,11 +1495,11 @@ func TestRestartChronydService(t *testing.T) {
 
 			// Mock: chronyd restart only if expected
 			if tc.expectCall {
-				testMockOps.EXPECT().SystemctlAction("restart", "chronyd").
+				testMockOps.EXPECT().SystemctlAction(gomock.Any(), "restart", "chronyd").
 					Return("", tc.mockError).Times(1)
 			}
 
-			err := pp.restartChronydService(tc.chronyConfig)
+			err := pp.restartChronydService(context.Background(), tc.chronyConfig)
 
 			if tc.expectedError {
 				assert.Error(t, err)

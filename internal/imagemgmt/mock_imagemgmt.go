@@ -9,6 +9,7 @@
 package imagemgmt
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -53,60 +54,60 @@ func (mr *MockImageMgmtIntfMockRecorder) CheckDiskUsageAgainstThreshold(threshol
 }
 
 // CleanupUnusedImages mocks base method.
-func (m *MockImageMgmtIntf) CleanupUnusedImages(thresholdPercent int) error {
+func (m *MockImageMgmtIntf) CleanupUnusedImages(ctx context.Context, thresholdPercent int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CleanupUnusedImages", thresholdPercent)
+	ret := m.ctrl.Call(m, "CleanupUnusedImages", ctx, thresholdPercent)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CleanupUnusedImages indicates an expected call of CleanupUnusedImages.
-func (mr *MockImageMgmtIntfMockRecorder) CleanupUnusedImages(thresholdPercent any) *gomock.Call {
+func (mr *MockImageMgmtIntfMockRecorder) CleanupUnusedImages(ctx, thresholdPercent any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupUnusedImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).CleanupUnusedImages), thresholdPercent)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupUnusedImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).CleanupUnusedImages), ctx, thresholdPercent)
 }
 
 // GetInuseImages mocks base method.
-func (m *MockImageMgmtIntf) GetInuseImages() ([]string, error) {
+func (m *MockImageMgmtIntf) GetInuseImages(ctx context.Context) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetInuseImages")
+	ret := m.ctrl.Call(m, "GetInuseImages", ctx)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetInuseImages indicates an expected call of GetInuseImages.
-func (mr *MockImageMgmtIntfMockRecorder) GetInuseImages() *gomock.Call {
+func (mr *MockImageMgmtIntfMockRecorder) GetInuseImages(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetInuseImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetInuseImages))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetInuseImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetInuseImages), ctx)
 }
 
 // GetPinnedImages mocks base method.
-func (m *MockImageMgmtIntf) GetPinnedImages() ([]string, error) {
+func (m *MockImageMgmtIntf) GetPinnedImages(ctx context.Context) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPinnedImages")
+	ret := m.ctrl.Call(m, "GetPinnedImages", ctx)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetPinnedImages indicates an expected call of GetPinnedImages.
-func (mr *MockImageMgmtIntfMockRecorder) GetPinnedImages() *gomock.Call {
+func (mr *MockImageMgmtIntfMockRecorder) GetPinnedImages(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPinnedImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetPinnedImages))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPinnedImages", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetPinnedImages), ctx)
 }
 
 // GetRemovalCandidates mocks base method.
-func (m *MockImageMgmtIntf) GetRemovalCandidates() ([]imageMgmtImageInfo, error) {
+func (m *MockImageMgmtIntf) GetRemovalCandidates(ctx context.Context) ([]imageMgmtImageInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRemovalCandidates")
+	ret := m.ctrl.Call(m, "GetRemovalCandidates", ctx)
 	ret0, _ := ret[0].([]imageMgmtImageInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetRemovalCandidates indicates an expected call of GetRemovalCandidates.
-func (mr *MockImageMgmtIntfMockRecorder) GetRemovalCandidates() *gomock.Call {
+func (mr *MockImageMgmtIntfMockRecorder) GetRemovalCandidates(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRemovalCandidates", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetRemovalCandidates))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRemovalCandidates", reflect.TypeOf((*MockImageMgmtIntf)(nil).GetRemovalCandidates), ctx)
 }

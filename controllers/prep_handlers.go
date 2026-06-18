@@ -68,7 +68,7 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 		defer func() { _ = os.Remove(common.PathOutsideChroot(pullSecretFilename)) }()
 	}
 
-	if _, err := ops.Execute("podman", "pull", "--authfile", pullSecretFilename, ibu.Spec.SeedImageRef.Image); err != nil {
+	if _, err := ops.Execute(ctx, "podman", "pull", "--authfile", pullSecretFilename, ibu.Spec.SeedImageRef.Image); err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
 	log.Info("Successfully pulled seed image", "image", ibu.Spec.SeedImageRef.Image)
@@ -206,8 +206,7 @@ func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(ctx context.Context,
 		Labels map[string]string `json:"Labels"`
 	}
 
-	// TODO: use the context when execute supports it
-	if inspectRaw, err := r.Executor.Execute("skopeo", inspectArgs...); err != nil || inspectRaw == "" {
+	if inspectRaw, err := r.Executor.Execute(ctx, "skopeo", inspectArgs...); err != nil || inspectRaw == "" {
 		return nil, fmt.Errorf("failed to inspect image: %w", err)
 	} else {
 		if err := json.Unmarshal([]byte(inspectRaw), &inspect); err != nil {
@@ -496,7 +495,7 @@ func initIBUWorkspaceDir() error {
 }
 
 // Cleanup container storage, if needed
-func (r *ImageBasedUpgradeReconciler) containerStorageCleanup(ibu *ibuv1.ImageBasedUpgrade) error {
+func (r *ImageBasedUpgradeReconciler) containerStorageCleanup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
 	// Check whether image cleanup is disabled using annotation
 	if val, exists := ibu.GetAnnotations()[common.ImageCleanupOnPrepAnnotation]; exists {
 		if val == common.ImageCleanupDisabledValue {
@@ -526,7 +525,7 @@ func (r *ImageBasedUpgradeReconciler) containerStorageCleanup(ibu *ibuv1.ImageBa
 	}
 
 	r.Log.Info("Performing automatic image cleanup to reduce container storage disk usage to be within threshold")
-	if err := r.ImageMgmtClient.CleanupUnusedImages(thresholdPercent); err != nil {
+	if err := r.ImageMgmtClient.CleanupUnusedImages(ctx, thresholdPercent); err != nil {
 		return fmt.Errorf("failed during image cleanup: %w", err)
 	}
 
@@ -576,7 +575,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			}
 
 			r.Log.Info("Checking container storage disk space")
-			if err := r.containerStorageCleanup(ibu); err != nil {
+			if err := r.containerStorageCleanup(ctx, ibu); err != nil {
 				return requeueWithError(fmt.Errorf("failed container storage cleanup: %w", err))
 			}
 

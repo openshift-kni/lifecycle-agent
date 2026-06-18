@@ -81,7 +81,7 @@ func TestHandleRollback(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockRebootClient := reboot.NewMockRebootIntf(ctrl)
-			mockRebootClient.EXPECT().IsOrigStaterootBooted(gomock.Any()).
+			mockRebootClient.EXPECT().IsOrigStaterootBooted(gomock.Any(), gomock.Any()).
 				Return(tt.isOrigStaterootBooted, tt.isOrigStaterootBootedErr)
 
 			r := &ImageBasedUpgradeReconciler{
@@ -244,25 +244,25 @@ func TestStartRollback(t *testing.T) {
 			mockOstreeClient := ostreeclient.NewMockIClient(ctrl)
 			mockRebootClient := reboot.NewMockRebootIntf(ctrl)
 
-			mockRpmostreeclient.EXPECT().GetUnbootedStaterootName().
+			mockRpmostreeclient.EXPECT().GetUnbootedStaterootName(gomock.Any()).
 				Return(tt.stateroot, tt.getUnbootedStaterootNameErr)
 
 			if tt.remountSysrootReturn != nil {
-				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
+				mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(tt.remountSysrootReturn())
 			}
 
 			if tt.getUnbootedDeploymentIndexReturn != nil {
-				mockRpmostreeclient.EXPECT().GetUnbootedDeploymentIndex().
+				mockRpmostreeclient.EXPECT().GetUnbootedDeploymentIndex(gomock.Any()).
 					Return(tt.getUnbootedDeploymentIndexReturn())
 			}
 
 			if tt.isSetDefaultFeatureEnabled != nil {
-				mockOstreeClient.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().
-					Return(*tt.isSetDefaultFeatureEnabled)
+				mockOstreeClient.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).
+					Return(*tt.isSetDefaultFeatureEnabled, nil)
 			}
 
 			if tt.setDefaultDeploymentReturn != nil {
-				mockOstreeClient.EXPECT().SetDefaultDeployment(gomock.Any()).
+				mockOstreeClient.EXPECT().SetDefaultDeployment(gomock.Any(), gomock.Any()).
 					Return(tt.setDefaultDeploymentReturn())
 			}
 
@@ -276,7 +276,7 @@ func TestStartRollback(t *testing.T) {
 				err := os.MkdirAll(filepath.Join(staterootPath, common.LCAConfigDir), 0777)
 				assert.NoError(t, err)
 
-				mockRebootClient.EXPECT().RebootToNewStateRoot("rollback").
+				mockRebootClient.EXPECT().RebootToNewStateRoot(gomock.Any(), "rollback").
 					Return(tt.rebootReturn())
 			}
 
@@ -308,10 +308,10 @@ func TestStartRollback_MarshalToFileFails(t *testing.T) {
 	mockOstreeClient := ostreeclient.NewMockIClient(ctrl)
 	mockRebootClient := reboot.NewMockRebootIntf(ctrl)
 
-	mockRpmostreeclient.EXPECT().GetUnbootedStaterootName().Return("rhcos_4.15.2", nil)
-	mockOps.EXPECT().RemountSysroot().Return(nil)
-	mockRpmostreeclient.EXPECT().GetUnbootedDeploymentIndex().Return(0, nil)
-	mockOstreeClient.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled().Return(false)
+	mockRpmostreeclient.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("rhcos_4.15.2", nil)
+	mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil)
+	mockRpmostreeclient.EXPECT().GetUnbootedDeploymentIndex(gomock.Any()).Return(0, nil)
+	mockOstreeClient.EXPECT().IsOstreeAdminSetDefaultFeatureEnabled(gomock.Any()).Return(false, nil)
 
 	origPrefix := common.OstreeDeployPathPrefix
 	tmpFile, createErr := os.CreateTemp(t.TempDir(), "ostree-prefix-*")
