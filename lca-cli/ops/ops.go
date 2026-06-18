@@ -743,6 +743,18 @@ func (o *ops) StopClusterServices() error {
 			return true, nil
 		})
 
+		// Remove all pod sandboxes to prevent CRI-O startup delays during seedgen restoration.
+		// When CRI-O starts after restoration, it attempts to restore network status for each
+		// pod sandbox by calling the CNI plugin. Each check can timeout (60s per pod), causing
+		// CRI-O startup to take 48+ minutes for clusters with many pods.
+		o.log.Info("Removing pod sandboxes")
+		args := []string{"pods", "-q", "|", "xargs", "--no-run-if-empty", "crictl", "rmp", "-f"}
+		_, err = o.RunBashInHostNamespace("crictl", args...)
+		if err != nil {
+			// Log warning but don't fail - CRI-O stop will clean up remaining state
+			o.log.Warnf("Failed to remove pod sandboxes (non-fatal): %v", err)
+		}
+
 		// Execute a D-Bus call to stop the CRI-O runtime
 		o.log.Debug("Stopping CRI-O engine")
 		_, err = o.SystemctlAction("stop", "crio.service")
