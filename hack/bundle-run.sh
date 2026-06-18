@@ -18,6 +18,7 @@
 #   OPERATOR_SDK: path to operator-sdk (default: <repo>/bin/operator-sdk)
 #   CATALOGSOURCE_NAME: CatalogSource name created by operator-sdk (default: lifecycle-agent-catalog)
 #   PATCH_TIMEOUT_SECONDS: how long to wait for CatalogSource/address to appear (default: 120)
+#   SA_WAIT_TIMEOUT_SECONDS: wait for default SA after namespace create (default: 30)
 #   BUNDLE_CLEAN_BEFORE_INSTALL: run hack/bundle-clean.sh first if true (default: false)
 
 set -euo pipefail
@@ -34,6 +35,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 : "${OPERATORGROUP_NAME:=global-operators}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
+: "${SA_WAIT_TIMEOUT_SECONDS:=30}"
 : "${BUNDLE_CLEAN_BEFORE_INSTALL:=false}"
 : "${OPERATOR_SDK:=${PROJECT_DIR}/bin/operator-sdk}"
 
@@ -75,6 +77,18 @@ fi
 echo "Installing lifecycle-agent bundle (INSTALL_MODE=${INSTALL_MODE}, olm=${OLM_INSTALL_MODE}, namespace=${BUNDLE_NAMESPACE})"
 
 oc create ns "${BUNDLE_NAMESPACE}" 2>/dev/null || true
+
+echo "Waiting for default serviceaccount in ${BUNDLE_NAMESPACE} (timeout=${SA_WAIT_TIMEOUT_SECONDS}s)"
+for _i in $(seq 1 "${SA_WAIT_TIMEOUT_SECONDS}"); do
+    if oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+    echo "ERROR: timed out waiting for serviceaccount/default in ${BUNDLE_NAMESPACE}"
+    exit 1
+fi
 
 "${OPERATOR_SDK}" --security-context-config restricted -n "${BUNDLE_NAMESPACE}" \
     run bundle "${BUNDLE_IMG}" --install-mode="${OLM_INSTALL_MODE}" &
