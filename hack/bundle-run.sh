@@ -22,6 +22,8 @@ fi
 : "${BUNDLE_NAMESPACE:=openshift-lifecycle-agent}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
+: "${SA_WAIT_TIMEOUT_SECONDS:=30}"
+: "${OPERATOR_SDK:=${PROJECT_DIR}/bin/operator-sdk}"
 
 if [[ -z "${OPERATOR_SDK:-}" ]]; then
     echo "ERROR: OPERATOR_SDK is not set"
@@ -34,6 +36,18 @@ if [[ -z "${BUNDLE_IMG:-}" ]]; then
 fi
 
 oc create ns "${BUNDLE_NAMESPACE}" 2>/dev/null || true
+
+echo "Waiting for default serviceaccount in ${BUNDLE_NAMESPACE} (timeout=${SA_WAIT_TIMEOUT_SECONDS}s)"
+for _i in $(seq 1 "${SA_WAIT_TIMEOUT_SECONDS}"); do
+    if oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+    echo "ERROR: timed out waiting for serviceaccount/default in ${BUNDLE_NAMESPACE}"
+    exit 1
+fi
 
 "${OPERATOR_SDK}" --security-context-config restricted -n "${BUNDLE_NAMESPACE}" run bundle "${BUNDLE_IMG}" &
 sdk_pid=$!
