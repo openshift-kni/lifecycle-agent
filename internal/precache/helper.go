@@ -298,7 +298,7 @@ func GetPrecacheStatusFileContent() string {
 		if err := json.Unmarshal(data, &curP); err != nil {
 			return "could not unmarshal precache status file"
 		}
-		return fmt.Sprintf("total: %d (pulled: %d, failed: %d)", curP.Total, curP.Pulled, curP.Failed)
+		return fmt.Sprintf("total: %d (pulled: %d, failed: %d, skipped: %d)", curP.Total, curP.Pulled, curP.Failed, curP.Skipped)
 	}
 	return "No precache status file to read yet."
 }
