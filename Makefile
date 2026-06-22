@@ -21,7 +21,7 @@ KUSTOMIZE_VERSION ?= v5@v5.1.1
 MOCK_GEN_VERSION ?= v0.3.0
 
 # OPERATOR_SDK_VERSION defines the operator-sdk version to download from GitHub releases.
-OPERATOR_SDK_VERSION ?= 1.40.0
+OPERATOR_SDK_VERSION ?= 1.42.2
 
 # OPM_VERSION defines the opm version to download from GitHub releases.
 OPM_VERSION ?= v1.52.0

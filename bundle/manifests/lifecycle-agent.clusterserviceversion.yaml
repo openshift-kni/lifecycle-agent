@@ -73,7 +73,7 @@ metadata:
     operators.openshift.io/must-gather-image: quay.io/openshift-kni/lifecycle-agent-operator:5.0.0
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus"]'
-    operators.operatorframework.io/builder: operator-sdk-v1.40.0
+    operators.operatorframework.io/builder: operator-sdk-v1.42.2
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     provider: Red Hat
     repository: https://github.com/openshift-kni/lifecycle-agent
