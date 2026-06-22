@@ -15,6 +15,7 @@
 #   BUNDLE_NAMESPACE: override install namespace
 #   OPERATORGROUP_NAME: OperatorGroup name for allnamespaces (default: global-operators)
 #   OPERATOR_SDK: path to operator-sdk (default: <repo>/bin/operator-sdk)
+#   BUNDLE_RUN_TIMEOUT: how long to wait for the CSV to install (default: 5m)
 #   CATALOGSOURCE_NAME: CatalogSource name created by operator-sdk (default: lifecycle-agent-catalog)
 #   PATCH_TIMEOUT_SECONDS: how long to wait for CatalogSource/address to appear (default: 120)
 #   SA_WAIT_TIMEOUT_SECONDS: wait for default SA after namespace create (default: 30)
@@ -31,6 +32,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 : "${INSTALL_MODE:=ownnamespace}"
 : "${LCA_NAMESPACE:=openshift-lifecycle-agent}"
 : "${OPERATORGROUP_NAME:=global-operators}"
+: "${BUNDLE_RUN_TIMEOUT:=5m}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
 : "${SA_WAIT_TIMEOUT_SECONDS:=30}"
@@ -88,7 +90,7 @@ if ! oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; the
 fi
 
 "${OPERATOR_SDK}" --security-context-config restricted -n "${BUNDLE_NAMESPACE}" \
-    run bundle "${BUNDLE_IMG}" --install-mode="${OLM_INSTALL_MODE}" &
+    run bundle --timeout="${BUNDLE_RUN_TIMEOUT}" "${BUNDLE_IMG}" --install-mode="${OLM_INSTALL_MODE}" &
 sdk_pid=$!
 
 for _i in $(seq 1 "${PATCH_TIMEOUT_SECONDS}"); do
