@@ -11,9 +11,8 @@
 #
 # Optional env vars:
 #   INSTALL_MODE: ownnamespace (default) or allnamespaces
-#   LCA_NAMESPACE: OwnNamespace install namespace (default: openshift-lifecycle-agent)
-#   OPERATORS_NAMESPACE: AllNamespaces install namespace (default: openshift-operators)
-#   BUNDLE_NAMESPACE: override install namespace (derived from INSTALL_MODE if unset)
+#   LCA_NAMESPACE: default install namespace (default: openshift-lifecycle-agent)
+#   BUNDLE_NAMESPACE: override install namespace
 #   OPERATORGROUP_NAME: OperatorGroup name for allnamespaces (default: global-operators)
 #   OPERATOR_SDK: path to operator-sdk (default: <repo>/bin/operator-sdk)
 #   CATALOGSOURCE_NAME: CatalogSource name created by operator-sdk (default: lifecycle-agent-catalog)
@@ -31,7 +30,6 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 : "${INSTALL_MODE:=ownnamespace}"
 : "${LCA_NAMESPACE:=openshift-lifecycle-agent}"
-: "${OPERATORS_NAMESPACE:=openshift-operators}"
 : "${OPERATORGROUP_NAME:=global-operators}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
@@ -41,11 +39,9 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 case "${INSTALL_MODE}" in
     ownnamespace)
-        BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE:-${LCA_NAMESPACE}}"
         OLM_INSTALL_MODE="OwnNamespace"
         ;;
     allnamespaces)
-        BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE:-${OPERATORS_NAMESPACE}}"
         OLM_INSTALL_MODE="AllNamespaces"
         ;;
     *)
@@ -53,6 +49,8 @@ case "${INSTALL_MODE}" in
         exit 2
         ;;
 esac
+
+BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE:-${LCA_NAMESPACE}}"
 
 if [[ ! -x "${OPERATOR_SDK}" ]]; then
     echo "ERROR: OPERATOR_SDK is not executable: ${OPERATOR_SDK}"
@@ -67,7 +65,6 @@ fi
 if [[ "${BUNDLE_CLEAN_BEFORE_INSTALL}" == "true" ]]; then
     INSTALL_MODE="${INSTALL_MODE}" \
         LCA_NAMESPACE="${LCA_NAMESPACE}" \
-        OPERATORS_NAMESPACE="${OPERATORS_NAMESPACE}" \
         CATALOGSOURCE_NAME="${CATALOGSOURCE_NAME}" \
         OPERATOR_SDK="${OPERATOR_SDK}" \
         BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE}" \

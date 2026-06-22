@@ -306,7 +306,7 @@ bundle-run: ## Install bundle on cluster (INSTALL_MODE=ownnamespace|allnamespace
 bundle-run-ownnamespace: ## Install bundle in OwnNamespace mode (openshift-lifecycle-agent).
 	$(MAKE) bundle-run INSTALL_MODE=ownnamespace
 
-bundle-run-allnamespaces: ## Install bundle in AllNamespaces mode (openshift-operators).
+bundle-run-allnamespaces: ## Install bundle in AllNamespaces mode (openshift-lifecycle-agent).
 	$(MAKE) bundle-run INSTALL_MODE=allnamespaces
 
 bundle-reinstall: ## Uninstall then install bundle (respects INSTALL_MODE).
@@ -317,7 +317,7 @@ bundle-upgrade: # Upgrade bundle on cluster using operator sdk.
 	$(OPERATOR_SDK) run bundle-upgrade $(BUNDLE_IMG)
 
 .PHONY: bundle-clean
-bundle-clean: ## Uninstall bundle; deletes install namespace in OwnNamespace mode.
+bundle-clean: ## Uninstall bundle; deletes install namespace in OwnNamespace mode, or AllNamespaces when BUNDLE_NAMESPACE matches LCA_NAMESPACE.
 	INSTALL_MODE="$(INSTALL_MODE)" \
 	LCA_NAMESPACE="$(LCA_NAMESPACE)" \
 	OPERATOR_SDK="$(OPERATOR_SDK)" \
