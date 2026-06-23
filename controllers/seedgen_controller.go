@@ -415,7 +415,7 @@ func (r *SeedGeneratorReconciler) cleanupClusterResources(ctx context.Context) e
 // TODO: Is there a better way to access the image ref?
 func (r *SeedGeneratorReconciler) getLcaImage(ctx context.Context) (image string, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.OperatorNamespace()}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}
@@ -796,8 +796,8 @@ func (r *SeedGeneratorReconciler) generateSeedImage(ctx context.Context, seedgen
 
 	// Get the seedgen secret
 	seedGenSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.LcaNamespace}, seedGenSecret); err != nil {
-		rc = fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.LcaNamespace, err)
+	if err := r.Get(ctx, types.NamespacedName{Name: utils.SeedGenSecretName, Namespace: common.OperatorNamespace()}, seedGenSecret); err != nil {
+		rc = fmt.Errorf("could not access secret %s in %s: %w", utils.SeedGenSecretName, common.OperatorNamespace(), err)
 		setSeedGenStatusFailed(seedgen, rc.Error())
 		return
 	}

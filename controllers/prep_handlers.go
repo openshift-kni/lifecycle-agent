@@ -54,7 +54,7 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
 		var pullSecret string
 		pullSecret, err := lcautils.GetSecretData(ctx, ibu.Spec.SeedImageRef.PullSecretRef.Name,
-			common.LcaNamespace, corev1.DockerConfigJsonKey, c)
+			common.OperatorNamespace(), corev1.DockerConfigJsonKey, c)
 		if err != nil {
 			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
 			return err
@@ -180,7 +180,7 @@ func (r *ImageBasedUpgradeReconciler) getLabelsForSeedImage(ctx context.Context,
 	if ibu.Spec.SeedImageRef.PullSecretRef != nil {
 		var pullSecret string
 		pullSecret, err := lcautils.GetSecretData(ctx, ibu.Spec.SeedImageRef.PullSecretRef.Name,
-			common.LcaNamespace, corev1.DockerConfigJsonKey, r.Client)
+			common.OperatorNamespace(), corev1.DockerConfigJsonKey, r.Client)
 		if err != nil {
 			err = fmt.Errorf("failed to retrieve pull-secret from secret %s, err: %w", ibu.Spec.SeedImageRef.PullSecretRef.Name, err)
 			return nil, err
@@ -345,7 +345,7 @@ func (r *ImageBasedUpgradeReconciler) validateSeedOcpVersion(seedOcpVersion stri
 
 func (r *ImageBasedUpgradeReconciler) getPodEnvVars(ctx context.Context) (envVars []corev1.EnvVar, err error) {
 	pod := &corev1.Pod{}
-	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.LcaNamespace}, pod); err != nil {
+	if err = r.Get(ctx, types.NamespacedName{Name: os.Getenv("MY_POD_NAME"), Namespace: common.OperatorNamespace()}, pod); err != nil {
 		err = fmt.Errorf("failed to get pod info: %w", err)
 		return
 	}

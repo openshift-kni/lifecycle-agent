@@ -324,7 +324,8 @@ func InitIBU(ctx context.Context, c runtimeclient.Client, log *logr.Logger) erro
 		if os.IsNotExist(err) {
 			ibu = &ibuv1.ImageBasedUpgrade{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: utils.IBUName,
+					Name:      utils.IBUName,
+					Namespace: common.OperatorNamespace(),
 				},
 				Spec: ibuv1.ImageBasedUpgradeSpec{
 					Stage: ibuv1.Stages.Idle,

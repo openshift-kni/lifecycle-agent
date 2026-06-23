@@ -10,21 +10,52 @@
 #     bash hack/bundle-run.sh
 #
 # Optional env vars:
-#   BUNDLE_NAMESPACE: namespace used for operator-sdk run bundle (default: openshift-lifecycle-agent)
+#   INSTALL_MODE: ownnamespace (default) or allnamespaces
+#   LCA_NAMESPACE: default install namespace (default: openshift-lifecycle-agent)
+#   BUNDLE_NAMESPACE: override install namespace
+#   OPERATORGROUP_NAME: OperatorGroup name for allnamespaces (default: global-operators)
+#   OPERATOR_SDK: path to operator-sdk (default: <repo>/bin/operator-sdk)
+#   BUNDLE_RUN_TIMEOUT: how long to wait for the CSV to install (default: 5m)
 #   CATALOGSOURCE_NAME: CatalogSource name created by operator-sdk (default: lifecycle-agent-catalog)
 #   PATCH_TIMEOUT_SECONDS: how long to wait for CatalogSource/address to appear (default: 120)
+#   SA_WAIT_TIMEOUT_SECONDS: wait for default SA after namespace create (default: 30)
+#   BUNDLE_CLEAN_BEFORE_INSTALL: run hack/bundle-clean.sh first if true (default: false)
 
 set -euo pipefail
 if [[ "${TRACE:-0}" == "1" ]]; then
     set -x
 fi
 
-: "${BUNDLE_NAMESPACE:=openshift-lifecycle-agent}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+: "${INSTALL_MODE:=ownnamespace}"
+: "${LCA_NAMESPACE:=openshift-lifecycle-agent}"
+: "${OPERATORGROUP_NAME:=global-operators}"
+: "${BUNDLE_RUN_TIMEOUT:=5m}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
+: "${SA_WAIT_TIMEOUT_SECONDS:=30}"
+: "${BUNDLE_CLEAN_BEFORE_INSTALL:=false}"
+: "${OPERATOR_SDK:=${PROJECT_DIR}/bin/operator-sdk}"
 
-if [[ -z "${OPERATOR_SDK:-}" ]]; then
-    echo "ERROR: OPERATOR_SDK is not set"
+case "${INSTALL_MODE}" in
+    ownnamespace)
+        OLM_INSTALL_MODE="OwnNamespace"
+        ;;
+    allnamespaces)
+        OLM_INSTALL_MODE="AllNamespaces"
+        ;;
+    *)
+        echo "ERROR: INSTALL_MODE must be 'ownnamespace' or 'allnamespaces', got: ${INSTALL_MODE}"
+        exit 2
+        ;;
+esac
+
+BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE:-${LCA_NAMESPACE}}"
+
+if [[ ! -x "${OPERATOR_SDK}" ]]; then
+    echo "ERROR: OPERATOR_SDK is not executable: ${OPERATOR_SDK}"
     exit 2
 fi
 
@@ -33,9 +64,33 @@ if [[ -z "${BUNDLE_IMG:-}" ]]; then
     exit 2
 fi
 
+if [[ "${BUNDLE_CLEAN_BEFORE_INSTALL}" == "true" ]]; then
+    INSTALL_MODE="${INSTALL_MODE}" \
+        LCA_NAMESPACE="${LCA_NAMESPACE}" \
+        CATALOGSOURCE_NAME="${CATALOGSOURCE_NAME}" \
+        OPERATOR_SDK="${OPERATOR_SDK}" \
+        BUNDLE_NAMESPACE="${BUNDLE_NAMESPACE}" \
+        bash "$(dirname "${BASH_SOURCE[0]}")/bundle-clean.sh"
+fi
+
+echo "Installing lifecycle-agent bundle (INSTALL_MODE=${INSTALL_MODE}, olm=${OLM_INSTALL_MODE}, namespace=${BUNDLE_NAMESPACE})"
+
 oc create ns "${BUNDLE_NAMESPACE}" 2>/dev/null || true
 
-"${OPERATOR_SDK}" --security-context-config restricted -n "${BUNDLE_NAMESPACE}" run bundle "${BUNDLE_IMG}" &
+echo "Waiting for default serviceaccount in ${BUNDLE_NAMESPACE} (timeout=${SA_WAIT_TIMEOUT_SECONDS}s)"
+for _i in $(seq 1 "${SA_WAIT_TIMEOUT_SECONDS}"); do
+    if oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
+    echo "ERROR: timed out waiting for serviceaccount/default in ${BUNDLE_NAMESPACE}"
+    exit 1
+fi
+
+"${OPERATOR_SDK}" --security-context-config restricted -n "${BUNDLE_NAMESPACE}" \
+    run bundle --timeout="${BUNDLE_RUN_TIMEOUT}" "${BUNDLE_IMG}" --install-mode="${OLM_INSTALL_MODE}" &
 sdk_pid=$!
 
 for _i in $(seq 1 "${PATCH_TIMEOUT_SECONDS}"); do
