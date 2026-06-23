@@ -37,7 +37,7 @@ import (
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -59,7 +59,7 @@ type (
 		ClusterConfig   clusterconfig.UpgradeClusterConfigGatherer
 		Executor        ops.Execute
 		Ops             ops.Ops
-		Recorder        record.EventRecorder
+		Recorder        events.EventRecorder
 		RPMOstreeClient rpmostreeclient.IClient
 		OstreeClient    ostreeclient.IClient
 		RebootClient    reboot.RebootIntf
@@ -243,7 +243,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 	}
 
 	// Write an event to indicate reboot attempt
-	u.Recorder.Event(ibu, v1.EventTypeNormal, "Reboot", "System will now reboot for upgrade")
+	u.Recorder.Eventf(ibu, nil, v1.EventTypeNormal, "Reboot", "Reboot", "System will now reboot for upgrade")
 	err = u.RebootClient.RebootToNewStateRoot("upgrade")
 	if err != nil {
 		u.Log.Error(err, "Failed to reboot to new stateroot")

@@ -42,7 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,7 +54,7 @@ import (
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	lsov1 "github.com/openshift/local-storage-operator/api/v1"
-	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
+	lvmv1alpha1 "github.com/openshift/lvm-operator/v4/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -67,7 +67,7 @@ type SeedGeneratorReconciler struct {
 	NoncachedClient client.Reader
 	Log             logr.Logger
 	Scheme          *runtime.Scheme
-	Recorder        record.EventRecorder
+	Recorder        events.EventRecorder
 	BackupRestore   backuprestore.BackuperRestorer
 	Executor        ops.Execute
 	Mux             *sync.Mutex
@@ -114,7 +114,7 @@ var phases = struct {
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=lca.openshift.io,resources=seedgenerators/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -505,6 +505,7 @@ func (r *SeedGeneratorReconciler) launchImager(seedgen *seedgenv1.SeedGenerator)
 
 	// In order to have the imager container both survive the LCA pod shutdown and have continued network access
 	// after all other pods are shutdown, we're using systemd-run to launch it as a transient service-unit
+	//nolint:goconst
 	systemdRunOpts := []string{
 		"--collect",
 		"--wait",
@@ -1106,7 +1107,7 @@ func (r *SeedGeneratorReconciler) updateStatus(ctx context.Context, seedgen *see
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SeedGeneratorReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("SeedGenerator")
+	r.Recorder = mgr.GetEventRecorder("SeedGenerator")
 
 	//nolint:wrapcheck
 	return ctrl.NewControllerManagedBy(mgr).

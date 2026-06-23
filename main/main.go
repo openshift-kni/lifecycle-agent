@@ -53,7 +53,7 @@ import (
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	lsov1 "github.com/openshift/local-storage-operator/api/v1"
-	lvmv1alpha1 "github.com/openshift/lvm-operator/api/v1alpha1"
+	lvmv1alpha1 "github.com/openshift/lvm-operator/v4/api/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -315,7 +315,7 @@ func main() {
 			ClusterConfig:   &clusterconfig.UpgradeClusterConfigGather{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Log: log},
 			Executor:        chrootExecutor,
 			Ops:             chrootOp,
-			Recorder:        mgr.GetEventRecorderFor("ImageBasedUpgrade"),
+			Recorder:        mgr.GetEventRecorder("ImageBasedUpgrade"),
 			RPMOstreeClient: rpmOstreeClient,
 			OstreeClient:    ostreeClient,
 			RebootClient:    ibuRebootClient,

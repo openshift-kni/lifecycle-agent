@@ -25,7 +25,7 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"go.uber.org/mock/gomock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -844,7 +844,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				ClusterConfig:   mockClusterconfig,
 				Executor:        mockExec,
 				Ops:             mockOps,
-				Recorder:        record.NewFakeRecorder(1),
+				Recorder:        events.NewFakeRecorder(1),
 				RPMOstreeClient: mockRpmostreeclient,
 				OstreeClient:    ostreeclientMock,
 				RebootClient:    mockRebootClient,
