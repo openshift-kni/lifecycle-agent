@@ -35,7 +35,9 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 : "${BUNDLE_RUN_TIMEOUT:=5m}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
-: "${SA_WAIT_TIMEOUT_SECONDS:=30}"
+# On freshly installed SNO, kube-apiserver revision rollouts can cause
+# intermittent API unavailability for 10+ minutes, blocking SA creation
+: "${SA_WAIT_TIMEOUT_SECONDS:=900}"
 : "${BUNDLE_CLEAN_BEFORE_INSTALL:=false}"
 : "${OPERATOR_SDK:=${PROJECT_DIR}/bin/operator-sdk}"
 
