@@ -11,9 +11,11 @@
 #
 # Optional env vars:
 #   BUNDLE_NAMESPACE: namespace used for operator-sdk run bundle (default: openshift-lifecycle-agent)
-#   BUNDLE_RUN_TIMEOUT: how long to wait for the CSV to install (default: 5m)
+#   BUNDLE_RUN_TIMEOUT: how long to wait for the CSV to install (default: 15m)
 #   CATALOGSOURCE_NAME: CatalogSource name created by operator-sdk (default: lifecycle-agent-catalog)
 #   PATCH_TIMEOUT_SECONDS: how long to wait for CatalogSource/address to appear (default: 120)
+#   SA_WAIT_TIMEOUT_SECONDS: how long to wait for default serviceaccount (default: 900)
+#   SA_WAIT_POLL_INTERVAL_SECONDS: poll interval while waiting for serviceaccount (default: 30)
 
 set -euo pipefail
 if [[ "${TRACE:-0}" == "1" ]]; then
@@ -21,10 +23,11 @@ if [[ "${TRACE:-0}" == "1" ]]; then
 fi
 
 : "${BUNDLE_NAMESPACE:=openshift-lifecycle-agent}"
-: "${BUNDLE_RUN_TIMEOUT:=5m}"
+: "${BUNDLE_RUN_TIMEOUT:=15m}"
 : "${CATALOGSOURCE_NAME:=lifecycle-agent-catalog}"
 : "${PATCH_TIMEOUT_SECONDS:=120}"
-: "${SA_WAIT_TIMEOUT_SECONDS:=30}"
+: "${SA_WAIT_TIMEOUT_SECONDS:=900}"
+: "${SA_WAIT_POLL_INTERVAL_SECONDS:=30}"
 : "${OPERATOR_SDK:=${PROJECT_DIR}/bin/operator-sdk}"
 
 if [[ -z "${OPERATOR_SDK:-}" ]]; then
@@ -39,12 +42,13 @@ fi
 
 oc create ns "${BUNDLE_NAMESPACE}" 2>/dev/null || true
 
-echo "Waiting for default serviceaccount in ${BUNDLE_NAMESPACE} (timeout=${SA_WAIT_TIMEOUT_SECONDS}s)"
-for _i in $(seq 1 "${SA_WAIT_TIMEOUT_SECONDS}"); do
+SA_WAIT_MAX_ATTEMPTS=$(( (SA_WAIT_TIMEOUT_SECONDS + SA_WAIT_POLL_INTERVAL_SECONDS - 1) / SA_WAIT_POLL_INTERVAL_SECONDS ))
+echo "Waiting for default serviceaccount in ${BUNDLE_NAMESPACE} (timeout=${SA_WAIT_TIMEOUT_SECONDS}s, poll=${SA_WAIT_POLL_INTERVAL_SECONDS}s)"
+for _i in $(seq 1 "${SA_WAIT_MAX_ATTEMPTS}"); do
     if oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
         break
     fi
-    sleep 1
+    sleep "${SA_WAIT_POLL_INTERVAL_SECONDS}"
 done
 if ! oc get serviceaccount default -n "${BUNDLE_NAMESPACE}" >/dev/null 2>&1; then
     echo "ERROR: timed out waiting for serviceaccount/default in ${BUNDLE_NAMESPACE}"
