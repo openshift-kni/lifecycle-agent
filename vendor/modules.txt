@@ -1619,7 +1619,7 @@ open-cluster-management.io/api/cluster/v1
 # open-cluster-management.io/config-policy-controller v0.19.0
 ## explicit; go 1.25.7
 open-cluster-management.io/config-policy-controller/api/v1
-# open-cluster-management.io/governance-policy-propagator v0.18.1-0.20260302212915-228fbaa3ff66
+# open-cluster-management.io/governance-policy-propagator v0.19.0
 ## explicit; go 1.25.0
 open-cluster-management.io/governance-policy-propagator/api/v1
 # sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0
