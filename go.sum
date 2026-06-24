@@ -457,8 +457,8 @@ open-cluster-management.io/api v1.3.0 h1:Q3miH38BE3N5+PesHQ0kcFi5nhX5350m7OJWapZ
 open-cluster-management.io/api v1.3.0/go.mod h1:t0DsBv4gjIo9ojd7GYfA2tcEMpNf0h5Ix68pFDXwNSk=
 open-cluster-management.io/config-policy-controller v0.19.0 h1:N0/rf3HEzVLT/Fj7evtNe2r1zPFyIW5Cn4LS7PKQpGc=
 open-cluster-management.io/config-policy-controller v0.19.0/go.mod h1:s90HOIy0pvI7hRB8TTtCVUj9YgaUJN9ROdPtkdZVlfc=
-open-cluster-management.io/governance-policy-propagator v0.18.1-0.20260302212915-228fbaa3ff66 h1:UWftxKTVRzi88ylhznaW+1CfJIyKfhHNQzpjp1AGC50=
-open-cluster-management.io/governance-policy-propagator v0.18.1-0.20260302212915-228fbaa3ff66/go.mod h1:Nd2kSzLhZ7iE94OcAbTvAppj3zVngPNxJU4/dqV9oWs=
+open-cluster-management.io/governance-policy-propagator v0.19.0 h1:5tVCsUvuRkc0XlUNopuGWGw9UDXDXTqA8z8TNA6721k=
+open-cluster-management.io/governance-policy-propagator v0.19.0/go.mod h1:pUxqI48imtKD44BWRGG8TlMg3//nbPahO0S1SNwpukA=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0 h1:hSfpvjjTQXQY2Fol2CS0QHMNs/WI1MOSGzCm1KhM5ec=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0/go.mod h1:Ve9uj1L+deCXFrPOk1LpFXqTg7LCFzFso6PA48q/XZw=
 sigs.k8s.io/controller-runtime v0.23.3 h1:VjB/vhoPoA9l1kEKZHBMnQF33tdCLQKJtydy4iqwZ80=
