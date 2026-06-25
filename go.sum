@@ -235,8 +235,8 @@ github.com/openshift/library-go v0.0.0-20260318142011-72bf34f474bc h1:a+rVRzEdFI
 github.com/openshift/library-go v0.0.0-20260318142011-72bf34f474bc/go.mod h1:3bi4pLpYRdVd1aEhsHfRTJkwxwPLfRZ+ZePn3RmJd2k=
 github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1 h1:SBnRKCTDVu7JHDSpLsfSDWQAF5wxu1/PoY3lKPcRexM=
 github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1/go.mod h1:14iQ/wwY3MTQRMHe04Lvx8Zhbh7ESJSRsN40coqDRw8=
-github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9 h1:LKGy84IuNDt9eazNzLo6bx5CFt9klh1OK6fmkkAHkOw=
-github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9/go.mod h1:u6gMQe0iFj1Q9umceqAh28aEbovECBWZtwnk0uthGj0=
+github.com/openshift/lvm-operator/v4 v4.20.0 h1:rENUiQPyXnQahFkAwsecpfEGqEDKSSRCkXosX3nou7w=
+github.com/openshift/lvm-operator/v4 v4.20.0/go.mod h1:BBa41rrG7hNmJm4qiBFppfArIX6J18aS8k1l/qfqAeM=
 github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3 h1:zTCUh4flIv7+4cVLWKXbcm9pKiR9V9k1uGRtrH5IjV8=
 github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3/go.mod h1:ThSzAlUNL+GIVhI3i7b3IukYxyhmUI2/aPNpTupI5vw=
 github.com/operator-framework/api v0.42.0 h1:rkc5V3zW8RxZMjePAe12jdL7Co/hwsYo1pLnkkhuR7s=

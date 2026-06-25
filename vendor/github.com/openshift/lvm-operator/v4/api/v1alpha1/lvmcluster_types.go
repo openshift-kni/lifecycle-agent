@@ -18,10 +18,8 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 // LVMClusterSpec defines the desired state of LVMCluster
@@ -52,7 +50,6 @@ type ThinPoolConfig struct {
 
 	// OverProvisionRatio specifies a factor by which you can provision additional storage based on the available storage in the thin pool. To prevent over-provisioning through validation, set this field to 1.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=100
 	// +kubebuilder:validation:Required
 	// +required
 	OverprovisionRatio int `json:"overprovisionRatio"`
@@ -127,76 +124,12 @@ const (
 	FilesystemTypeXFS  DeviceFilesystemType = "xfs"
 )
 
-// RAIDType represents the LVM RAID level for a device class.
-// +kubebuilder:validation:Enum=raid1;raid4;raid5;raid6;raid10
-type RAIDType string
-
-const (
-	RAIDTypeRAID1  RAIDType = "raid1"
-	RAIDTypeRAID4  RAIDType = "raid4"
-	RAIDTypeRAID5  RAIDType = "raid5"
-	RAIDTypeRAID6  RAIDType = "raid6"
-	RAIDTypeRAID10 RAIDType = "raid10"
-)
-
-// MinDeviceCount returns the minimum number of devices required for this RAID type.
-// For parity RAID levels (raid4/5/6), stripes determines the data stripe count,
-// and the total minimum is stripes plus the parity drive count.
-func (r RAIDType) MinDeviceCount(mirrors int, stripes *int) int {
-	switch r {
-	case RAIDTypeRAID1:
-		return mirrors + 1
-	case RAIDTypeRAID4, RAIDTypeRAID5:
-		return ptr.Deref(stripes, 2) + 1
-	case RAIDTypeRAID6:
-		return ptr.Deref(stripes, 3) + 2
-	case RAIDTypeRAID10:
-		return 2 * (mirrors + 1)
-	default:
-		return 0
-	}
-}
-
-// RAIDConfig configures LVM RAID for a device class. Mutually exclusive with ThinPoolConfig.
-type RAIDConfig struct {
-	// Type is the LVM RAID level.
-	// +kubebuilder:validation:Required
-	// +required
-	Type RAIDType `json:"type"`
-
-	// Mirrors is the number of mirror copies. Only valid for raid1 and raid10.
-	// Default is 1 (2 total copies: original + 1 mirror).
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	Mirrors *int `json:"mirrors,omitempty"`
-
-	// Stripes is the number of data stripes. Only valid for raid4, raid5, raid6, and raid10.
-	// When not specified, LVM uses its default (typically all available devices minus parity).
-	// +optional
-	// +kubebuilder:validation:Minimum=2
-	Stripes *int `json:"stripes,omitempty"`
-
-	// StripeSize is the size of each stripe chunk. Only valid for raid4, raid5, raid6, and raid10.
-	// Must be a power of 2 (e.g., 64Ki, 128Ki, 256Ki, 512Ki). Default is 64Ki.
-	// +optional
-	StripeSize *resource.Quantity `json:"stripeSize,omitempty"`
-}
-
-// EffectiveMirrors returns the configured mirror count or the default of 1.
-func (r *RAIDConfig) EffectiveMirrors() int {
-	if r.Mirrors != nil {
-		return *r.Mirrors
-	}
-	return 1
-}
-
 type DeviceClass struct {
 	// Name specifies a name for the device class
 	// +kubebuilder:validation:MaxLength=245
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-	// +required
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 
 	// DeviceSelector contains the configuration to specify paths to the devices that you want to add to the LVM volume group, and force wipe the selected devices.
 	// +optional
@@ -210,13 +143,6 @@ type DeviceClass struct {
 	// +optional
 	ThinPoolConfig *ThinPoolConfig `json:"thinPoolConfig,omitempty"`
 
-	// RAIDConfig configures native LVM RAID for this device class. When set, the device class
-	// uses thick provisioning and all logical volumes are RAID-protected at the specified level.
-	// Mutually exclusive with ThinPoolConfig. All fields are immutable after creation.
-	// +optional
-	// +kubebuilder:validation:XValidation:rule="oldSelf == self",message="raidConfig is immutable after creation"
-	RAIDConfig *RAIDConfig `json:"raidConfig,omitempty"`
-
 	// Default is a flag to indicate that a device class is the default. You can configure only a single default device class.
 	// +optional
 	Default bool `json:"default,omitempty"`
@@ -224,56 +150,10 @@ type DeviceClass struct {
 	// FilesystemType sets the default filesystem type for persistent volumes created from this device class.
 	// This determines the filesystem used when provisioning PVCs with volumeMode: Filesystem.
 	// Select either `ext4` or `xfs`. This does not filter devices during discovery.
-	// +kubebuilder:validation:Enum=xfs;ext4
+	// +kubebuilder:validation:Enum=xfs;ext4;""
 	// +kubebuilder:default=xfs
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="oldSelf == self",message="fstype is immutable"
 	FilesystemType DeviceFilesystemType `json:"fstype,omitempty"`
-
-	// DeviceDiscoveryPolicy specifies the policy for discovering devices for this device class.
-	// Static means the volume group is created with devices found at install time; new devices are ignored.
-	// Dynamic means devices are continuously discovered and added to the volume group.
-	// When not set, new volume groups default to Static and existing volume groups default to Dynamic for backward compatibility.
-	// +kubebuilder:validation:Enum=Static;Dynamic
-	// +optional
-	DeviceDiscoveryPolicy *DeviceDiscoveryPolicySpec `json:"deviceDiscoveryPolicy,omitempty"`
-
-	// StorageClassOptions allows customization of the StorageClass created for this device class.
-	// +optional
-	StorageClassOptions *StorageClassOptions `json:"storageClassOptions,omitempty"`
-}
-
-// StorageClassOptions defines optional overrides for the StorageClass generated by LVMS for a device class.
-type StorageClassOptions struct {
-	// ReclaimPolicy sets the reclaim policy for PVs provisioned by this device class.
-	// When set to Retain, PVs and their underlying logical volumes are preserved when PVCs are deleted.
-	// +optional
-	// +kubebuilder:default=Delete
-	// +kubebuilder:validation:Enum=Delete;Retain
-	// +kubebuilder:validation:XValidation:rule="oldSelf == self",message="reclaimPolicy is immutable once set"
-	ReclaimPolicy *corev1.PersistentVolumeReclaimPolicy `json:"reclaimPolicy,omitempty"`
-
-	// VolumeBindingMode sets the binding mode for PVs provisioned by this device class.
-	// +optional
-	// +kubebuilder:default=WaitForFirstConsumer
-	// +kubebuilder:validation:Enum=WaitForFirstConsumer;Immediate
-	// +kubebuilder:validation:XValidation:rule="oldSelf == self",message="volumeBindingMode is immutable once set"
-	VolumeBindingMode *storagev1.VolumeBindingMode `json:"volumeBindingMode,omitempty"`
-
-	// AdditionalParameters sets additional parameters on the StorageClass.
-	// LVMS-owned keys (topolvm.io/device-class, csi.storage.k8s.io/fstype) cannot be overridden.
-	// This field is immutable after creation.
-	// +optional
-	// +kubebuilder:default={}
-	// +kubebuilder:validation:MaxProperties=16
-	// +kubebuilder:validation:XValidation:rule="oldSelf == self",message="additionalParameters is immutable once set"
-	AdditionalParameters map[string]string `json:"additionalParameters,omitempty"`
-
-	// AdditionalLabels sets additional labels on the StorageClass.
-	// This is the only StorageClassOptions field that can be changed after creation.
-	// +optional
-	// +kubebuilder:validation:MaxProperties=16
-	AdditionalLabels map[string]string `json:"additionalLabels,omitempty"`
 }
 
 // DeviceSelector specifies the list of criteria that have to match before a device is assigned
@@ -282,16 +162,11 @@ type DeviceSelector struct {
 	// +optional
 	// MinSize *resource.Quantity `json:"minSize,omitempty"`
 
-	// Paths is a list of device paths. All paths must resolve on each node.
-	// Prefer stable, consistent paths such as /dev/disk/by-id/… instead of
-	// /dev/sda, which may be renamed or reordered by the kernel on reboot.
+	// Paths specify the device paths.
 	// +optional
 	Paths []DevicePath `json:"paths,omitempty"`
 
-	// OptionalPaths is a list of device paths. At least one path must resolve on each node.
-	// Prefer stable, consistent paths such as /dev/disk/by-id/… instead of
-	// /dev/sda, which may be renamed or reordered by the kernel on reboot.
-	// This can be used to provide a single list of disk IDs across multiple nodes.
+	// OptionalPaths specify the optional device paths.
 	// +optional
 	OptionalPaths []DevicePath `json:"optionalPaths,omitempty"`
 
@@ -363,8 +238,6 @@ type DeviceClassStatus struct {
 type Storage struct {
 	// DeviceClasses contains the configuration to assign the local storage devices to the LVM volume groups that you can use to provision persistent volume claims (PVCs).
 	// +Optional
-	// +listType=map
-	// +listMapKey=name
 	DeviceClasses []DeviceClass `json:"deviceClasses,omitempty"`
 }
 

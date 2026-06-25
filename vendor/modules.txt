@@ -582,12 +582,10 @@ github.com/openshift/library-go/pkg/operator/v1helpers
 # github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 ## explicit; go 1.20
 github.com/openshift/local-storage-operator/api/v1
-# github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9
-## explicit; go 1.25.8
+# github.com/openshift/lvm-operator/v4 v4.20.0
+## explicit; go 1.24.3
 github.com/openshift/lvm-operator/v4/api/v1alpha1
 github.com/openshift/lvm-operator/v4/internal/cluster
-github.com/openshift/lvm-operator/v4/internal/controllers/constants
-github.com/openshift/lvm-operator/v4/internal/controllers/labels
 # github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3
 ## explicit; go 1.25.3
 github.com/openshift/machine-config-operator/internal/clients

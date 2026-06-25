@@ -24,14 +24,13 @@ import (
 	"strings"
 
 	"github.com/openshift/lvm-operator/v4/internal/cluster"
-	"github.com/openshift/lvm-operator/v4/internal/controllers/constants"
-	"github.com/openshift/lvm-operator/v4/internal/controllers/labels"
 
 	corev1 "k8s.io/api/core/v1"
-	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -45,7 +44,7 @@ type lvmClusterValidator struct {
 	client.Client
 }
 
-var _ admission.Validator[*LVMCluster] = &lvmClusterValidator{}
+var _ webhook.CustomValidator = &lvmClusterValidator{}
 
 var (
 	ErrDeviceClassNotFound                                   = errors.New("DeviceClass not found in the LVMCluster")
@@ -61,26 +60,20 @@ var (
 	ErrNodeSelectorCannotBeChanged                           = errors.New("NodeSelector can not be changed")
 	ErrDevicePathsCannotBeAddedInUpdate                      = errors.New("device paths can not be added after a device class has been initialized")
 	ErrForceWipeOptionCannotBeChanged                        = errors.New("ForceWipeDevicesAndDestroyAllData can not be changed")
-	ErrRAIDAndThinPoolMutuallyExclusive                      = errors.New("raidConfig and thinPoolConfig are mutually exclusive")
-	ErrRAIDMirrorsOnlyForRAID1AndRAID10                      = errors.New("mirrors is only valid for raid1 and raid10")
-	ErrRAIDStripesNotForRAID1                                = errors.New("stripes is only valid for raid4, raid5, raid6, and raid10")
-	ErrRAIDStripeSizeNotForRAID1                             = errors.New("stripeSize is only valid for raid4, raid5, raid6, and raid10")
-	ErrRAIDDeviceSelectorRequired                            = errors.New("at least one of paths or optionalPaths is required when raidConfig is set")
-	ErrRAIDStripeSizeNotPowerOf2                             = errors.New("stripeSize must be a power of 2 (e.g., 64Ki, 128Ki, 256Ki, 512Ki)")
-	ErrRAIDConfigCannotBeChanged                             = errors.New("raidConfig cannot be changed")
-	ErrRAIDConfigNotSet                                      = errors.New("RAIDConfig is not set for the DeviceClass")
 )
 
 //+kubebuilder:webhook:path=/validate-lvm-topolvm-io-v1alpha1-lvmcluster,mutating=false,failurePolicy=fail,sideEffects=None,groups=lvm.topolvm.io,resources=lvmclusters,verbs=create;update,versions=v1alpha1,name=vlvmcluster.kb.io,admissionReviewVersions=v1
 
 func (l *LVMCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, l).
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(l).
 		WithValidator(&lvmClusterValidator{Client: mgr.GetClient()}).
 		Complete()
 }
 
-// ValidateCreate implements admission.Validator so a webhook will be registered for the type
-func (v *lvmClusterValidator) ValidateCreate(ctx context.Context, l *LVMCluster) (admission.Warnings, error) {
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (v *lvmClusterValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	l := obj.(*LVMCluster)
 
 	warnings := admission.Warnings{}
 	lvmclusterlog.Info("validate create", "name", l.Name)
@@ -104,11 +97,6 @@ func (v *lvmClusterValidator) ValidateCreate(ctx context.Context, l *LVMCluster)
 
 	deviceClassWarnings, err := v.verifyDeviceClass(l)
 	warnings = append(warnings, deviceClassWarnings...)
-	if err != nil {
-		return warnings, err
-	}
-
-	err = v.verifyRAIDConfig(l)
 	if err != nil {
 		return warnings, err
 	}
@@ -144,31 +132,18 @@ func (v *lvmClusterValidator) ValidateCreate(ctx context.Context, l *LVMCluster)
 		return warnings, err
 	}
 	warnings = append(warnings, metadataWarnings...)
-
-	discoveryPolicyWarnings := v.verifyDeviceDiscoveryPolicy(l)
-	warnings = append(warnings, discoveryPolicyWarnings...)
-
-	scOptionWarnings, err := v.validateAdditionalParamsAndLabels(l)
-	warnings = append(warnings, scOptionWarnings...)
-	if err != nil {
-		return warnings, err
-	}
-
 	return warnings, nil
 }
 
-// ValidateUpdate implements admission.Validator so a webhook will be registered for the type
-func (v *lvmClusterValidator) ValidateUpdate(_ context.Context, oldLVMCluster, l *LVMCluster) (admission.Warnings, error) {
+// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
+func (v *lvmClusterValidator) ValidateUpdate(_ context.Context, old, new runtime.Object) (admission.Warnings, error) {
+	l := new.(*LVMCluster)
+
 	lvmclusterlog.Info("validate update", "name", l.Name)
 	warnings := admission.Warnings{}
 
 	deviceClassWarnings, err := v.verifyDeviceClass(l)
 	warnings = append(warnings, deviceClassWarnings...)
-	if err != nil {
-		return warnings, err
-	}
-
-	err = v.verifyRAIDConfig(l)
 	if err != nil {
 		return warnings, err
 	}
@@ -194,16 +169,15 @@ func (v *lvmClusterValidator) ValidateUpdate(_ context.Context, oldLVMCluster, l
 		return warnings, err
 	}
 
-	scOptionWarnings, err := v.validateAdditionalParamsAndLabels(l)
-	warnings = append(warnings, scOptionWarnings...)
-	if err != nil {
-		return warnings, err
+	oldLVMCluster, ok := old.(*LVMCluster)
+	if !ok {
+		return warnings, fmt.Errorf("failed to parse LVMCluster")
 	}
 
-	// Validate device class removal follows the business rules
-	err = validateDeviceClassRemoval(oldLVMCluster.Spec.Storage.DeviceClasses, l.Spec.Storage.DeviceClasses)
+	// Validate all the old device classes still exist
+	err = validateDeviceClassesStillExist(oldLVMCluster.Spec.Storage.DeviceClasses, l.Spec.Storage.DeviceClasses)
 	if err != nil {
-		return warnings, fmt.Errorf("device class removal validation failed: %w", err)
+		return warnings, fmt.Errorf("invalid: device classes were deleted from the LVMCluster: %w", err)
 	}
 
 	for _, deviceClass := range l.Spec.Storage.DeviceClasses {
@@ -246,21 +220,6 @@ func (v *lvmClusterValidator) ValidateUpdate(_ context.Context, oldLVMCluster, l
 			}
 		}
 
-		var newRAIDConfig, oldRAIDConfig *RAIDConfig
-		newRAIDConfig = deviceClass.RAIDConfig
-		oldRAIDConfig, err = v.getRAIDConfigOfDeviceClass(oldLVMCluster, deviceClass.Name)
-
-		if (newRAIDConfig != nil && oldRAIDConfig == nil && !errors.Is(err, ErrDeviceClassNotFound)) ||
-			(newRAIDConfig == nil && oldRAIDConfig != nil) {
-			return warnings, ErrRAIDConfigCannotBeChanged
-		}
-
-		if newRAIDConfig != nil && oldRAIDConfig != nil {
-			if !reflect.DeepEqual(newRAIDConfig, oldRAIDConfig) {
-				return warnings, fmt.Errorf("RAIDConfig fields are immutable: %w", ErrRAIDConfigCannotBeChanged)
-			}
-		}
-
 		newNodeSelector := deviceClass.NodeSelector
 		oldNodeSelector, err := v.getNodeSelectorOfDeviceClass(oldLVMCluster, deviceClass.Name)
 		if (newNodeSelector != nil && oldNodeSelector == nil && !errors.Is(err, ErrDeviceClassNotFound)) ||
@@ -290,48 +249,70 @@ func (v *lvmClusterValidator) ValidateUpdate(_ context.Context, oldLVMCluster, l
 			return warnings, ErrForceWipeOptionCannotBeChanged
 		}
 
-		// If originally no devices were specified, prevent adding any devices
-		if len(oldDevices) == 0 && len(oldOptionalDevices) == 0 {
-			if len(newDevices) > 0 || len(newOptionalDevices) > 0 {
-				return warnings, ErrDevicePathsCannotBeAddedInUpdate
-			}
+		// Make sure a device path list was not added
+		if len(oldDevices) == 0 && len(newDevices) > 0 {
+			return warnings, ErrDevicePathsCannotBeAddedInUpdate
 		}
 
-		// Ensure at least one device path remains when removing devices
-		if len(oldDevices)+len(oldOptionalDevices) > 0 && len(newDevices)+len(newOptionalDevices) == 0 {
-			return warnings, fmt.Errorf("cannot remove all device paths from device class %s: at least one device path must remain", deviceClass.Name)
+		// Make sure an optionalPaths list was not added
+		if len(oldOptionalDevices) == 0 && len(newOptionalDevices) > 0 {
+			return warnings, ErrDevicePathsCannotBeAddedInUpdate
 		}
+
+		if err := validateDevicePathsStillExist(oldDevices, newDevices); err != nil {
+			return warnings, fmt.Errorf("invalid: required device paths were deleted from the LVMCluster: %w", err)
+		}
+
+		if err := validateDevicePathsStillExist(oldOptionalDevices, newOptionalDevices); err != nil {
+			return warnings, fmt.Errorf("invalid: optional device paths were deleted from the LVMCluster: %w", err)
+		}
+
 	}
 
 	return warnings, nil
 }
 
-// validateDeviceClassRemoval validates that device class removal follows the business rules:
-// 1. Cannot delete the last device class
-// 2. Cannot delete default device class
-func validateDeviceClassRemoval(old, new []DeviceClass) error {
-	if len(new) == 0 {
-		return fmt.Errorf("cannot remove all device classes: at least one device class must remain")
+func validateDeviceClassesStillExist(old, new []DeviceClass) error {
+	deviceClassMap := make(map[string]bool)
+
+	for _, deviceClass := range old {
+		deviceClassMap[deviceClass.Name] = true
 	}
 
-	newDeviceClassMap := make(map[string]DeviceClass)
 	for _, deviceClass := range new {
-		newDeviceClassMap[deviceClass.Name] = deviceClass
+		delete(deviceClassMap, deviceClass.Name)
 	}
 
-	for _, oldDeviceClass := range old {
-		if _, exists := newDeviceClassMap[oldDeviceClass.Name]; !exists {
-			if oldDeviceClass.Default {
-				return fmt.Errorf("cannot delete default device class %s", oldDeviceClass.Name)
-			}
-		}
+	// if any old device class is removed now
+	if len(deviceClassMap) != 0 {
+		return fmt.Errorf("device classes can not be removed from the LVMCluster once added oldDeviceClasses:%v, newDeviceClasses:%v", old, new)
 	}
 
 	return nil
 }
 
-// ValidateDelete implements admission.Validator so a webhook will be registered for the type
-func (v *lvmClusterValidator) ValidateDelete(ctx context.Context, l *LVMCluster) (admission.Warnings, error) {
+func validateDevicePathsStillExist(old, new []DevicePath) error {
+	deviceMap := make(map[DevicePath]struct{})
+
+	for _, device := range old {
+		deviceMap[device] = struct{}{}
+	}
+
+	for _, device := range new {
+		delete(deviceMap, device)
+	}
+
+	// if any old device is removed now
+	if len(deviceMap) != 0 {
+		return fmt.Errorf("devices can not be removed from the LVMCluster once added oldDevices:%s, newDevices:%s", old, new)
+	}
+
+	return nil
+}
+
+// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
+func (v *lvmClusterValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	l := obj.(*LVMCluster)
 
 	lvmclusterlog.Info("validate delete", "name", l.Name)
 
@@ -380,12 +361,7 @@ func (v *lvmClusterValidator) verifyPathsAreNotEmpty(l *LVMCluster) (admission.W
 	if len(l.Spec.Storage.DeviceClasses) > 1 && len(deviceClassesWithoutPaths) > 0 {
 		return nil, fmt.Errorf("%w. Please specify device path(s) under deviceSelector.paths for %s deviceClass(es)", ErrEmptyPathsWithMultipleDeviceClasses, strings.Join(deviceClassesWithoutPaths, `,`))
 	} else if len(l.Spec.Storage.DeviceClasses) == 1 && len(deviceClassesWithoutPaths) == 1 {
-		return admission.Warnings{fmt.Sprintf(
-			"no device path(s) under deviceSelector.paths was specified for the %s deviceClass, "+
-				"device discovery will be based on the deviceDiscoveryPolicy (defaults to Static). "+
-				"This is not recommended for production environments. "+
-				"Please refer to the limitations outlined in the product documentation for further details.",
-			deviceClassesWithoutPaths[0])}, nil
+		return admission.Warnings{fmt.Sprintf("no device path(s) under deviceSelector.paths was specified for the %s deviceClass, LVMS will actively monitor and dynamically utilize any supported unused devices. This is not recommended for production environments. Please refer to the limitations outlined in the product documentation for further details.", deviceClassesWithoutPaths[0])}, nil
 	}
 
 	return nil, nil
@@ -587,135 +563,4 @@ func (v *lvmClusterValidator) verifyMetadataSize(l *LVMCluster) ([]string, error
 		}
 	}
 	return warnings, nil
-}
-
-func (v *lvmClusterValidator) verifyDeviceDiscoveryPolicy(l *LVMCluster) admission.Warnings {
-	var warnings admission.Warnings
-	for _, deviceClass := range l.Spec.Storage.DeviceClasses {
-		hasExplicitPaths := deviceClass.DeviceSelector != nil &&
-			(len(deviceClass.DeviceSelector.Paths) > 0 || len(deviceClass.DeviceSelector.OptionalPaths) > 0)
-
-		if deviceClass.DeviceDiscoveryPolicy == nil && !hasExplicitPaths {
-			warnings = append(warnings, fmt.Sprintf(
-				"deviceDiscoveryPolicy is not set for device class %q; new volume groups will default to Static mode "+
-					"(devices discovered at creation time only). Set deviceDiscoveryPolicy explicitly to avoid ambiguity.",
-				deviceClass.Name))
-		}
-	}
-	return warnings
-}
-
-// lvmsOwnedParameterKeys are StorageClass parameter keys managed by LVMS that cannot be set via additionalParameters.
-var lvmsOwnedParameterKeys = map[string]struct{}{
-	constants.DeviceClassKey: {},
-	constants.FsTypeKey:      {},
-}
-
-// validateAdditionalParamsAndLabels rejects LVMS-owned parameter keys and operator-reserved
-// label keys at admission. It also validates label key/value format via
-// IsQualifiedName/IsValidLabelValue which cannot be expressed as CEL rules.
-// The controller re-applies owned keys after merging as defense-in-depth against admission bypass.
-func (v *lvmClusterValidator) validateAdditionalParamsAndLabels(l *LVMCluster) (admission.Warnings, error) {
-	var warnings admission.Warnings
-	for _, dc := range l.Spec.Storage.DeviceClasses {
-		if dc.StorageClassOptions == nil {
-			continue
-		}
-		for key := range dc.StorageClassOptions.AdditionalParameters {
-			if key == "" {
-				return warnings, fmt.Errorf("device class %q: additionalParameters must not contain empty keys", dc.Name)
-			}
-			if _, owned := lvmsOwnedParameterKeys[key]; owned {
-				return warnings, fmt.Errorf("device class %q: additionalParameters key %q is managed by LVMS and cannot be set",
-					dc.Name, key)
-			}
-		}
-		for key, val := range dc.StorageClassOptions.AdditionalLabels {
-			if errs := k8svalidation.IsQualifiedName(key); len(errs) > 0 {
-				return warnings, fmt.Errorf("device class %q: additionalLabels key %q is invalid: %s",
-					dc.Name, key, strings.Join(errs, "; "))
-			}
-			if errs := k8svalidation.IsValidLabelValue(val); len(errs) > 0 {
-				return warnings, fmt.Errorf("device class %q: additionalLabels value %q for key %q is invalid: %s",
-					dc.Name, val, key, strings.Join(errs, "; "))
-			}
-			if _, reserved := constants.ReservedStorageClassLabelKeys[key]; reserved {
-				return warnings, fmt.Errorf("device class %q: additionalLabels key %q is operator-reserved and cannot be set",
-					dc.Name, key)
-			}
-			if strings.HasPrefix(key, labels.OwnedByPrefix) {
-				return warnings, fmt.Errorf("device class %q: additionalLabels key %q is operator-reserved and cannot be set",
-					dc.Name, key)
-			}
-		}
-	}
-	return warnings, nil
-}
-
-func (v *lvmClusterValidator) verifyRAIDConfig(l *LVMCluster) error {
-	for _, dc := range l.Spec.Storage.DeviceClasses {
-		if dc.RAIDConfig == nil {
-			continue
-		}
-
-		if dc.ThinPoolConfig != nil {
-			return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDAndThinPoolMutuallyExclusive)
-		}
-
-		rc := dc.RAIDConfig
-
-		if rc.Mirrors != nil && rc.Type != RAIDTypeRAID1 && rc.Type != RAIDTypeRAID10 {
-			return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDMirrorsOnlyForRAID1AndRAID10)
-		}
-
-		if rc.Stripes != nil && rc.Type == RAIDTypeRAID1 {
-			return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDStripesNotForRAID1)
-		}
-
-		if rc.StripeSize != nil && rc.Type == RAIDTypeRAID1 {
-			return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDStripeSizeNotForRAID1)
-		}
-
-		if rc.StripeSize != nil {
-			bytes := rc.StripeSize.Value()
-			if bytes <= 0 || (bytes&(bytes-1)) != 0 {
-				return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDStripeSizeNotPowerOf2)
-			}
-		}
-
-		hasDevices := dc.DeviceSelector != nil &&
-			(len(dc.DeviceSelector.Paths) > 0 || len(dc.DeviceSelector.OptionalPaths) > 0)
-		if !hasDevices {
-			return fmt.Errorf("device class %q: %w", dc.Name, ErrRAIDDeviceSelectorRequired)
-		}
-
-		totalDevices := len(dc.DeviceSelector.Paths) + len(dc.DeviceSelector.OptionalPaths)
-
-		minDevices := rc.Type.MinDeviceCount(rc.EffectiveMirrors(), rc.Stripes)
-		if totalDevices < minDevices {
-			return fmt.Errorf("device class %q: %s requires at least %d devices, got %d",
-				dc.Name, rc.Type, minDevices, totalDevices)
-		}
-
-		if rc.Type == RAIDTypeRAID10 && len(dc.DeviceSelector.OptionalPaths) == 0 {
-			divisor := rc.EffectiveMirrors() + 1
-			if totalDevices%divisor != 0 {
-				return fmt.Errorf("device class %q: raid10 with mirrors=%d requires device count to be a multiple of %d, got %d",
-					dc.Name, rc.EffectiveMirrors(), divisor, totalDevices)
-			}
-		}
-	}
-	return nil
-}
-
-func (v *lvmClusterValidator) getRAIDConfigOfDeviceClass(l *LVMCluster, deviceClassName string) (*RAIDConfig, error) {
-	for _, deviceClass := range l.Spec.Storage.DeviceClasses {
-		if deviceClass.Name == deviceClassName {
-			if deviceClass.RAIDConfig != nil {
-				return deviceClass.RAIDConfig, nil
-			}
-			return nil, ErrRAIDConfigNotSet
-		}
-	}
-	return nil, ErrDeviceClassNotFound
 }

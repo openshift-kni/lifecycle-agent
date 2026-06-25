@@ -14,7 +14,7 @@ require (
 	github.com/openshift/controller-runtime-common v0.0.0-20260318085703-1812aed6dbd2
 	github.com/openshift/library-go v0.0.0-20260318142011-72bf34f474bc
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
-	github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9
+	github.com/openshift/lvm-operator/v4 v4.20.0
 	github.com/operator-framework/api v0.42.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5

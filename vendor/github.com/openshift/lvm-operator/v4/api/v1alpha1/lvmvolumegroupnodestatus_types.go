@@ -22,29 +22,13 @@ import (
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// DeviceDiscoveryPolicySpec is the spec-level policy for device discovery on a volume group.
-type DeviceDiscoveryPolicySpec string
+type DeviceDiscoveryPolicy string
 
 const (
-	// DeviceDiscoveryPolicyStatic means the VG is created with devices found at install time; new devices are ignored.
-	DeviceDiscoveryPolicyStatic DeviceDiscoveryPolicySpec = "Static"
-	// DeviceDiscoveryPolicyDynamic means devices are continuously discovered and added to the VG.
-	DeviceDiscoveryPolicyDynamic DeviceDiscoveryPolicySpec = "Dynamic"
-)
-
-// DeviceDiscoveryPolicyStatus is the effective device discovery policy reported in the volume group status.
-type DeviceDiscoveryPolicyStatus string
-
-const (
-	// DeviceDiscoveryPolicyPreconfigured indicates the devices are preconfigured through explicit DeviceSelector paths.
-	// When paths are specified, the device discovery policy from the spec is ignored.
-	DeviceDiscoveryPolicyPreconfigured DeviceDiscoveryPolicyStatus = "Preconfigured"
-	// DeviceDiscoveryPolicyRuntimeDynamic indicates the devices are discovered and added to the VG dynamically
-	// if they are present at runtime. No DeviceSelector paths are configured and the discovery policy is Dynamic.
-	DeviceDiscoveryPolicyRuntimeDynamic DeviceDiscoveryPolicyStatus = "RuntimeDynamic"
-	// DeviceDiscoveryPolicyRuntimeStatic indicates the VG is created with devices discovered at install time;
-	// later-discovered devices are ignored. No DeviceSelector paths are configured and the discovery policy is Static.
-	DeviceDiscoveryPolicyRuntimeStatic DeviceDiscoveryPolicyStatus = "RuntimeStatic"
+	// DeviceDiscoveryPolicyPreconfigured indicates the devices are preconfigured through a DeviceSelector.
+	DeviceDiscoveryPolicyPreconfigured DeviceDiscoveryPolicy = "Preconfigured"
+	// DeviceDiscoveryPolicyRuntimeDynamic indicates the devices are added to the VG dynamically if they are present at runtime.
+	DeviceDiscoveryPolicyRuntimeDynamic DeviceDiscoveryPolicy = "RuntimeDynamic"
 )
 
 // LVMVolumeGroupNodeStatusSpec defines the desired state of LVMVolumeGroupNodeStatus
@@ -78,50 +62,15 @@ type VGStatus struct {
 	// Excluded contains the per node status of applied device exclusions that were picked up via selector,
 	// but were not used for other reasons.
 	Excluded []ExcludedDevice `json:"excluded,omitempty"`
-	// DeviceDiscoveryPolicy is a field to indicate the effective device discovery policy for this volume group.
-	// Preconfigured indicates explicit DeviceSelector paths are configured and the discovery policy is not applicable.
-	// RuntimeDynamic indicates devices are discovered and added dynamically at runtime (no explicit paths, Dynamic policy).
-	// RuntimeStatic indicates devices were discovered at install time and new devices are ignored (no explicit paths, Static policy).
-	// +kubebuilder:validation:Enum=Preconfigured;RuntimeDynamic;RuntimeStatic
-	// +kubebuilder:default=RuntimeStatic
+	// DeviceDiscoveryPolicy is a field to indicate whether the devices are discovered
+	// at runtime or preconfigured through a DeviceSelector
+	// Setting this to DeviceDiscoveryPolicyPreconfigured indicates the devices are preconfigured through a DeviceSelector.
+	// Setting this to DeviceDiscoveryPolicyRuntimeDynamic indicates the devices are added to the VG dynamically if they are present at runtime.
+	// By default, the value is set to RuntimeDynamic.
+	// +kubebuilder:validation:Enum=Preconfigured;RuntimeDynamic
+	// +kubebuilder:default=RuntimeDynamic
 	// +kubebuilder:validation:Required
-	DeviceDiscoveryPolicy DeviceDiscoveryPolicyStatus `json:"deviceDiscoveryPolicy,omitempty"`
-	// RAIDStatus reports the RAID health for this device class. Only set when the device class uses RAIDConfig.
-	// +optional
-	RAIDStatus *RAIDStatus `json:"raidStatus,omitempty"`
-}
-
-// RAIDHealthStatus represents the overall health of RAID in a device class.
-// +kubebuilder:validation:Enum=Healthy;Degraded;Failed
-type RAIDHealthStatus string
-
-const (
-	RAIDHealthStatusHealthy  RAIDHealthStatus = "Healthy"
-	RAIDHealthStatusDegraded RAIDHealthStatus = "Degraded"
-	RAIDHealthStatusFailed   RAIDHealthStatus = "Failed"
-)
-
-// RAIDLVHealth reports the health of a single RAID logical volume.
-type RAIDLVHealth struct {
-	// Name is the logical volume name.
-	Name string `json:"name"`
-	// RAIDType is the RAID level of this logical volume.
-	RAIDType RAIDType `json:"raidType"`
-	// SyncPercent is the resynchronization progress (0-100).
-	SyncPercent int `json:"syncPercent"`
-	// HealthStatus is the LVM health status string. Empty for healthy volumes.
-	// Examples: "partial", "refresh needed", "mismatches exist".
-	// +optional
-	HealthStatus string `json:"healthStatus,omitempty"`
-}
-
-// RAIDStatus reports the overall RAID health for a device class on a node.
-type RAIDStatus struct {
-	// Status is the overall RAID health.
-	Status RAIDHealthStatus `json:"status"`
-	// LVHealth contains per-logical-volume RAID health details.
-	// +optional
-	LVHealth []RAIDLVHealth `json:"lvHealth,omitempty"`
+	DeviceDiscoveryPolicy DeviceDiscoveryPolicy `json:"deviceDiscoveryPolicy,omitempty"`
 }
 
 type ExcludedDevice struct {
