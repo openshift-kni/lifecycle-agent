@@ -40,6 +40,7 @@ if [[ -z "${BUNDLE_IMG:-}" ]]; then
     exit 2
 fi
 
+echo "testing ci"
 oc create ns "${BUNDLE_NAMESPACE}" 2>/dev/null || true
 
 if [[ ! "${SA_WAIT_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
