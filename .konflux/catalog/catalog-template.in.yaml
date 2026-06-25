@@ -12,7 +12,7 @@ entries:
   - entries:
       # v5.0.0
       - name: lifecycle-agent.v5.0.0
-        skipRange: '>=4.20.0 <5.0.0'
+        skipRange: '>=4.22.0 <5.0.0'
     name: stable
     package: lifecycle-agent
     schema: olm.channel
@@ -20,7 +20,7 @@ entries:
   - entries:
       # v5.0.0
       - name: lifecycle-agent.v5.0.0
-        skipRange: '>=4.20.0 <5.0.0'
+        skipRange: '>=4.22.0 <5.0.0'
     name: "5.0"
     package: lifecycle-agent
     schema: olm.channel
