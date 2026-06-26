@@ -22,8 +22,8 @@ github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmO
 github.com/ashcrow/osrelease v0.0.0-20180626175927-9b292693c55c h1:icme0QhxrgZOxTBnT6K8dfGLwbKWSOVwPB95XTbo8Ws=
 github.com/ashcrow/osrelease v0.0.0-20180626175927-9b292693c55c/go.mod h1:BRljTyotlu+6N+Qlu5MhjxpdmccCnp9lDvZjNNV8qr4=
 github.com/aws/aws-sdk-go v1.19.11/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
-github.com/aws/aws-sdk-go-v2 v1.41.5 h1:dj5kopbwUsVUVFgO4Fi5BIT3t4WyqIDjGKCangnV/yY=
-github.com/aws/aws-sdk-go-v2 v1.41.5/go.mod h1:mwsPRE8ceUUpiTgF7QmQIJ7lgsKUPQOUl3o72QBrE1o=
+github.com/aws/aws-sdk-go-v2 v1.41.12 h1:DIKX2c31ekm9RA2D9FBj1EWXx++9AdAqRw+e78Tq2Ck=
+github.com/aws/aws-sdk-go-v2 v1.41.12/go.mod h1:27+ACypSLljLAEKsCYOmrjKh83vuTRkuAe9Uv/3A4bg=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM=
@@ -303,8 +303,8 @@ github.com/ulikunitz/xz v0.5.14/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0o
 github.com/vincent-petithory/dataurl v0.0.0-20160330182126-9a301d65acbb/go.mod h1:FHafX5vmDzyP+1CQATJn7WFKc9CvnvxyvZy6I1MrG/U=
 github.com/vincent-petithory/dataurl v1.0.0 h1:cXw+kPto8NLuJtlMsI152irrVw9fRDX8AbShPRpg2CI=
 github.com/vincent-petithory/dataurl v1.0.0/go.mod h1:FHafX5vmDzyP+1CQATJn7WFKc9CvnvxyvZy6I1MrG/U=
-github.com/vmware-tanzu/velero v1.18.1 h1:eV+urQYesy7tJLVkGM5fs9s/nfOWKtoFezcY1r8IjJM=
-github.com/vmware-tanzu/velero v1.18.1/go.mod h1:ksHZNpG5U+u14ihPNkf7KgoD8r2qzbJydvNC7vFdXpQ=
+github.com/vmware-tanzu/velero v1.18.2 h1:FUscTf6W+d/WpDHfGTlAbCgMETkduMuyCeWDbqiOqgM=
+github.com/vmware-tanzu/velero v1.18.2/go.mod h1:+qTdDZ/Mwk7hMlCle/cmhJ2B5GSVwtcfqbOIp14Fg0c=
 github.com/vmware/vmw-guestinfo v0.0.0-20170707015358-25eff159a728/go.mod h1:x9oS4Wk2s2u4tS29nEaDLdzvuHdB19CvSGJjPgkZJNk=
 github.com/vmware/vmw-ovflib v0.0.0-20170608004843-1f217b9dc714/go.mod h1:jiPk45kn7klhByRvUq5i2vo1RtHKBHj+iWGFpxbXuuI=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
