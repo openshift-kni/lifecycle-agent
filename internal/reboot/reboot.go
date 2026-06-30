@@ -177,11 +177,18 @@ func (c *IBURebootClient) RebootToNewStateRoot(rationale string) error {
 }
 
 func (c *IBURebootClient) Reboot(rationale string) error {
+	// Stop cluster services before reboot to avoid messy shutdown cascades.
+	// Runs as a host-level systemd unit so it survives the LCA pod being killed
+	// when kubelet/CRI-O stop.
 	_, err := c.hostCommandsExecutor.Execute("systemd-run", "--unit", "lifecycle-agent-reboot",
 		"--description", fmt.Sprintf("\"lifecycle-agent: %s\"", rationale),
-		"systemctl", "--message=\"Image Based Upgrade\"", "reboot")
+		"bash", "-c",
+		"systemctl stop kubelet.service 2>/dev/null; "+
+			"crictl ps -q 2>/dev/null | xargs --no-run-if-empty --max-args 1 --max-procs 10 crictl stop --timeout 5 2>/dev/null; "+
+			"systemctl stop crio.service 2>/dev/null; "+
+			"systemctl --message='Image Based Upgrade' reboot")
 	if err != nil {
-		return fmt.Errorf("failed to reboot with systemd :%w", err)
+		return fmt.Errorf("failed to reboot with systemd: %w", err)
 	}
 
 	c.log.Info(fmt.Sprintf("Wait for %s to be killed via SIGTERM", defaultRebootTimeout.String()))
