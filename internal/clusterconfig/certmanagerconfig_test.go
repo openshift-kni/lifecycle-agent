@@ -19,8 +19,10 @@ package clusterconfig
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -258,8 +260,8 @@ func TestPreserveCertManagerConfig(t *testing.T) {
 				// Verify the key file contains valid PEM data
 				keyData, err := os.ReadFile(filepath.Join(cryptoDir, cryptoFiles[0].Name()))
 				assert.NoError(t, err)
-				assert.True(t, strings.HasPrefix(string(keyData), "-----BEGIN EC PRIVATE KEY-----"),
-					"key file should contain PEM-encoded private key")
+				assert.True(t, strings.HasPrefix(string(keyData), "-----BEGIN PRIVATE KEY-----"),
+					"key file should contain PKCS#8-encoded private key")
 			},
 		},
 		{
@@ -564,6 +566,60 @@ func TestWriteCertManagerCrypto(t *testing.T) {
 			}(),
 			expectedKeyFiles: 0,
 		},
+		{
+			name: "RSA PKCS#1 key is converted to PKCS#8",
+			secrets: func() map[types.NamespacedName]*unstructured.Unstructured {
+				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+				tmpl := &x509.Certificate{
+					SerialNumber: big.NewInt(3),
+					Subject:      pkix.Name{CommonName: "rsa.example.com"},
+					NotBefore:    time.Now(),
+					NotAfter:     time.Now().Add(24 * time.Hour),
+				}
+				certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &rsaKey.PublicKey, rsaKey)
+				certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+				rsaDER := x509.MarshalPKCS1PrivateKey(rsaKey)
+				rsaPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: rsaDER})
+				return map[types.NamespacedName]*unstructured.Unstructured{
+					{Name: "rsa-tls", Namespace: "default"}: {
+						Object: map[string]any{
+							"data": map[string]any{
+								"tls.crt": base64.StdEncoding.EncodeToString(certPEM),
+								"tls.key": base64.StdEncoding.EncodeToString(rsaPEM),
+							},
+						},
+					},
+				}
+			}(),
+			expectedKeyFiles: 1,
+		},
+		{
+			name: "Ed25519 certificate is skipped with warning",
+			secrets: func() map[types.NamespacedName]*unstructured.Unstructured {
+				pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+				tmpl := &x509.Certificate{
+					SerialNumber: big.NewInt(4),
+					Subject:      pkix.Name{CommonName: "ed25519.example.com"},
+					NotBefore:    time.Now(),
+					NotAfter:     time.Now().Add(24 * time.Hour),
+				}
+				certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+				certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+				keyDER, _ := x509.MarshalPKCS8PrivateKey(priv)
+				keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+				return map[types.NamespacedName]*unstructured.Unstructured{
+					{Name: "ed25519-tls", Namespace: "default"}: {
+						Object: map[string]any{
+							"data": map[string]any{
+								"tls.crt": base64.StdEncoding.EncodeToString(certPEM),
+								"tls.key": base64.StdEncoding.EncodeToString(keyPEM),
+							},
+						},
+					},
+				}
+			}(),
+			expectedKeyFiles: 0,
+		},
 	}
 
 	for _, tc := range testcases {
@@ -594,10 +650,72 @@ func TestWriteCertManagerCrypto(t *testing.T) {
 				assert.True(t, strings.HasPrefix(entry.Name(), "CN="))
 				data, err := os.ReadFile(filepath.Join(cryptoDir, entry.Name()))
 				assert.NoError(t, err)
-				assert.True(t, strings.HasPrefix(string(data), "-----BEGIN EC PRIVATE KEY-----"))
+				assert.True(t, strings.HasPrefix(string(data), "-----BEGIN PRIVATE KEY-----"))
 			}
 		})
 	}
+}
+
+func TestNormalizeToPKCS8(t *testing.T) {
+	t.Run("EC SEC1 key is converted to PKCS#8", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		assert.NoError(t, err)
+		sec1DER, err := x509.MarshalECPrivateKey(key)
+		assert.NoError(t, err)
+		sec1PEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: sec1DER})
+
+		result, err := normalizeToPKCS8(sec1PEM)
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(result), "-----BEGIN PRIVATE KEY-----"))
+
+		blk, _ := pem.Decode(result)
+		parsed, err := x509.ParsePKCS8PrivateKey(blk.Bytes)
+		assert.NoError(t, err)
+		_, ok := parsed.(*ecdsa.PrivateKey)
+		assert.True(t, ok, "parsed key should be *ecdsa.PrivateKey")
+	})
+
+	t.Run("RSA PKCS#1 key is converted to PKCS#8", func(t *testing.T) {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.NoError(t, err)
+		pkcs1DER := x509.MarshalPKCS1PrivateKey(key)
+		pkcs1PEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: pkcs1DER})
+
+		result, err := normalizeToPKCS8(pkcs1PEM)
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(result), "-----BEGIN PRIVATE KEY-----"))
+
+		blk, _ := pem.Decode(result)
+		parsed, err := x509.ParsePKCS8PrivateKey(blk.Bytes)
+		assert.NoError(t, err)
+		_, ok := parsed.(*rsa.PrivateKey)
+		assert.True(t, ok, "parsed key should be *rsa.PrivateKey")
+	})
+
+	t.Run("PKCS#8 key passes through unchanged", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		assert.NoError(t, err)
+		pkcs8DER, err := x509.MarshalPKCS8PrivateKey(key)
+		assert.NoError(t, err)
+		pkcs8PEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8DER})
+
+		result, err := normalizeToPKCS8(pkcs8PEM)
+		assert.NoError(t, err)
+		assert.Equal(t, pkcs8PEM, result)
+	})
+
+	t.Run("unsupported PEM type returns error", func(t *testing.T) {
+		badPEM := pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: []byte("fake")})
+		_, err := normalizeToPKCS8(badPEM)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported PEM type")
+	})
+
+	t.Run("invalid PEM data returns error", func(t *testing.T) {
+		_, err := normalizeToPKCS8([]byte("not-pem-data"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode PEM block")
+	})
 }
 
 func TestExportCertManagerNamespaces(t *testing.T) {
