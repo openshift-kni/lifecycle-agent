@@ -25,6 +25,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	ipconfigcmd "github.com/openshift-kni/lifecycle-agent/lca-cli/cmd/ipconfig"
+	"github.com/openshift-kni/lifecycle-agent/version"
 )
 
 // Create logger
@@ -38,9 +39,6 @@ var verbose bool
 
 // noColor is the optional flag for controlling ANSI sequence output
 var noColor bool
-
-// version is an optional command that will display the current release version
-var releaseVersion string
 
 func addCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&authFile, "authfile", "a", common.ImageRegistryAuthFile, "The path to the authentication file of the container registry.")
@@ -64,7 +62,7 @@ func init() {
 var (
 	rootCmd = &cobra.Command{
 		Use:     "lca-cli",
-		Version: releaseVersion,
+		Version: version.String(),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if verbose {
 				log.SetLevel(logrus.DebugLevel)
