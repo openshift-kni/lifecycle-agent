@@ -225,6 +225,13 @@ func writeCertManagerCrypto(
 				"secret", ref.Name, "namespace", ref.Namespace)
 			continue
 		}
+		if parsedCert.PublicKeyAlgorithm == x509.Ed25519 {
+			log.Info("WARNING: Certificate uses Ed25519 which recert does not yet support, "+
+				"skipping use_key rule (certificate will be re-issued after upgrade)",
+				"secret", ref.Name, "namespace", ref.Namespace,
+				"cn", parsedCert.Subject.CommonName)
+			continue
+		}
 
 		// Write the private key as a PEM file for recert use_key rules.
 		// The CN is encoded in the filename so appendCertManagerCryptoRules can
@@ -240,11 +247,19 @@ func writeCertManagerCrypto(
 			return fmt.Errorf("failed to decode tls.key for %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
 
+		// Normalize the private key to PKCS#8 PEM format. Recert only accepts
+		// PKCS#8 ("BEGIN PRIVATE KEY") but cert-manager produces ECDSA keys in
+		// SEC1 format ("BEGIN EC PRIVATE KEY").
+		pkcs8Key, err := normalizeToPKCS8(decodedKey)
+		if err != nil {
+			return fmt.Errorf("failed to normalize key to PKCS#8 for %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+
 		// Filename format: "CN=<cn>__<namespace>_<name>.key"
 		// The CN= prefix and __ separator allow appendCertManagerCryptoRules to parse the CN.
 		keyFile := filepath.Join(cryptoDir, fmt.Sprintf("CN=%s__%s_%s.key",
 			parsedCert.Subject.CommonName, ref.Namespace, ref.Name))
-		if err := os.WriteFile(keyFile, decodedKey, 0o600); err != nil {
+		if err := os.WriteFile(keyFile, pkcs8Key, 0o600); err != nil {
 			return fmt.Errorf("failed to write key file %s: %w", keyFile, err)
 		}
 		log.Info("Wrote cert-manager TLS key for recert preservation",
@@ -254,6 +269,40 @@ func writeCertManagerCrypto(
 
 	log.Info("Wrote cert-manager crypto for recert preservation", "secretCount", len(secrets))
 	return nil
+}
+
+// normalizeToPKCS8 converts a PEM-encoded private key to PKCS#8 format. Keys already
+// in PKCS#8 are returned unchanged. SEC1 EC keys and PKCS#1 RSA keys are re-encoded.
+func normalizeToPKCS8(pemData []byte) ([]byte, error) {
+	keyBlock, _ := pem.Decode(pemData)
+	if keyBlock == nil {
+		return nil, fmt.Errorf("failed to decode PEM block from private key")
+	}
+
+	if keyBlock.Type == "PRIVATE KEY" {
+		return pemData, nil
+	}
+
+	var parsedKey any
+	var err error
+	switch keyBlock.Type {
+	case "EC PRIVATE KEY":
+		parsedKey, err = x509.ParseECPrivateKey(keyBlock.Bytes)
+	case "RSA PRIVATE KEY":
+		parsedKey, err = x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	default:
+		return nil, fmt.Errorf("unsupported PEM type %q", keyBlock.Type)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s key: %w", keyBlock.Type, err)
+	}
+
+	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(parsedKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal key to PKCS#8: %w", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8Bytes}), nil
 }
 
 // exportCertManagerNamespaces writes Namespace manifests (01_ prefix) for non-standard
