@@ -1,6 +1,7 @@
 package reboot
 
 import (
+	"context"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -59,8 +60,8 @@ func TestIsOrigStaterootBooted(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rebootClient := NewIBURebootClient(&tt.args.log, tt.args.executor, tt.args.r, tt.args.ostreeClient, tt.args.ops)
-			mockRpmostreeclient.EXPECT().GetCurrentStaterootName().Return(tt.currentStateRoot, nil).Times(1)
-			got, err := rebootClient.IsOrigStaterootBooted(tt.args.ibu.Spec.SeedImageRef.Version)
+			mockRpmostreeclient.EXPECT().GetCurrentStaterootName(gomock.Any()).Return(tt.currentStateRoot, nil).Times(1)
+			got, err := rebootClient.IsOrigStaterootBooted(context.Background(), tt.args.ibu.Spec.SeedImageRef.Version)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("IsOrigStaterootBooted() error = %v, wantErr %v", err, tt.wantErr)
 				return

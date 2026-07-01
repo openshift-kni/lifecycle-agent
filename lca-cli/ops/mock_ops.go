@@ -9,6 +9,7 @@
 package ops
 
 import (
+	context "context"
 	os "os"
 	reflect "reflect"
 
@@ -69,17 +70,17 @@ func (mr *MockOpsMockRecorder) CopyFile(src, dest, perm any) *gomock.Call {
 }
 
 // CreateExtraPartition mocks base method.
-func (m *MockOps) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
+func (m *MockOps) CreateExtraPartition(ctx context.Context, installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateExtraPartition", installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
+	ret := m.ctrl.Call(m, "CreateExtraPartition", ctx, installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateExtraPartition indicates an expected call of CreateExtraPartition.
-func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber any) *gomock.Call {
+func (mr *MockOpsMockRecorder) CreateExtraPartition(ctx, installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateExtraPartition", reflect.TypeOf((*MockOps)(nil).CreateExtraPartition), ctx, installationDisk, extraPartitionLabel, extraPartitionStart, extraPartitionNumber)
 }
 
 // CreateIsoWithEmbeddedIgnition mocks base method.
@@ -97,60 +98,60 @@ func (mr *MockOpsMockRecorder) CreateIsoWithEmbeddedIgnition(log, ignitionBytes,
 }
 
 // EnableClusterServices mocks base method.
-func (m *MockOps) EnableClusterServices() error {
+func (m *MockOps) EnableClusterServices(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnableClusterServices")
+	ret := m.ctrl.Call(m, "EnableClusterServices", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnableClusterServices indicates an expected call of EnableClusterServices.
-func (mr *MockOpsMockRecorder) EnableClusterServices() *gomock.Call {
+func (mr *MockOpsMockRecorder) EnableClusterServices(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnableClusterServices", reflect.TypeOf((*MockOps)(nil).EnableClusterServices))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnableClusterServices", reflect.TypeOf((*MockOps)(nil).EnableClusterServices), ctx)
 }
 
 // ExtractTarWithSELinux mocks base method.
-func (m *MockOps) ExtractTarWithSELinux(srcPath, destPath string) error {
+func (m *MockOps) ExtractTarWithSELinux(ctx context.Context, srcPath, destPath string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtractTarWithSELinux", srcPath, destPath)
+	ret := m.ctrl.Call(m, "ExtractTarWithSELinux", ctx, srcPath, destPath)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ExtractTarWithSELinux indicates an expected call of ExtractTarWithSELinux.
-func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gomock.Call {
+func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(ctx, srcPath, destPath any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), srcPath, destPath)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), ctx, srcPath, destPath)
 }
 
 // ForceExpireSeedCrypto mocks base method.
-func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
+func (m *MockOps) ForceExpireSeedCrypto(ctx context.Context, recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", recertContainerImage, authFile, hasKubeAdminPassword)
+	ret := m.ctrl.Call(m, "ForceExpireSeedCrypto", ctx, recertContainerImage, authFile, hasKubeAdminPassword)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ForceExpireSeedCrypto indicates an expected call of ForceExpireSeedCrypto.
-func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(recertContainerImage, authFile, hasKubeAdminPassword any) *gomock.Call {
+func (mr *MockOpsMockRecorder) ForceExpireSeedCrypto(ctx, recertContainerImage, authFile, hasKubeAdminPassword any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), recertContainerImage, authFile, hasKubeAdminPassword)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ForceExpireSeedCrypto", reflect.TypeOf((*MockOps)(nil).ForceExpireSeedCrypto), ctx, recertContainerImage, authFile, hasKubeAdminPassword)
 }
 
 // GetContainerStorageTarget mocks base method.
-func (m *MockOps) GetContainerStorageTarget() (string, error) {
+func (m *MockOps) GetContainerStorageTarget(ctx context.Context) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetContainerStorageTarget")
+	ret := m.ctrl.Call(m, "GetContainerStorageTarget", ctx)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetContainerStorageTarget indicates an expected call of GetContainerStorageTarget.
-func (mr *MockOpsMockRecorder) GetContainerStorageTarget() *gomock.Call {
+func (mr *MockOpsMockRecorder) GetContainerStorageTarget(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContainerStorageTarget", reflect.TypeOf((*MockOps)(nil).GetContainerStorageTarget))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContainerStorageTarget", reflect.TypeOf((*MockOps)(nil).GetContainerStorageTarget), ctx)
 }
 
 // GetHostname mocks base method.
@@ -169,33 +170,33 @@ func (mr *MockOpsMockRecorder) GetHostname() *gomock.Call {
 }
 
 // ImageExists mocks base method.
-func (m *MockOps) ImageExists(img string) (bool, error) {
+func (m *MockOps) ImageExists(ctx context.Context, img string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImageExists", img)
+	ret := m.ctrl.Call(m, "ImageExists", ctx, img)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImageExists indicates an expected call of ImageExists.
-func (mr *MockOpsMockRecorder) ImageExists(img any) *gomock.Call {
+func (mr *MockOpsMockRecorder) ImageExists(ctx, img any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImageExists", reflect.TypeOf((*MockOps)(nil).ImageExists), img)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImageExists", reflect.TypeOf((*MockOps)(nil).ImageExists), ctx, img)
 }
 
 // IsImageMounted mocks base method.
-func (m *MockOps) IsImageMounted(img string) (bool, error) {
+func (m *MockOps) IsImageMounted(ctx context.Context, img string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsImageMounted", img)
+	ret := m.ctrl.Call(m, "IsImageMounted", ctx, img)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IsImageMounted indicates an expected call of IsImageMounted.
-func (mr *MockOpsMockRecorder) IsImageMounted(img any) *gomock.Call {
+func (mr *MockOpsMockRecorder) IsImageMounted(ctx, img any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), img)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsImageMounted", reflect.TypeOf((*MockOps)(nil).IsImageMounted), ctx, img)
 }
 
 // IsNotExist mocks base method.
@@ -213,18 +214,18 @@ func (mr *MockOpsMockRecorder) IsNotExist(err any) *gomock.Call {
 }
 
 // ListBlockDevices mocks base method.
-func (m *MockOps) ListBlockDevices() ([]BlockDevice, error) {
+func (m *MockOps) ListBlockDevices(ctx context.Context) ([]BlockDevice, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListBlockDevices")
+	ret := m.ctrl.Call(m, "ListBlockDevices", ctx)
 	ret0, _ := ret[0].([]BlockDevice)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListBlockDevices indicates an expected call of ListBlockDevices.
-func (mr *MockOpsMockRecorder) ListBlockDevices() *gomock.Call {
+func (mr *MockOpsMockRecorder) ListBlockDevices(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlockDevices", reflect.TypeOf((*MockOps)(nil).ListBlockDevices))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlockDevices", reflect.TypeOf((*MockOps)(nil).ListBlockDevices), ctx)
 }
 
 // MkdirAll mocks base method.
@@ -242,32 +243,32 @@ func (mr *MockOpsMockRecorder) MkdirAll(path, perm any) *gomock.Call {
 }
 
 // Mount mocks base method.
-func (m *MockOps) Mount(deviceName, mountFolder string) error {
+func (m *MockOps) Mount(ctx context.Context, deviceName, mountFolder string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Mount", deviceName, mountFolder)
+	ret := m.ctrl.Call(m, "Mount", ctx, deviceName, mountFolder)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Mount indicates an expected call of Mount.
-func (mr *MockOpsMockRecorder) Mount(deviceName, mountFolder any) *gomock.Call {
+func (mr *MockOpsMockRecorder) Mount(ctx, deviceName, mountFolder any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Mount", reflect.TypeOf((*MockOps)(nil).Mount), deviceName, mountFolder)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Mount", reflect.TypeOf((*MockOps)(nil).Mount), ctx, deviceName, mountFolder)
 }
 
 // MountImage mocks base method.
-func (m *MockOps) MountImage(img string) (string, error) {
+func (m *MockOps) MountImage(ctx context.Context, img string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MountImage", img)
+	ret := m.ctrl.Call(m, "MountImage", ctx, img)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MountImage indicates an expected call of MountImage.
-func (mr *MockOpsMockRecorder) MountImage(img any) *gomock.Call {
+func (mr *MockOpsMockRecorder) MountImage(ctx, img any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MountImage", reflect.TypeOf((*MockOps)(nil).MountImage), img)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MountImage", reflect.TypeOf((*MockOps)(nil).MountImage), ctx, img)
 }
 
 // ReadDir mocks base method.
@@ -301,9 +302,9 @@ func (mr *MockOpsMockRecorder) ReadFile(filename any) *gomock.Call {
 }
 
 // RecertFullFlow mocks base method.
-func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
+func (m *MockOps) RecertFullFlow(ctx context.Context, recertContainerImage, authFile, configFile string, preRecertOperations, postRecertOperations func() error, additionalPodmanParams ...string) error {
 	m.ctrl.T.Helper()
-	varargs := []any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}
+	varargs := []any{ctx, recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}
 	for _, a := range additionalPodmanParams {
 		varargs = append(varargs, a)
 	}
@@ -313,38 +314,38 @@ func (m *MockOps) RecertFullFlow(recertContainerImage, authFile, configFile stri
 }
 
 // RecertFullFlow indicates an expected call of RecertFullFlow.
-func (mr *MockOpsMockRecorder) RecertFullFlow(recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations any, additionalPodmanParams ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RecertFullFlow(ctx, recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations any, additionalPodmanParams ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}, additionalPodmanParams...)
+	varargs := append([]any{ctx, recertContainerImage, authFile, configFile, preRecertOperations, postRecertOperations}, additionalPodmanParams...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecertFullFlow", reflect.TypeOf((*MockOps)(nil).RecertFullFlow), varargs...)
 }
 
 // RemountBoot mocks base method.
-func (m *MockOps) RemountBoot() error {
+func (m *MockOps) RemountBoot(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RemountBoot")
+	ret := m.ctrl.Call(m, "RemountBoot", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RemountBoot indicates an expected call of RemountBoot.
-func (mr *MockOpsMockRecorder) RemountBoot() *gomock.Call {
+func (mr *MockOpsMockRecorder) RemountBoot(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountBoot", reflect.TypeOf((*MockOps)(nil).RemountBoot))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountBoot", reflect.TypeOf((*MockOps)(nil).RemountBoot), ctx)
 }
 
 // RemountSysroot mocks base method.
-func (m *MockOps) RemountSysroot() error {
+func (m *MockOps) RemountSysroot(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RemountSysroot")
+	ret := m.ctrl.Call(m, "RemountSysroot", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RemountSysroot indicates an expected call of RemountSysroot.
-func (mr *MockOpsMockRecorder) RemountSysroot() *gomock.Call {
+func (mr *MockOpsMockRecorder) RemountSysroot(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountSysroot", reflect.TypeOf((*MockOps)(nil).RemountSysroot))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemountSysroot", reflect.TypeOf((*MockOps)(nil).RemountSysroot), ctx)
 }
 
 // RemoveAllFiles mocks base method.
@@ -376,23 +377,23 @@ func (mr *MockOpsMockRecorder) RemoveFile(path any) *gomock.Call {
 }
 
 // RestoreOriginalSeedCrypto mocks base method.
-func (m *MockOps) RestoreOriginalSeedCrypto(recertContainerImage, authFile string) error {
+func (m *MockOps) RestoreOriginalSeedCrypto(ctx context.Context, recertContainerImage, authFile string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RestoreOriginalSeedCrypto", recertContainerImage, authFile)
+	ret := m.ctrl.Call(m, "RestoreOriginalSeedCrypto", ctx, recertContainerImage, authFile)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RestoreOriginalSeedCrypto indicates an expected call of RestoreOriginalSeedCrypto.
-func (mr *MockOpsMockRecorder) RestoreOriginalSeedCrypto(recertContainerImage, authFile any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RestoreOriginalSeedCrypto(ctx, recertContainerImage, authFile any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreOriginalSeedCrypto", reflect.TypeOf((*MockOps)(nil).RestoreOriginalSeedCrypto), recertContainerImage, authFile)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreOriginalSeedCrypto", reflect.TypeOf((*MockOps)(nil).RestoreOriginalSeedCrypto), ctx, recertContainerImage, authFile)
 }
 
 // RunBashInHostNamespace mocks base method.
-func (m *MockOps) RunBashInHostNamespace(command string, args ...string) (string, error) {
+func (m *MockOps) RunBashInHostNamespace(ctx context.Context, command string, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{command}
+	varargs := []any{ctx, command}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -403,16 +404,16 @@ func (m *MockOps) RunBashInHostNamespace(command string, args ...string) (string
 }
 
 // RunBashInHostNamespace indicates an expected call of RunBashInHostNamespace.
-func (mr *MockOpsMockRecorder) RunBashInHostNamespace(command any, args ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunBashInHostNamespace(ctx, command any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{command}, args...)
+	varargs := append([]any{ctx, command}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunBashInHostNamespace", reflect.TypeOf((*MockOps)(nil).RunBashInHostNamespace), varargs...)
 }
 
 // RunInHostNamespace mocks base method.
-func (m *MockOps) RunInHostNamespace(command string, args ...string) (string, error) {
+func (m *MockOps) RunInHostNamespace(ctx context.Context, command string, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{command}
+	varargs := []any{ctx, command}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -423,30 +424,30 @@ func (m *MockOps) RunInHostNamespace(command string, args ...string) (string, er
 }
 
 // RunInHostNamespace indicates an expected call of RunInHostNamespace.
-func (mr *MockOpsMockRecorder) RunInHostNamespace(command any, args ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunInHostNamespace(ctx, command any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{command}, args...)
+	varargs := append([]any{ctx, command}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunInHostNamespace", reflect.TypeOf((*MockOps)(nil).RunInHostNamespace), varargs...)
 }
 
 // RunListOfCommands mocks base method.
-func (m *MockOps) RunListOfCommands(cmds []*CMD) error {
+func (m *MockOps) RunListOfCommands(ctx context.Context, cmds []*CMD) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RunListOfCommands", cmds)
+	ret := m.ctrl.Call(m, "RunListOfCommands", ctx, cmds)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RunListOfCommands indicates an expected call of RunListOfCommands.
-func (mr *MockOpsMockRecorder) RunListOfCommands(cmds any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunListOfCommands(ctx, cmds any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunListOfCommands", reflect.TypeOf((*MockOps)(nil).RunListOfCommands), cmds)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunListOfCommands", reflect.TypeOf((*MockOps)(nil).RunListOfCommands), ctx, cmds)
 }
 
 // RunRecert mocks base method.
-func (m *MockOps) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
+func (m *MockOps) RunRecert(ctx context.Context, recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
 	m.ctrl.T.Helper()
-	varargs := []any{recertContainerImage, authFile, recertConfigFile}
+	varargs := []any{ctx, recertContainerImage, authFile, recertConfigFile}
 	for _, a := range additionalPodmanParams {
 		varargs = append(varargs, a)
 	}
@@ -456,16 +457,16 @@ func (m *MockOps) RunRecert(recertContainerImage, authFile, recertConfigFile str
 }
 
 // RunRecert indicates an expected call of RunRecert.
-func (mr *MockOpsMockRecorder) RunRecert(recertContainerImage, authFile, recertConfigFile any, additionalPodmanParams ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunRecert(ctx, recertContainerImage, authFile, recertConfigFile any, additionalPodmanParams ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{recertContainerImage, authFile, recertConfigFile}, additionalPodmanParams...)
+	varargs := append([]any{ctx, recertContainerImage, authFile, recertConfigFile}, additionalPodmanParams...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunRecert", reflect.TypeOf((*MockOps)(nil).RunRecert), varargs...)
 }
 
 // RunSystemdAction mocks base method.
-func (m *MockOps) RunSystemdAction(args ...string) (string, error) {
+func (m *MockOps) RunSystemdAction(ctx context.Context, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{}
+	varargs := []any{ctx}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -476,37 +477,38 @@ func (m *MockOps) RunSystemdAction(args ...string) (string, error) {
 }
 
 // RunSystemdAction indicates an expected call of RunSystemdAction.
-func (mr *MockOpsMockRecorder) RunSystemdAction(args ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunSystemdAction(ctx any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSystemdAction", reflect.TypeOf((*MockOps)(nil).RunSystemdAction), args...)
+	varargs := append([]any{ctx}, args...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSystemdAction", reflect.TypeOf((*MockOps)(nil).RunSystemdAction), varargs...)
 }
 
 // RunUnauthenticatedEtcdServer mocks base method.
-func (m *MockOps) RunUnauthenticatedEtcdServer(authFile, name string) error {
+func (m *MockOps) RunUnauthenticatedEtcdServer(ctx context.Context, authFile, name string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RunUnauthenticatedEtcdServer", authFile, name)
+	ret := m.ctrl.Call(m, "RunUnauthenticatedEtcdServer", ctx, authFile, name)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RunUnauthenticatedEtcdServer indicates an expected call of RunUnauthenticatedEtcdServer.
-func (mr *MockOpsMockRecorder) RunUnauthenticatedEtcdServer(authFile, name any) *gomock.Call {
+func (mr *MockOpsMockRecorder) RunUnauthenticatedEtcdServer(ctx, authFile, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunUnauthenticatedEtcdServer", reflect.TypeOf((*MockOps)(nil).RunUnauthenticatedEtcdServer), authFile, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunUnauthenticatedEtcdServer", reflect.TypeOf((*MockOps)(nil).RunUnauthenticatedEtcdServer), ctx, authFile, name)
 }
 
 // SetupContainersFolderCommands mocks base method.
-func (m *MockOps) SetupContainersFolderCommands() error {
+func (m *MockOps) SetupContainersFolderCommands(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetupContainersFolderCommands")
+	ret := m.ctrl.Call(m, "SetupContainersFolderCommands", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetupContainersFolderCommands indicates an expected call of SetupContainersFolderCommands.
-func (mr *MockOpsMockRecorder) SetupContainersFolderCommands() *gomock.Call {
+func (mr *MockOpsMockRecorder) SetupContainersFolderCommands(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupContainersFolderCommands", reflect.TypeOf((*MockOps)(nil).SetupContainersFolderCommands))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupContainersFolderCommands", reflect.TypeOf((*MockOps)(nil).SetupContainersFolderCommands), ctx)
 }
 
 // StatFile mocks base method.
@@ -525,37 +527,37 @@ func (mr *MockOpsMockRecorder) StatFile(name any) *gomock.Call {
 }
 
 // StopClusterServices mocks base method.
-func (m *MockOps) StopClusterServices() error {
+func (m *MockOps) StopClusterServices(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StopClusterServices")
+	ret := m.ctrl.Call(m, "StopClusterServices", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // StopClusterServices indicates an expected call of StopClusterServices.
-func (mr *MockOpsMockRecorder) StopClusterServices() *gomock.Call {
+func (mr *MockOpsMockRecorder) StopClusterServices(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StopClusterServices", reflect.TypeOf((*MockOps)(nil).StopClusterServices))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StopClusterServices", reflect.TypeOf((*MockOps)(nil).StopClusterServices), ctx)
 }
 
 // StopEtcdServer mocks base method.
-func (m *MockOps) StopEtcdServer(authfile, name string) error {
+func (m *MockOps) StopEtcdServer(ctx context.Context, authfile, name string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StopEtcdServer", authfile, name)
+	ret := m.ctrl.Call(m, "StopEtcdServer", ctx, authfile, name)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // StopEtcdServer indicates an expected call of StopEtcdServer.
-func (mr *MockOpsMockRecorder) StopEtcdServer(authfile, name any) *gomock.Call {
+func (mr *MockOpsMockRecorder) StopEtcdServer(ctx, authfile, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StopEtcdServer", reflect.TypeOf((*MockOps)(nil).StopEtcdServer), authfile, name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StopEtcdServer", reflect.TypeOf((*MockOps)(nil).StopEtcdServer), ctx, authfile, name)
 }
 
 // SystemctlAction mocks base method.
-func (m *MockOps) SystemctlAction(action string, args ...string) (string, error) {
+func (m *MockOps) SystemctlAction(ctx context.Context, action string, args ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{action}
+	varargs := []any{ctx, action}
 	for _, a := range args {
 		varargs = append(varargs, a)
 	}
@@ -566,38 +568,38 @@ func (m *MockOps) SystemctlAction(action string, args ...string) (string, error)
 }
 
 // SystemctlAction indicates an expected call of SystemctlAction.
-func (mr *MockOpsMockRecorder) SystemctlAction(action any, args ...any) *gomock.Call {
+func (mr *MockOpsMockRecorder) SystemctlAction(ctx, action any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{action}, args...)
+	varargs := append([]any{ctx, action}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SystemctlAction", reflect.TypeOf((*MockOps)(nil).SystemctlAction), varargs...)
 }
 
 // Umount mocks base method.
-func (m *MockOps) Umount(deviceName string) error {
+func (m *MockOps) Umount(ctx context.Context, deviceName string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Umount", deviceName)
+	ret := m.ctrl.Call(m, "Umount", ctx, deviceName)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Umount indicates an expected call of Umount.
-func (mr *MockOpsMockRecorder) Umount(deviceName any) *gomock.Call {
+func (mr *MockOpsMockRecorder) Umount(ctx, deviceName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Umount", reflect.TypeOf((*MockOps)(nil).Umount), deviceName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Umount", reflect.TypeOf((*MockOps)(nil).Umount), ctx, deviceName)
 }
 
 // UnmountAndRemoveImage mocks base method.
-func (m *MockOps) UnmountAndRemoveImage(img string) error {
+func (m *MockOps) UnmountAndRemoveImage(ctx context.Context, img string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UnmountAndRemoveImage", img)
+	ret := m.ctrl.Call(m, "UnmountAndRemoveImage", ctx, img)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UnmountAndRemoveImage indicates an expected call of UnmountAndRemoveImage.
-func (mr *MockOpsMockRecorder) UnmountAndRemoveImage(img any) *gomock.Call {
+func (mr *MockOpsMockRecorder) UnmountAndRemoveImage(ctx, img any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnmountAndRemoveImage", reflect.TypeOf((*MockOps)(nil).UnmountAndRemoveImage), img)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnmountAndRemoveImage", reflect.TypeOf((*MockOps)(nil).UnmountAndRemoveImage), ctx, img)
 }
 
 // WriteFile mocks base method.
@@ -615,15 +617,15 @@ func (mr *MockOpsMockRecorder) WriteFile(filename, data, perm any) *gomock.Call 
 }
 
 // waitForEtcd mocks base method.
-func (m *MockOps) waitForEtcd(healthzEndpoint string) error {
+func (m *MockOps) waitForEtcd(ctx context.Context, healthzEndpoint string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "waitForEtcd", healthzEndpoint)
+	ret := m.ctrl.Call(m, "waitForEtcd", ctx, healthzEndpoint)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // waitForEtcd indicates an expected call of waitForEtcd.
-func (mr *MockOpsMockRecorder) waitForEtcd(healthzEndpoint any) *gomock.Call {
+func (mr *MockOpsMockRecorder) waitForEtcd(ctx, healthzEndpoint any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "waitForEtcd", reflect.TypeOf((*MockOps)(nil).waitForEtcd), healthzEndpoint)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "waitForEtcd", reflect.TypeOf((*MockOps)(nil).waitForEtcd), ctx, healthzEndpoint)
 }

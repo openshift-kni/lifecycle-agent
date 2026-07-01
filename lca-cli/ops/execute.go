@@ -2,6 +2,7 @@ package ops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -18,8 +19,8 @@ import (
 const nsenter = "nsenter"
 
 type Execute interface {
-	Execute(command string, args ...string) (string, error)
-	ExecuteWithLiveLogger(command string, args ...string) (string, error)
+	Execute(ctx context.Context, command string, args ...string) (string, error)
+	ExecuteWithLiveLogger(ctx context.Context, command string, args ...string) (string, error)
 }
 
 type executor struct {
@@ -27,9 +28,9 @@ type executor struct {
 	verbose bool
 }
 
-func (e *executor) execute(liveLogger io.Writer, root, command string, args ...string) (string, error) {
+func (e *executor) execute(ctx context.Context, liveLogger io.Writer, root, command string, args ...string) (string, error) {
 	e.log.Infof("Executing %s with args %s", command, args)
-	cmd := exec.Command(command, args...) //nolint:gosec // command is validated by caller
+	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // command is validated by caller
 	var stdoutBytes bytes.Buffer
 	if liveLogger != nil {
 		cmd.Stdout = io.MultiWriter(liveLogger, &stdoutBytes)
@@ -59,12 +60,12 @@ func NewRegularExecutor(logger *logrus.Logger, verbose bool) Execute {
 	return &regularExecutor{executor: executor{logger, verbose}}
 }
 
-func (e *regularExecutor) Execute(command string, args ...string) (string, error) {
-	return e.execute(nil, "", command, args...)
+func (e *regularExecutor) Execute(ctx context.Context, command string, args ...string) (string, error) {
+	return e.execute(ctx, nil, "", command, args...)
 }
 
-func (e *regularExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.execute(e.log.Writer(), "", command, args...)
+func (e *regularExecutor) ExecuteWithLiveLogger(ctx context.Context, command string, args ...string) (string, error) {
+	return e.execute(ctx, e.log.Writer(), "", command, args...)
 }
 
 type nsenterExecutor struct {
@@ -75,20 +76,20 @@ func NewNsenterExecutor(logger *logrus.Logger, verbose bool) Execute {
 	return &nsenterExecutor{executor: executor{logger, verbose}}
 }
 
-func (e *nsenterExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.baseExecute(e.log.Writer(), command, args...)
+func (e *nsenterExecutor) ExecuteWithLiveLogger(ctx context.Context, command string, args ...string) (string, error) {
+	return e.baseExecute(ctx, e.log.Writer(), command, args...)
 }
 
-func (e *nsenterExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
+func (e *nsenterExecutor) baseExecute(ctx context.Context, writer io.Writer, command string, args ...string) (string, error) {
 	// nsenter is used here to launch processes inside the container in a way that makes said processes feel
 	// and behave as if they're running on the host directly rather than inside the container
 	arguments := append(nsenterArgs(), command)
 	arguments = append(arguments, args...)
-	return e.execute(writer, "", nsenter, arguments...)
+	return e.execute(ctx, writer, "", nsenter, arguments...)
 }
 
-func (e *nsenterExecutor) Execute(command string, args ...string) (string, error) {
-	return e.baseExecute(nil, command, args...)
+func (e *nsenterExecutor) Execute(ctx context.Context, command string, args ...string) (string, error) {
+	return e.baseExecute(ctx, nil, command, args...)
 }
 
 type chrootExecutor struct {
@@ -103,18 +104,18 @@ func NewChrootExecutor(logger *logrus.Logger, verbose bool, root string) Execute
 // Running a command with chroot using exec.Command runs into issues with exec.LookPath,
 // if an absolute path is not used for the "command", as it does not account for the chroot dir.
 // To workaround this issue, prefix the command with /usr/bin/env.
-func (e *chrootExecutor) baseExecute(writer io.Writer, command string, args ...string) (string, error) {
+func (e *chrootExecutor) baseExecute(ctx context.Context, writer io.Writer, command string, args ...string) (string, error) {
 	commandBase := "/usr/bin/env"
 	args = append([]string{"--", command}, args...)
-	return e.execute(writer, e.root, commandBase, args...)
+	return e.execute(ctx, writer, e.root, commandBase, args...)
 }
 
-func (e *chrootExecutor) Execute(command string, args ...string) (string, error) {
-	return e.baseExecute(nil, command, args...)
+func (e *chrootExecutor) Execute(ctx context.Context, command string, args ...string) (string, error) {
+	return e.baseExecute(ctx, nil, command, args...)
 }
 
-func (e *chrootExecutor) ExecuteWithLiveLogger(command string, args ...string) (string, error) {
-	return e.baseExecute(e.log.Writer(), command, args...)
+func (e *chrootExecutor) ExecuteWithLiveLogger(ctx context.Context, command string, args ...string) (string, error) {
+	return e.baseExecute(ctx, e.log.Writer(), command, args...)
 }
 
 func nsenterArgs() []string {

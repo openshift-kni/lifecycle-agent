@@ -1,0 +1,142 @@
+version: "2"
+run:
+  concurrency: 6
+linters:
+  default: none
+  enable:
+    - depguard
+    - errorlint
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - loggercheck
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - wrapcheck
+  settings:
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: Should be replaced by standard lib errors package
+    gocritic:
+      enabled-checks:
+        - argOrder
+        - badCond
+        - caseOrder
+        - codegenComment
+        - commentedOutCode
+        - deprecatedComment
+        - dupArg
+        - dupBranchBody
+        - dupCase
+        - dupSubExpr
+        - exitAfterDefer
+        - flagDeref
+        - flagName
+        - nilValReturn
+        - offBy1
+        - weakCond
+        - octalLiteral
+        - sloppyReassign
+        - equalFold
+        - indexAlloc
+        - rangeExprCopy
+        - appendCombine
+        - assignOp
+        - boolExprSimplify
+        - captLocal
+        - commentFormatting
+        - commentedOutImport
+        - defaultCaseOrder
+        - docStub
+        - elseif
+        - emptyFallthrough
+        - emptyStringTest
+        - hexLiteral
+        - methodExprCall
+        - regexpMust
+        - singleCaseSwitch
+        - sloppyLen
+        - stringXbytes
+        - switchTrue
+        - typeAssertChain
+        - typeSwitchVar
+        - underef
+        - unlabelStmt
+        - unlambda
+        - unslice
+        - valSwap
+        - yodaStyleExpr
+        - wrapperFunc
+        - initClause
+        - nestingReduce
+        - ptrToRefParam
+        - typeUnparen
+        - unnecessaryBlock
+        - paramTypeCombine
+    revive:
+      rules:
+        - name: if-return
+          severity: warning
+          disabled: true
+        - name: string-format
+          arguments:
+            - - core.WriteError[1].Message
+              - /^([^A-Z]|$)/
+              - must not start with a capital letter
+            - - fmt.Errorf[0]
+              - /^([^A-Z]|$)/
+              - must not start with a capital letter
+            - - fmt.Errorf[0]
+              - /(^|[^\.!?])$/
+              - must not end in punctuation
+            - - panic
+              - /^[^\n]*$/
+              - must not contain line breaks
+          severity: warning
+          disabled: false
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
+        - .WrapPrefixf(
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - .*_test\.go$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
