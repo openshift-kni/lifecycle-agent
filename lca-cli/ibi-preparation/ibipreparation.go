@@ -190,6 +190,11 @@ func (i *IBIPrepare) diskPreparation() error {
 		return fmt.Errorf("failed to write image to disk: %w", err)
 	}
 
+	i.log.Info("Fixing GPT partition table")
+	if _, err := i.ops.RunInHostNamespace("sgdisk", "-e", i.config.InstallationDisk); err != nil {
+		return fmt.Errorf("failed to fix GPT partition table: %w", err)
+	}
+
 	if i.config.UseContainersFolder {
 		if err := i.ops.SetupContainersFolderCommands(); err != nil {
 			return fmt.Errorf("failed to setup containers folder: %w", err)

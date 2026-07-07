@@ -111,6 +111,7 @@ func TestDiskPreparation(t *testing.T) {
 			}
 			args := append([]string{"install", "/dev/sda"}, tc.CoreosInstallerArgs...)
 			mockOps.EXPECT().RunInHostNamespace("coreos-installer", args).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("sgdisk", "-e", installationDisk).Return("", nil).Times(1)
 
 			if !tc.UseContainersFolder {
 				if !tc.partitionError {
