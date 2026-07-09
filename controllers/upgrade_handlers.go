@@ -346,8 +346,14 @@ var getStaterootVarPath = func(stateroot string) string {
 	return common.PathOutsideChroot(filepath.Join(common.GetStaterootPath(stateroot), "/var"))
 }
 
-// CheckHealth helper func to call HealthChecks
+// CheckHealth helper func to call HealthChecks (used by PrePivot)
 var CheckHealth = healthcheck.HealthChecks
+
+// CheckMandatoryHealth runs pre-restore mandatory checks (COs, MCP, SRIOV, OADP)
+var CheckMandatoryHealth = healthcheck.MandatoryHealthChecks
+
+// CheckDeferredHealth runs post-restore deferred checks (Node, CSVs, CSRs)
+var CheckDeferredHealth = healthcheck.DeferredHealthChecks
 
 func (u *UpgHandler) autoRollbackIfEnabled(ibu *ibuv1.ImageBasedUpgrade, msg string) {
 	// Check whether auto-rollback is disabled using annotation
@@ -376,8 +382,8 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 	// start post-pivot phase timer
 	utils.StartPhase(u.Client, u.Log, ibu, UpgradePhasePostpivot)
 
-	u.Log.Info("Starting health check for different components")
-	if err := CheckHealth(ctx, u.NoncachedClient, u.Log); err != nil {
+	u.Log.Info("Running mandatory health checks (pre-restore)")
+	if err := CheckMandatoryHealth(ctx, u.NoncachedClient, u.Log); err != nil {
 		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to stabilize: %s", err.Error()))
 		return requeueWithHealthCheckInterval(), nil
 	}
@@ -451,6 +457,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		// The restore process has not been completed yet, requeue
 		utils.SetUpgradeStatusInProgress(ibu, "Restore of Application Data is in progress")
 		return result, nil
+	}
+
+	u.Log.Info("Running deferred health checks (post-restore)")
+	if err := CheckDeferredHealth(ctx, u.NoncachedClient, u.Log); err != nil {
+		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Waiting for system to fully stabilize: %s", err.Error()))
+		return requeueWithHealthCheckInterval(), nil
 	}
 
 	if err := u.RebootClient.DisableInitMonitor(); err != nil {
