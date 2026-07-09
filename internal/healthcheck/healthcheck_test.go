@@ -28,8 +28,6 @@ var s = scheme.Scheme
 
 // let fakeclient know about all the possible types of CRs used by HCs
 func init() {
-	s.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterVersion{})
-	s.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterVersionList{})
 	s.AddKnownTypes(mcv1.GroupVersion, &mcv1.MachineConfigPoolList{})
 	s.AddKnownTypes(mcv1.GroupVersion, &mcv1.MachineConfigPool{})
 	s.AddKnownTypes(configv1.GroupVersion, &configv1.ClusterOperatorList{})
@@ -430,59 +428,6 @@ func Test_machineConfigPoolReady(t *testing.T) {
 	}
 }
 
-func Test_clusterVersionReady(t *testing.T) {
-	type args struct {
-		c client.Reader
-		l logr.Logger
-	}
-	tests := []struct {
-		name    string
-		args    args
-		objects []runtime.Object
-		wantErr bool
-	}{
-		{
-			name: "happy path clusterVersion Ready",
-			objects: []runtime.Object{
-				&configv1.ClusterVersion{
-					Status: configv1.ClusterVersionStatus{
-						Conditions: []configv1.ClusterOperatorStatusCondition{
-							{
-								Type:   configv1.OperatorAvailable,
-								Status: configv1.ConditionTrue,
-							},
-						},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "clusterVersion condition false",
-			objects: []runtime.Object{
-				&configv1.ClusterVersion{
-					Status: configv1.ClusterVersionStatus{
-						Conditions: []configv1.ClusterOperatorStatusCondition{
-							{
-								Type:   configv1.OperatorAvailable,
-								Status: configv1.ConditionFalse,
-							},
-						},
-					},
-				},
-			},
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.args.c = fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
-			if err := IsClusterVersionReady(context.TODO(), tt.args.c, tt.args.l); (err != nil) != tt.wantErr {
-				t.Errorf("IsClusterVersionReady() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
 
 func Test_sriovNetworkNodeStateReady(t *testing.T) {
 	type args struct {
@@ -825,24 +770,14 @@ func TestHealthChecks(t *testing.T) {
 						},
 					},
 				},
-				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
-					MachineCount:      1,
-					ReadyMachineCount: 12,
-				}},
-				&configv1.ClusterVersion{
-					Status: configv1.ClusterVersionStatus{
-						Conditions: []configv1.ClusterOperatorStatusCondition{
-							{
-								Type:   configv1.OperatorAvailable,
-								Status: configv1.ConditionFalse,
-							},
-						},
-					},
-				},
-			},
+			&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+				MachineCount:      1,
+				ReadyMachineCount: 12,
+			}},
 		},
-		{
-			name:    "happy path",
+	},
+	{
+		name:    "happy path",
 			wantErr: false,
 			objects: []runtime.Object{
 				&configv1.Infrastructure{
@@ -891,21 +826,11 @@ func TestHealthChecks(t *testing.T) {
 						},
 					},
 				},
-				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
-					MachineCount:      1,
-					ReadyMachineCount: 1,
-				}},
-				&configv1.ClusterVersion{
-					Status: configv1.ClusterVersionStatus{
-						Conditions: []configv1.ClusterOperatorStatusCondition{
-							{
-								Type:   configv1.OperatorAvailable,
-								Status: configv1.ConditionTrue,
-							},
-						},
-					},
-				},
-				crd,
+			&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+				MachineCount:      1,
+				ReadyMachineCount: 1,
+			}},
+			crd,
 				&sriovv1.SriovNetworkNodeStateList{
 					Items: []sriovv1.SriovNetworkNodeState{*successSriovNetworkNodeState},
 				},
@@ -959,6 +884,319 @@ func TestHealthChecks(t *testing.T) {
 			err := HealthChecks(context.TODO(), tt.args.c, tt.args.l)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HealthChecks() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMandatoryHealthChecks(t *testing.T) {
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sriovnetworknodestates.sriovnetwork.openshift.io",
+		},
+	}
+
+	dpaCrd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "dataprotectionapplications.oadp.openshift.io",
+		},
+	}
+
+	successDpa := &unstructured.Unstructured{
+		Object: map[string]any{
+			"kind":       backuprestore.DpaGvk.Kind,
+			"apiVersion": backuprestore.DpaGvk.Group + "/" + backuprestore.DpaGvk.Version,
+			"metadata": map[string]any{
+				"name":      "oadp",
+				"namespace": backuprestore.OadpNs,
+			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{
+						"type":   "Reconciled",
+						"status": "True",
+						"reason": "Complete",
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		objects []runtime.Object
+		wantErr bool
+	}{
+		{
+			name: "all mandatory checks pass",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionTrue, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 1,
+				}},
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{
+						{ObjectMeta: metav1.ObjectMeta{Name: "node1"}, Status: sriovv1.SriovNetworkNodeStateStatus{SyncStatus: "Succeeded"}},
+					},
+				},
+				dpaCrd,
+				&unstructured.UnstructuredList{Items: []unstructured.Unstructured{*successDpa}},
+				&velerov1.BackupStorageLocationList{
+					Items: []velerov1.BackupStorageLocation{
+						{ObjectMeta: metav1.ObjectMeta{Name: "dpa-1", Namespace: backuprestore.OadpNs}, Status: velerov1.BackupStorageLocationStatus{Phase: velerov1.BackupStorageLocationPhaseAvailable}},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "CO not ready fails",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionFalse, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 1,
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "MCP not ready fails",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionTrue, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 0,
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "SRIOV not ready fails",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionTrue, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 1,
+				}},
+				crd,
+				&sriovv1.SriovNetworkNodeStateList{
+					Items: []sriovv1.SriovNetworkNodeState{
+						{ObjectMeta: metav1.ObjectMeta{Name: "node1"}, Status: sriovv1.SriovNetworkNodeStateStatus{SyncStatus: ""}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "DPA not reconciled fails",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionTrue, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 1,
+				}},
+				dpaCrd,
+				&unstructured.UnstructuredList{
+					Items: []unstructured.Unstructured{
+						{Object: map[string]any{
+							"kind":       backuprestore.DpaGvk.Kind,
+							"apiVersion": backuprestore.DpaGvk.Group + "/" + backuprestore.DpaGvk.Version,
+							"metadata":   map[string]any{"name": "oadp", "namespace": backuprestore.OadpNs},
+							"status": map[string]any{"conditions": []any{
+								map[string]any{"type": "Reconciled", "status": "False", "reason": "Error"},
+							}},
+						}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "BSL unavailable fails",
+			objects: []runtime.Object{
+				&configv1.ClusterOperator{
+					Status: configv1.ClusterOperatorStatus{
+						Conditions: []configv1.ClusterOperatorStatusCondition{
+							{Status: configv1.ConditionTrue, Type: configv1.OperatorAvailable},
+						},
+					},
+				},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount: 1, ReadyMachineCount: 1,
+				}},
+				dpaCrd,
+				&unstructured.UnstructuredList{Items: []unstructured.Unstructured{*successDpa}},
+				&velerov1.BackupStorageLocationList{
+					Items: []velerov1.BackupStorageLocation{
+						{ObjectMeta: metav1.ObjectMeta{Name: "dpa-1", Namespace: backuprestore.OadpNs}, Status: velerov1.BackupStorageLocationStatus{Phase: velerov1.BackupStorageLocationPhaseUnavailable}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			err := MandatoryHealthChecks(context.TODO(), c, logr.Logger{})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("MandatoryHealthChecks() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeferredHealthChecks(t *testing.T) {
+	tests := []struct {
+		name    string
+		objects []runtime.Object
+		wantErr bool
+	}{
+		{
+			name: "all deferred checks pass",
+			objects: []runtime.Object{
+				&configv1.Infrastructure{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Status:     configv1.InfrastructureStatus{InfrastructureTopology: configv1.SingleReplicaTopologyMode},
+				},
+				&v1.Node{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+						NodeRoleControlPlane: "", NodeRoleMaster: "", NodeRoleWorker: "",
+					}},
+					Status: v1.NodeStatus{Conditions: []v1.NodeCondition{
+						{Type: v1.NodeReady, Status: v1.ConditionTrue},
+						{Type: v1.NodeNetworkUnavailable, Status: v1.ConditionFalse},
+					}},
+				},
+				&operatorsv1alpha1.ClusterServiceVersion{
+					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
+						Phase: operatorsv1alpha1.CSVPhaseSucceeded, Reason: operatorsv1alpha1.CSVReasonInstallSuccessful,
+					},
+				},
+				&k8sv1.CertificateSigningRequest{
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{
+							{Type: k8sv1.CertificateApproved, Status: v1.ConditionStatus(metav1.ConditionTrue)},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "node not ready fails",
+			objects: []runtime.Object{
+				&configv1.Infrastructure{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Status:     configv1.InfrastructureStatus{InfrastructureTopology: configv1.SingleReplicaTopologyMode},
+				},
+				&v1.Node{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+						NodeRoleControlPlane: "", NodeRoleMaster: "", NodeRoleWorker: "",
+					}},
+					Status: v1.NodeStatus{Conditions: []v1.NodeCondition{
+						{Type: v1.NodeReady, Status: v1.ConditionFalse},
+					}},
+				},
+				&operatorsv1alpha1.ClusterServiceVersion{
+					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
+						Phase: operatorsv1alpha1.CSVPhaseSucceeded, Reason: operatorsv1alpha1.CSVReasonInstallSuccessful,
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "CSV not ready fails",
+			objects: []runtime.Object{
+				&configv1.Infrastructure{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Status:     configv1.InfrastructureStatus{InfrastructureTopology: configv1.SingleReplicaTopologyMode},
+				},
+				&v1.Node{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+						NodeRoleControlPlane: "", NodeRoleMaster: "", NodeRoleWorker: "",
+					}},
+					Status: v1.NodeStatus{Conditions: []v1.NodeCondition{
+						{Type: v1.NodeReady, Status: v1.ConditionTrue},
+						{Type: v1.NodeNetworkUnavailable, Status: v1.ConditionFalse},
+					}},
+				},
+				&operatorsv1alpha1.ClusterServiceVersion{
+					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
+						Phase: operatorsv1alpha1.CSVPhasePending,
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "CSR not approved fails",
+			objects: []runtime.Object{
+				&configv1.Infrastructure{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Status:     configv1.InfrastructureStatus{InfrastructureTopology: configv1.SingleReplicaTopologyMode},
+				},
+				&v1.Node{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+						NodeRoleControlPlane: "", NodeRoleMaster: "", NodeRoleWorker: "",
+					}},
+					Status: v1.NodeStatus{Conditions: []v1.NodeCondition{
+						{Type: v1.NodeReady, Status: v1.ConditionTrue},
+						{Type: v1.NodeNetworkUnavailable, Status: v1.ConditionFalse},
+					}},
+				},
+				&operatorsv1alpha1.ClusterServiceVersion{
+					Status: operatorsv1alpha1.ClusterServiceVersionStatus{
+						Phase: operatorsv1alpha1.CSVPhaseSucceeded, Reason: operatorsv1alpha1.CSVReasonInstallSuccessful,
+					},
+				},
+				&k8sv1.CertificateSigningRequest{
+					ObjectMeta: metav1.ObjectMeta{Name: "test-csr"},
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{
+							{Type: k8sv1.CertificateApproved, Status: v1.ConditionStatus(metav1.ConditionFalse)},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(tt.objects...).Build()
+			err := DeferredHealthChecks(context.TODO(), c, logr.Logger{})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeferredHealthChecks() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

@@ -916,6 +916,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 		want                              controllerruntime.Result
 		wantErr                           assert.ErrorAssertionFunc
 		checkHealthReturn                 func(ctx context.Context, c client.Reader, l logr.Logger) error
+		checkDeferredHealthReturn         func(ctx context.Context, c client.Reader, l logr.Logger) error
 		applyExtraManifestsReturn         func() error
 		applyPolicyManifestsReturn        func() error
 		ensureOadpConfigurationReturn     func() error
@@ -1046,6 +1047,38 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			wantErr: assert.NoError,
 		},
 		{
+			name: "deferred healthchecks return error after restore",
+			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
+			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+				return nil
+			},
+			checkDeferredHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
+				return fmt.Errorf("node is not yet ready: cnfdf40")
+			},
+			applyPolicyManifestsReturn: func() error {
+				return nil
+			},
+			applyExtraManifestsReturn: func() error {
+				return nil
+			},
+			ensureOadpConfigurationReturn: func() error {
+				return nil
+			},
+			loadRestoresFromOadpRestoreReturn: func() ([][]*velerov1.Restore, error) {
+				return nil, nil
+			},
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "Waiting for system to fully stabilize: node is not yet ready: cnfdf40",
+				},
+			},
+			want:    requeueWithHealthCheckInterval(),
+			wantErr: assert.NoError,
+		},
+		{
 			name: "upgrade completed",
 			args: args{ibu: &ibuv1.ImageBasedUpgrade{}},
 			checkHealthReturn: func(ctx context.Context, c client.Reader, l logr.Logger) error {
@@ -1095,12 +1128,21 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				RebootClient:    mockRebootClient,
 			}
 
-			oldHC := CheckHealth
+			oldMandatory := CheckMandatoryHealth
+			oldDeferred := CheckDeferredHealth
 			defer func() {
-				CheckHealth = oldHC
+				CheckMandatoryHealth = oldMandatory
+				CheckDeferredHealth = oldDeferred
 			}()
 
-			CheckHealth = tt.checkHealthReturn
+			CheckMandatoryHealth = tt.checkHealthReturn
+			if tt.checkDeferredHealthReturn != nil {
+				CheckDeferredHealth = tt.checkDeferredHealthReturn
+			} else {
+				CheckDeferredHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error {
+					return nil
+				}
+			}
 
 			if tt.applyPolicyManifestsReturn != nil {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.PolicyManifestPath)).Return(tt.applyPolicyManifestsReturn()).Times(1)
