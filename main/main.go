@@ -216,6 +216,10 @@ func main() {
 					Namespaces: map[string]cache.Config{
 						common.OperatorNamespace(): {}},
 				},
+				&velerov1.Restore{}: {
+					Namespaces: map[string]cache.Config{
+						"openshift-adp": {}},
+				},
 			},
 		},
 	})
