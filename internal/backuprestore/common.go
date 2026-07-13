@@ -235,10 +235,7 @@ func ExtractBackupSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]BackupSp
 					continue
 				}
 
-				spec, err := backupSpecFromUnstructured(&resource)
-				if err != nil {
-					return nil, err
-				}
+				spec := backupSpecFromUnstructured(&resource)
 				specs = append(specs, spec)
 			}
 		}
@@ -246,7 +243,7 @@ func ExtractBackupSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]BackupSp
 	return specs, nil
 }
 
-func backupSpecFromUnstructured(u *unstructured.Unstructured) (BackupSpec, error) {
+func backupSpecFromUnstructured(u *unstructured.Unstructured) BackupSpec {
 	spec := BackupSpec{
 		Name:      u.GetName(),
 		Namespace: u.GetNamespace(),
@@ -259,7 +256,7 @@ func backupSpecFromUnstructured(u *unstructured.Unstructured) (BackupSpec, error
 
 	specMap, ok := u.Object["spec"].(map[string]interface{})
 	if !ok {
-		return spec, nil
+		return spec
 	}
 
 	spec.IncludedNamespaces = getStringSlice(specMap, "includedNamespaces")
@@ -278,7 +275,7 @@ func backupSpecFromUnstructured(u *unstructured.Unstructured) (BackupSpec, error
 		spec.LabelSelector = selector
 	}
 
-	return spec, nil
+	return spec
 }
 
 func getStringSlice(m map[string]interface{}, key string) []string {
