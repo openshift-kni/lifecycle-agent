@@ -110,6 +110,7 @@ func requeueWithShortInterval() ctrl.Result {
 	return requeueWithCustomInterval(30 * time.Second)
 }
 
+//nolint:unused
 func requeueWithMediumInterval() ctrl.Result {
 	return requeueWithCustomInterval(1 * time.Minute)
 }
