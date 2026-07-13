@@ -597,8 +597,8 @@ github.com/openshift/machine-config-operator/pkg/controller/common
 github.com/openshift/machine-config-operator/pkg/daemon/constants
 github.com/openshift/machine-config-operator/pkg/secrets
 github.com/openshift/machine-config-operator/pkg/version
-# github.com/operator-framework/api v0.42.0
-## explicit; go 1.25.7
+# github.com/operator-framework/api v0.43.0
+## explicit; go 1.26.3
 github.com/operator-framework/api/pkg/lib/release
 github.com/operator-framework/api/pkg/lib/version
 github.com/operator-framework/api/pkg/operators

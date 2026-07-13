@@ -1,6 +1,6 @@
 module github.com/openshift-kni/lifecycle-agent
 
-go 1.25.8
+go 1.26.3
 
 require (
 	github.com/containers/image/v5 v5.36.2
@@ -15,7 +15,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20260318142011-72bf34f474bc
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9
-	github.com/operator-framework/api v0.42.0
+	github.com/operator-framework/api v0.43.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.53.0
