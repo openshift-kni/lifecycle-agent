@@ -44,7 +44,7 @@ import (
 
 type (
 	UpgradeHandler interface {
-		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
+		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, targetDir string) (ctrl.Result, error)
 		HandleRestore(ctx context.Context) (ctrl.Result, error)
 		PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
@@ -138,13 +138,22 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return requeueWithHealthCheckInterval(), nil
 	}
 
+	u.Log.Info("Remounting sysroot")
+	if err := u.Ops.RemountSysroot(); err != nil {
+		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
+	}
+
+	stateroot := common.GetDesiredStaterootName(ibu)
+	staterootPath := getStaterootPath(stateroot)
+	staterootVarPath := getStaterootVarPath(stateroot)
+
 	utils.SetUpgradeStatusInProgress(ibu, "Backing up Application Data")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	u.Log.Info("Handling backups with OADP operator")
-	ctrlResult, err := u.HandleBackup(ctx, ibu)
+	u.Log.Info("Handling local backup")
+	ctrlResult, err := u.HandleBackup(ctx, ibu, staterootVarPath)
 	if err != nil {
 		if backuprestore.IsBRFailedValidationError(err) ||
 			backuprestore.IsBRFailedError(err) {
@@ -156,32 +165,8 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return requeueWithError(fmt.Errorf("error while handling backup: %w", err))
 	}
 	if !ctrlResult.IsZero() {
-		// The backup process has not been completed yet, requeue
 		utils.SetUpgradeStatusInProgress(ibu, "Backup of Application Data is in progress")
 		return ctrlResult, nil
-	}
-
-	u.Log.Info("Remounting sysroot")
-	if err := u.Ops.RemountSysroot(); err != nil {
-		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
-	}
-
-	stateroot := common.GetDesiredStaterootName(ibu)
-	staterootPath := getStaterootPath(stateroot)
-	staterootVarPath := getStaterootVarPath(stateroot)
-
-	utils.SetUpgradeStatusInProgress(ibu, "Exporting Application Configuration")
-	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
-		u.Log.Error(updateErr, "failed to update IBU CR status")
-	}
-
-	if err := u.exportOadpConfigurationAndRestore(ctx, ibu, staterootVarPath); err != nil {
-		if backuprestore.IsBRFailedError(err) || backuprestore.IsBRFailedValidationError(err) {
-			u.Log.Error(err, "Failed to export OADP configuration and restores")
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			return doNotRequeue(), nil
-		}
-		return requeueWithError(fmt.Errorf("error while exporting OADP configuration and restores: %w", err))
 	}
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
@@ -251,26 +236,6 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return doNotRequeue(), nil
 	}
 	return doNotRequeue(), nil
-}
-
-// exportOadpConfigurationAndRestore exports OADP configuration and restore CRs to the new stateroot
-func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, ostreeVarDir string) error {
-	if len(ibu.Spec.OADPContent) == 0 {
-		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
-		return nil
-	}
-
-	u.Log.Info("Writing OadpConfiguration CRs into new stateroot")
-	if err := u.BackupRestore.ExportOadpConfigurationToDir(ctx, ostreeVarDir, backuprestore.OadpNs); err != nil {
-		return fmt.Errorf("failed to export OADP configuration: %w", err)
-	}
-
-	u.Log.Info("Writing Restore CRs into new stateroot")
-	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, ostreeVarDir); err != nil {
-		return fmt.Errorf("failed to export restores: %w", err)
-	}
-
-	return nil
 }
 
 // extractAndExportExtraManifests extracts extra manifest from policies and/or configmaps and export them to the new stateroot
@@ -388,25 +353,13 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return requeueWithHealthCheckInterval(), nil
 	}
 
-	err := u.BackupRestore.EnsureOadpConfiguration(ctx)
-	if err != nil {
-		if backuprestore.IsBRStorageBackendUnavailableError(err) {
-			u.Log.Error(err, "Failed to ensure OADP configuration")
-			utils.SetUpgradeStatusFailed(ibu, err.Error())
-			u.autoRollbackIfEnabled(ibu, fmt.Sprintf("Rollback due to missing DataProtectionApplication: %s", err))
-			return doNotRequeue(), nil
-		}
-		utils.SetUpgradeStatusInProgress(ibu, fmt.Sprintf("Checking Application Configuration: Failure occurred: %s", err.Error()))
-		return requeueWithError(fmt.Errorf("error while checking OADP configuration: %w", err))
-	}
-
 	// Applying extra manifests
 	utils.SetUpgradeStatusInProgress(ibu, "Applying Policy Manifests")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	err = u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
+	err := u.ExtraManifest.ApplyExtraManifests(ctx, common.PathOutsideChroot(extramanifest.PolicyManifestPath))
 	if err != nil {
 		if extramanifest.IsEMFailedError(err) {
 			u.Log.Error(err, "Failed to apply policy manifests")
@@ -435,7 +388,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return requeueWithError(fmt.Errorf("error while applying config manifests: %w", err))
 	}
 
-	// Handling restores with OADP operator
+	// Restoring application data from local backup
 	utils.SetUpgradeStatusInProgress(ibu, "Restoring Application Data")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
@@ -443,7 +396,6 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 
 	result, err := u.HandleRestore(ctx)
 	if err != nil {
-		// Restore failed
 		if backuprestore.IsBRFailedError(err) {
 			u.Log.Error(err, "Failed to handle restore")
 			utils.SetUpgradeStatusFailed(ibu, err.Error())
@@ -454,7 +406,6 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return requeueWithError(fmt.Errorf("error while handling restore: %w", err))
 	}
 	if !result.IsZero() {
-		// The restore process has not been completed yet, requeue
 		utils.SetUpgradeStatusInProgress(ibu, "Restore of Application Data is in progress")
 		return result, nil
 	}
@@ -480,14 +431,9 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 	return doNotRequeue(), nil
 }
 
-// HandleBackup manages backup flow and returns with possible requeue
-func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
-	sortedBackupGroups, err := u.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
-	if err != nil {
-		return requeueWithError(fmt.Errorf("error while getting sorted backups from configmap: %w", err))
-	}
-
-	if len(sortedBackupGroups) == 0 {
+// HandleBackup manages backup flow using local backup
+func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, targetDir string) (ctrl.Result, error) {
+	if len(ibu.Spec.OADPContent) == 0 {
 		u.Log.Info("No backup requests, skipping")
 		return doNotRequeue(), nil
 	}
@@ -496,93 +442,45 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
 	}
 
-	// trigger and track each group
-	for index, backups := range sortedBackupGroups {
-		u.Log.Info("Processing backup", "groupIndex", index+1, "totalGroups", len(sortedBackupGroups))
+	backupTracker, err := u.BackupRestore.StartBackup(ctx, ibu.Spec.OADPContent, targetDir)
+	if err != nil {
+		return requeueWithError(fmt.Errorf("error while running backup: %w", err))
+	}
 
-		// check for any stale backup in the group
-		if err := u.BackupRestore.CleanupStaleBackups(ctx, backups); err != nil {
-			return requeueWithError(fmt.Errorf("failed to cleanup stale Backups: %w", err))
-		}
-
-		backupTracker, err := u.BackupRestore.StartOrTrackBackup(ctx, backups)
-		if err != nil {
-			return requeueWithError(fmt.Errorf("error while starting or tracking backup: %w", err))
-		}
-
-		// The current backup group has done, work on the next group
-		if len(backupTracker.SucceededBackups) == len(backups) {
-			continue
-		}
-
-		// Backup CRs failed
-		if len(backupTracker.FailedBackups) > 0 {
-			errMsg := fmt.Sprintf("Failed backup CRs: %s", strings.Join(backupTracker.FailedBackups, ","))
-			return requeueWithError(backuprestore.NewBRFailedError("Backup", errMsg))
-		}
-
-		// Backups are in progress
-		if len(backupTracker.ProgressingBackups) > 0 {
-			return requeueWithShortInterval(), nil
-		}
-
-		// Backups are waiting for condition
-		return requeueWithMediumInterval(), nil
+	if len(backupTracker.FailedBackups) > 0 {
+		errMsg := fmt.Sprintf("Failed backups: %s", strings.Join(backupTracker.FailedBackups, ","))
+		return requeueWithError(backuprestore.NewBRFailedError("Backup", errMsg))
 	}
 
 	u.Log.Info("All backups succeeded")
 	return doNotRequeue(), nil
 }
 
+// HandleRestore manages restore flow using local restore
 func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
-	u.Log.Info("Handling restores with OADP operator")
-	// Load restore CRs from files
-	sortedRestoreGroups, err := u.BackupRestore.LoadRestoresFromOadpRestorePath()
+	u.Log.Info("Handling local restore")
+
+	restoreTracker, err := u.BackupRestore.StartRestore(ctx)
 	if err != nil {
-		return requeueWithError(fmt.Errorf("error while loading restores from OADP restore path: %w", err))
+		return requeueWithError(fmt.Errorf("error while running restore: %w", err))
 	}
 
-	if len(sortedRestoreGroups) == 0 {
-		u.Log.Info("No restore requests, skipping")
-		return doNotRequeue(), nil
+	if len(restoreTracker.FailedRestores) > 0 {
+		errMsg := fmt.Sprintf("Failed restores: %s", strings.Join(restoreTracker.FailedRestores, ","))
+		return requeueWithError(backuprestore.NewBRFailedError("Restore", errMsg))
 	}
 
-	for index, restores := range sortedRestoreGroups {
-		u.Log.Info("Processing restore", "groupIndex", index+1, "totalGroups", len(sortedRestoreGroups))
-		restoreTracker, err := u.BackupRestore.StartOrTrackRestore(ctx, restores)
-		if err != nil {
-			return requeueWithError(fmt.Errorf("error while starting or tracking restore: %w", err))
-		}
-
-		// The current restore group has done, work on the next group
-		if len(restoreTracker.SucceededRestores) == len(restores) {
-			continue
-		}
-
-		// Restore CRs failed
-		if len(restoreTracker.FailedRestores) > 0 {
-			errMsg := fmt.Sprintf("Failed restore CRs: %s", strings.Join(restoreTracker.FailedRestores, ","))
-			return requeueWithError(backuprestore.NewBRFailedError("Restore", errMsg))
-		}
-
-		// Restores CRs are in progress
-		if len(restoreTracker.ProgressingRestores) > 0 {
-			return requeueWithShortInterval(), nil
-		}
-
-		// Restores are waiting for condition
-		return requeueWithMediumInterval(), nil
-	}
 	u.Log.Info("All restores succeeded")
 
 	if err := u.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
 		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
 	}
 
-	if err := os.RemoveAll(common.PathOutsideChroot(backuprestore.OadpPath)); err != nil {
-		return requeueWithError(fmt.Errorf("error while removing OADP path: %w", err))
+	backupPath := common.PathOutsideChroot(backuprestore.LocalBackupPath)
+	if err := os.RemoveAll(backupPath); err != nil {
+		return requeueWithError(fmt.Errorf("error while removing local backup path: %w", err))
 	}
-	u.Log.Info("OADP path removed", "path", backuprestore.OadpPath)
+	u.Log.Info("Local backup path removed", "path", backupPath)
 
 	return doNotRequeue(), nil
 }
