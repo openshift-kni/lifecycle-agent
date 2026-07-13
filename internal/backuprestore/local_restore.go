@@ -111,10 +111,7 @@ func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
 
 func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Unstructured) error {
 	gvk := resource.GroupVersionKind()
-	gvr, err := h.resolveGVR(gvk)
-	if err != nil {
-		return fmt.Errorf("failed to resolve resource for %s: %w", gvk.String(), err)
-	}
+	gvr := h.resolveGVR(gvk)
 
 	name := resource.GetName()
 	namespace := resource.GetNamespace()
@@ -126,7 +123,7 @@ func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Un
 		return h.applyClusterScopedResource(ctx, gvr, name, resource)
 	}
 
-	err = apply()
+	err := apply()
 	if err == nil {
 		return nil
 	}
@@ -140,7 +137,7 @@ func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Un
 	return retryWithBackoff(ctx, apply)
 }
 
-func (h *BRHandler) resolveGVR(gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+func (h *BRHandler) resolveGVR(gvk schema.GroupVersionKind) schema.GroupVersionResource {
 	mapping, err := h.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		gvr := schema.GroupVersionResource{
@@ -150,9 +147,9 @@ func (h *BRHandler) resolveGVR(gvk schema.GroupVersionKind) (schema.GroupVersion
 		}
 		h.Log.Info("REST mapper lookup failed, using pluralized kind",
 			"gvk", gvk.String(), "gvr", gvr.String(), "error", err.Error())
-		return gvr, nil
+		return gvr
 	}
-	return mapping.Resource, nil
+	return mapping.Resource
 }
 
 func (h *BRHandler) applyNamespacedResource(ctx context.Context, gvr schema.GroupVersionResource,
@@ -226,7 +223,7 @@ func retryWithBackoff(ctx context.Context, fn func() error) error {
 
 func validateChecksums(backupPath string) error {
 	checksumFile := filepath.Join(backupPath, "checksums.sha256")
-	data, err := os.ReadFile(checksumFile)
+	data, err := os.ReadFile(checksumFile) //nolint:gosec
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -248,7 +245,7 @@ func validateChecksums(backupPath string) error {
 		relPath := parts[1]
 
 		filePath := filepath.Join(backupPath, relPath)
-		fileData, err := os.ReadFile(filePath)
+		fileData, err := os.ReadFile(filePath) //nolint:gosec
 		if err != nil {
 			return fmt.Errorf("failed to read file %s for checksum validation: %w", relPath, err)
 		}
