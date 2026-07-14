@@ -1,5 +1,12 @@
 [Unit]
 Description=Image base SNO configuration script
+# update-ca-trust is not concurrency-safe. Both this service and
+# coreos-update-ca-trust.service call it at boot; without this
+# ordering they race and update-ca-trust fails. The race exists on
+# RHEL 9 too but the collision window is ~100ms; RHEL 10 widened it
+# to several seconds (more hash symlinks in /etc/pki/tls/certs/),
+# making it hit reliably.
+After=coreos-update-ca-trust.service
 
 [Service]
 Type=oneshot
