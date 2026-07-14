@@ -533,19 +533,19 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					}}
 				},
 			),
-		builder.WithPredicates(predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool { return false },
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				oldRestore, okOld := e.ObjectOld.(*velerov1.Restore)
-				newRestore, okNew := e.ObjectNew.(*velerov1.Restore)
-				if !okOld || !okNew {
-					return false
-				}
-				return oldRestore.Status.Phase != newRestore.Status.Phase
-			},
-			DeleteFunc:  func(e event.DeleteEvent) bool { return false },
-			GenericFunc: func(e event.GenericEvent) bool { return false },
-		}),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(e event.CreateEvent) bool { return false },
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					oldRestore, okOld := e.ObjectOld.(*velerov1.Restore)
+					newRestore, okNew := e.ObjectNew.(*velerov1.Restore)
+					if !okOld || !okNew {
+						return false
+					}
+					return oldRestore.Status.Phase != newRestore.Status.Phase
+				},
+				DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+				GenericFunc: func(e event.GenericEvent) bool { return false },
+			}),
 		).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
