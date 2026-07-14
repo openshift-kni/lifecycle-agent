@@ -232,16 +232,6 @@ rules:
   verbs:
   - '*'
 - apiGroups:
-  - oadp.openshift.io
-  resources:
-  - dataprotectionapplications
-  verbs:
-  - create
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
   - operator.openshift.io
   resources:
   - imagecontentsourcepolicies
@@ -253,10 +243,7 @@ rules:
   - operators.coreos.com
   resources:
   - clusterserviceversions
-  - subscriptions
   verbs:
-  - delete
-  - get
   - list
   - watch
 - apiGroups:
@@ -294,27 +281,6 @@ rules:
   - storage.k8s.io
   resources:
   - storageclasses
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - velero.io
-  resources:
-  - backups
-  - deletebackuprequests
-  - restores
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
-  - velero.io
-  resources:
-  - backupstoragelocations
   verbs:
   - get
   - list
