@@ -428,7 +428,6 @@ func Test_machineConfigPoolReady(t *testing.T) {
 	}
 }
 
-
 func Test_sriovNetworkNodeStateReady(t *testing.T) {
 	type args struct {
 		c client.Reader
@@ -770,14 +769,14 @@ func TestHealthChecks(t *testing.T) {
 						},
 					},
 				},
-			&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
-				MachineCount:      1,
-				ReadyMachineCount: 12,
-			}},
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount:      1,
+					ReadyMachineCount: 12,
+				}},
+			},
 		},
-	},
-	{
-		name:    "happy path",
+		{
+			name:    "happy path",
 			wantErr: false,
 			objects: []runtime.Object{
 				&configv1.Infrastructure{
@@ -826,11 +825,11 @@ func TestHealthChecks(t *testing.T) {
 						},
 					},
 				},
-			&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
-				MachineCount:      1,
-				ReadyMachineCount: 1,
-			}},
-			crd,
+				&mcv1.MachineConfigPool{Status: mcv1.MachineConfigPoolStatus{
+					MachineCount:      1,
+					ReadyMachineCount: 1,
+				}},
+				crd,
 				&sriovv1.SriovNetworkNodeStateList{
 					Items: []sriovv1.SriovNetworkNodeState{*successSriovNetworkNodeState},
 				},
