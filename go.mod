@@ -28,9 +28,9 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.35.5
 	k8s.io/apiextensions-apiserver v0.35.5
-	k8s.io/apimachinery v0.35.5
+	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.35.5
-	k8s.io/code-generator v0.35.5
+	k8s.io/code-generator v0.36.2
 	open-cluster-management.io/api v1.3.0
 	open-cluster-management.io/config-policy-controller v0.19.0
 	open-cluster-management.io/governance-policy-propagator v0.19.0
@@ -104,6 +104,7 @@ require (
 	k8s.io/gengo/v2 v2.0.0-20250922181213-ec3ebc5fd46b // indirect
 	k8s.io/kube-aggregator v0.35.1 // indirect
 	k8s.io/kubectl v0.35.0 // indirect
+	k8s.io/streaming v0.36.2 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.6-0.20230721195810-5c8923c5ff96 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
@@ -174,11 +175,11 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.5.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20260127142750-a19766b6e2d4 // indirect
+	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 )
