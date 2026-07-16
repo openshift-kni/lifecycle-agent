@@ -87,6 +87,9 @@ type ImageBasedUpgradeReconciler struct {
 
 	// Cluster data retrieved once, during init
 	ContainerStorageMountpointTarget string
+
+	// VeleroAvailable indicates whether Velero CRDs are present in the cluster
+	VeleroAvailable bool
 }
 
 func doNotRequeue() ctrl.Result {
@@ -473,8 +476,7 @@ func validateStageTransition(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) bo
 func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorder("ImageBasedUpgrade")
 
-	//nolint:wrapcheck
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&ibuv1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				// Generation is only updated on spec changes (also on deletion),
@@ -524,8 +526,10 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return false
 			},
 		})).
-		Owns(&kbatch.Job{}). // note: job resource watched is restricted further using cache.Options during NewManager
-		Watches(&velerov1.Restore{},
+		Owns(&kbatch.Job{}) // note: job resource watched is restricted further using cache.Options during NewManager
+
+	if r.VeleroAvailable {
+		b = b.Watches(&velerov1.Restore{},
 			handler.EnqueueRequestsFromMapFunc(
 				func(ctx context.Context, obj client.Object) []reconcile.Request {
 					return []reconcile.Request{{
@@ -546,7 +550,10 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 				GenericFunc: func(e event.GenericEvent) bool { return false },
 			}),
-		).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		)
+	}
+
+	//nolint:wrapcheck
+	return b.WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
 }
