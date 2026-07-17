@@ -272,6 +272,24 @@ func backupSpecFromUnstructured(u *unstructured.Unstructured) BackupSpec {
 				selector.MatchLabels[k] = fmt.Sprintf("%v", v)
 			}
 		}
+		if meList, ok := lsMap["matchExpressions"].([]interface{}); ok {
+			for _, item := range meList {
+				expr, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				req := metav1.LabelSelectorRequirement{
+					Key:      fmt.Sprintf("%v", expr["key"]),
+					Operator: metav1.LabelSelectorOperator(fmt.Sprintf("%v", expr["operator"])),
+				}
+				if vals, ok := expr["values"].([]interface{}); ok {
+					for _, v := range vals {
+						req.Values = append(req.Values, fmt.Sprintf("%v", v))
+					}
+				}
+				selector.MatchExpressions = append(selector.MatchExpressions, req)
+			}
+		}
 		spec.LabelSelector = selector
 	}
 
