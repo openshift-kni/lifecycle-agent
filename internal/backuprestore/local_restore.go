@@ -69,12 +69,13 @@ func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
 		return rt, nil
 	}
 
-	if err := validateChecksums(backupPath); err != nil {
+	validatedFiles, err := validateChecksums(backupPath)
+	if err != nil {
 		return rt, NewBRFailedError("Restore",
 			fmt.Sprintf("backup checksum validation failed: %s", err.Error()))
 	}
 
-	resources, err := loadBackupResources(backupPath, h.Log)
+	resources, err := loadBackupResources(backupPath, validatedFiles, h.Log)
 	if err != nil {
 		return rt, NewBRFailedError("Restore",
 			fmt.Sprintf("failed to load backup resources: %s", err.Error()))
@@ -221,16 +222,14 @@ func retryWithBackoff(ctx context.Context, fn func() error) error {
 	})
 }
 
-func validateChecksums(backupPath string) error {
+func validateChecksums(backupPath string) (map[string]bool, error) {
 	checksumFile := filepath.Join(backupPath, "checksums.sha256")
 	data, err := os.ReadFile(checksumFile) //nolint:gosec
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read checksum file: %w", err)
+		return nil, fmt.Errorf("checksum manifest checksums.sha256 is missing or unreadable: %w", err)
 	}
 
+	validatedFiles := make(map[string]bool)
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -239,7 +238,7 @@ func validateChecksums(backupPath string) error {
 		}
 		parts := strings.SplitN(line, "  ", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid checksum line: %s", line)
+			return nil, fmt.Errorf("invalid checksum line: %s", line)
 		}
 		expectedHash := parts[0]
 		relPath := parts[1]
@@ -247,19 +246,23 @@ func validateChecksums(backupPath string) error {
 		filePath := filepath.Join(backupPath, relPath)
 		fileData, err := os.ReadFile(filePath) //nolint:gosec
 		if err != nil {
-			return fmt.Errorf("failed to read file %s for checksum validation: %w", relPath, err)
+			return nil, fmt.Errorf("failed to read file %s for checksum validation: %w", relPath, err)
 		}
 
 		actualHash := sha256.Sum256(fileData)
 		if hex.EncodeToString(actualHash[:]) != expectedHash {
-			return fmt.Errorf("checksum mismatch for file %s", relPath)
+			return nil, fmt.Errorf("checksum mismatch for file %s", relPath)
 		}
+		validatedFiles[relPath] = true
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to scan checksum manifest: %w", err)
 	}
 
-	return nil
+	return validatedFiles, nil
 }
 
-func loadBackupResources(backupPath string, log logr.Logger) ([]*unstructured.Unstructured, error) {
+func loadBackupResources(backupPath string, validatedFiles map[string]bool, log logr.Logger) ([]*unstructured.Unstructured, error) {
 	var resources []*unstructured.Unstructured
 
 	entries, err := os.ReadDir(backupPath)
@@ -282,6 +285,11 @@ func loadBackupResources(backupPath string, log logr.Logger) ([]*unstructured.Un
 		for _, yamlFile := range yamlFiles {
 			if yamlFile.IsDir() || !strings.HasSuffix(yamlFile.Name(), ".yaml") {
 				continue
+			}
+
+			relPath := filepath.Join(entry.Name(), yamlFile.Name())
+			if !validatedFiles[relPath] {
+				return nil, fmt.Errorf("file %s is not listed in checksum manifest, refusing to restore", relPath)
 			}
 
 			filePath := filepath.Join(specDir, yamlFile.Name())
