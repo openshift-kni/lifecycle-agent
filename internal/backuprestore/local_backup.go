@@ -117,6 +117,11 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	for groupIdx, group := range sortedGroups {
 		h.Log.Info("Processing backup group", "groupIndex", groupIdx+1, "totalGroups", len(sortedGroups))
 		for _, spec := range group {
+			if err := validateBackupName(spec.Name); err != nil {
+				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
+				return bt, NewBRFailedValidationError("Backup", err.Error())
+			}
+
 			resources, err := h.fetchResources(ctx, spec)
 			if err != nil {
 				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
@@ -379,6 +384,13 @@ func parseResourceType(resourceType string) schema.GroupVersionResource {
 func isResourceNotRegistered(err error) bool {
 	return strings.Contains(err.Error(), "the server could not find the requested resource") ||
 		strings.Contains(err.Error(), "no matches for kind")
+}
+
+func validateBackupName(name string) error {
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid backup name %q: must not contain path separators or '..'", name)
+	}
+	return nil
 }
 
 func deduplicateResources(resources []*unstructured.Unstructured) []*unstructured.Unstructured {
