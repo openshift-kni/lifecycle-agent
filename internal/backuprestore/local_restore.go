@@ -323,6 +323,8 @@ func pluralizeKind(kind string) string {
 		strings.HasSuffix(lower, "x"),
 		strings.HasSuffix(lower, "z"):
 		return lower + "es"
+	case len(lower) > 1 && strings.HasSuffix(lower, "y") && !strings.ContainsAny(string(lower[len(lower)-2]), "aeiou"):
+		return lower[:len(lower)-1] + "ies"
 	default:
 		return lower + "s"
 	}
