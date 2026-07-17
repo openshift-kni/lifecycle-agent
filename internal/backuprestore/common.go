@@ -43,9 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;watch
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=delete
+// +kubebuilder:rbac:groups="*",resources="*",verbs="*"
 
 const (
 	applyLabelAnn = "lca.openshift.io/apply-label"
