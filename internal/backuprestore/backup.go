@@ -47,7 +47,7 @@ func (h *BRHandler) PatchPVsReclaimPolicy(ctx context.Context) error {
 
 				pvPatched := pv
 				pvPatched.Spec.PersistentVolumeReclaimPolicy = "Retain"
-				pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true"
+				pvPatched.Annotations[updatedReclaimPolicyAnnotation] = "true" //nolint:goconst
 				if err := h.Update(ctx, &pvPatched); err != nil {
 					return fmt.Errorf("failed to update PersistentVolume %s: %w", pv.Name, err)
 				}
