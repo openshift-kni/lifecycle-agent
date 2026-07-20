@@ -388,15 +388,14 @@ func parseResourceType(resourceType string) schema.GroupVersionResource {
 func (h *BRHandler) resolveResourceType(resourceType string) schema.GroupVersionResource {
 	parsed := parseResourceType(resourceType)
 
-	if parsed.Group != "" {
-		return parsed
+	// Use REST mapper to discover the API group (for bare names) and the correct preferred API version.
+	partialGVR := schema.GroupVersionResource{
+		Group:    parsed.Group,
+		Resource: parsed.Resource,
 	}
-
-	// Bare resource name — use REST mapper to discover the API group.
-	partialGVR := schema.GroupVersionResource{Resource: parsed.Resource}
 	resolved, err := h.RESTMapper().ResourceFor(partialGVR)
 	if err != nil {
-		h.Log.Info("REST mapper lookup failed for resource, defaulting to core API group",
+		h.Log.Info("REST mapper lookup failed for resource, defaulting to parsed GVR",
 			"resource", resourceType, "error", err.Error())
 		return parsed
 	}
