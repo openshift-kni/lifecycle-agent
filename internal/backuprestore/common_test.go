@@ -55,12 +55,14 @@ func TestResolveResourceType(t *testing.T) {
 		{Group: "", Version: "v1"},
 		{Group: "apps", Version: "v1"},
 		{Group: "route.openshift.io", Version: "v1"},
+		{Group: "example.io", Version: "v1alpha1"},
 	})
 	mapper.Add(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}, meta.RESTScopeNamespace)
 	mapper.Add(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"}, meta.RESTScopeNamespace)
 	mapper.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace)
 	mapper.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "StatefulSet"}, meta.RESTScopeNamespace)
 	mapper.Add(schema.GroupVersionKind{Group: "route.openshift.io", Version: "v1", Kind: "Route"}, meta.RESTScopeNamespace)
+	mapper.Add(schema.GroupVersionKind{Group: "example.io", Version: "v1alpha1", Kind: "Widget"}, meta.RESTScopeNamespace)
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithRESTMapper(mapper).Build()
 	handler := &BRHandler{
@@ -102,6 +104,11 @@ func TestResolveResourceType(t *testing.T) {
 			name:         "qualified 'routes.route.openshift.io' uses explicit group",
 			resourceType: "routes.route.openshift.io",
 			expected:     schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"},
+		},
+		{
+			name:         "qualified non-v1 CRD discovers correct API version via REST mapper",
+			resourceType: "widgets.example.io",
+			expected:     schema.GroupVersionResource{Group: "example.io", Version: "v1alpha1", Resource: "widgets"},
 		},
 	}
 
