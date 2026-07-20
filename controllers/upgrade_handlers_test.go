@@ -673,6 +673,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 					SucceededRestores: []string{"name-success"},
 				}, nil
 			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
+			},
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeInProgress),
