@@ -177,6 +177,13 @@ func main() {
 		setupLog.Info("NetworkPolicies", "msg", msg)
 	}
 
+	veleroAvailable := isVeleroAvailable(k8sClient)
+	if veleroAvailable {
+		setupLog.Info("Velero CRDs detected, enabling Restore watch")
+	} else {
+		setupLog.Info("Velero CRDs not found, Restore watch disabled")
+	}
+
 	// Fetch the TLS profile from the APIServer resource.
 	tlsSecurityProfileSpec, err := utiltls.FetchAPIServerTLSProfile(context.Background(), k8sClient)
 	if err != nil {
@@ -211,12 +218,7 @@ func main() {
 			TLSOpts:        tlsOpts,
 		},
 		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
-			ByObject: map[client.Object]cache.ByObject{
-				&kbatchv1.Job{}: {
-					Namespaces: map[string]cache.Config{
-						common.OperatorNamespace(): {}},
-				},
-			},
+			ByObject: cacheByObject(veleroAvailable),
 		},
 	})
 
@@ -327,6 +329,8 @@ func main() {
 
 		// Cluster data retrieved once during init
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
+
+		VeleroAvailable: veleroAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -561,4 +565,28 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 
 	log.Info("Restore successful and saved SeedGenerator CR removed")
 	return nil
+}
+
+func isVeleroAvailable(c client.Client) bool {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := c.Get(context.TODO(), client.ObjectKey{Name: "restores.velero.io"}, crd); err != nil {
+		return false
+	}
+	return true
+}
+
+func cacheByObject(veleroAvailable bool) map[client.Object]cache.ByObject {
+	objs := map[client.Object]cache.ByObject{
+		&kbatchv1.Job{}: {
+			Namespaces: map[string]cache.Config{
+				common.OperatorNamespace(): {}},
+		},
+	}
+	if veleroAvailable {
+		objs[&velerov1.Restore{}] = cache.ByObject{
+			Namespaces: map[string]cache.Config{
+				backuprestore.OadpNs: {}},
+		}
+	}
+	return objs
 }

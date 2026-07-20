@@ -31,7 +31,9 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/imagemgmt"
 	"github.com/openshift-kni/lifecycle-agent/internal/reboot"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	kbatch "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/go-logr/logr"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
@@ -51,7 +53,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
@@ -83,6 +87,9 @@ type ImageBasedUpgradeReconciler struct {
 
 	// Cluster data retrieved once, during init
 	ContainerStorageMountpointTarget string
+
+	// VeleroAvailable indicates whether Velero CRDs are present in the cluster
+	VeleroAvailable bool
 }
 
 func doNotRequeue() ctrl.Result {
@@ -469,8 +476,7 @@ func validateStageTransition(ibu *ibuv1.ImageBasedUpgrade, isAfterPivot bool) bo
 func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorder("ImageBasedUpgrade")
 
-	//nolint:wrapcheck
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&ibuv1.ImageBasedUpgrade{}, builder.WithPredicates(predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
 				// Generation is only updated on spec changes (also on deletion),
@@ -520,7 +526,34 @@ func (r *ImageBasedUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return false
 			},
 		})).
-		Owns(&kbatch.Job{}). // note: job resource watched is restricted further using cache.Options during NewManager
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		Owns(&kbatch.Job{}) // note: job resource watched is restricted further using cache.Options during NewManager
+
+	if r.VeleroAvailable {
+		b = b.Watches(&velerov1.Restore{},
+			handler.EnqueueRequestsFromMapFunc(
+				func(ctx context.Context, obj client.Object) []reconcile.Request {
+					return []reconcile.Request{{
+						NamespacedName: types.NamespacedName{Name: utils.IBUName},
+					}}
+				},
+			),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(e event.CreateEvent) bool { return false },
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					oldRestore, okOld := e.ObjectOld.(*velerov1.Restore)
+					newRestore, okNew := e.ObjectNew.(*velerov1.Restore)
+					if !okOld || !okNew {
+						return false
+					}
+					return oldRestore.Status.Phase != newRestore.Status.Phase
+				},
+				DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+				GenericFunc: func(e event.GenericEvent) bool { return false },
+			}),
+		)
+	}
+
+	//nolint:wrapcheck
+	return b.WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
 }
