@@ -283,7 +283,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 			continue
 		}
 
-		gvr := parseResourceType(resourceType)
+		gvr := h.resolveResourceType(resourceType)
 		list, err := h.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOpts)
 		if err != nil {
 			if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
@@ -306,7 +306,7 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 		return nil, nil
 	}
 
-	gvr := parseResourceType(resourceType)
+	gvr := h.resolveResourceType(resourceType)
 
 	listOpts := metav1.ListOptions{}
 	if spec.LabelSelector != nil {
@@ -379,6 +379,28 @@ func parseResourceType(resourceType string) schema.GroupVersionResource {
 		Version:  "v1",
 		Resource: resource,
 	}
+}
+
+// resolveResourceType resolves a user-provided resource type string to its
+// GVR using the REST mapper. For qualified names like "deployments.apps" or
+// "routes.route.openshift.io" the explicit group is used directly. For bare
+// names like "deployments" the REST mapper discovers the correct API group.
+func (h *BRHandler) resolveResourceType(resourceType string) schema.GroupVersionResource {
+	parsed := parseResourceType(resourceType)
+
+	if parsed.Group != "" {
+		return parsed
+	}
+
+	// Bare resource name — use REST mapper to discover the API group.
+	partialGVR := schema.GroupVersionResource{Resource: parsed.Resource}
+	resolved, err := h.RESTMapper().ResourceFor(partialGVR)
+	if err != nil {
+		h.Log.Info("REST mapper lookup failed for resource, defaulting to core API group",
+			"resource", resourceType, "error", err.Error())
+		return parsed
+	}
+	return resolved
 }
 
 func isResourceNotRegistered(err error) bool {
