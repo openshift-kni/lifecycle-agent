@@ -325,7 +325,6 @@ func main() {
 
 		// Cluster data retrieved once during init
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
-
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -561,4 +560,3 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	log.Info("Restore successful and saved SeedGenerator CR removed")
 	return nil
 }
-
