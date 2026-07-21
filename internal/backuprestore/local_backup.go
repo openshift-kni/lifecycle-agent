@@ -107,7 +107,7 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		return bt, fmt.Errorf("failed to sort backup specs: %w", err)
 	}
 
-	backupDir := filepath.Join(targetDir, LocalBackupPath)
+	backupDir := filepath.Join(hostPath, LocalBackupPath)
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return bt, fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
 	}
