@@ -49,7 +49,7 @@ const (
 	applyLabelAnn = "lca.openshift.io/apply-label"
 	backupLabel   = "lca.openshift.io/backup"
 
-	LocalBackupPath = "/opt/lca-backups"
+	LocalBackupPath = "/var/lib/containers/lca-backups"
 
 	topolvmValue                   = "topolvm.io"
 	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
