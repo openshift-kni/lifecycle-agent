@@ -83,7 +83,6 @@ type ImageBasedUpgradeReconciler struct {
 
 	// Cluster data retrieved once, during init
 	ContainerStorageMountpointTarget string
-
 }
 
 func doNotRequeue() ctrl.Result {
