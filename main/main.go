@@ -55,7 +55,6 @@ import (
 	lsov1 "github.com/openshift/local-storage-operator/api/v1"
 	lvmv1alpha1 "github.com/openshift/lvm-operator/v4/api/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -105,7 +104,6 @@ func init() {
 	utilruntime.Must(ipcv1.AddToScheme(scheme))
 	utilruntime.Must(ocpv1.AddToScheme(scheme))
 	utilruntime.Must(mcv1.AddToScheme(scheme))
-	utilruntime.Must(velerov1.AddToScheme(scheme))
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.Install(scheme))
@@ -177,13 +175,6 @@ func main() {
 		setupLog.Info("NetworkPolicies", "msg", msg)
 	}
 
-	veleroAvailable := isVeleroAvailable(k8sClient)
-	if veleroAvailable {
-		setupLog.Info("Velero CRDs detected, enabling Restore watch")
-	} else {
-		setupLog.Info("Velero CRDs not found, Restore watch disabled")
-	}
-
 	// Fetch the TLS profile from the APIServer resource.
 	tlsSecurityProfileSpec, err := utiltls.FetchAPIServerTLSProfile(context.Background(), k8sClient)
 	if err != nil {
@@ -218,7 +209,12 @@ func main() {
 			TLSOpts:        tlsOpts,
 		},
 		Cache: cache.Options{ // https://github.com/kubernetes-sigs/controller-runtime/blob/main/designs/cache_options.md
-			ByObject: cacheByObject(veleroAvailable),
+			ByObject: map[client.Object]cache.ByObject{
+				&kbatchv1.Job{}: {
+					Namespaces: map[string]cache.Config{
+						common.OperatorNamespace(): {}},
+				},
+			},
 		},
 	})
 
@@ -330,7 +326,6 @@ func main() {
 		// Cluster data retrieved once during init
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
 
-		VeleroAvailable: veleroAvailable,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImageBasedUpgrade")
 		os.Exit(1)
@@ -567,26 +562,3 @@ func initSeedGen(ctx context.Context, c client.Client, log *logr.Logger) error {
 	return nil
 }
 
-func isVeleroAvailable(c client.Client) bool {
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	if err := c.Get(context.TODO(), client.ObjectKey{Name: "restores.velero.io"}, crd); err != nil {
-		return false
-	}
-	return true
-}
-
-func cacheByObject(veleroAvailable bool) map[client.Object]cache.ByObject {
-	objs := map[client.Object]cache.ByObject{
-		&kbatchv1.Job{}: {
-			Namespaces: map[string]cache.Config{
-				common.OperatorNamespace(): {}},
-		},
-	}
-	if veleroAvailable {
-		objs[&velerov1.Restore{}] = cache.ByObject{
-			Namespaces: map[string]cache.Config{
-				backuprestore.OadpNs: {}},
-		}
-	}
-	return objs
-}
