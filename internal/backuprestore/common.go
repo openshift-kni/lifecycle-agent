@@ -105,6 +105,16 @@ type BackupSpec struct {
 	LabelSelector                    *metav1.LabelSelector
 }
 
+// RestoreSpec holds the parsed fields from a Velero Restore CR spec in a configmap
+type RestoreSpec struct {
+	Name                   string
+	Namespace              string
+	BackupName             string
+	ApplyWave              string
+	RestorePVs             bool
+	RestoreStatusResources []string
+}
+
 type BackupTracker struct {
 	SucceededBackups []string
 	FailedBackups    []string
@@ -239,6 +249,88 @@ func ExtractBackupSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]BackupSp
 		}
 	}
 	return specs, nil
+}
+
+// ExtractRestoreSpecsFromConfigmaps parses Velero Restore CR specs from configmaps
+func ExtractRestoreSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]RestoreSpec, error) {
+	var specs []RestoreSpec
+	for _, cm := range configmaps {
+		for _, value := range cm.Data {
+			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
+			for {
+				resource := unstructured.Unstructured{}
+				if err := decoder.Decode(&resource); err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					return nil, fmt.Errorf("failed to decode configmap data: %w", err)
+				}
+
+				if resource.GroupVersionKind() != common.RestoreGvk {
+					continue
+				}
+
+				spec := restoreSpecFromUnstructured(&resource)
+				specs = append(specs, spec)
+			}
+		}
+	}
+	return specs, nil
+}
+
+// ValidateBackupRestoreMapping validates that each Backup CR is referenced by at most one Restore CR.
+func ValidateBackupRestoreMapping(restoreSpecs []RestoreSpec) error {
+	seen := make(map[string]string)
+	for _, rs := range restoreSpecs {
+		if rs.BackupName == "" {
+			continue
+		}
+		if existing, ok := seen[rs.BackupName]; ok {
+			return fmt.Errorf("backup %q is referenced by multiple Restore CRs: %q and %q", rs.BackupName, existing, rs.Name)
+		}
+		seen[rs.BackupName] = rs.Name
+	}
+	return nil
+}
+
+// FindRestoreForBackup returns the RestoreSpec matching a backup name, or nil if none
+func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *RestoreSpec {
+	for i := range restoreSpecs {
+		if restoreSpecs[i].BackupName == backupName {
+			return &restoreSpecs[i]
+		}
+	}
+	return nil
+}
+
+func restoreSpecFromUnstructured(u *unstructured.Unstructured) RestoreSpec {
+	spec := RestoreSpec{
+		Name:      u.GetName(),
+		Namespace: u.GetNamespace(),
+	}
+
+	if ann := u.GetAnnotations(); ann != nil {
+		spec.ApplyWave = ann[common.ApplyWaveAnn]
+	}
+
+	specMap, ok := u.Object["spec"].(map[string]interface{})
+	if !ok {
+		return spec
+	}
+
+	if backupName, ok := specMap["backupName"].(string); ok {
+		spec.BackupName = backupName
+	}
+
+	if restorePVs, ok := specMap["restorePVs"].(bool); ok {
+		spec.RestorePVs = restorePVs
+	}
+
+	if restoreStatus, ok := specMap["restoreStatus"].(map[string]interface{}); ok {
+		spec.RestoreStatusResources = getStringSlice(restoreStatus, "includedResources")
+	}
+
+	return spec
 }
 
 func backupSpecFromUnstructured(u *unstructured.Unstructured) BackupSpec {
