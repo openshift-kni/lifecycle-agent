@@ -2,7 +2,15 @@ package utils
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -311,4 +319,82 @@ func TestGetMachineNetworks_InvalidYAML(t *testing.T) {
 	nets, err := GetMachineNetworks(ctx, cl)
 	assert.Error(t, err)
 	assert.Nil(t, nets)
+}
+
+func mustGenerateCertPEM(t *testing.T, cn string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	assert.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+}
+
+func mustGenerateKeyPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.NoError(t, err)
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	assert.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func TestGetCommonNameFromCertificate(t *testing.T) {
+	tests := []struct {
+		name        string
+		certPEM     []byte
+		expectedCN  string
+		expectedErr string
+	}{
+		{
+			name:       "valid certificate with known CN",
+			certPEM:    mustGenerateCertPEM(t, "ingress-operator@1234567890"),
+			expectedCN: "ingress-operator@1234567890",
+		},
+		{
+			name:       "certificate with empty CN",
+			certPEM:    mustGenerateCertPEM(t, ""),
+			expectedCN: "",
+		},
+		{
+			name:        "malformed PEM data",
+			certPEM:     []byte("not-a-pem-block"),
+			expectedErr: "failed to decode PEM block",
+		},
+		{
+			name:        "private key PEM instead of certificate",
+			certPEM:     mustGenerateKeyPEM(t),
+			expectedErr: "failed to parse certificate",
+		},
+		{
+			name: "uses first PEM block when multiple are present",
+			certPEM: append(
+				mustGenerateCertPEM(t, "first-cn"),
+				mustGenerateCertPEM(t, "second-cn")...,
+			),
+			expectedCN: "first-cn",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cn, err := getCommonNameFromCertificate(tt.certPEM)
+			if tt.expectedErr != "" {
+				assert.ErrorContains(t, err, tt.expectedErr)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedCN, cn)
+			}
+		})
+	}
 }
