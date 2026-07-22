@@ -27,6 +27,8 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -599,14 +601,109 @@ func (o *ops) IsNotExist(err error) bool {
 	return os.IsNotExist(err)
 }
 
+// parseSizeToBytes converts size strings like "40G", "1024M", "2048K" to bytes
+func parseSizeToBytes(size string) (int64, error) {
+	re := regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*([KMGT]?)B?$`)
+	matches := re.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(size)))
+	if len(matches) != 3 {
+		return 0, fmt.Errorf("invalid size format: %s", size)
+	}
+
+	value, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid numeric value: %s", matches[1])
+	}
+
+	multiplier := int64(1)
+	switch matches[2] {
+	case "K":
+		multiplier = 1024
+	case "M":
+		multiplier = 1024 * 1024
+	case "G":
+		multiplier = 1024 * 1024 * 1024
+	case "T":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	}
+
+	return int64(value * float64(multiplier)), nil
+}
+
+// calculateStartFromNegative calculates the start sector for a partition when given a negative size
+// For example, "-40G" means create a 40GB partition at the end of the disk
+func (o *ops) calculateStartFromNegative(installationDisk, negativeStart string) (string, error) {
+	// Remove the negative sign to get the partition size
+	partitionSizeStr := strings.TrimPrefix(negativeStart, "-")
+
+	// Parse the partition size to bytes
+	partitionSizeBytes, err := parseSizeToBytes(partitionSizeStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse partition size %s: %w", partitionSizeStr, err)
+	}
+
+	// Get the disk size in bytes using blockdev
+	diskSizeBytesStr, err := o.RunBashInHostNamespace("blockdev", "--getsize64", installationDisk)
+	if err != nil {
+		return "", fmt.Errorf("failed to get disk size: %w", err)
+	}
+
+	diskSizeBytes, err := strconv.ParseInt(strings.TrimSpace(diskSizeBytesStr), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse disk size: %w", err)
+	}
+
+	// Get the sector size (usually 512 bytes)
+	sectorSizeStr, err := o.RunBashInHostNamespace("blockdev", "--getss", installationDisk)
+	if err != nil {
+		return "", fmt.Errorf("failed to get sector size: %w", err)
+	}
+
+	sectorSize, err := strconv.ParseInt(strings.TrimSpace(sectorSizeStr), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse sector size: %w", err)
+	}
+
+	// Validate that sector size is positive to avoid division by zero
+	if sectorSize <= 0 {
+		return "", fmt.Errorf("invalid sector size %d: must be greater than zero", sectorSize)
+	}
+
+	// Calculate start position: (disk_size - partition_size) / sector_size
+	startSector := (diskSizeBytes - partitionSizeBytes) / sectorSize
+
+	// Make sure we don't go negative
+	if startSector < 0 {
+		return "", fmt.Errorf("partition size %s is larger than disk size", partitionSizeStr)
+	}
+
+	// Align start sector down to the nearest 1 MiB boundary for optimal performance
+	// 1 MiB = 1048576 bytes
+	sectorsPerMiB := int64(1048576) / sectorSize
+	alignedStartSector := (startSector / sectorsPerMiB) * sectorsPerMiB
+
+	return strconv.FormatInt(alignedStartSector, 10), nil
+}
+
 func (o *ops) CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error {
 	o.log.Info("Creating extra partition")
+
+	// Handle negative start values which mean "create partition of this size at the end of disk"
+	// sfdisk doesn't support negative start values like sgdisk did, so we need to calculate the actual start position
+	actualStart := extraPartitionStart
+	if strings.HasPrefix(extraPartitionStart, "-") {
+		calculatedStart, err := o.calculateStartFromNegative(installationDisk, extraPartitionStart)
+		if err != nil {
+			return fmt.Errorf("failed to calculate start position for negative start %s: %w", extraPartitionStart, err)
+		}
+		actualStart = calculatedStart
+		o.log.Infof("Converted negative start %s to calculated start sector %s", extraPartitionStart, actualStart)
+	}
+
 	// Use sfdisk to create a new partition with the specified start and label
 	// The format is: start,size,type,name
-	// extraPartitionStart format is like "-40G" which means 40GB from the end
 	// Note: We use printf with %q to safely quote the variables to prevent shell injection
 	if _, err := o.RunBashInHostNamespace(
-		"printf", fmt.Sprintf("'start=%%s,name=%%s\\n' %q %q", extraPartitionStart, extraPartitionLabel),
+		"printf", fmt.Sprintf("'start=%%s,name=%%s\\n' %q %q", actualStart, extraPartitionLabel),
 		"|", "sfdisk", "--append", installationDisk); err != nil {
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
