@@ -51,6 +51,15 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
+	restoreSpecs, err := ExtractRestoreSpecsFromConfigmaps(configmaps)
+	if err != nil {
+		return NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
+		return NewBRFailedValidationError("Backup", err.Error())
+	}
+
 	if len(backupSpecs) == 0 {
 		h.Log.Info("No backup specs found in configmaps")
 		return nil
@@ -94,6 +103,15 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 
 	backupSpecs, err := ExtractBackupSpecsFromConfigmaps(configmaps)
 	if err != nil {
+		return bt, NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	restoreSpecs, err := ExtractRestoreSpecsFromConfigmaps(configmaps)
+	if err != nil {
+		return bt, NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 
