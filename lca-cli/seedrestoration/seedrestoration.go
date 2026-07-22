@@ -17,6 +17,7 @@ limitations under the License.
 package seedrestoration
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func NewSeedRestoration(log *logrus.Logger, ops ops.Ops, backupDir,
 
 // RestoreSeedCluster comprises the lca-cli workflow for restoration operations
 // after creating a seed image out of an SNO cluster.
-func (s *SeedRestoration) RestoreSeedCluster() error {
+func (s *SeedRestoration) RestoreSeedCluster(ctx context.Context) error {
 	s.log.Info("Cleaning up seed cluster")
 
 	// Collect all restoration errors to only fail fatally at the end,
@@ -70,13 +71,13 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 	var errors []error
 
 	s.log.Info("Removing seed image")
-	if _, err := s.ops.RunInHostNamespace("podman", []string{"rmi", s.containerRegistry}...); err != nil {
+	if _, err := s.ops.RunInHostNamespace(ctx, "podman", []string{"rmi", s.containerRegistry}...); err != nil {
 		s.log.Errorf("failed to remove seed image: %v", err)
 		errors = append(errors, err)
 	}
 
 	s.log.Info("Cleaning up systemd service units")
-	if err := s.cleanupServiceUnits(); err != nil {
+	if err := s.cleanupServiceUnits(ctx); err != nil {
 		s.log.Errorf("Error cleaning up systemd service files: %v", err)
 		errors = append(errors, err)
 	}
@@ -87,7 +88,7 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 		s.log.Info("Restoring crypto via recert tool")
 		recertFilePath := filepath.Join(common.BackupChecksDir, "recert.done")
 		if _, err := os.Stat(recertFilePath); err == nil && !os.IsNotExist(err) {
-			if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
+			if err := s.ops.RestoreOriginalSeedCrypto(ctx, s.recertContainerImage, s.authFile); err != nil {
 				s.log.Errorf("Error restoring certificates: %v", err)
 				errors = append(errors, err)
 			}
@@ -103,7 +104,7 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 	}
 
 	s.log.Info("Restoring cluster services (i.e. kubelet.service unit)")
-	if _, err := s.ops.SystemctlAction("enable", "kubelet.service", "--now"); err != nil {
+	if _, err := s.ops.SystemctlAction(ctx, "enable", "kubelet.service", "--now"); err != nil {
 		s.log.Errorf("Error enabling kubelet.service unit: %v", err)
 		errors = append(errors, err)
 	}
@@ -115,7 +116,7 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 	return nil
 }
 
-func (s *SeedRestoration) cleanupServiceUnits() error {
+func (s *SeedRestoration) cleanupServiceUnits(ctx context.Context) error {
 	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
@@ -124,7 +125,7 @@ func (s *SeedRestoration) cleanupServiceUnits() error {
 		serviceName := info.Name()
 
 		s.log.Infof("Disabling service unit %s", serviceName)
-		if _, err := s.ops.SystemctlAction("disable", serviceName, "--now"); err != nil {
+		if _, err := s.ops.SystemctlAction(ctx, "disable", serviceName, "--now"); err != nil {
 			s.log.Errorf("Error disabling %s unit: %v", serviceName, err)
 		}
 

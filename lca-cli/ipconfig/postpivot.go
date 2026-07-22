@@ -67,16 +67,16 @@ func (p *IPConfigPostPivotHandler) Run(ctx context.Context) error {
 	p.log.Info("IP config post-pivot started")
 
 	p.log.Info("Applying network configuration")
-	if err := utils.RunOnce("apply-network-configuration", p.workspaceDir, p.log, p.applyNetworkConfiguration); err != nil {
+	if err := utils.RunOnce("apply-network-configuration", p.workspaceDir, p.log, p.applyNetworkConfiguration, ctx); err != nil {
 		return fmt.Errorf("failed to run once apply-network-configuration: %w", err)
 	}
 
 	p.log.Info("Running recert")
-	if err := utils.RunOnce("run-recert", p.workspaceDir, p.log, p.runRecert); err != nil {
+	if err := utils.RunOnce("run-recert", p.workspaceDir, p.log, p.runRecert, ctx); err != nil {
 		return fmt.Errorf("failed to run once run-recert: %w", err)
 	}
 
-	if err := p.enableAndStartKubelet(); err != nil {
+	if err := p.enableAndStartKubelet(ctx); err != nil {
 		return fmt.Errorf("failed to enable and start kubelet: %w", err)
 	}
 
@@ -92,7 +92,7 @@ func (p *IPConfigPostPivotHandler) Run(ctx context.Context) error {
 
 	utils.WaitForApi(ctx, client, p.log)
 
-	if _, err = p.ops.SystemctlAction("disable", "ip-configuration.service"); err != nil {
+	if _, err = p.ops.SystemctlAction(ctx, "disable", "ip-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable ip-configuration.service, err: %w", err)
 	}
 
@@ -103,9 +103,9 @@ func (p *IPConfigPostPivotHandler) Run(ctx context.Context) error {
 
 // runRecert writes a recert configuration and executes the full recert flow
 // to regenerate certificates and manifests for the new IP configuration.
-func (p *IPConfigPostPivotHandler) runRecert() error {
+func (p *IPConfigPostPivotHandler) runRecert(ctx context.Context) error {
 	pullSecretPath := filepath.Join(p.workspaceDir, filepath.Base(common.IPConfigPullSecretFile))
-	if err := p.ops.RecertFullFlow(
+	if err := p.ops.RecertFullFlow(ctx,
 		p.recertImage,
 		pullSecretPath,
 		filepath.Join(p.workspaceDir, recert.RecertConfigFile),
@@ -119,17 +119,17 @@ func (p *IPConfigPostPivotHandler) runRecert() error {
 	return nil
 }
 
-func (p *IPConfigPostPivotHandler) applyNetworkConfiguration() error {
+func (p *IPConfigPostPivotHandler) applyNetworkConfiguration(ctx context.Context) error {
 	nmstateConfigFile := filepath.Join(p.workspaceDir, common.NmstateConfigFileName)
-	if _, err := p.ops.RunInHostNamespace("nmstatectl", "apply", nmstateConfigFile); err != nil {
+	if _, err := p.ops.RunInHostNamespace(ctx, "nmstatectl", "apply", nmstateConfigFile); err != nil {
 		return fmt.Errorf("failed to apply network configuration: %w", err)
 	}
 
 	return nil
 }
 
-func (p *IPConfigPostPivotHandler) enableAndStartKubelet() error {
-	if _, err := p.ops.SystemctlAction("enable", "kubelet", "--now"); err != nil {
+func (p *IPConfigPostPivotHandler) enableAndStartKubelet(ctx context.Context) error {
+	if _, err := p.ops.SystemctlAction(ctx, "enable", "kubelet", "--now"); err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}
 	return nil

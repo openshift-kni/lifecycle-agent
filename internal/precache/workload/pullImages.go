@@ -17,6 +17,7 @@
 package workload
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -46,28 +47,28 @@ var (
 )
 
 // CheckPodman verifies that podman is running by checking the version of podman
-func CheckPodman() bool {
-	if _, err := Executor.ExecuteWithLiveLogger("podman", []string{"version"}...); err != nil {
+func CheckPodman(ctx context.Context) bool {
+	if _, err := Executor.ExecuteWithLiveLogger(ctx, "podman", []string{"version"}...); err != nil {
 		return false
 	}
 	return true
 }
 
 // podmanImgPull pulls the specified image via podman CLI
-func podmanImgPull(image, authFile string) error {
+func podmanImgPull(ctx context.Context, image, authFile string) error {
 	args := []string{"pull", image}
 	if authFile != "" {
 		args = append(args, []string{"--authfile", authFile}...)
 	}
-	if _, err := Executor.Execute("podman", args...); err != nil {
+	if _, err := Executor.Execute(ctx, "podman", args...); err != nil {
 		return fmt.Errorf("failed podman pull with args %s: %w", args, err)
 	}
 	return nil
 }
 
-func podmanImgExists(image string) bool {
+func podmanImgExists(ctx context.Context, image string) bool {
 	args := []string{"image", "exists", image}
-	_, err := Executor.Execute("podman", args...)
+	_, err := Executor.Execute(ctx, "podman", args...)
 	if err != nil {
 		log.Errorf("failed podman image check with args %s: %v", args, err)
 	}
@@ -75,11 +76,11 @@ func podmanImgExists(image string) bool {
 }
 
 // pullImage attempts to pull an image via podman CLI
-func pullImage(image, authFile string, progress *precache.Progress) error {
+func pullImage(ctx context.Context, image, authFile string, progress *precache.Progress) error {
 
 	var err error
 	for i := 0; i < MaxRetries; i++ {
-		err = podmanImgPull(image, authFile)
+		err = podmanImgPull(ctx, image, authFile)
 		if err == nil {
 			log.Infof("Successfully pulled image: %s", image)
 			break
@@ -119,7 +120,7 @@ func GetAuthFile() (string, error) {
 }
 
 // PullImages pulls a list of images using podman
-func PullImages(precacheSpec []string, authFile string) *precache.Progress {
+func PullImages(ctx context.Context, precacheSpec []string, authFile string) *precache.Progress {
 
 	// Initialize progress tracking
 	progress := &precache.Progress{
@@ -148,7 +149,7 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 				<-threads
 				wg.Done()
 			}()
-			err := pullImage(image, authFile, progress)
+			err := pullImage(ctx, image, authFile, progress)
 
 			if err != nil {
 				log.Errorf("Failed to pull image: %s, error: %v", image, err)
@@ -170,13 +171,13 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 	return progress
 }
 
-func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
+func ValidatePrecache(ctx context.Context, status *precache.Progress, bestEffort bool) error {
 	// Check pre-caching execution status
 	if status.Failed != 0 {
 		var imagesFound []string
 		log.Info("Failed to pre-cache the following images:")
 		for _, image := range status.FailedPullList {
-			if podmanImgExists(image) {
+			if podmanImgExists(ctx, image) {
 				log.Infof("%s, but found locally after downloading other images", image)
 				imagesFound = append(imagesFound, image)
 			} else {
@@ -196,12 +197,12 @@ func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 	return nil
 }
 
-func Precache(precacheSpec []string, authFile string, bestEffort bool) error {
+func Precache(ctx context.Context, precacheSpec []string, authFile string, bestEffort bool) error {
 	// Pre-cache images
-	status := PullImages(precacheSpec, authFile)
+	status := PullImages(ctx, precacheSpec, authFile)
 	log.Info("Completed executing pre-caching")
 
-	if err := ValidatePrecache(status, bestEffort); err != nil {
+	if err := ValidatePrecache(ctx, status, bestEffort); err != nil {
 		return fmt.Errorf("failed to pre-cache one or more images")
 	}
 

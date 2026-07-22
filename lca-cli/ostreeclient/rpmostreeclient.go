@@ -19,6 +19,7 @@ limitations under the License.
 package rpmostreeclient
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -58,16 +59,16 @@ type Deployment struct {
 
 //go:generate mockgen -source=rpmostreeclient.go -package=rpmostreeclient -destination=mock_rpmostreeclient.go
 type IClient interface {
-	newCmd(args ...string) ([]byte, error)
-	RpmOstreeVersion() (*VersionData, error)
-	QueryStatus() (*Status, error)
-	IsStaterootBooted(stateroot string) (bool, error)
-	GetCurrentStaterootName() (string, error)
-	GetUnbootedStaterootName() (string, error)
-	GetDeploymentID(osname string) (string, error)
-	GetDeploymentIndex(osname string) (int, error)
-	GetUnbootedDeploymentIndex() (int, error)
-	RpmOstreeCleanup() error
+	newCmd(ctx context.Context, args ...string) ([]byte, error)
+	RpmOstreeVersion(ctx context.Context) (*VersionData, error)
+	QueryStatus(ctx context.Context) (*Status, error)
+	IsStaterootBooted(ctx context.Context, stateroot string) (bool, error)
+	GetCurrentStaterootName(ctx context.Context) (string, error)
+	GetUnbootedStaterootName(ctx context.Context) (string, error)
+	GetDeploymentID(ctx context.Context, osname string) (string, error)
+	GetDeploymentIndex(ctx context.Context, osname string) (int, error)
+	GetUnbootedDeploymentIndex(ctx context.Context) (int, error)
+	RpmOstreeCleanup(ctx context.Context) error
 }
 
 // Client is a handle for interacting with a rpm-ostree based system.
@@ -86,8 +87,8 @@ func NewClient(id string, executor ops.Execute) *Client {
 	}
 }
 
-func (c *Client) newCmd(args ...string) ([]byte, error) {
-	rawOutput, err := c.executor.Execute("rpm-ostree", args...)
+func (c *Client) newCmd(ctx context.Context, args ...string) ([]byte, error) {
+	rawOutput, err := c.executor.Execute(ctx, "rpm-ostree", args...)
 	return []byte(rawOutput), err
 }
 
@@ -138,8 +139,8 @@ func getDeploymentIndex(deployments []Deployment, stateroot string) (int, error)
 }
 
 // RpmOstreeVersion returns the running rpm-ostree version number
-func (c *Client) RpmOstreeVersion() (*VersionData, error) {
-	buf, err := c.newCmd("--version")
+func (c *Client) RpmOstreeVersion(ctx context.Context) (*VersionData, error) {
+	buf, err := c.newCmd(ctx, "--version")
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +155,9 @@ func (c *Client) RpmOstreeVersion() (*VersionData, error) {
 }
 
 // QueryStatus loads the current system state.
-func (c *Client) QueryStatus() (*Status, error) {
+func (c *Client) QueryStatus(ctx context.Context) (*Status, error) {
 	var q Status
-	buf, err := c.newCmd("status", "--json")
+	buf, err := c.newCmd(ctx, "status", "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +169,8 @@ func (c *Client) QueryStatus() (*Status, error) {
 	return &q, nil
 }
 
-func (c *Client) GetDeploymentID(stateroot string) (string, error) {
-	status, err := c.QueryStatus()
+func (c *Client) GetDeploymentID(ctx context.Context, stateroot string) (string, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -182,8 +183,8 @@ func (c *Client) GetDeploymentID(stateroot string) (string, error) {
 	return "", fmt.Errorf("failed to find deployment with osname %s", stateroot)
 }
 
-func (c *Client) GetDeploymentIndex(stateroot string) (int, error) {
-	status, err := c.QueryStatus()
+func (c *Client) GetDeploymentIndex(ctx context.Context, stateroot string) (int, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return -1, err
 	}
@@ -191,8 +192,8 @@ func (c *Client) GetDeploymentIndex(stateroot string) (int, error) {
 	return getDeploymentIndex(status.Deployments, stateroot)
 }
 
-func (c *Client) GetUnbootedDeploymentIndex() (int, error) {
-	status, err := c.QueryStatus()
+func (c *Client) GetUnbootedDeploymentIndex(ctx context.Context) (int, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return -1, err
 	}
@@ -208,8 +209,8 @@ func (c *Client) GetUnbootedDeploymentIndex() (int, error) {
 }
 
 // IsStaterootBooted returns whether the specified stateroot is booted
-func (c *Client) IsStaterootBooted(stateroot string) (bool, error) {
-	status, err := c.QueryStatus()
+func (c *Client) IsStaterootBooted(ctx context.Context, stateroot string) (bool, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -223,8 +224,8 @@ func (c *Client) IsStaterootBooted(stateroot string) (bool, error) {
 }
 
 // GetCurrentStaterootName returns current stateroot name (a.k.a OSName)
-func (c *Client) GetCurrentStaterootName() (string, error) {
-	status, err := c.QueryStatus()
+func (c *Client) GetCurrentStaterootName(ctx context.Context) (string, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -233,8 +234,8 @@ func (c *Client) GetCurrentStaterootName() (string, error) {
 }
 
 // GetUnbootedStaterootName returns unbooted stateroot name (a.k.a OSName)
-func (c *Client) GetUnbootedStaterootName() (string, error) {
-	status, err := c.QueryStatus()
+func (c *Client) GetUnbootedStaterootName(ctx context.Context) (string, error) {
+	status, err := c.QueryStatus(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -243,7 +244,7 @@ func (c *Client) GetUnbootedStaterootName() (string, error) {
 	return getUnbootedStaterootName(status.Deployments)
 }
 
-func (c *Client) RpmOstreeCleanup() error {
-	_, err := c.newCmd("cleanup", "-b")
+func (c *Client) RpmOstreeCleanup(ctx context.Context) error {
+	_, err := c.newCmd(ctx, "cleanup", "-b")
 	return err
 }
