@@ -7,7 +7,6 @@ require (
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/go-logr/logr v1.4.3
-	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.6.0
 	github.com/openshift/api v0.0.0-20260326111139-30c2ef7a272e
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
@@ -70,6 +69,7 @@ require (
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.28.1 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
@@ -117,7 +117,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
 	github.com/ajeddeloh/go-json v0.0.0-20200220154158-5ae607161559 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver/v4 v4.0.0
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clarketm/json v1.17.1 // indirect
 	github.com/coreos/fcct v0.5.0 // indirect
