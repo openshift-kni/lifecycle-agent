@@ -8,6 +8,9 @@ FROM ${BUILDER_IMAGE} as builder
 
 # Default Konflux to false
 ARG KONFLUX="false"
+ARG GIT_COMMIT="unknown"
+ARG VERSION="unknown"
+ARG BUILD_TIME="unknown"
 
 # Explicitly set the working directory
 WORKDIR /opt/app-root
@@ -26,17 +29,19 @@ COPY lca-cli lca-cli
 COPY internal internal
 COPY main main
 COPY utils utils
+COPY version version
 
 # For Konflux, compile with FIPS enabled
 # Otherwise compile normally
-RUN if [[ "${KONFLUX}" == "true" ]]; then \
+RUN LDFLAGS="-X github.com/openshift-kni/lifecycle-agent/version.Version=${VERSION} -X github.com/openshift-kni/lifecycle-agent/version.GitCommit=${GIT_COMMIT} -X github.com/openshift-kni/lifecycle-agent/version.BuildTime=${BUILD_TIME}" && \
+    if [[ "${KONFLUX}" == "true" ]]; then \
         echo "Compiling with fips" && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -o build/manager main/main.go && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -a -o build/lca-cli main/lca-cli/main.go; \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -ldflags "${LDFLAGS}" -o build/manager main/main.go && \
+        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -ldflags "${LDFLAGS}" -a -o build/lca-cli main/lca-cli/main.go; \
     else \
         echo "Compiling without fips" && \
-        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -a -o build/manager main/main.go && \
-        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -a -o build/lca-cli main/lca-cli/main.go; \
+        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -ldflags "${LDFLAGS}" -a -o build/manager main/main.go && \
+        CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -ldflags "${LDFLAGS}" -a -o build/lca-cli main/lca-cli/main.go; \
     fi
 
 #####################################################################################################
