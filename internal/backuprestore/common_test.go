@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -252,5 +253,93 @@ func TestFindRestoreForBackup(t *testing.T) {
 	t.Run("returns nil for no match", func(t *testing.T) {
 		r := FindRestoreForBackup("b3", restores)
 		assert.Nil(t, r)
+	})
+}
+
+func TestResolveWave(t *testing.T) {
+	t.Run("restore wave takes priority", func(t *testing.T) {
+		backup := BackupSpec{Name: "b1", ApplyWave: "5"}
+		restore := &RestoreSpec{Name: "r1", ApplyWave: "2"}
+		assert.Equal(t, 2, resolveWave(backup, restore))
+	})
+
+	t.Run("falls back to backup wave", func(t *testing.T) {
+		backup := BackupSpec{Name: "b1", ApplyWave: "3"}
+		assert.Equal(t, 3, resolveWave(backup, nil))
+	})
+
+	t.Run("falls back to backup wave when restore has no wave", func(t *testing.T) {
+		backup := BackupSpec{Name: "b1", ApplyWave: "7"}
+		restore := &RestoreSpec{Name: "r1"}
+		assert.Equal(t, 7, resolveWave(backup, restore))
+	})
+
+	t.Run("defaults to 999", func(t *testing.T) {
+		backup := BackupSpec{Name: "b1"}
+		assert.Equal(t, 999, resolveWave(backup, nil))
+	})
+}
+
+func TestParseWavePrefix(t *testing.T) {
+	t.Run("parses wave prefix", func(t *testing.T) {
+		wave, name := parseWavePrefix("001_acm-klusterlet")
+		assert.Equal(t, 1, wave)
+		assert.Equal(t, "acm-klusterlet", name)
+	})
+
+	t.Run("parses three-digit wave", func(t *testing.T) {
+		wave, name := parseWavePrefix("999_test-app")
+		assert.Equal(t, 999, wave)
+		assert.Equal(t, "test-app", name)
+	})
+
+	t.Run("no prefix defaults to 999", func(t *testing.T) {
+		wave, name := parseWavePrefix("my-backup")
+		assert.Equal(t, 999, wave)
+		assert.Equal(t, "my-backup", name)
+	})
+}
+
+func TestResolveStatusResources(t *testing.T) {
+	t.Run("nil restore returns nil", func(t *testing.T) {
+		assert.Nil(t, resolveStatusResources(nil))
+	})
+
+	t.Run("empty restore resources returns nil", func(t *testing.T) {
+		restore := &RestoreSpec{Name: "r1"}
+		assert.Nil(t, resolveStatusResources(restore))
+	})
+
+	t.Run("returns lowercased resource set", func(t *testing.T) {
+		restore := &RestoreSpec{
+			Name:                   "r1",
+			RestoreStatusResources: []string{"LogicalVolumes", "deployments"},
+		}
+		result := resolveStatusResources(restore)
+		assert.True(t, result["logicalvolumes"])
+		assert.True(t, result["deployments"])
+		assert.False(t, result["services"])
+	})
+}
+
+func TestShouldPreserveStatus(t *testing.T) {
+	t.Run("nil map returns false", func(t *testing.T) {
+		resource := &unstructured.Unstructured{}
+		resource.SetKind("Deployment")
+		assert.False(t, shouldPreserveStatus(resource, nil))
+	})
+
+	t.Run("matching kind returns true", func(t *testing.T) {
+		resource := &unstructured.Unstructured{}
+		resource.SetKind("Deployment")
+		statusResources := map[string]bool{"deployments": true}
+		assert.True(t, shouldPreserveStatus(resource, statusResources))
+	})
+
+	t.Run("non-matching kind returns false", func(t *testing.T) {
+		resource := &unstructured.Unstructured{}
+		resource.SetKind("Service")
+		statusResources := map[string]bool{"deployments": true}
+		assert.False(t, shouldPreserveStatus(resource, statusResources))
 	})
 }
