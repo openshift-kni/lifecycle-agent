@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,46 +76,92 @@ func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
 			fmt.Sprintf("backup checksum validation failed: %s", err.Error()))
 	}
 
-	resources, err := loadBackupResources(backupPath, validatedFiles, h.Log)
+	waveGroups, err := loadBackupResourcesByWave(backupPath, validatedFiles, h.Log)
 	if err != nil {
 		return rt, NewBRFailedError("Restore",
 			fmt.Sprintf("failed to load backup resources: %s", err.Error()))
 	}
 
-	if len(resources) == 0 {
+	if len(waveGroups) == 0 {
 		h.Log.Info("No resources to restore")
 		return rt, nil
 	}
 
-	sortResourcesByWave(resources)
+	for _, wg := range waveGroups {
+		h.Log.Info("Processing restore wave group", "wave", wg.wave, "resourceCount", len(wg.resources))
 
-	for _, resource := range resources {
-		name := resource.GetName()
-		namespace := resource.GetNamespace()
-		kind := resource.GetKind()
+		sortResourcesByWave(wg.resources)
 
-		if shouldSkipRestore(resource) {
-			h.Log.Info("Skipping auto-generated resource during restore",
-				"kind", kind, "name", name, "namespace", namespace)
-			continue
-		}
-		prepareResourceForRestore(resource)
+		for _, resource := range wg.resources {
+			name := resource.GetName()
+			namespace := resource.GetNamespace()
+			kind := resource.GetKind()
 
-		err := h.applyResource(ctx, resource)
-		if err != nil {
-			rt.FailedRestores = append(rt.FailedRestores,
+			if shouldSkipRestore(resource) {
+				h.Log.Info("Skipping auto-generated resource during restore",
+					"kind", kind, "name", name, "namespace", namespace)
+				continue
+			}
+
+			savedStatus, hasStatus := resource.Object["status"]
+			prepareResourceForRestore(resource)
+
+			unstructured.RemoveNestedField(resource.Object, "status")
+
+			err := h.applyResource(ctx, resource)
+			if err != nil {
+				rt.FailedRestores = append(rt.FailedRestores,
+					fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+				return rt, NewBRFailedError("Restore",
+					fmt.Sprintf("failed to restore %s %s/%s: %s", kind, namespace, name, err.Error()))
+			}
+
+			if hasStatus && savedStatus != nil {
+				if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
+					h.Log.Info("Failed to restore status subresource, continuing",
+						"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
+				}
+			}
+
+			rt.SucceededRestores = append(rt.SucceededRestores,
 				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
-			return rt, NewBRFailedError("Restore",
-				fmt.Sprintf("failed to restore %s %s/%s: %s", kind, namespace, name, err.Error()))
 		}
-
-		rt.SucceededRestores = append(rt.SucceededRestores,
-			fmt.Sprintf("%s/%s/%s", kind, namespace, name))
 	}
 
 	h.Log.Info("All resources restored successfully",
 		"restoredCount", len(rt.SucceededRestores))
 	return rt, nil
+}
+
+func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstructured.Unstructured, status interface{}) error {
+	gvk := resource.GroupVersionKind()
+	gvr := h.resolveGVR(gvk)
+
+	name := resource.GetName()
+	namespace := resource.GetNamespace()
+
+	var existing *unstructured.Unstructured
+	var err error
+	if namespace != "" {
+		existing, err = h.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	} else {
+		existing, err = h.DynamicClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get resource for status update: %w", err)
+	}
+
+	existing.Object["status"] = status
+
+	if namespace != "" {
+		_, err = h.DynamicClient.Resource(gvr).Namespace(namespace).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
+	} else {
+		_, err = h.DynamicClient.Resource(gvr).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to update status subresource: %w", err)
+	}
+	return nil
 }
 
 func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Unstructured) error {
@@ -269,23 +316,51 @@ func validateChecksums(backupPath string) (map[string]bool, error) {
 	return validatedFiles, nil
 }
 
-func loadBackupResources(backupPath string, validatedFiles map[string]bool, log logr.Logger) ([]*unstructured.Unstructured, error) {
-	var resources []*unstructured.Unstructured
+type waveGroup struct {
+	wave      int
+	resources []*unstructured.Unstructured
+}
 
+func parseWavePrefix(dirName string) (int, string) {
+	if idx := strings.Index(dirName, "_"); idx > 0 {
+		if w, err := strconv.Atoi(dirName[:idx]); err == nil {
+			return w, dirName[idx+1:]
+		}
+	}
+	return 999, dirName
+}
+
+func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool, log logr.Logger) ([]waveGroup, error) {
 	entries, err := os.ReadDir(backupPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read backup directory: %w", err)
 	}
 
+	type dirEntry struct {
+		wave    int
+		dirName string
+	}
+	var dirs []dirEntry
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+		wave, _ := parseWavePrefix(entry.Name())
+		dirs = append(dirs, dirEntry{wave: wave, dirName: entry.Name()})
+	}
 
-		specDir := filepath.Join(backupPath, entry.Name())
+	sort.SliceStable(dirs, func(i, j int) bool {
+		return dirs[i].wave < dirs[j].wave
+	})
+
+	waveMap := make(map[int]*waveGroup)
+	var waveOrder []int
+
+	for _, d := range dirs {
+		specDir := filepath.Join(backupPath, d.dirName)
 		yamlFiles, err := os.ReadDir(specDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read spec directory %s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("failed to read spec directory %s: %w", d.dirName, err)
 		}
 
 		count := 0
@@ -294,7 +369,7 @@ func loadBackupResources(backupPath string, validatedFiles map[string]bool, log 
 				continue
 			}
 
-			relPath := filepath.Join(entry.Name(), yamlFile.Name())
+			relPath := filepath.Join(d.dirName, yamlFile.Name())
 			if !validatedFiles[relPath] {
 				return nil, fmt.Errorf("file %s is not listed in checksum manifest, refusing to restore", relPath)
 			}
@@ -305,14 +380,24 @@ func loadBackupResources(backupPath string, validatedFiles map[string]bool, log 
 				return nil, fmt.Errorf("failed to read resource file %s: %w", filePath, err)
 			}
 
-			resources = append(resources, resource)
+			wg, ok := waveMap[d.wave]
+			if !ok {
+				wg = &waveGroup{wave: d.wave}
+				waveMap[d.wave] = wg
+				waveOrder = append(waveOrder, d.wave)
+			}
+			wg.resources = append(wg.resources, resource)
 			count++
 		}
 
-		log.Info("Loaded backup resources from spec", "spec", entry.Name(), "count", count)
+		log.Info("Loaded backup resources from spec", "spec", d.dirName, "count", count)
 	}
 
-	return resources, nil
+	var result []waveGroup
+	for _, w := range waveOrder {
+		result = append(result, *waveMap[w])
+	}
+	return result, nil
 }
 
 func sortResourcesByWave(resources []*unstructured.Unstructured) {
