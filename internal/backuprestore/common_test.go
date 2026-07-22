@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -143,5 +144,113 @@ func TestSortBackupSpecsByApplyWave(t *testing.T) {
 		assert.Equal(t, 2, len(groups[1]))
 		assert.Equal(t, "b", groups[1][0].Name)
 		assert.Equal(t, "d", groups[1][1].Name)
+	})
+}
+
+func TestExtractRestoreSpecsFromConfigmaps(t *testing.T) {
+	t.Run("empty configmaps returns empty specs", func(t *testing.T) {
+		specs, err := ExtractRestoreSpecsFromConfigmaps(nil)
+		assert.NoError(t, err)
+		assert.Empty(t, specs)
+	})
+
+	t.Run("parses restore spec fields", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"restore.yaml": `
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: my-restore
+  namespace: openshift-adp
+  annotations:
+    lca.openshift.io/apply-wave: "2"
+spec:
+  backupName: my-backup
+  restorePVs: true
+  restoreStatus:
+    includedResources:
+      - logicalvolumes
+      - deployments
+`,
+			},
+		}
+		specs, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "my-restore", specs[0].Name)
+		assert.Equal(t, "openshift-adp", specs[0].Namespace)
+		assert.Equal(t, "my-backup", specs[0].BackupName)
+		assert.Equal(t, "2", specs[0].ApplyWave)
+		assert.True(t, specs[0].RestorePVs)
+		assert.Equal(t, []string{"logicalvolumes", "deployments"}, specs[0].RestoreStatusResources)
+	})
+
+	t.Run("defaults for missing fields", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"restore.yaml": `
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: simple-restore
+spec:
+  backupName: simple-backup
+`,
+			},
+		}
+		specs, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "simple-backup", specs[0].BackupName)
+		assert.False(t, specs[0].RestorePVs)
+		assert.Empty(t, specs[0].RestoreStatusResources)
+		assert.Empty(t, specs[0].ApplyWave)
+	})
+}
+
+func TestValidateBackupRestoreMapping(t *testing.T) {
+	t.Run("valid mapping passes", func(t *testing.T) {
+		restores := []RestoreSpec{
+			{Name: "r1", BackupName: "b1"},
+			{Name: "r2", BackupName: "b2"},
+		}
+		assert.NoError(t, ValidateBackupRestoreMapping(restores))
+	})
+
+	t.Run("duplicate backup references fail", func(t *testing.T) {
+		restores := []RestoreSpec{
+			{Name: "r1", BackupName: "b1"},
+			{Name: "r2", BackupName: "b1"},
+		}
+		err := ValidateBackupRestoreMapping(restores)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "multiple Restore CRs")
+	})
+
+	t.Run("empty backup name is ignored", func(t *testing.T) {
+		restores := []RestoreSpec{
+			{Name: "r1", BackupName: ""},
+			{Name: "r2", BackupName: ""},
+		}
+		assert.NoError(t, ValidateBackupRestoreMapping(restores))
+	})
+}
+
+func TestFindRestoreForBackup(t *testing.T) {
+	restores := []RestoreSpec{
+		{Name: "r1", BackupName: "b1"},
+		{Name: "r2", BackupName: "b2"},
+	}
+
+	t.Run("finds matching restore", func(t *testing.T) {
+		r := FindRestoreForBackup("b1", restores)
+		assert.NotNil(t, r)
+		assert.Equal(t, "r1", r.Name)
+	})
+
+	t.Run("returns nil for no match", func(t *testing.T) {
+		r := FindRestoreForBackup("b3", restores)
+		assert.Nil(t, r)
 	})
 }
