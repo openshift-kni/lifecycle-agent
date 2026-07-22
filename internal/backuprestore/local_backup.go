@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -140,6 +141,9 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 				return bt, NewBRFailedValidationError("Backup", err.Error())
 			}
 
+			restoreSpec := FindRestoreForBackup(spec.Name, restoreSpecs)
+			statusResources := resolveStatusResources(restoreSpec)
+
 			resources, err := h.fetchResources(ctx, spec)
 			if err != nil {
 				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
@@ -147,14 +151,16 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 					fmt.Sprintf("failed to fetch resources for backup %s: %s", spec.Name, err.Error()))
 			}
 
-			specDir := filepath.Join(backupDir, spec.Name)
+			wave := resolveWave(spec, restoreSpec)
+			dirName := fmt.Sprintf("%03d_%s", wave, spec.Name)
+			specDir := filepath.Join(backupDir, dirName)
 			if err := os.MkdirAll(specDir, 0o700); err != nil {
 				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
 				return bt, fmt.Errorf("failed to create backup spec directory: %w", err)
 			}
 
 			for i, resource := range resources {
-				stripTransientMetadata(resource)
+				stripTransientMetadata(resource, statusResources)
 
 				data, err := k8syaml.Marshal(resource.Object)
 				if err != nil {
@@ -175,7 +181,7 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 
 				hash := sha256.Sum256(data)
 				checksums = append(checksums, fmt.Sprintf("%s  %s",
-					hex.EncodeToString(hash[:]), filepath.Join(spec.Name, fileName)))
+					hex.EncodeToString(hash[:]), filepath.Join(dirName, fileName)))
 			}
 
 			h.Log.Info("Backup completed for spec", "name", spec.Name, "resourceCount", len(resources))
@@ -193,6 +199,35 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		"succeeded", bt.SucceededBackups,
 		"targetDir", backupDir)
 	return bt, nil
+}
+
+// resolveWave determines the wave number for a backup spec.
+// Priority: Restore CR's apply-wave > Backup CR's apply-wave > default 999.
+func resolveWave(backup BackupSpec, restore *RestoreSpec) int {
+	if restore != nil && restore.ApplyWave != "" {
+		if w, err := strconv.Atoi(restore.ApplyWave); err == nil {
+			return w
+		}
+	}
+	if backup.ApplyWave != "" {
+		if w, err := strconv.Atoi(backup.ApplyWave); err == nil {
+			return w
+		}
+	}
+	return 999
+}
+
+// resolveStatusResources returns the list of resource kinds/plurals for which
+// status should be preserved during backup, based on the matching Restore CR.
+func resolveStatusResources(restore *RestoreSpec) map[string]bool {
+	if restore == nil || len(restore.RestoreStatusResources) == 0 {
+		return nil
+	}
+	result := make(map[string]bool, len(restore.RestoreStatusResources))
+	for _, r := range restore.RestoreStatusResources {
+		result[strings.ToLower(r)] = true
+	}
+	return result
 }
 
 func (h *BRHandler) CleanupBackups(_ context.Context) error {
@@ -347,7 +382,10 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 	return resources, nil
 }
 
-func stripTransientMetadata(resource *unstructured.Unstructured) {
+// stripTransientMetadata removes transient fields from a resource before backup.
+// If statusResources is non-nil, status is preserved for resource kinds whose
+// pluralized name appears in the set (matching Velero Restore CR restoreStatus behavior).
+func stripTransientMetadata(resource *unstructured.Unstructured, statusResources map[string]bool) {
 	resource.SetUID("")
 	resource.SetResourceVersion("")
 	resource.SetGeneration(0)
@@ -364,12 +402,22 @@ func stripTransientMetadata(resource *unstructured.Unstructured) {
 		}
 	}
 
-	unstructured.RemoveNestedField(resource.Object, "status")
+	if !shouldPreserveStatus(resource, statusResources) {
+		unstructured.RemoveNestedField(resource.Object, "status")
+	}
 	unstructured.RemoveNestedField(resource.Object, "metadata", "deletionTimestamp")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "deletionGracePeriodSeconds")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "ownerReferences")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "finalizers")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "selfLink")
+}
+
+func shouldPreserveStatus(resource *unstructured.Unstructured, statusResources map[string]bool) bool {
+	if len(statusResources) == 0 {
+		return false
+	}
+	kind := resource.GetKind()
+	return statusResources[pluralizeKind(kind)]
 }
 
 func isExcluded(resource string, excludedResources []string) bool {
