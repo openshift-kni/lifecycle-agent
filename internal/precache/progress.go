@@ -29,7 +29,9 @@ type Progress struct {
 	Total          int      `json:"total"`
 	Pulled         int      `json:"pulled"`
 	Failed         int      `json:"failed"`
+	Skipped        int      `json:"skipped"`
 	FailedPullList []string `json:"failed_pulls"`
+	SkippedList    []string `json:"skipped_pulls"`
 	mux            sync.Mutex
 }
 
@@ -48,12 +50,27 @@ func (p *Progress) Update(success bool, image string) {
 	}
 }
 
+func (p *Progress) Skip(image string) {
+	p.mux.Lock()
+	defer p.mux.Unlock()
+
+	p.Skipped++
+	if p.SkippedList == nil {
+		p.SkippedList = []string{}
+	}
+	p.SkippedList = append(p.SkippedList, image)
+}
+
 func (p *Progress) Log() {
 	logrus.Infof("Total Images: %d", p.Total)
 	logrus.Infof("Images Pulled Successfully: %d", p.Pulled)
 	logrus.Infof("Images Failed to Pull: %d", p.Failed)
+	logrus.Infof("Images Skipped (arch incompatible): %d", p.Skipped)
 	for _, img := range p.FailedPullList {
 		logrus.Infof("failed: %s", img)
+	}
+	for _, img := range p.SkippedList {
+		logrus.Infof("skipped: %s", img)
 	}
 }
 
