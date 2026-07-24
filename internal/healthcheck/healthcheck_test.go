@@ -1244,6 +1244,54 @@ func TestAreCertificateSigningRequestsReady(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "certificateSigningRequest (csr) test-csr not yet approved",
 		},
+		{
+			name: "Fail with no conditions at all",
+			objects: []runtime.Object{
+				&k8sv1.CertificateSigningRequest{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "pending-csr",
+					},
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{},
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "certificateSigningRequest (csr) pending-csr not yet approved",
+		},
+		{
+			name:    "Success with empty CSR list",
+			objects: []runtime.Object{},
+			wantErr: false,
+		},
+		{
+			name: "Fail when one of multiple CSRs is not approved",
+			objects: []runtime.Object{
+				&k8sv1.CertificateSigningRequest{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "approved-csr",
+					},
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{
+							{
+								Type:   k8sv1.CertificateApproved,
+								Status: v1.ConditionStatus(metav1.ConditionTrue),
+							},
+						},
+					},
+				},
+				&k8sv1.CertificateSigningRequest{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "unapproved-csr",
+					},
+					Status: k8sv1.CertificateSigningRequestStatus{
+						Conditions: []k8sv1.CertificateSigningRequestCondition{},
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "certificateSigningRequest (csr) unapproved-csr not yet approved",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
