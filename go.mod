@@ -7,7 +7,6 @@ require (
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/go-logr/logr v1.4.4
-	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.6.0
 	github.com/openshift/api v0.0.0-20260326111139-30c2ef7a272e
 	github.com/openshift/assisted-image-service v0.0.0-20240528153439-08336d4322dc
