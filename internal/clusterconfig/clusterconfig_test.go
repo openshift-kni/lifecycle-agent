@@ -42,6 +42,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -736,4 +737,59 @@ func genSelfSignedKeyPair(cert *x509.Certificate) (*pem.Block, *ecdsa.PrivateKey
 	}
 
 	return &pem.Block{Type: "CERTIFICATE", Bytes: signedCert}, key, err
+}
+
+func TestFetchIDMS_ErrorWrapping(t *testing.T) {
+	// Use a minimal scheme without IDMS registered so List fails
+	minimalScheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(minimalScheme)
+
+	c := fake.NewClientBuilder().WithScheme(minimalScheme).Build()
+	ucc := &UpgradeClusterConfigGather{
+		Client: c,
+		Log:    logr.Discard(),
+		Scheme: minimalScheme,
+	}
+
+	err := ucc.fetchIDMS(context.Background(), t.TempDir())
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "failed to get IDMS list:")
+	}
+}
+
+func TestFetchICSPs_ErrorWrapping(t *testing.T) {
+	// Use a minimal scheme without ICSPs registered so List fails
+	minimalScheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(minimalScheme)
+
+	c := fake.NewClientBuilder().WithScheme(minimalScheme).Build()
+	ucc := &UpgradeClusterConfigGather{
+		Client: c,
+		Log:    logr.Discard(),
+		Scheme: minimalScheme,
+	}
+
+	err := ucc.fetchICSPs(context.Background(), t.TempDir())
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "failed list ImageContentSourcePolicy:")
+	}
+}
+
+func TestFetchClusterConfig_FetchIDMSErrorWrapping(t *testing.T) {
+	// Use a scheme that supports enough types for configDir to work,
+	// but NOT IDMS so fetchIDMS fails inside FetchClusterConfig.
+	minimalScheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(minimalScheme)
+
+	c := fake.NewClientBuilder().WithScheme(minimalScheme).Build()
+	ucc := &UpgradeClusterConfigGather{
+		Client: c,
+		Log:    logr.Discard(),
+		Scheme: minimalScheme,
+	}
+
+	err := ucc.FetchClusterConfig(context.Background(), t.TempDir())
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "failed to fetch IDMS:")
+	}
 }
