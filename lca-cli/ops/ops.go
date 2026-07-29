@@ -46,6 +46,10 @@ import (
 
 const (
 	podman = "podman"
+
+	defaultEtcdHealthTimeout = 1 * time.Minute
+	etcdPollInterval         = 1 * time.Second
+	etcdRequestTimeout       = 5 * time.Second
 )
 
 var podmanRecertArgs = []string{
@@ -115,6 +119,7 @@ type BlockDevice struct {
 type ops struct {
 	log                  *logrus.Logger
 	hostCommandsExecutor Execute
+	etcdTimeout          time.Duration
 }
 
 // NewOps creates and returns an Ops interface for executing host namespace operations
@@ -252,30 +257,34 @@ func (o *ops) StopEtcdServer(authfile, name string) error {
 }
 
 func (o *ops) waitForEtcd(healthzEndpoint string) error {
-	timeout := time.After(1 * time.Minute)
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("timeout waiting for etcd")
-		case <-ticker.C:
-			resp, err := http.Get(healthzEndpoint) //nolint:gosec
-			if err != nil {
-				o.log.Infof("Waiting for etcd: %s", err)
-				continue
-			}
-			defer func() { _ = resp.Body.Close() }()
-
-			if resp.StatusCode != http.StatusOK {
-				o.log.Infof("Waiting for etcd, status: %d", resp.StatusCode)
-				continue
-			}
-
-			return nil
-		}
+	etcdTimeout := o.etcdTimeout
+	if etcdTimeout == 0 {
+		etcdTimeout = defaultEtcdHealthTimeout
 	}
+	client := &http.Client{Timeout: etcdRequestTimeout}
+
+	err := wait.PollUntilContextTimeout(context.Background(), etcdPollInterval, etcdTimeout, true, func(_ context.Context) (bool, error) {
+		resp, err := client.Get(healthzEndpoint) //nolint:noctx
+		if err != nil {
+			o.log.Infof("Waiting for etcd: %s", err)
+			return false, nil
+		}
+
+		statusCode := resp.StatusCode
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		if statusCode != http.StatusOK {
+			o.log.Infof("Waiting for etcd, status: %d", statusCode)
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timeout waiting for etcd: %w", err)
+	}
+	return nil
 }
 
 func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error {
