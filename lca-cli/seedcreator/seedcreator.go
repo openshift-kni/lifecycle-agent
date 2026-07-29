@@ -434,9 +434,12 @@ func (s *SeedCreator) backupOstree(ctx context.Context) error {
 
 func (s *SeedCreator) backupRPMOstree(ctx context.Context) error {
 	rpmJSON := s.backupDir + "/rpm-ostree.json"
-	args := append([]string{"status", "-v", "--json"}, ">", rpmJSON)
-	if _, err := s.ops.RunBashInHostNamespace(ctx, "rpm-ostree", args...); err != nil {
-		return fmt.Errorf("failed to run backup rpmostree with args %s: %w", args, err)
+	output, err := s.ops.RunInHostNamespace(ctx, "rpm-ostree", "status", "-v", "--json")
+	if err != nil {
+		return fmt.Errorf("failed to run backup rpmostree: %w", err)
+	}
+	if err := s.ops.WriteFile(rpmJSON, []byte(output), 0o644); err != nil {
+		return fmt.Errorf("failed to write rpm-ostree backup to %s: %w", rpmJSON, err)
 	}
 	s.log.Info("Backup of rpm-ostree.json created successfully.")
 	return nil
@@ -444,7 +447,7 @@ func (s *SeedCreator) backupRPMOstree(ctx context.Context) error {
 
 func (s *SeedCreator) backupMCOConfig(ctx context.Context) error {
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	if _, err := s.ops.RunBashInHostNamespace(ctx, "cp", common.MCDCurrentConfig, mcoJSON); err != nil {
+	if err := s.ops.CopyFile(common.MCDCurrentConfig, mcoJSON, 0o644); err != nil {
 		return fmt.Errorf("failed to backup MCO config: %w", err)
 	}
 	s.log.Info("Backup of mco-currentconfig created successfully.")
@@ -519,11 +522,9 @@ func (s *SeedCreator) backupOstreeOrigin(ctx context.Context, statusRpmOstree *o
 	if err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("failed to get file info for %s: %w", originFileName, err)
 	}
-	// Execute 'copy' command and backup .origin file
-	_, err = s.ops.RunInHostNamespace(
-		ctx, "cp", []string{"/ostree/deploy/" + bootedOSName + "/deploy/" + bootedDeployment + ".origin", originFileName}...)
-	if err != nil {
-		return fmt.Errorf("failed 'copy' command to backup .origin file,: %w", err)
+	originSrcPath := "/ostree/deploy/" + bootedOSName + "/deploy/" + bootedDeployment + ".origin"
+	if err := s.ops.CopyFile(originSrcPath, originFileName, 0o644); err != nil {
+		return fmt.Errorf("failed to backup .origin file: %w", err)
 	}
 	s.log.Info("Backup of .origin created successfully.")
 	return nil

@@ -106,9 +106,13 @@ func NewCMD(command string, args ...string) *CMD {
 }
 
 type BlockDevice struct {
-	Name  string
-	Label string
+	Name     string        `json:"name"`
+	Label    string        `json:"label,omitempty"`
+	Path     string        `json:"path,omitempty"`
+	Children []BlockDevice `json:"children,omitempty"`
 }
+
+const maxConcurrentContainerStops = 10
 
 type ops struct {
 	log                  *logrus.Logger
@@ -510,6 +514,27 @@ func (o *ops) ListBlockDevices(ctx context.Context) ([]BlockDevice, error) {
 	return blockDeviceList, nil
 }
 
+func (o *ops) getExtraPartitionPath(ctx context.Context, installationDisk string, partitionNumber uint) (string, error) {
+	lsblkOutput, err := o.RunInHostNamespace(ctx, "lsblk", installationDisk, "--json", "--output", "NAME,PATH")
+	if err != nil {
+		return "", fmt.Errorf("failed to run lsblk: %w", err)
+	}
+	var result struct {
+		BlockDevices []BlockDevice `json:"blockdevices"`
+	}
+	if err := json.Unmarshal([]byte(lsblkOutput), &result); err != nil {
+		return "", fmt.Errorf("failed to unmarshal lsblk output: %w", err)
+	}
+	if len(result.BlockDevices) == 0 {
+		return "", fmt.Errorf("no block devices found for %s", installationDisk)
+	}
+	children := result.BlockDevices[0].Children
+	if partitionNumber == 0 || partitionNumber > uint(len(children)) { //nolint:gosec // len is always non-negative
+		return "", fmt.Errorf("partition number %d out of range (device has %d children)", partitionNumber, len(children))
+	}
+	return strings.TrimSpace(children[partitionNumber-1].Path), nil
+}
+
 func (o *ops) Mount(ctx context.Context, deviceName, mountFolder string) error {
 	o.log.Infof("Mounting %s into %s", deviceName, mountFolder)
 	if err := os.MkdirAll(mountFolder, 0o700); err != nil {
@@ -712,8 +737,7 @@ func (o *ops) CreateExtraPartition(ctx context.Context, installationDisk, extraP
 		return fmt.Errorf("failed to create extra partition: %w", err)
 	}
 
-	extraPartitionPath, err := o.RunBashInHostNamespace(ctx, "lsblk", installationDisk, "--json", "-O", "|", "jq",
-		fmt.Sprintf(".blockdevices[0].children[%d].path", extraPartitionNumber-1), "-r")
+	extraPartitionPath, err := o.getExtraPartitionPath(ctx, installationDisk, extraPartitionNumber)
 	if err != nil {
 		return fmt.Errorf("failed to get extra partition path: %w", err)
 	}
@@ -733,10 +757,18 @@ func (o *ops) CreateExtraPartition(ctx context.Context, installationDisk, extraP
 
 func (o *ops) SetupContainersFolderCommands(ctx context.Context) error {
 	o.log.Info("Setting up containers folder")
+	if _, err := o.RunInHostNamespace(ctx, "chattr", "-i", "/mnt/"); err != nil {
+		return fmt.Errorf("failed to remove immutable flag on /mnt/: %w", err)
+	}
+	if err := o.MkdirAll("/mnt/containers", 0o755); err != nil {
+		// Best-effort: re-seal /mnt/ so it stays immutable even though mkdir failed
+		if _, chattrErr := o.RunInHostNamespace(ctx, "chattr", "+i", "/mnt/"); chattrErr != nil {
+			o.log.Errorf("failed to restore immutable flag on /mnt/ after mkdir failure: %v", chattrErr)
+		}
+		return fmt.Errorf("failed to create /mnt/containers: %w", err)
+	}
 	var cmds []*CMD
-	cmds = append(cmds, NewCMD("chattr", "-i", "/mnt/"),
-		NewCMD("mkdir", "-p", "/mnt/containers"),
-		NewCMD("chattr", "+i", "/mnt/"),
+	cmds = append(cmds, NewCMD("chattr", "+i", "/mnt/"),
 		NewCMD("mount", "-o", "bind", "/mnt/containers", common.ContainerStoragePath),
 		NewCMD("restorecon", "-R", common.ContainerStoragePath))
 	if err := o.RunListOfCommands(ctx, cmds); err != nil {
@@ -836,10 +868,37 @@ func (o *ops) StopClusterServices(ctx context.Context) error {
 		// CRI-O is active, so stop running containers with retry
 		_ = wait.PollUntilContextCancel(ctx, time.Second, true, func(pollCtx context.Context) (done bool, err error) {
 			o.log.Info("Stop running containers")
-			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-			_, err = o.RunBashInHostNamespace(pollCtx, "crictl", args...)
-			if err != nil {
-				return false, fmt.Errorf("failed to stop running containers: %w", err)
+			output, listErr := o.RunInHostNamespace(pollCtx, "crictl", "ps", "-q")
+			if listErr != nil {
+				return false, fmt.Errorf("failed to list running containers: %w", listErr)
+			}
+			var ids []string
+			for _, id := range strings.Split(strings.TrimSpace(output), "\n") {
+				if id != "" {
+					ids = append(ids, id)
+				}
+			}
+			errCh := make(chan error, len(ids))
+			sem := make(chan struct{}, maxConcurrentContainerStops)
+			for _, id := range ids {
+				sem <- struct{}{}
+				go func(containerID string) {
+					defer func() { <-sem }()
+					if _, stopErr := o.RunInHostNamespace(pollCtx, "crictl", "stop", "--timeout", "5", containerID); stopErr != nil {
+						errCh <- fmt.Errorf("failed to stop container %s: %w", containerID, stopErr)
+						return
+					}
+					errCh <- nil
+				}(id)
+			}
+			var firstErr error
+			for range ids {
+				if stopErr := <-errCh; stopErr != nil && firstErr == nil {
+					firstErr = stopErr
+				}
+			}
+			if firstErr != nil {
+				return false, firstErr
 			}
 			return true, nil
 		})
