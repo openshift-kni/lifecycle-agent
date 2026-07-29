@@ -1,6 +1,8 @@
 package imagemgmt
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"syscall"
 	"testing"
@@ -1188,10 +1190,10 @@ func Test_GetInuseImages(t *testing.T) {
 	t.Run("test GetInUseImages", func(t *testing.T) {
 		imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
 
-		mockExec.EXPECT().Execute("crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
-		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
 
-		inUse, err := imageMgmtClient.GetInuseImages()
+		inUse, err := imageMgmtClient.GetInuseImages(context.Background())
 		if err != nil {
 			t.Errorf("GetInuseImages() error = %v", err)
 			return
@@ -1227,9 +1229,9 @@ func Test_GetPinnedImages(t *testing.T) {
 	t.Run("test GetPinnedImages", func(t *testing.T) {
 		imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
 
-		mockExec.EXPECT().Execute("crictl", "images", "-o", "json").Return(test_CrictlImagesOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "crictl", "images", "-o", "json").Return(test_CrictlImagesOutput, nil)
 
-		pinned, err := imageMgmtClient.GetPinnedImages()
+		pinned, err := imageMgmtClient.GetPinnedImages(context.Background())
 		if err != nil {
 			t.Errorf("GetPinnedImages() error = %v", err)
 			return
@@ -1265,12 +1267,12 @@ func Test_GetRemovalCandidates(t *testing.T) {
 	t.Run("test GetRemovalCandidates", func(t *testing.T) {
 		imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
 
-		mockExec.EXPECT().Execute("crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
-		mockExec.EXPECT().Execute("podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
-		mockExec.EXPECT().Execute("crictl", "images", "-o", "json").Return(test_CrictlImagesOutput, nil)
-		mockExec.EXPECT().Execute("podman", "images", "--format", "json", "--log-level", "error").Return(test_PodmanImagesOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return(test_CrictlPsOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(test_PodmanPsOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "crictl", "images", "-o", "json").Return(test_CrictlImagesOutput, nil)
+		mockExec.EXPECT().Execute(gomock.Any(), "podman", "images", "--format", "json", "--log-level", "error").Return(test_PodmanImagesOutput, nil)
 
-		removalCandidates, err := imageMgmtClient.GetRemovalCandidates()
+		removalCandidates, err := imageMgmtClient.GetRemovalCandidates(context.Background())
 		if err != nil {
 			t.Errorf("GetRemovalCandidates() error = %v", err)
 			return
@@ -1279,4 +1281,147 @@ func Test_GetRemovalCandidates(t *testing.T) {
 			return
 		}
 	})
+}
+
+func Test_GetInuseImages_Errors(t *testing.T) {
+	tests := []struct {
+		name           string
+		crictlPsErr    error
+		crictlPsOutput string
+		podmanPsErr    error
+		podmanPsOutput string
+		wantErr        bool
+	}{
+		{
+			name:        "crictl ps fails",
+			crictlPsErr: fmt.Errorf("crictl not available"),
+			wantErr:     true,
+		},
+		{
+			name:           "crictl ps returns invalid JSON",
+			crictlPsOutput: "not valid json",
+			wantErr:        true,
+		},
+		{
+			name:           "podman ps fails",
+			crictlPsOutput: `{"containers": []}`,
+			podmanPsErr:    fmt.Errorf("podman not available"),
+			wantErr:        true,
+		},
+		{
+			name:           "podman ps returns invalid JSON",
+			crictlPsOutput: `{"containers": []}`,
+			podmanPsOutput: "not valid json",
+			wantErr:        true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockController := gomock.NewController(t)
+			defer mockController.Finish()
+
+			mockExec := ops.NewMockExecute(mockController)
+			log := logr.Logger{}
+			imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
+
+			mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return(tt.crictlPsOutput, tt.crictlPsErr)
+			if (tt.crictlPsErr == nil && tt.podmanPsOutput != "") || tt.podmanPsErr != nil {
+				mockExec.EXPECT().Execute(gomock.Any(), "podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(tt.podmanPsOutput, tt.podmanPsErr)
+			}
+
+			_, err := imageMgmtClient.GetInuseImages(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetInuseImages() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func Test_GetPinnedImages_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		execErr    error
+		execOutput string
+		wantErr    bool
+	}{
+		{
+			name:    "crictl images fails",
+			execErr: fmt.Errorf("crictl not available"),
+			wantErr: true,
+		},
+		{
+			name:       "crictl images returns invalid JSON",
+			execOutput: "not valid json",
+			wantErr:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockController := gomock.NewController(t)
+			defer mockController.Finish()
+
+			mockExec := ops.NewMockExecute(mockController)
+			log := logr.Logger{}
+			imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
+
+			mockExec.EXPECT().Execute(gomock.Any(), "crictl", "images", "-o", "json").Return(tt.execOutput, tt.execErr)
+
+			_, err := imageMgmtClient.GetPinnedImages(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetPinnedImages() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func Test_GetRemovalCandidates_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		setupMocks func(mockExec *ops.MockExecute)
+		wantErr    bool
+	}{
+		{
+			name: "GetInuseImages fails",
+			setupMocks: func(mockExec *ops.MockExecute) {
+				mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return("", fmt.Errorf("crictl failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "GetPinnedImages fails",
+			setupMocks: func(mockExec *ops.MockExecute) {
+				mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return(`{"containers": []}`, nil)
+				mockExec.EXPECT().Execute(gomock.Any(), "podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(`[]`, nil)
+				mockExec.EXPECT().Execute(gomock.Any(), "crictl", "images", "-o", "json").Return("", fmt.Errorf("crictl images failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "podman images fails",
+			setupMocks: func(mockExec *ops.MockExecute) {
+				mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-a", "-o", "json").Return(`{"containers": []}`, nil)
+				mockExec.EXPECT().Execute(gomock.Any(), "podman", "ps", "-a", "--format", "json", "--log-level", "error").Return(`[]`, nil)
+				mockExec.EXPECT().Execute(gomock.Any(), "crictl", "images", "-o", "json").Return(`{"images": []}`, nil)
+				mockExec.EXPECT().Execute(gomock.Any(), "podman", "images", "--format", "json", "--log-level", "error").Return("", fmt.Errorf("podman images failed"))
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockController := gomock.NewController(t)
+			defer mockController.Finish()
+
+			mockExec := ops.NewMockExecute(mockController)
+			log := logr.Logger{}
+			imageMgmtClient := NewImageMgmtClient(&log, mockExec, common.PathOutsideChroot(common.ContainerStoragePath))
+
+			tt.setupMocks(mockExec)
+
+			_, err := imageMgmtClient.GetRemovalCandidates(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetRemovalCandidates() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
 }

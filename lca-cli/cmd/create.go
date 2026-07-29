@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -96,7 +97,7 @@ func create() error {
 	if !skipCleanup {
 		defer func() {
 			if err = seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
-				authFile, recertContainerImage, recertSkipValidation).RestoreSeedCluster(); err != nil {
+				authFile, recertContainerImage, recertSkipValidation).RestoreSeedCluster(context.Background()); err != nil {
 				log.Fatalf("Failed to restore seed cluster: %v", err)
 			}
 			log.Info("Seed cluster restored successfully!")
