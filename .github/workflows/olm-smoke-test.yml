@@ -1,0 +1,110 @@
+name: OLM Smoke Test
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release-*'
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'OWNERS'
+      - 'OWNERS_ALIASES'
+      - 'LICENSE'
+      - '.tekton/**'
+      - '.konflux/**'
+      - 'renovate.json'
+      - '.gitignore'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'OWNERS'
+      - 'OWNERS_ALIASES'
+      - 'LICENSE'
+      - '.tekton/**'
+      - '.konflux/**'
+      - 'renovate.json'
+      - '.gitignore'
+  workflow_dispatch:
+
+jobs:
+  olm-smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      REGISTRY_PORT: 5000
+      OPERATOR_IMG_NAME: lca-operator
+      BUNDLE_IMG_NAME: lca-bundle
+      IMG_TAG: smoke
+      OPERATOR_NAMESPACE: openshift-lifecycle-agent
+      INTERNAL_REGISTRY: image-registry.openshift-image-registry.svc:5000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Start local registry
+        run: docker run -d --name registry --restart always -p ${REGISTRY_PORT}:5000 registry:2
+
+      - name: Determine host IP
+        run: echo "HOST_IP=$(hostname -I | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Build operator image
+        run: |
+          make docker-build \
+            IMG="${HOST_IP}:${REGISTRY_PORT}/${OPERATOR_IMG_NAME}:${IMG_TAG}" \
+            ENGINE=docker \
+            GOARCH=amd64
+
+      - name: Push operator image to local registry
+        run: docker push "${HOST_IP}:${REGISTRY_PORT}/${OPERATOR_IMG_NAME}:${IMG_TAG}"
+
+      - name: Generate bundle manifests
+        run: |
+          make bundle \
+            IMG="${INTERNAL_REGISTRY}/openshift/${OPERATOR_IMG_NAME}:${IMG_TAG}"
+
+      - name: Build and push bundle image
+        run: |
+          docker build -f bundle.Dockerfile \
+            -t "${HOST_IP}:${REGISTRY_PORT}/${BUNDLE_IMG_NAME}:${IMG_TAG}" .
+          docker push "${HOST_IP}:${REGISTRY_PORT}/${BUNDLE_IMG_NAME}:${IMG_TAG}"
+
+      - name: Start OpenShift cluster
+        uses: palmsoftware/quick-ocp@v1
+        with:
+          desiredOCPVersion: "latest"
+          preloadImages: |
+            ${{ env.HOST_IP }}:${{ env.REGISTRY_PORT }}/${{ env.OPERATOR_IMG_NAME }}:${{ env.IMG_TAG }}
+            ${{ env.HOST_IP }}:${{ env.REGISTRY_PORT }}/${{ env.BUNDLE_IMG_NAME }}:${{ env.IMG_TAG }}
+
+      - name: Install operator via OLM
+        run: |
+          oc create namespace "${OPERATOR_NAMESPACE}" 2>/dev/null || true
+          ./bin/operator-sdk run bundle \
+            "${INTERNAL_REGISTRY}/openshift/${BUNDLE_IMG_NAME}:${IMG_TAG}" \
+            --namespace "${OPERATOR_NAMESPACE}" \
+            --timeout 5m
+
+      - name: Verify operator
+        run: .github/scripts/olm-smoke-verify.sh "${OPERATOR_NAMESPACE}"
+
+      - name: Run operator-sdk scorecard
+        run: |
+          ./bin/operator-sdk scorecard bundle/ \
+            --namespace "${OPERATOR_NAMESPACE}" \
+            --wait-time 120s \
+            --output text
+
+      - name: Gather diagnostics
+        if: failure()
+        run: .github/scripts/olm-smoke-diagnostics.sh "${OPERATOR_NAMESPACE}"
