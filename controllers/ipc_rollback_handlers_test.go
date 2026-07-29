@@ -150,8 +150,8 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).Times(1)
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().WriteFile(gomock.Any(), gomock.Any(), gomock.Any()).
 			DoAndReturn(func(filename string, data []byte, perm os.FileMode) error {
 				assert.True(t, strings.Contains(filename, "stateroot-old"), "expected save path to include stateroot name, got %q", filename)
@@ -162,12 +162,12 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 			}).Times(1)
 		// scheduleIPConfigRollback passes 13 args to RunSystemdAction:
 		// --wait --collect --property ExitType=cgroup --unit ... --description ... lca-cli ip-config rollback --stateroot <name>
-		mockOps.EXPECT().RunSystemdAction(
+		mockOps.EXPECT().RunSystemdAction(gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(),
 		).
-			DoAndReturn(func(args ...string) (string, error) {
+			DoAndReturn(func(_ context.Context, args ...string) (string, error) {
 				assert.Contains(t, args, "--unit")
 				assert.Contains(t, args, controllerutils.IPConfigRollbackUnit)
 				assert.Contains(t, args, controllerutils.LcaCliBinaryName)
@@ -206,7 +206,7 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("", errors.New("boom")).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", errors.New("boom")).Times(1)
 
 		h := &IPCRollbackTwoPhaseHandler{
 			Client:          k8sClient,
@@ -232,8 +232,8 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).Times(1)
-		mockOps.EXPECT().RemountSysroot().Return(errors.New("remount failed")).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(errors.New("remount failed")).Times(1)
 
 		h := &IPCRollbackTwoPhaseHandler{
 			Client:          k8sClient,
@@ -259,8 +259,8 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).Times(1)
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().WriteFile(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("write failed")).Times(1)
 
 		h := &IPCRollbackTwoPhaseHandler{
@@ -287,10 +287,10 @@ func TestIPCRollbackTwoPhaseHandler_PrePivot(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).Times(1)
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().WriteFile(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
-		mockOps.EXPECT().RunSystemdAction(
+		mockOps.EXPECT().RunSystemdAction(gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(),
@@ -457,8 +457,8 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 		updated.Status.ValidNextStages = []v1.IPConfigStage{v1.IPStages.Rollback}
 		assert.NoError(t, k8sClient.Status().Update(ctx, updated))
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("some-unbooted", nil).Times(1)
-		mockRpm.EXPECT().IsStaterootBooted(gomock.Any()).Return(true, nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("some-unbooted", nil).Times(1)
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
 		tph.EXPECT().
 			PrePivot(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(requeueWithShortInterval(), nil).
@@ -485,8 +485,8 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("", errors.New("no unbooted stateroot")).Times(1)
-		mockRpm.EXPECT().IsStaterootBooted(gomock.Any()).Times(0)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("", errors.New("no unbooted stateroot")).Times(1)
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any(), gomock.Any()).Times(0)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		stageHandler := NewIPCRollbackStageHandler(k8sClient, mockRpm, mockOps, tph)
@@ -527,8 +527,8 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).AnyTimes()
-		mockRpm.EXPECT().IsStaterootBooted("rhcos").Return(true, nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).AnyTimes()
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any(), "rhcos").Return(true, nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
@@ -563,7 +563,7 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
 		// With PostPivot mocked, only Handle() performs the isTargetStaterootBooted check.
-		mockRpm.EXPECT().IsStaterootBooted("rhcos").Return(false, nil).Times(1)
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any(), "rhcos").Return(false, nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().
@@ -602,8 +602,8 @@ func TestIPCRollbackStageHandler_Handle(t *testing.T) {
 		ipc := mkRollbackIPC(t, true)
 		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
 
-		mockRpm.EXPECT().GetUnbootedStaterootName().Return("stateroot-old", nil).AnyTimes()
-		mockRpm.EXPECT().IsStaterootBooted("rhcos").Return(true, nil).Times(1)
+		mockRpm.EXPECT().GetUnbootedStaterootName(gomock.Any()).Return("stateroot-old", nil).AnyTimes()
+		mockRpm.EXPECT().IsStaterootBooted(gomock.Any(), "rhcos").Return(true, nil).Times(1)
 
 		tph := NewMockIPConfigTwoPhaseHandlerInterface(gc)
 		tph.EXPECT().

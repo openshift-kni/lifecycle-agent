@@ -117,7 +117,31 @@ func (h *IPCIdleStageHandler) Handle(
 		}
 	}
 
-	if err := h.cleanup(logger); err != nil {
+	if !controllerutils.IsIPStageInProgress(ipc, ipcv1.IPStages.Idle) {
+		logger.Info("Stage is not in progress")
+		return doNotRequeue(), nil
+	}
+
+	if shouldSkipClusterHealthChecks(ipc, controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation) {
+		logger.Info(
+			"Skipping cluster health checks due to annotation",
+			"annotation", controllerutils.SkipIPConfigPreConfigurationClusterHealthChecksAnnotation,
+		)
+	} else {
+		logger.Info("Running health checks")
+		if err := CheckHealth(ctx, h.NoncachedClient, logger); err != nil {
+			msg := fmt.Sprintf("Waiting for system to stabilize: %s", err.Error())
+			controllerutils.SetIPIdleStatusFalse(ipc, controllerutils.ConditionReasons.InProgress, msg)
+			if uerr := controllerutils.UpdateIPCStatus(ctx, h.Client, ipc); uerr != nil {
+				logger.Error(uerr, "Failed to update IPConfig status after health check failure")
+				return requeueWithError(fmt.Errorf("failed to update ipconfig status: %w", uerr))
+			}
+			logger.Info("Cluster not healthy yet", "reason", msg)
+			return requeueWithHealthCheckInterval(), nil
+		}
+	}
+
+	if err := h.cleanup(ctx, logger); err != nil {
 		controllerutils.SetIPIdleStatusFalse(
 			ipc,
 			controllerutils.ConditionReasons.Failed,
@@ -146,12 +170,12 @@ func (h *IPCIdleStageHandler) Handle(
 	return doNotRequeue(), nil
 }
 
-func (h *IPCIdleStageHandler) cleanup(logger logr.Logger) error {
-	if err := h.ChrootOps.RemountSysroot(); err != nil {
+func (h *IPCIdleStageHandler) cleanup(ctx context.Context, logger logr.Logger) error {
+	if err := h.ChrootOps.RemountSysroot(ctx); err != nil {
 		return fmt.Errorf("failed to remount sysroot: %w", err)
 	}
 
-	if err := h.cleanuoUnbootedStateroots(logger); err != nil {
+	if err := h.cleanupUnbootedStateroots(ctx, logger); err != nil {
 		return fmt.Errorf("failed to clean up unbooted stateroots: %w", err)
 	}
 
@@ -192,14 +216,14 @@ func (h *IPCIdleStageHandler) checkIPManualCleanup(
 	return false, nil
 }
 
-func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) error {
-	staterootsToRemove, err := getStaterootsToRemove(h.RPMOstreeClient)
+func (h *IPCIdleStageHandler) cleanupUnbootedStateroots(ctx context.Context, logger logr.Logger) error {
+	staterootsToRemove, err := getStaterootsToRemove(ctx, h.RPMOstreeClient)
 	if err != nil {
 		return fmt.Errorf("failed to determine stateroots to remove: %w", err)
 	}
 	logger.Info("Stateroots to remove", "stateroots", staterootsToRemove)
 
-	if err := h.ChrootOps.RemountBoot(); err != nil {
+	if err := h.ChrootOps.RemountBoot(ctx); err != nil {
 		return fmt.Errorf("failed to remount boot: %w", err)
 	}
 
@@ -207,7 +231,7 @@ func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) erro
 		return err
 	}
 
-	if err := CleanupUnbootedStateroots(logger, h.ChrootOps, h.OstreeClient, h.RPMOstreeClient); err != nil {
+	if err := CleanupUnbootedStateroots(ctx, logger, h.ChrootOps, h.OstreeClient, h.RPMOstreeClient); err != nil {
 		return fmt.Errorf("failed to clean up unbooted stateroots: %w", err)
 	}
 
@@ -250,8 +274,8 @@ func removeBootDirsByStaterootPrefixes(
 	return nil
 }
 
-func getStaterootsToRemove(rpmOstreeClient rpmostreeclient.IClient) ([]string, error) {
-	status, err := rpmOstreeClient.QueryStatus()
+func getStaterootsToRemove(ctx context.Context, rpmOstreeClient rpmostreeclient.IClient) ([]string, error) {
+	status, err := rpmOstreeClient.QueryStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query status with rpmostree: %w", err)
 	}
