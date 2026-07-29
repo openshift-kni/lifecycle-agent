@@ -198,3 +198,35 @@ func TestFetchLvmConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestFetchLvmConfig_FetchLocalVolumesErrorWrapping(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostPath = filepath.Join(tmpDir, "host")
+
+	// Register the CRD and a LocalVolume so fetchLocalVolumes reaches the
+	// MarshalToFile call, then sabotage the manifestsDir so writing fails.
+	c := fake.NewClientBuilder().WithScheme(testscheme).WithObjects(lvCRD, lv1, sc1).Build()
+	ucc := &UpgradeClusterConfigGather{
+		Client: c,
+		Log:    logr.Discard(),
+		Scheme: c.Scheme(),
+	}
+
+	// Create manifestsDir as a FILE instead of a directory so that
+	// MarshalToFile will fail when trying to write the LocalVolume JSON.
+	manifestsDir := filepath.Join(tmpDir, common.OptOpenshift, common.ClusterConfigDir, ManifestDir)
+	parentDir := filepath.Dir(manifestsDir)
+	if err := os.MkdirAll(parentDir, 0o700); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	f, err := os.Create(manifestsDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	f.Close()
+
+	err = ucc.FetchLvmConfig(context.Background(), tmpDir)
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "failed to fetch local volumes:")
+	}
+}
