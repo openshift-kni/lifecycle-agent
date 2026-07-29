@@ -17,6 +17,7 @@ limitations under the License.
 package ipconfigcmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -68,12 +69,14 @@ func runIPConfigRollback() error {
 
 	rb := reboot.NewIPCRebootClient(&logr.Logger{}, hostCommandsExecutor, rpmClient, ostreeClient, opsInterface)
 
+	ctx := context.Background()
+
 	exec := ipconfig.NewRollbackHandler(pkgLog, opsInterface, ostreeClient, rpmClient)
-	if err := exec.Run(rollbackStateroot); err != nil {
+	if err := exec.Run(ctx, rollbackStateroot); err != nil {
 		return fmt.Errorf("ip config rollback handler failed: %w", err)
 	}
 
-	if err := rb.RebootToNewStateRoot("ip-config rollback"); err != nil {
+	if err := rb.RebootToNewStateRoot(ctx, "ip-config rollback"); err != nil {
 		return fmt.Errorf("failed to reboot: %w", err)
 	}
 

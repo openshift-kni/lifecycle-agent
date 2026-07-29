@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,7 @@ func TestWaitForEtcd_ImmediateSuccess(t *testing.T) {
 	defer srv.Close()
 
 	o := newTestOps(t, 5*time.Second)
-	err := o.waitForEtcd(srv.URL)
+	err := o.waitForEtcd(context.Background(),srv.URL)
 	assert.NoError(t, err)
 }
 
@@ -42,7 +43,7 @@ func TestWaitForEtcd_SucceedsAfterRetries(t *testing.T) {
 	defer srv.Close()
 
 	o := newTestOps(t, 5*time.Second)
-	err := o.waitForEtcd(srv.URL)
+	err := o.waitForEtcd(context.Background(),srv.URL)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, count.Load(), int32(3))
 }
@@ -54,7 +55,7 @@ func TestWaitForEtcd_Timeout(t *testing.T) {
 	defer srv.Close()
 
 	o := newTestOps(t, 2*time.Second)
-	err := o.waitForEtcd(srv.URL)
+	err := o.waitForEtcd(context.Background(),srv.URL)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout waiting for etcd")
 }
@@ -67,7 +68,7 @@ func TestWaitForEtcd_ConnectionError(t *testing.T) {
 	srv.Close()
 
 	o := newTestOps(t, 2*time.Second)
-	err := o.waitForEtcd(url)
+	err := o.waitForEtcd(context.Background(),url)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout waiting for etcd")
 }
@@ -86,7 +87,7 @@ func TestWaitForEtcd_DefaultTimeout(t *testing.T) {
 	o := &ops{log: log} // etcdTimeout is zero-value
 	assert.Equal(t, time.Duration(0), o.etcdTimeout, "precondition: etcdTimeout should be zero")
 
-	err := o.waitForEtcd(srv.URL)
+	err := o.waitForEtcd(context.Background(),srv.URL)
 	assert.NoError(t, err)
 }
 
@@ -107,7 +108,7 @@ func TestWaitForEtcd_ResponseBodyDrained(t *testing.T) {
 	defer srv.Close()
 
 	o := newTestOps(t, 5*time.Second)
-	err := o.waitForEtcd(srv.URL)
+	err := o.waitForEtcd(context.Background(),srv.URL)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, count.Load(), int32(3))
 }
