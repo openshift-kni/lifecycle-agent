@@ -144,13 +144,13 @@ func (h *IPCConfigStageHandler) Handle(ctx context.Context, ipc *ipcv1.IPConfig)
 		return doNotRequeue(), nil
 	}
 
-	targetStaterootBooted, err := isTargetStaterootBooted(ipc, h.RPMOstreeClient)
+	targetStaterootBooted, err := isTargetStaterootBooted(ctx, ipc, h.RPMOstreeClient)
 	if err != nil {
 		logger.Error(err, "Failed to determine whether target stateroot is booted")
 		return requeueWithError(fmt.Errorf("failed to check if target stateroot is booted: %w", err))
 	}
 
-	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(h.RPMOstreeClient)
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(ctx, h.RPMOstreeClient)
 	if err != nil {
 		logger.Error(err, "Failed to determine whether an unbooted stateroot is available")
 		return requeueWithError(fmt.Errorf("failed to check if unbooted stateroot is available: %w", err))
@@ -279,7 +279,7 @@ func (h *IPCConfigTwoPhaseHandler) PrePivot(
 		return requeueWithError(fmt.Errorf("failed to export ipconfig for uncontrolled rollback: %w", err))
 	}
 
-	if err := h.RunLcaCliIPConfigPrePivot(logger); err != nil {
+	if err := h.RunLcaCliIPConfigPrePivot(ctx, logger); err != nil {
 		controllerutils.SetIPConfigStatusFailed(
 			ipc,
 			fmt.Sprintf("ip-config pre-pivot failed. error: %s", err.Error()),
@@ -305,7 +305,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 	logger.Info("Starting post-pivot phase")
 
 	if ipc.Status.RollbackAvailabilityExpiration.IsZero() {
-		unbootedStateroot, err := h.RPMOstreeClient.GetUnbootedStaterootName()
+		unbootedStateroot, err := h.RPMOstreeClient.GetUnbootedStaterootName(ctx)
 		if err != nil {
 			return requeueWithError(fmt.Errorf("unable to determine unbooted stateroot path for rollback: %w", err))
 		}
@@ -320,7 +320,7 @@ func (h *IPCConfigTwoPhaseHandler) PostPivot(
 		}
 	}
 
-	if err := h.RebootClient.DisableInitMonitor(); err != nil {
+	if err := h.RebootClient.DisableInitMonitor(ctx); err != nil {
 		controllerutils.SetIPConfigStatusFailed(
 			ipc,
 			fmt.Sprintf("failed to disable init monitor: %s", err.Error()),
@@ -799,6 +799,7 @@ func getRecertImage(ipc *ipcv1.IPConfig) string {
 
 // RunLcaCliIPConfigPrePivot schedules an lca-cli ip-config pre-pivot via systemd-run.
 func (h *IPCConfigTwoPhaseHandler) RunLcaCliIPConfigPrePivot(
+	ctx context.Context,
 	logger logr.Logger,
 ) error {
 	logger.Info("Scheduling lca-cli ip-config pre-pivot via systemd-run")
@@ -812,7 +813,7 @@ func (h *IPCConfigTwoPhaseHandler) RunLcaCliIPConfigPrePivot(
 		controllerutils.LcaCliBinaryName, "ip-config", "pre-pivot",
 	}
 
-	if _, err := h.ChrootOps.RunSystemdAction(args...); err != nil {
+	if _, err := h.ChrootOps.RunSystemdAction(ctx, args...); err != nil {
 		return fmt.Errorf("lca-cli ip-config pre-pivot failed: %w", err)
 	}
 
@@ -1014,8 +1015,8 @@ func (h *IPCConfigStageHandler) validateSNO(ctx context.Context) error {
 	return nil
 }
 
-func (h *IPCConfigStageHandler) validateStaticNetworking() error {
-	output, err := h.ChrootOps.RunInHostNamespace("nmstatectl", "show", "--json", "-q")
+func (h *IPCConfigStageHandler) validateStaticNetworking(ctx context.Context) error {
+	output, err := h.ChrootOps.RunInHostNamespace(ctx, "nmstatectl", "show", "--json", "-q")
 	if err != nil {
 		return fmt.Errorf("failed to run nmstatectl show --json for static networking validation: %w", err)
 	}
@@ -1074,7 +1075,7 @@ func (h *IPCConfigStageHandler) validateConfigStart(ctx context.Context, ipc *ip
 		return fmt.Errorf("validation of SNO failed: %w", err)
 	}
 
-	if err := h.validateStaticNetworking(); err != nil {
+	if err := h.validateStaticNetworking(ctx); err != nil {
 		return fmt.Errorf("validation of static networking failed: %w", err)
 	}
 

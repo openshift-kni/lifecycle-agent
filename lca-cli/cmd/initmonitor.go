@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -71,13 +72,14 @@ func initMonitor() error {
 		monitorSvcUnitComponentTag,
 		monitorMode,
 	)
+	ctx := context.Background()
 	if launchMonitor {
-		if err := initMonitorRunner.RunInitMonitor(); err != nil {
+		if err := initMonitorRunner.RunInitMonitor(ctx); err != nil {
 			return fmt.Errorf("failed to run init monitor: %w", err)
 		}
 		return nil
 	} else if monitorSvcUnitComponentTag != "" {
-		if err := initMonitorRunner.RunExitStopPostCheck(); err != nil {
+		if err := initMonitorRunner.RunExitStopPostCheck(ctx); err != nil {
 			return fmt.Errorf("failed to run exit stop post check: %w", err)
 		}
 		return nil

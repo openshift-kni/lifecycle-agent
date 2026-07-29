@@ -89,7 +89,7 @@ func (h *IPCRollbackStageHandler) Handle(
 			return doNotRequeue(), nil
 		}
 
-		if err := h.validateRollbackStart(); err != nil {
+		if err := h.validateRollbackStart(ctx); err != nil {
 			controllerutils.SetIPRollbackStatusFailed(
 				ipc,
 				fmt.Sprintf("rollback validation failed: %s", err.Error()),
@@ -122,7 +122,7 @@ func (h *IPCRollbackStageHandler) Handle(
 		return doNotRequeue(), nil
 	}
 
-	targetStaterootBooted, err := isTargetStaterootBooted(ipc, h.RPMOstreeClient)
+	targetStaterootBooted, err := isTargetStaterootBooted(ctx, ipc, h.RPMOstreeClient)
 	if err != nil {
 		logger.Error(err, "Failed to determine whether target stateroot is booted")
 		return requeueWithError(fmt.Errorf("failed to check if target stateroot is booted: %w", err))
@@ -175,7 +175,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 	controllerutils.StartIPPhase(r.Client, logger, ipc, IPConfigRollbackPhasePrepivot)
 	logger.Info("Starting pre-pivot phase")
 
-	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName()
+	stateroot, err := r.RPMOstreeClient.GetUnbootedStaterootName(ctx)
 	if err != nil {
 		controllerutils.SetIPRollbackStatusFailed(
 			ipc,
@@ -187,7 +187,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 		return requeueWithError(fmt.Errorf("failed to determine unbooted stateroot: %w", err))
 	}
 
-	if err := r.Ops.RemountSysroot(); err != nil {
+	if err := r.Ops.RemountSysroot(ctx); err != nil {
 		controllerutils.SetIPRollbackStatusFailed(
 			ipc,
 			fmt.Errorf("failed to remount sysroot: %w", err).Error(),
@@ -229,7 +229,7 @@ func (r *IPCRollbackTwoPhaseHandler) PrePivot(
 		return requeueWithError(fmt.Errorf("failed to save IPConfig CR before pivot: %w", err))
 	}
 
-	if err := r.scheduleIPConfigRollback(logger, stateroot); err != nil {
+	if err := r.scheduleIPConfigRollback(ctx, logger, stateroot); err != nil {
 		controllerutils.SetIPRollbackStatusFailed(
 			ipc,
 			fmt.Errorf("failed to schedule ip-config rollback: %w", err).Error(),
@@ -283,6 +283,7 @@ func (r *IPCRollbackTwoPhaseHandler) PostPivot(
 }
 
 func (r *IPCRollbackTwoPhaseHandler) scheduleIPConfigRollback(
+	ctx context.Context,
 	logger logr.Logger,
 	stateroot string,
 ) error {
@@ -296,23 +297,23 @@ func (r *IPCRollbackTwoPhaseHandler) scheduleIPConfigRollback(
 		controllerutils.LcaCliBinaryName, "ip-config", "rollback",
 		"--stateroot", stateroot,
 	}
-	if _, err := r.Ops.RunSystemdAction(args...); err != nil {
+	if _, err := r.Ops.RunSystemdAction(ctx, args...); err != nil {
 		return fmt.Errorf("failed to schedule ip-config rollback: %w", err)
 	}
 
 	return nil
 }
 
-func (h *IPCRollbackStageHandler) validateRollbackStart() error {
-	if err := h.validateUnbootedStaterootAvailable(); err != nil {
+func (h *IPCRollbackStageHandler) validateRollbackStart(ctx context.Context) error {
+	if err := h.validateUnbootedStaterootAvailable(ctx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (h *IPCRollbackStageHandler) validateUnbootedStaterootAvailable() error {
-	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(h.RPMOstreeClient)
+func (h *IPCRollbackStageHandler) validateUnbootedStaterootAvailable(ctx context.Context) error {
+	isUnbootedStaterootAvailable, err := isUnbootedStaterootAvailable(ctx, h.RPMOstreeClient)
 	if err != nil {
 		return fmt.Errorf("failed to check if unbooted stateroot is available: %w", err)
 	}

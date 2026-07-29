@@ -271,7 +271,7 @@ func main() {
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
-	containerStorageMountpointTarget, err := chrootOp.GetContainerStorageTarget()
+	containerStorageMountpointTarget, err := chrootOp.GetContainerStorageTarget(context.TODO())
 	if err != nil {
 		setupLog.Error(err, "unable to get container storage mountpoint target")
 		os.Exit(1)
