@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -50,7 +52,7 @@ func restore() {
 	seedRestore := seedrestoration.NewSeedRestoration(log, op, common.BackupDir, containerRegistry,
 		authFile, recertContainerImage, recertSkipValidation)
 
-	if err := seedRestore.RestoreSeedCluster(); err != nil {
+	if err := seedRestore.RestoreSeedCluster(context.Background()); err != nil {
 		log.Fatalf("Failed to restore seed cluster: %v", err)
 	}
 
