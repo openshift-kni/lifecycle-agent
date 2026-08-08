@@ -78,12 +78,7 @@ func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpg
 
 // validateSeedImageConfig retrieves the labels for the seed image without downloading the image itself, then validates
 // the config data from the labels
-func (r *ImageBasedUpgradeReconciler) validateSeedImageConfig(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) error {
-	labels, err := r.getLabelsForSeedImage(ctx, ibu)
-	if err != nil {
-		return fmt.Errorf("failed to get seed image labels: %w", err)
-	}
-
+func (r *ImageBasedUpgradeReconciler) validateSeedImageConfig(ctx context.Context, labels map[string]string) error {
 	r.Log.Info("Checking seed image version compatibility")
 	if err := checkSeedImageVersionCompatibility(labels); err != nil {
 		return fmt.Errorf("checking seed image compatibility: %w", err)
@@ -569,10 +564,23 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to initialize IBU workspace: %s", err.Error()), ibu)
 			}
 
+			labels, err := r.getLabelsForSeedImage(ctx, ibu)
+			if err != nil {
+				return requeueWithError(fmt.Errorf("failed to get labels for seed image: %w", err))
+			}
+
 			// Validate config information from the seed image labels, prior to launching the job and downloading the image
 			r.Log.Info("Validating seed information")
-			if err := r.validateSeedImageConfig(ctx, ibu); err != nil {
+			if err := r.validateSeedImageConfig(ctx, labels); err != nil {
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate seed image info: %s", err.Error()), ibu)
+			}
+
+			// Check the OCI labels of the seed image to detect bootc seed
+			useBootc := false
+			if val, exists := labels[common.SeedUseBootcOCILabel]; exists {
+				if val == "true" {
+					useBootc = true
+				}
 			}
 
 			r.Log.Info("Checking container storage disk space")
@@ -581,7 +589,7 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			}
 
 			r.Log.Info("Launching a new stateroot job")
-			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log); err != nil {
+			if _, err := prep.LaunchStaterootSetupJob(ctx, r.Client, ibu, r.Scheme, r.Log, useBootc); err != nil {
 				return requeueWithError(fmt.Errorf("failed launch stateroot job: %w", err))
 			}
 			// start prep stage stateroot phase timing
