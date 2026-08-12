@@ -92,7 +92,8 @@ func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
 
 		sortResourcesByWave(wg.resources)
 
-		for _, resource := range wg.resources {
+		for _, entry := range wg.resources {
+			resource := entry.resource
 			name := resource.GetName()
 			namespace := resource.GetNamespace()
 			kind := resource.GetKind()
@@ -122,6 +123,14 @@ func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
 						"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
 				}
 			}
+
+			logFields := []interface{}{
+				"file", entry.fileName, "resourceType", kind, "name", name,
+			}
+			if namespace != "" {
+				logFields = append(logFields, "namespace", namespace)
+			}
+			h.Log.Info("Resource restored", logFields...)
 
 			rt.SucceededRestores = append(rt.SucceededRestores,
 				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
@@ -316,9 +325,14 @@ func validateChecksums(backupPath string) (map[string]bool, error) {
 	return validatedFiles, nil
 }
 
+type resourceEntry struct {
+	resource *unstructured.Unstructured
+	fileName string
+}
+
 type waveGroup struct {
 	wave      int
-	resources []*unstructured.Unstructured
+	resources []resourceEntry
 }
 
 func parseWavePrefix(dirName string) (int, string) {
@@ -386,7 +400,10 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 				waveMap[d.wave] = wg
 				waveOrder = append(waveOrder, d.wave)
 			}
-			wg.resources = append(wg.resources, resource)
+			wg.resources = append(wg.resources, resourceEntry{
+				resource: resource,
+				fileName: yamlFile.Name(),
+			})
 			count++
 		}
 
@@ -400,9 +417,9 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 	return result, nil
 }
 
-func sortResourcesByWave(resources []*unstructured.Unstructured) {
+func sortResourcesByWave(resources []resourceEntry) {
 	sort.SliceStable(resources, func(i, j int) bool {
-		return getWaveOrder(resources[i]) < getWaveOrder(resources[j])
+		return getWaveOrder(resources[i].resource) < getWaveOrder(resources[j].resource)
 	})
 }
 
