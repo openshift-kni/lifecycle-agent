@@ -179,6 +179,14 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 					return bt, fmt.Errorf("failed to write resource file: %w", err)
 				}
 
+				logFields := []interface{}{
+					"file", fileName, "resourceType", kind, "name", name,
+				}
+				if ns != "" {
+					logFields = append(logFields, "namespace", ns)
+				}
+				h.Log.Info("Resource backed up", logFields...)
+
 				hash := sha256.Sum256(data)
 				checksums = append(checksums, fmt.Sprintf("%s  %s",
 					hex.EncodeToString(hash[:]), filepath.Join(dirName, fileName)))
@@ -262,7 +270,19 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 		}
 	}
 
+	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
 	for _, ns := range spec.IncludedNamespaces {
+		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				h.Log.Info("Namespace not found, skipping", "namespace", ns)
+			} else {
+				return nil, fmt.Errorf("failed to get namespace %s: %w", ns, err)
+			}
+		} else {
+			resources = append(resources, nsObj)
+		}
+
 		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch resources in namespace %s: %w", ns, err)
