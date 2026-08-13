@@ -94,6 +94,13 @@ func mkIPCForIdle(t *testing.T) *ipcv1.IPConfig {
 	}
 }
 
+func stubOsReadDirEmpty(t *testing.T) {
+	t.Helper()
+	orig := osReadDir
+	osReadDir = func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil }
+	t.Cleanup(func() { osReadDir = orig })
+}
+
 func assertIdleCond(t *testing.T, ipc *ipcv1.IPConfig, wantStatus metav1.ConditionStatus, wantReason controllerutils.ConditionReason, msgContains string) {
 	t.Helper()
 	idle := meta.FindStatusCondition(ipc.Status.Conditions, string(controllerutils.ConditionTypes.Idle))
@@ -440,6 +447,8 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
+		stubOsReadDirEmpty(t)
+
 		status := &rpmostreeclient.Status{
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
 		}
@@ -504,6 +513,8 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		oldHC := CheckHealth
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
+
+		stubOsReadDirEmpty(t)
 
 		status := &rpmostreeclient.Status{
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},

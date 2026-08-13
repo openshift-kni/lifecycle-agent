@@ -1542,3 +1542,435 @@ func TestValidateClusterAndNetworkSpecCompatability_DNSFilterOutFamilyRequiresDu
 		assert.Contains(t, err.Error(), "dual-stack")
 	})
 }
+
+func Test_ipEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical v4", "192.168.1.1", "192.168.1.1", true},
+		{"different v4", "192.168.1.1", "192.168.1.2", false},
+		{"identical v6", "fd00::1", "fd00::1", true},
+		{"v6 normalized vs expanded", "fd00::1", "fd00:0000:0000:0000:0000:0000:0000:0001", true},
+		{"different v6", "fd00::1", "fd00::2", false},
+		{"v4 with CIDR stripped", "192.168.1.1/24", "192.168.1.1", true},
+		{"both with CIDR", "10.0.0.1/16", "10.0.0.1/24", true},
+		{"different IPs with CIDR", "10.0.0.1/24", "10.0.0.2/24", false},
+		{"unparseable falls back to string match", "not-an-ip", "not-an-ip", true},
+		{"unparseable different", "not-an-ip", "other", false},
+		{"empty strings", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ipEqual(tt.a, tt.b))
+		})
+	}
+}
+
+func Test_cidrEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical v4 CIDR", "192.168.1.0/24", "192.168.1.0/24", true},
+		{"same network different notation", "10.0.0.0/8", "10.0.0.0/8", true},
+		{"different prefix length", "192.168.1.0/24", "192.168.1.0/16", false},
+		{"different network", "10.0.0.0/24", "10.0.1.0/24", false},
+		{"v6 CIDR identical", "fd00::/64", "fd00::/64", true},
+		{"v6 CIDR different prefix", "fd00::/64", "fd00::/48", false},
+		{"unparseable falls back to string", "bogus", "bogus", true},
+		{"unparseable different", "bogus", "other", false},
+		{"one parseable one not", "192.168.1.0/24", "bogus", false},
+		{"whitespace trimmed", " 10.0.0.0/24 ", "10.0.0.0/24", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, cidrEqual(tt.a, tt.b))
+		})
+	}
+}
+
+func Test_parseCIDR(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantIP  string
+		wantLen int
+		wantErr bool
+	}{
+		{"v4 /24", "192.168.1.0/24", "192.168.1.0", 24, false},
+		{"v4 /16", "10.0.0.0/16", "10.0.0.0", 16, false},
+		{"v4 host masked", "192.168.1.100/24", "192.168.1.0", 24, false},
+		{"v6 /64", "fd00::/64", "fd00::", 64, false},
+		{"v6 /128", "::1/128", "::1", 128, false},
+		{"whitespace", "  10.0.0.0/8  ", "10.0.0.0", 8, false},
+		{"invalid", "not-cidr", "", 0, true},
+		{"ip without prefix", "192.168.1.1", "", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ip, prefixLen, err := parseCIDR(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantIP, ip)
+			assert.Equal(t, tt.wantLen, prefixLen)
+		})
+	}
+}
+
+func Test_statusIPsMatchSpec(t *testing.T) {
+	t.Run("status not populated returns error", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not yet populated")
+	})
+
+	t.Run("matching v4 spec and status", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{
+					Address:        "192.168.1.10/24",
+					Gateway:        "192.168.1.1",
+					MachineNetwork: "192.168.1.0/24",
+				},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{
+					Address:        "192.168.1.10",
+					Gateway:        "192.168.1.1",
+					MachineNetwork: "192.168.1.0/24",
+				},
+			},
+		}
+		assert.NoError(t, statusIPsMatchSpec(ipc))
+	})
+
+	t.Run("v4 address mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{Address: "192.168.1.10"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{Address: "192.168.1.20"},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv4 address mismatch")
+	})
+
+	t.Run("v4 status nil", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{Address: "192.168.1.10"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{Address: "fd00::1"},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv4 missing from status")
+	})
+
+	t.Run("dns filter out family mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				DNSFilterOutFamily: "ipv6",
+				IPv4:               &ipcv1.IPv4Config{Address: "10.0.0.1"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				DNSFilterOutFamily: "ipv4",
+				IPv4:               &ipcv1.IPv4Status{Address: "10.0.0.1"},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dnsFilterOutFamily mismatch")
+	})
+
+	t.Run("vlan mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				VLANID: 100,
+				IPv4:   &ipcv1.IPv4Config{Address: "10.0.0.1"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				VLANID: 200,
+				IPv4:   &ipcv1.IPv4Status{Address: "10.0.0.1"},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "vlan mismatch")
+	})
+
+	t.Run("dns servers mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				DNSServers: []ipcv1.IPAddress{"8.8.8.8"},
+				IPv4:       &ipcv1.IPv4Config{Address: "10.0.0.1"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				DNSServers: []string{"1.1.1.1"},
+				IPv4:       &ipcv1.IPv4Status{Address: "10.0.0.1"},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dnsServers mismatch")
+	})
+
+	t.Run("v6 gateway mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{
+					Address: "fd00::10",
+					Gateway: "fd00::1",
+				},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{
+					Address: "fd00::10",
+					Gateway: "fd00::ff",
+				},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 gateway mismatch")
+	})
+
+	t.Run("v6 machineNetwork mismatch", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{
+					Address:        "fd00::10",
+					MachineNetwork: "fd00::/64",
+				},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{
+					Address:        "fd00::10",
+					MachineNetwork: "fd01::/64",
+				},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 machineNetwork mismatch")
+	})
+
+	t.Run("v6 machineNetwork not observed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{
+					Address:        "fd00::10",
+					MachineNetwork: "fd00::/64",
+				},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{
+					Address: "fd00::10",
+				},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 machineNetwork not observed")
+	})
+
+	t.Run("v6 address missing from status", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{Address: "fd00::10"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 address missing from status")
+	})
+
+	t.Run("v4 machineNetwork not observed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{
+					Address:        "192.168.1.10",
+					MachineNetwork: "192.168.1.0/24",
+				},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{
+					Address: "192.168.1.10",
+				},
+			},
+		}
+		err := statusIPsMatchSpec(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "machineNetwork not observed")
+	})
+
+	t.Run("full dual-stack match", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{
+					Address:        "192.168.1.10",
+					Gateway:        "192.168.1.1",
+					MachineNetwork: "192.168.1.0/24",
+				},
+				IPv6: &ipcv1.IPv6Config{
+					Address:        "fd00::10",
+					Gateway:        "fd00::1",
+					MachineNetwork: "fd00::/64",
+				},
+				VLANID:             100,
+				DNSFilterOutFamily: "none",
+				DNSServers:         []ipcv1.IPAddress{"8.8.8.8", "8.8.4.4"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{
+					Address:        "192.168.1.10",
+					Gateway:        "192.168.1.1",
+					MachineNetwork: "192.168.1.0/24",
+				},
+				IPv6: &ipcv1.IPv6Status{
+					Address:        "fd00::10",
+					Gateway:        "fd00::1",
+					MachineNetwork: "fd00::/64",
+				},
+				VLANID:             100,
+				DNSFilterOutFamily: "none",
+				DNSServers:         []string{"8.8.8.8", "8.8.4.4"},
+			},
+		}
+		assert.NoError(t, statusIPsMatchSpec(ipc))
+	})
+}
+
+func Test_validateAddressChanges(t *testing.T) {
+	t.Run("nil ipc returns nil", func(t *testing.T) {
+		assert.NoError(t, validateAddressChanges(nil))
+	})
+
+	t.Run("no spec families returns nil", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("dns change without address change rejected", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4:       &ipcv1.IPv4Config{Address: "10.0.0.1"},
+				DNSServers: []ipcv1.IPAddress{"8.8.8.8"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4:       &ipcv1.IPv4Status{Address: "10.0.0.1"},
+				DNSServers: []string{"1.1.1.1"},
+			},
+		}
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dnsServers can be changed only if address is also changed")
+	})
+
+	t.Run("dns change with address change allowed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4:       &ipcv1.IPv4Config{Address: "10.0.0.2"},
+				DNSServers: []ipcv1.IPAddress{"8.8.8.8"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4:       &ipcv1.IPv4Status{Address: "10.0.0.1"},
+				DNSServers: []string{"1.1.1.1"},
+			},
+		}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("v6 gateway change without address change rejected", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{Address: "fd00::1", Gateway: "fd00::ff"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{Address: "fd00::1", Gateway: "fd00::1"},
+			},
+		}
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 gateway can be changed only if address is also changed")
+	})
+
+	t.Run("v6 machineNetwork change without address change rejected", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{Address: "fd00::1", MachineNetwork: "fd01::/64"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{Address: "fd00::1", MachineNetwork: "fd00::/64"},
+			},
+		}
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv6 machineNetwork can be changed only if address is also changed")
+	})
+
+	t.Run("v6 machineNetwork change with address change allowed", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv6: &ipcv1.IPv6Config{Address: "fd00::2", MachineNetwork: "fd01::/64"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv6: &ipcv1.IPv6Status{Address: "fd00::1", MachineNetwork: "fd00::/64"},
+			},
+		}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("v4 gateway change without address change rejected", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{Address: "10.0.0.1", Gateway: "10.0.0.254"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{Address: "10.0.0.1", Gateway: "10.0.0.1"},
+			},
+		}
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv4 gateway can be changed only if address is also changed")
+	})
+
+	t.Run("v4 machineNetwork change without address change rejected", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{Address: "10.0.0.1", MachineNetwork: "10.0.1.0/24"},
+			},
+			Status: ipcv1.IPConfigStatus{
+				IPv4: &ipcv1.IPv4Status{Address: "10.0.0.1", MachineNetwork: "10.0.0.0/24"},
+			},
+		}
+		err := validateAddressChanges(ipc)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ipv4 machineNetwork can be changed only if address is also changed")
+	})
+
+	t.Run("nil spec and status returns nil", func(t *testing.T) {
+		ipc := &ipcv1.IPConfig{
+			Spec: ipcv1.IPConfigSpec{
+				IPv4: &ipcv1.IPv4Config{Address: "10.0.0.1"},
+			},
+			Status: ipcv1.IPConfigStatus{},
+		}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+}
