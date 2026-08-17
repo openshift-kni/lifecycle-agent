@@ -21,7 +21,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	github.com/vmware-tanzu/velero v1.18.2
 	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.54.0
