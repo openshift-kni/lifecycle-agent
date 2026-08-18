@@ -217,6 +217,7 @@ ci-job: common-deps-update generate fmt vet golangci-lint unittest shellcheck ba
 
 # Download go tools
 .PHONY: controller-gen
+.PHONY: $(CONTROLLER_GEN)
 controller-gen: sync-git-submodules $(LOCALBIN) ## Download controller-gen locally if necessary.
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
 		TOOL_NAME=controller-gen \
@@ -224,6 +225,7 @@ controller-gen: sync-git-submodules $(LOCALBIN) ## Download controller-gen local
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 
 .PHONY: kustomize
+.PHONY: $(KUSTOMIZE)
 kustomize: sync-git-submodules $(LOCALBIN) ## Download kustomize locally if necessary.
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
 		TOOL_NAME=kustomize \
@@ -231,6 +233,7 @@ kustomize: sync-git-submodules $(LOCALBIN) ## Download kustomize locally if nece
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 
 .PHONY: mock-gen
+.PHONY: $(MOCK_GEN)
 mock-gen: sync-git-submodules $(LOCALBIN) ## Download mockgen locally if necessary.
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-go-tool \
 		TOOL_NAME=mockgen \
@@ -375,6 +378,7 @@ test-kustomize: kustomize ## Validate all kustomization.yaml files can build suc
 	@echo "Kustomize validation completed successfully."
 
 .PHONY: bashate-download
+.PHONY: $(BASHATE)
 bashate-download: sync-git-submodules $(LOCALBIN) ## Download bashate locally if necessary and run against bash files. If wrong version is installed, it will be removed before downloading.
 	@echo "Downloading bashate..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
@@ -398,6 +402,7 @@ bashate: bashate-download $(BASHATE) ## Lint bash files in the repository
 	@echo "Bashate linting completed successfully."
 
 .PHONY: golangci-lint-download
+.PHONY: $(GOLANGCI_LINT)
 golangci-lint-download: sync-git-submodules $(LOCALBIN) ## Download golangci-lint locally if necessary. If wrong version is installed, it will be removed before downloading.
 	@echo "Downloading golangci-lint..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
@@ -431,6 +436,8 @@ markdownlint: markdownlint-image  ## run the markdown linter
 		-v $$(pwd):/workdir:Z \
 		$(IMAGE_NAME)-markdownlint:latest
 
+.PHONY: operator-sdk
+.PHONY: $(OPERATOR_SDK)
 operator-sdk: sync-git-submodules $(LOCALBIN) ## Download operator-sdk locally if necessary.
 	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-operator-sdk \
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
@@ -438,6 +445,7 @@ operator-sdk: sync-git-submodules $(LOCALBIN) ## Download operator-sdk locally i
 	@echo "Operator sdk downloaded successfully."
 
 .PHONY: opm
+.PHONY: $(OPM)
 opm: sync-git-submodules $(LOCALBIN) ## Download opm locally if necessary.
 	@$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-opm \
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN) \
@@ -445,6 +453,7 @@ opm: sync-git-submodules $(LOCALBIN) ## Download opm locally if necessary.
 	@echo "Opm downloaded successfully."
 
 .PHONY: shellcheck-download
+.PHONY: $(SHELLCHECK)
 shellcheck-download: sync-git-submodules $(LOCALBIN) ## Download shellcheck locally if necessary. If wrong version is installed, it will be removed before downloading.
 	@echo "Downloading shellcheck..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
@@ -468,6 +477,7 @@ shellcheck: shellcheck-download $(SHELLCHECK) ## Lint bash files in the reposito
 	@echo "Shellcheck linting completed successfully."
 
 .PHONY: yamllint-download
+.PHONY: $(YAMLLINT)
 yamllint-download: sync-git-submodules $(LOCALBIN) ## Download yamllint locally if necessary and run against yaml files. If wrong version is installed, it will be removed before downloading.
 	@echo "Downloading yamllint..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download \
@@ -483,6 +493,7 @@ yamllint: yamllint-download $(YAMLLINT) ## Lint YAML files in the repository
 	@echo "YAML linting completed successfully."
 
 .PHONY: yq
+.PHONY: $(YQ)
 yq: sync-git-submodules $(LOCALBIN) ## Download yq
 	@echo "Downloading yq..."
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/download download-yq \
