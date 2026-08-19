@@ -283,6 +283,84 @@ func TestExtractTrailingNumber(t *testing.T) {
 	}
 }
 
+func TestLoadGroupedManifestsFromPathWithNumericFileSorting(t *testing.T) {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "manifest-file-numeric-test")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create manifests directory with a single group holding 12 files.
+	manifestDir := filepath.Join(tmpDir, "manifests")
+	groupDir := filepath.Join(manifestDir, "group1")
+	if err := os.MkdirAll(groupDir, 0755); err != nil {
+		t.Fatalf("Failed to create group directory: %v", err)
+	}
+
+	// Create 12 manifest files with leading index prefixes (1_ through 12_).
+	// This tests the bug where 10_, 11_, 12_ would come before 2_ with alphabetical sorting.
+	for i := 1; i <= 12; i++ {
+		manifestFile := filepath.Join(groupDir, fmt.Sprintf("%d_default-restore%d.yaml", i, i))
+		content := fmt.Sprintf("apiVersion: velero.io/v1\nkind: Restore\nmetadata:\n  name: restore%d\nspec:\n  backupName: backup%d\n", i, i)
+		if err := os.WriteFile(manifestFile, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to create manifest file %d: %v", i, err)
+		}
+	}
+
+	manifests, err := LoadGroupedManifestsFromPath(manifestDir, &logr.Logger{})
+	if err != nil {
+		t.Fatalf("Failed to load manifests: %v", err)
+	}
+
+	// Verify we have a single group with 12 manifests in ascending numeric order.
+	assert.Equal(t, 1, len(manifests), "Expected 1 manifest group")
+	assert.Equal(t, 12, len(manifests[0]), "Expected 12 manifests in the group")
+
+	for i := 0; i < 12; i++ {
+		expectedName := fmt.Sprintf("restore%d", i+1)
+		actualName := manifests[0][i].GetName()
+		assert.Equal(t, expectedName, actualName,
+			"Expected manifest at index %d to be %s but got %s", i, expectedName, actualName)
+	}
+}
+
+func TestExtractLeadingNumber(t *testing.T) {
+	testcases := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{
+			name:     "single digit",
+			input:    "1_ConfigMap_x_.yaml",
+			expected: 1,
+		},
+		{
+			name:     "double digit",
+			input:    "10_SriovNetwork_x_ns.yaml",
+			expected: 10,
+		},
+		{
+			name:     "trailing digits in name",
+			input:    "16_RoleBinding_x_s000032-001-ec-gnb-001.yaml",
+			expected: 16,
+		},
+		{
+			name:     "no number",
+			input:    "no-number.yaml",
+			expected: 0,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractLeadingNumber(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
 func TestReadSeedReconfigurationFromFile(t *testing.T) {
 	type dummySeedReconfiguration struct {
 		seedreconfig.SeedReconfiguration
