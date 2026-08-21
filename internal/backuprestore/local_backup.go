@@ -376,7 +376,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	}
 
 	for _, resourceType := range resourceTypes {
-		if isExcluded(resourceType, spec.ExcludedResources) {
+		if isExcluded(resourceType, spec.ExcludedResources, spec.ExcludedNamespaceScopedResources) {
 			continue
 		}
 
@@ -399,7 +399,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 }
 
 func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec) ([]*unstructured.Unstructured, error) {
-	if isExcluded(resourceType, spec.ExcludedResources) {
+	if isExcluded(resourceType, spec.ExcludedResources, spec.ExcludedClusterScopedResources) {
 		return nil, nil
 	}
 
@@ -477,14 +477,17 @@ func shouldPreserveStatus(resource *unstructured.Unstructured, statusResources m
 	return statusResources[pluralizeKind(kind)]
 }
 
-func isExcluded(resource string, excludedResources []string) bool {
-	for _, excluded := range excludedResources {
-		if strings.EqualFold(resource, excluded) {
-			return true
-		}
-		parts := strings.SplitN(resource, ".", 2)
-		if len(parts) > 0 && strings.EqualFold(parts[0], excluded) {
-			return true
+// isExcluded reports whether the given resource type matches any entry in the
+// provided exclusion lists. A resource matches either by its full type string
+// (e.g. "deployments.apps") or by its bare resource name (e.g. "deployments"),
+// case-insensitively.
+func isExcluded(resource string, excludedLists ...[]string) bool {
+	bare := strings.SplitN(resource, ".", 2)[0]
+	for _, list := range excludedLists {
+		for _, excluded := range list {
+			if strings.EqualFold(resource, excluded) || strings.EqualFold(bare, excluded) {
+				return true
+			}
 		}
 	}
 	return false

@@ -210,6 +210,67 @@ spec:
 	})
 }
 
+func TestExtractBackupSpecsExcludedResources(t *testing.T) {
+	cm := corev1.ConfigMap{
+		Data: map[string]string{
+			"backup.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: my-backup
+spec:
+  includedNamespaces:
+  - test-ns
+  includedNamespaceScopedResources:
+  - secrets
+  - deployments
+  includedClusterScopedResources:
+  - clusterroles
+  - persistentvolumes
+  excludedResources:
+  - events
+  excludedNamespaceScopedResources:
+  - secrets
+  excludedClusterScopedResources:
+  - persistentvolumes
+`,
+		},
+	}
+	specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+	assert.NoError(t, err)
+	assert.Len(t, specs, 1)
+	assert.Equal(t, []string{"events"}, specs[0].ExcludedResources)
+	assert.Equal(t, []string{"secrets"}, specs[0].ExcludedNamespaceScopedResources)
+	assert.Equal(t, []string{"persistentvolumes"}, specs[0].ExcludedClusterScopedResources)
+}
+
+func TestIsExcluded(t *testing.T) {
+	t.Run("matches bare resource name", func(t *testing.T) {
+		assert.True(t, isExcluded("deployments.apps", []string{"deployments"}))
+	})
+
+	t.Run("matches full resource type", func(t *testing.T) {
+		assert.True(t, isExcluded("deployments.apps", []string{"deployments.apps"}))
+	})
+
+	t.Run("case insensitive", func(t *testing.T) {
+		assert.True(t, isExcluded("secrets", []string{"Secrets"}))
+	})
+
+	t.Run("no match returns false", func(t *testing.T) {
+		assert.False(t, isExcluded("secrets", []string{"configmaps"}))
+	})
+
+	t.Run("checks multiple lists", func(t *testing.T) {
+		assert.True(t, isExcluded("persistentvolumes",
+			[]string{"events"}, []string{"persistentvolumes"}))
+	})
+
+	t.Run("empty lists returns false", func(t *testing.T) {
+		assert.False(t, isExcluded("secrets"))
+	})
+}
+
 func TestValidateBackupRestoreMapping(t *testing.T) {
 	t.Run("valid mapping passes", func(t *testing.T) {
 		restores := []RestoreSpec{
