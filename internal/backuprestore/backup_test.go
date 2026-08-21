@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -150,6 +151,43 @@ func TestGetObjsFromApplyLabel(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
+}
+
+func TestRemovePVClaimRef(t *testing.T) {
+	t.Run("removes claimRef from a PersistentVolume", func(t *testing.T) {
+		pv := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "PersistentVolume",
+			"metadata":   map[string]interface{}{"name": "pv1"},
+			"spec": map[string]interface{}{
+				"claimRef": map[string]interface{}{
+					"name":      "my-pvc",
+					"namespace": "my-ns",
+				},
+				"capacity": map[string]interface{}{"storage": "1Gi"},
+			},
+		}}
+		removePVClaimRef(pv)
+		_, found, _ := unstructured.NestedMap(pv.Object, "spec", "claimRef")
+		assert.False(t, found, "claimRef should be removed")
+		// Other spec fields are preserved.
+		_, found, _ = unstructured.NestedMap(pv.Object, "spec", "capacity")
+		assert.True(t, found, "capacity should be preserved")
+	})
+
+	t.Run("no-op for non-PersistentVolume resources", func(t *testing.T) {
+		svc := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata":   map[string]interface{}{"name": "svc1"},
+			"spec": map[string]interface{}{
+				"claimRef": map[string]interface{}{"name": "should-stay"},
+			},
+		}}
+		removePVClaimRef(svc)
+		_, found, _ := unstructured.NestedMap(svc.Object, "spec", "claimRef")
+		assert.True(t, found, "non-PV resources must be left untouched")
+	})
 }
 
 func TestPatchPVsReclaimPolicy(t *testing.T) {
