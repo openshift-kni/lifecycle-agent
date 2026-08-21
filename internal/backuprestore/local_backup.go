@@ -143,6 +143,7 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 
 			restoreSpec := FindRestoreForBackup(spec.Name, restoreSpecs)
 			statusResources := resolveStatusResources(restoreSpec)
+			restorePVs := restoreSpec != nil && restoreSpec.RestorePVs
 
 			resources, err := h.fetchResources(ctx, spec)
 			if err != nil {
@@ -161,6 +162,14 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 
 			for i, resource := range resources {
 				stripTransientMetadata(resource, statusResources)
+
+				// When the matching Restore CR sets restorePVs: true, strip
+				// spec.claimRef from PersistentVolumes so that when they are
+				// (re)applied during the post-pivot restore they are not bound
+				// to a stale PVC reference and can rebind to their restored PVC.
+				if restorePVs {
+					removePVClaimRef(resource)
+				}
 
 				data, err := k8syaml.Marshal(resource.Object)
 				if err != nil {
@@ -445,6 +454,19 @@ func stripTransientMetadata(resource *unstructured.Unstructured, statusResources
 	unstructured.RemoveNestedField(resource.Object, "metadata", "ownerReferences")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "finalizers")
 	unstructured.RemoveNestedField(resource.Object, "metadata", "selfLink")
+}
+
+// removePVClaimRef clears spec.claimRef from a PersistentVolume. It is invoked
+// during backup when the matching Velero Restore CR sets restorePVs: true, so
+// that the stored PV manifest is applied without a claimRef during the
+// post-pivot restore and the PV can rebind to its restored PVC. This mirrors
+// the volume-binding reset that OADP/Velero performs when restorePVs is set.
+// For any non-PersistentVolume resource this is a no-op.
+func removePVClaimRef(resource *unstructured.Unstructured) {
+	if resource.GetKind() != "PersistentVolume" {
+		return
+	}
+	unstructured.RemoveNestedField(resource.Object, "spec", "claimRef")
 }
 
 func shouldPreserveStatus(resource *unstructured.Unstructured, statusResources map[string]bool) bool {
