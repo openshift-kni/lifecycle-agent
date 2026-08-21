@@ -69,7 +69,7 @@ spec:
       value: []
     - name: additional-labels
       value:
-        - name=openshift4/lifecycle-agent-operator-bundle
+        - name=openshift5/lifecycle-agent-operator-bundle
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
