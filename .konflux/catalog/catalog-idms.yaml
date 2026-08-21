@@ -9,3 +9,6 @@ spec:
   - mirrors:
     - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-5-0
     source: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle
+  - mirrors:
+    - quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-operator-bundle-5-0
+    source: registry.redhat.io/openshift5/lifecycle-agent-operator-bundle

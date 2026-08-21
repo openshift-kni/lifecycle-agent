@@ -14,12 +14,15 @@ TEMP_FILES=()
 # Cleanup function (invoked via trap, not called directly)
 # shellcheck disable=SC2329
 cleanup() {
-    for temp_file in "${TEMP_FILES[@]}"; do
-        if [ -f "$temp_file" ]; then
-            rm -f "$temp_file"
-            echo "Cleaned up: $temp_file"
-        fi
-    done
+    # macOS Bash treats "${array[@]}" as unbound under set -u when empty
+    if ((${#TEMP_FILES[@]} > 0)); then
+        for temp_file in "${TEMP_FILES[@]}"; do
+            if [ -f "$temp_file" ]; then
+                rm -f "$temp_file"
+                echo "Cleaned up: $temp_file"
+            fi
+        done
+    fi
 }
 
 # Set trap to ensure cleanup on exit
