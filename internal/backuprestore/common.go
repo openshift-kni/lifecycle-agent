@@ -100,8 +100,10 @@ type BackupSpec struct {
 	ApplyWave                        string
 	IncludedNamespaces               []string
 	IncludedNamespaceScopedResources []string
-	ExcludedResources                []string
 	IncludedClusterScopedResources   []string
+	ExcludedResources                []string
+	ExcludedNamespaceScopedResources []string
+	ExcludedClusterScopedResources   []string
 	LabelSelector                    *metav1.LabelSelector
 }
 
@@ -351,8 +353,13 @@ func backupSpecFromUnstructured(u *unstructured.Unstructured) BackupSpec {
 
 	spec.IncludedNamespaces = getStringSlice(specMap, "includedNamespaces")
 	spec.IncludedNamespaceScopedResources = getStringSlice(specMap, "includedNamespaceScopedResources")
-	spec.ExcludedResources = getStringSlice(specMap, "excludedResources")
 	spec.IncludedClusterScopedResources = getStringSlice(specMap, "includedClusterScopedResources")
+	// excludedResources is the legacy Velero filter that applies to both
+	// namespace- and cluster-scoped resources; the *Scoped variants match the
+	// newer Velero resource-policy API and apply to their respective scope.
+	spec.ExcludedResources = getStringSlice(specMap, "excludedResources")
+	spec.ExcludedNamespaceScopedResources = getStringSlice(specMap, "excludedNamespaceScopedResources")
+	spec.ExcludedClusterScopedResources = getStringSlice(specMap, "excludedClusterScopedResources")
 
 	if lsMap, ok := specMap["labelSelector"].(map[string]interface{}); ok {
 		selector := &metav1.LabelSelector{}
