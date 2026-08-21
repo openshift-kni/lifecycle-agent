@@ -256,20 +256,9 @@ func (h *BRHandler) CleanupBackups(_ context.Context) error {
 func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*unstructured.Unstructured, error) {
 	var resources []*unstructured.Unstructured
 
-	applyLabelObjs, err := getObjsFromApplyLabel(spec.ApplyLabel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse apply-label: %w", err)
-	}
-	for _, obj := range applyLabelObjs {
-		resource, err := h.getResourceByMetadata(ctx, &obj)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get resource from apply-label %s/%s: %w", obj.Resource, obj.Name, err)
-		}
-		if resource != nil {
-			resources = append(resources, resource)
-		}
-	}
-
+	// Always include the Namespace objects for the included namespaces so they
+	// are recreated (in wave 0) before their contained resources during restore,
+	// regardless of whether the apply-label annotation is used.
 	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
 	for _, ns := range spec.IncludedNamespaces {
 		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
@@ -282,7 +271,33 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 		} else {
 			resources = append(resources, nsObj)
 		}
+	}
 
+	// When the apply-label annotation is present, the backup scope is limited
+	// exclusively to the resources named in the annotation, regardless of the
+	// resource types listed in the spec (see docs/backuprestore-with-oadp.md,
+	// section "LCA apply label annotation"). Fetch each named object directly
+	// instead of listing every resource of the included types.
+	if spec.ApplyLabel != "" {
+		applyLabelObjs, err := getObjsFromApplyLabel(spec.ApplyLabel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse apply-label: %w", err)
+		}
+		for _, obj := range applyLabelObjs {
+			resource, err := h.getResourceByMetadata(ctx, &obj)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get resource from apply-label %s/%s: %w", obj.Resource, obj.Name, err)
+			}
+			if resource != nil {
+				resources = append(resources, resource)
+			}
+		}
+		return deduplicateResources(resources), nil
+	}
+
+	// No apply-label: back up all resources of the included types in each
+	// included namespace and every included cluster-scoped resource type.
+	for _, ns := range spec.IncludedNamespaces {
 		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch resources in namespace %s: %w", ns, err)
