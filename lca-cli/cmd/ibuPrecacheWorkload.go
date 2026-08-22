@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -110,8 +111,10 @@ func ibuPrecacheWorkloadRun() {
 	}
 	log.Infof("chroot %s successful", common.Host)
 
+	ctx := context.Background()
+
 	// Pre-check: Verify podman is running
-	if !workload.CheckPodman() {
+	if !workload.CheckPodman(ctx) {
 		terminateOnError(fmt.Errorf("failed to execute podman command"))
 	}
 	log.Info("podman is running, proceeding to pre-cache images!")
@@ -120,7 +123,7 @@ func ibuPrecacheWorkloadRun() {
 	if err != nil {
 		terminateOnError(err)
 	}
-	if err := workload.Precache(precacheSpec, authFile, bestEffort); err != nil {
+	if err := workload.Precache(ctx, precacheSpec, authFile, bestEffort); err != nil {
 		terminateOnError(err)
 	}
 }
