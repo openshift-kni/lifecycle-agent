@@ -415,6 +415,57 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		assertStatusInvariants(t, updated, ipc)
 	})
 
+	t.Run("cleanup failing at removeBootDirsByStaterootPrefixes (ReadDir error) => idle=false failed and requeueWithError", func(t *testing.T) {
+		gc := gomock.NewController(t)
+		defer gc.Finish()
+
+		mockOps := ops.NewMockOps(gc)
+		mockRpm := rpmostreeclient.NewMockIClient(gc)
+		mockOstree := ostreeclient.NewMockIClient(gc)
+
+		ipc := mkIPCForIdle(t)
+		ipc.Status.Conditions = nil
+		ipc.Status.ValidNextStages = []ipcv1.IPConfigStage{ipcv1.IPStages.Idle}
+
+		k8sClient := newFakeClientWithIPC(t, scheme, ipc)
+		h := &IPCIdleStageHandler{
+			Client:          k8sClient,
+			NoncachedClient: k8sClient,
+			ChrootOps:       mockOps,
+			OstreeClient:    mockOstree,
+			RPMOstreeClient: mockRpm,
+		}
+
+		oldHC := CheckHealth
+		defer func() { CheckHealth = oldHC }()
+		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
+
+		// QueryStatus returns an unbooted deployment so getStaterootsToRemove returns a non-empty list
+		status := &rpmostreeclient.Status{
+			Deployments: []rpmostreeclient.Deployment{
+				{OSName: "rhcos", Booted: true},
+				{OSName: "old-stateroot", Booted: false},
+			},
+		}
+
+		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(1)
+		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
+		// ReadDir returns an error (not IsNotExist) to trigger the wrapped error path
+		mockOps.EXPECT().ReadDir(gomock.Any()).Return(nil, errors.New("permission denied")).Times(1)
+		mockOps.EXPECT().IsNotExist(gomock.Any()).Return(false).Times(1)
+
+		res, err := h.Handle(ctx, ipc)
+		assert.Error(t, err)
+		wantRes, _ := requeueWithError(err)
+		assert.Equal(t, wantRes, res)
+		assert.Contains(t, err.Error(), "failed to remove boot dirs by stateroot prefixes")
+
+		updated := mustGetIPC(t, k8sClient, common.IPConfigName)
+		assertIdleCond(t, updated, metav1.ConditionFalse, controllerutils.ConditionReasons.Failed, "failed to clean up unbooted stateroots")
+		assertStatusInvariants(t, updated, ipc)
+	})
+
 	t.Run("cleanup failing at workspace cleanup (RemoveAllFiles error) => idle=false failed and requeueWithError", func(t *testing.T) {
 		gc := gomock.NewController(t)
 		defer gc.Finish()
