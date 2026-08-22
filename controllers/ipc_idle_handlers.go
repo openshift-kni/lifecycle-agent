@@ -151,8 +151,16 @@ func (h *IPCIdleStageHandler) cleanup(logger logr.Logger) error {
 		return fmt.Errorf("failed to remount sysroot: %w", err)
 	}
 
+	if err := h.ChrootOps.RemountBoot(); err != nil {
+		return fmt.Errorf("failed to remount boot: %w", err)
+	}
+
 	if err := h.cleanuoUnbootedStateroots(logger); err != nil {
 		return fmt.Errorf("failed to clean up unbooted stateroots: %w", err)
+	}
+
+	if err := removeOrphanedBootEntries(logger, h.ChrootOps, h.RPMOstreeClient); err != nil {
+		return err
 	}
 
 	if err := cleanupLCAWorkspace(h.ChrootOps); err != nil {
@@ -199,10 +207,6 @@ func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) erro
 	}
 	logger.Info("Stateroots to remove", "stateroots", staterootsToRemove)
 
-	if err := h.ChrootOps.RemountBoot(); err != nil {
-		return fmt.Errorf("failed to remount boot: %w", err)
-	}
-
 	if err := removeBootDirsByStaterootPrefixes(logger, h.ChrootOps, staterootsToRemove); err != nil {
 		return err
 	}
@@ -247,6 +251,56 @@ func removeBootDirsByStaterootPrefixes(
 			}
 		}
 	}
+	return nil
+}
+
+// removeOrphanedBootEntries removes directories under /boot/ostree that do not
+// match any stateroot currently listed in rpm-ostree deployments.
+func removeOrphanedBootEntries(
+	logger logr.Logger,
+	chrootOps ops.Ops,
+	rpmOstreeClient rpmostreeclient.IClient,
+) error {
+	status, err := rpmOstreeClient.QueryStatus()
+	if err != nil {
+		return fmt.Errorf("failed to query rpm-ostree status: %w", err)
+	}
+
+	deployedStateroots := make(map[string]struct{})
+	for i := range status.Deployments {
+		deployedStateroots[status.Deployments[i].OSName] = struct{}{}
+	}
+
+	bootOstreePath := common.PathOutsideChroot("/boot/ostree")
+	entries, err := chrootOps.ReadDir(bootOstreePath)
+	if err != nil {
+		if chrootOps.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to list boot ostree directory %s: %w", bootOstreePath, err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		matched := false
+		for stateroot := range deployedStateroots {
+			if strings.HasPrefix(name, stateroot+"-") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			dirPath := filepath.Join(bootOstreePath, name)
+			logger.Info("Removing orphaned boot entry with no matching deployment", "path", dirPath)
+			if err := chrootOps.RemoveAllFiles(dirPath); err != nil {
+				return fmt.Errorf("failed to remove orphaned boot directory %s: %w", dirPath, err)
+			}
+		}
+	}
+
 	return nil
 }
 
