@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -18,6 +19,128 @@ func TestExtractBackupSpecsFromConfigmaps(t *testing.T) {
 		specs, err := ExtractBackupSpecsFromConfigmaps(nil)
 		assert.NoError(t, err)
 		assert.Empty(t, specs)
+	})
+
+	t.Run("parses backup spec fields including labelSelector", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"backup.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: my-backup
+  namespace: openshift-adp
+  annotations:
+    lca.openshift.io/apply-label: rbac.authorization.k8s.io/v1/clusterroles/klusterlet
+    lca.openshift.io/apply-wave: "3"
+spec:
+  includedNamespaces:
+  - test-ns
+  includedNamespaceScopedResources:
+  - secrets
+  includedClusterScopedResources:
+  - clusterroles
+  labelSelector:
+    matchLabels:
+      app: my-app
+    matchExpressions:
+    - key: tier
+      operator: In
+      values:
+      - frontend
+      - backend
+`,
+			},
+		}
+		specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "my-backup", specs[0].Name)
+		assert.Equal(t, "openshift-adp", specs[0].Namespace)
+		assert.Equal(t, "rbac.authorization.k8s.io/v1/clusterroles/klusterlet", specs[0].ApplyLabel)
+		assert.Equal(t, "3", specs[0].ApplyWave)
+		assert.Equal(t, []string{"test-ns"}, specs[0].IncludedNamespaces)
+		assert.Equal(t, []string{"secrets"}, specs[0].IncludedNamespaceScopedResources)
+		assert.Equal(t, []string{"clusterroles"}, specs[0].IncludedClusterScopedResources)
+		assert.NotNil(t, specs[0].LabelSelector)
+		assert.Equal(t, map[string]string{"app": "my-app"}, specs[0].LabelSelector.MatchLabels)
+		assert.Len(t, specs[0].LabelSelector.MatchExpressions, 1)
+		assert.Equal(t, "tier", specs[0].LabelSelector.MatchExpressions[0].Key)
+		assert.Equal(t, metav1.LabelSelectorOpIn, specs[0].LabelSelector.MatchExpressions[0].Operator)
+		assert.Equal(t, []string{"frontend", "backend"}, specs[0].LabelSelector.MatchExpressions[0].Values)
+	})
+
+	t.Run("defaults for missing optional fields", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"backup.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: simple-backup
+spec:
+  includedNamespaces:
+  - test-ns
+`,
+			},
+		}
+		specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "simple-backup", specs[0].Name)
+		assert.Empty(t, specs[0].Namespace)
+		assert.Empty(t, specs[0].ApplyLabel)
+		assert.Empty(t, specs[0].ApplyWave)
+		assert.Nil(t, specs[0].LabelSelector)
+		assert.Nil(t, specs[0].IncludedClusterScopedResources)
+	})
+
+	t.Run("non-Velero documents are ignored", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"mixed.yaml": `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: some-configmap
+data:
+  key: value
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: not-a-backup
+spec:
+  backupName: my-backup
+---
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: the-backup
+`,
+			},
+		}
+		specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "the-backup", specs[0].Name)
+	})
+
+	t.Run("malformed document returns a clear decode error", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"broken.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: broken
+   this: is not valid yaml
+`,
+			},
+		}
+		_, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode")
 	})
 }
 
@@ -207,6 +330,57 @@ spec:
 		assert.False(t, specs[0].RestorePVs)
 		assert.Empty(t, specs[0].RestoreStatusResources)
 		assert.Empty(t, specs[0].ApplyWave)
+	})
+
+	t.Run("non-Velero documents are ignored", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"mixed.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: not-a-restore
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: some-secret
+---
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: the-restore
+spec:
+  backupName: the-backup
+`,
+			},
+		}
+		specs, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.NoError(t, err)
+		assert.Len(t, specs, 1)
+		assert.Equal(t, "the-restore", specs[0].Name)
+		assert.Equal(t, "the-backup", specs[0].BackupName)
+	})
+
+	t.Run("malformed document returns a clear decode error", func(t *testing.T) {
+		cm := corev1.ConfigMap{
+			Data: map[string]string{
+				"broken.yaml": `
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: broken
+spec:
+  restorePVs: "not-a-bool-but-a-mapping"
+  nested:
+     - bad
+    indent: here
+`,
+			},
+		}
+		_, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode")
 	})
 }
 
