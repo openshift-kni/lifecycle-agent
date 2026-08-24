@@ -180,7 +180,7 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 				ns := resource.GetNamespace()
 				name := resource.GetName()
 				kind := resource.GetKind()
-				fileName := fmt.Sprintf("%d_%s_%s_%s.yaml", i, strings.ToLower(kind), ns, name)
+				fileName := fmt.Sprintf("%05d_%s_%s_%s.yaml", i, strings.ToLower(kind), ns, name)
 				filePath := filepath.Join(specDir, fileName)
 
 				if err := os.WriteFile(filePath, data, 0o600); err != nil {
