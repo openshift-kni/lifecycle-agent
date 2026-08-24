@@ -17,6 +17,7 @@ limitations under the License.
 package backuprestore
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -35,12 +36,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/yaml"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 // +kubebuilder:rbac:groups="*",resources="*",verbs="*"
@@ -225,28 +226,103 @@ func (o *ObjMetadata) GroupVersionResource() schema.GroupVersionResource {
 	}
 }
 
+// veleroTypeMeta captures the identifying fields of a document so it can be
+// filtered by apiVersion/kind before it is fully decoded.
+type veleroTypeMeta struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+}
+
+// veleroObjectMeta models only the metadata fields LCA reads from a Velero CR.
+type veleroObjectMeta struct {
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Annotations map[string]string `json:"annotations"`
+}
+
+// veleroBackup models the subset of a Velero Backup CR that LCA reads. It
+// deliberately avoids importing the Velero API types; any unknown fields in the
+// source document are ignored during decoding.
+type veleroBackup struct {
+	Metadata veleroObjectMeta `json:"metadata"`
+	Spec     veleroBackupSpec `json:"spec"`
+}
+
+type veleroBackupSpec struct {
+	IncludedNamespaces               []string              `json:"includedNamespaces"`
+	IncludedNamespaceScopedResources []string              `json:"includedNamespaceScopedResources"`
+	IncludedClusterScopedResources   []string              `json:"includedClusterScopedResources"`
+	ExcludedResources                []string              `json:"excludedResources"`
+	ExcludedNamespaceScopedResources []string              `json:"excludedNamespaceScopedResources"`
+	ExcludedClusterScopedResources   []string              `json:"excludedClusterScopedResources"`
+	LabelSelector                    *metav1.LabelSelector `json:"labelSelector"`
+}
+
+// veleroRestore models the subset of a Velero Restore CR that LCA reads.
+type veleroRestore struct {
+	Metadata veleroObjectMeta  `json:"metadata"`
+	Spec     veleroRestoreSpec `json:"spec"`
+}
+
+type veleroRestoreSpec struct {
+	BackupName    string               `json:"backupName"`
+	RestorePVs    bool                 `json:"restorePVs"`
+	RestoreStatus *veleroRestoreStatus `json:"restoreStatus"`
+}
+
+type veleroRestoreStatus struct {
+	IncludedResources []string `json:"includedResources"`
+}
+
+// forEachVeleroDoc iterates over every YAML/JSON document in a configmap value,
+// invoking handle with the raw bytes of each document whose apiVersion and kind
+// match the given GVK. Non-matching documents are ignored; malformed documents
+// produce a clear decode error.
+func forEachVeleroDoc(value string, gvk schema.GroupVersionKind, handle func(raw []byte) error) error {
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(strings.NewReader(value)))
+	for {
+		raw, err := reader.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("failed to read configmap data: %w", err)
+		}
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+
+		var typeMeta veleroTypeMeta
+		if err := k8syaml.Unmarshal(raw, &typeMeta); err != nil {
+			return fmt.Errorf("failed to decode configmap data: %w", err)
+		}
+		if typeMeta.APIVersion != gvk.GroupVersion().String() || typeMeta.Kind != gvk.Kind {
+			continue
+		}
+
+		if err := handle(raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ExtractBackupSpecsFromConfigmaps parses Velero Backup CR specs from configmaps
 // into internal BackupSpec structs without depending on the Velero Go types.
 func ExtractBackupSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]BackupSpec, error) {
 	var specs []BackupSpec
 	for _, cm := range configmaps {
 		for _, value := range cm.Data {
-			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
-			for {
-				resource := unstructured.Unstructured{}
-				if err := decoder.Decode(&resource); err != nil {
-					if errors.Is(err, io.EOF) {
-						break
-					}
-					return nil, fmt.Errorf("failed to decode configmap data: %w", err)
+			err := forEachVeleroDoc(value, common.BackupGvk, func(raw []byte) error {
+				var backup veleroBackup
+				if err := k8syaml.Unmarshal(raw, &backup); err != nil {
+					return fmt.Errorf("failed to decode Velero Backup CR: %w", err)
 				}
-
-				if resource.GroupVersionKind() != common.BackupGvk {
-					continue
-				}
-
-				spec := backupSpecFromUnstructured(&resource)
-				specs = append(specs, spec)
+				specs = append(specs, backup.toBackupSpec())
+				return nil
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -258,22 +334,16 @@ func ExtractRestoreSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]Restore
 	var specs []RestoreSpec
 	for _, cm := range configmaps {
 		for _, value := range cm.Data {
-			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(value), 4096)
-			for {
-				resource := unstructured.Unstructured{}
-				if err := decoder.Decode(&resource); err != nil {
-					if errors.Is(err, io.EOF) {
-						break
-					}
-					return nil, fmt.Errorf("failed to decode configmap data: %w", err)
+			err := forEachVeleroDoc(value, common.RestoreGvk, func(raw []byte) error {
+				var restore veleroRestore
+				if err := k8syaml.Unmarshal(raw, &restore); err != nil {
+					return fmt.Errorf("failed to decode Velero Restore CR: %w", err)
 				}
-
-				if resource.GroupVersionKind() != common.RestoreGvk {
-					continue
-				}
-
-				spec := restoreSpecFromUnstructured(&resource)
-				specs = append(specs, spec)
+				specs = append(specs, restore.toRestoreSpec())
+				return nil
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -305,110 +375,41 @@ func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *Restor
 	return nil
 }
 
-func restoreSpecFromUnstructured(u *unstructured.Unstructured) RestoreSpec {
+// toRestoreSpec converts the decoded Velero Restore document into the internal
+// RestoreSpec, preserving the previous parsing semantics and defaults.
+func (r *veleroRestore) toRestoreSpec() RestoreSpec {
 	spec := RestoreSpec{
-		Name:      u.GetName(),
-		Namespace: u.GetNamespace(),
+		Name:       r.Metadata.Name,
+		Namespace:  r.Metadata.Namespace,
+		ApplyWave:  r.Metadata.Annotations[common.ApplyWaveAnn],
+		BackupName: r.Spec.BackupName,
+		RestorePVs: r.Spec.RestorePVs,
 	}
-
-	if ann := u.GetAnnotations(); ann != nil {
-		spec.ApplyWave = ann[common.ApplyWaveAnn]
+	if r.Spec.RestoreStatus != nil {
+		spec.RestoreStatusResources = r.Spec.RestoreStatus.IncludedResources
 	}
-
-	specMap, ok := u.Object["spec"].(map[string]interface{})
-	if !ok {
-		return spec
-	}
-
-	if backupName, ok := specMap["backupName"].(string); ok {
-		spec.BackupName = backupName
-	}
-
-	if restorePVs, ok := specMap["restorePVs"].(bool); ok {
-		spec.RestorePVs = restorePVs
-	}
-
-	if restoreStatus, ok := specMap["restoreStatus"].(map[string]interface{}); ok {
-		spec.RestoreStatusResources = getStringSlice(restoreStatus, "includedResources")
-	}
-
 	return spec
 }
 
-func backupSpecFromUnstructured(u *unstructured.Unstructured) BackupSpec {
-	spec := BackupSpec{
-		Name:      u.GetName(),
-		Namespace: u.GetNamespace(),
+// toBackupSpec converts the decoded Velero Backup document into the internal
+// BackupSpec, preserving the previous parsing semantics and defaults.
+func (b *veleroBackup) toBackupSpec() BackupSpec {
+	return BackupSpec{
+		Name:                             b.Metadata.Name,
+		Namespace:                        b.Metadata.Namespace,
+		ApplyLabel:                       b.Metadata.Annotations[applyLabelAnn],
+		ApplyWave:                        b.Metadata.Annotations[common.ApplyWaveAnn],
+		IncludedNamespaces:               b.Spec.IncludedNamespaces,
+		IncludedNamespaceScopedResources: b.Spec.IncludedNamespaceScopedResources,
+		IncludedClusterScopedResources:   b.Spec.IncludedClusterScopedResources,
+		// excludedResources is the legacy Velero filter that applies to both
+		// namespace- and cluster-scoped resources; the *Scoped variants match the
+		// newer Velero resource-policy API and apply to their respective scope.
+		ExcludedResources:                b.Spec.ExcludedResources,
+		ExcludedNamespaceScopedResources: b.Spec.ExcludedNamespaceScopedResources,
+		ExcludedClusterScopedResources:   b.Spec.ExcludedClusterScopedResources,
+		LabelSelector:                    b.Spec.LabelSelector,
 	}
-
-	if ann := u.GetAnnotations(); ann != nil {
-		spec.ApplyLabel = ann[applyLabelAnn]
-		spec.ApplyWave = ann[common.ApplyWaveAnn]
-	}
-
-	specMap, ok := u.Object["spec"].(map[string]interface{})
-	if !ok {
-		return spec
-	}
-
-	spec.IncludedNamespaces = getStringSlice(specMap, "includedNamespaces")
-	spec.IncludedNamespaceScopedResources = getStringSlice(specMap, "includedNamespaceScopedResources")
-	spec.IncludedClusterScopedResources = getStringSlice(specMap, "includedClusterScopedResources")
-	// excludedResources is the legacy Velero filter that applies to both
-	// namespace- and cluster-scoped resources; the *Scoped variants match the
-	// newer Velero resource-policy API and apply to their respective scope.
-	spec.ExcludedResources = getStringSlice(specMap, "excludedResources")
-	spec.ExcludedNamespaceScopedResources = getStringSlice(specMap, "excludedNamespaceScopedResources")
-	spec.ExcludedClusterScopedResources = getStringSlice(specMap, "excludedClusterScopedResources")
-
-	if lsMap, ok := specMap["labelSelector"].(map[string]interface{}); ok {
-		selector := &metav1.LabelSelector{}
-		if ml, ok := lsMap["matchLabels"].(map[string]interface{}); ok {
-			selector.MatchLabels = make(map[string]string)
-			for k, v := range ml {
-				selector.MatchLabels[k] = fmt.Sprintf("%v", v)
-			}
-		}
-		if meList, ok := lsMap["matchExpressions"].([]interface{}); ok {
-			for _, item := range meList {
-				expr, ok := item.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				req := metav1.LabelSelectorRequirement{
-					Key:      fmt.Sprintf("%v", expr["key"]),
-					Operator: metav1.LabelSelectorOperator(fmt.Sprintf("%v", expr["operator"])),
-				}
-				if vals, ok := expr["values"].([]interface{}); ok {
-					for _, v := range vals {
-						req.Values = append(req.Values, fmt.Sprintf("%v", v))
-					}
-				}
-				selector.MatchExpressions = append(selector.MatchExpressions, req)
-			}
-		}
-		spec.LabelSelector = selector
-	}
-
-	return spec
-}
-
-func getStringSlice(m map[string]interface{}, key string) []string {
-	val, ok := m[key]
-	if !ok {
-		return nil
-	}
-	arr, ok := val.([]interface{})
-	if !ok {
-		return nil
-	}
-	var result []string
-	for _, item := range arr {
-		if s, ok := item.(string); ok {
-			result = append(result, s)
-		}
-	}
-	return result
 }
 
 // SortBackupSpecsByApplyWave groups and sorts backup specs by their apply-wave annotation
