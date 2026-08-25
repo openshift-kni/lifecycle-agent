@@ -1,0 +1,156 @@
+name: OLM Smoke Test
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release-*'
+    paths-ignore: &smoke_paths_ignore
+      - 'docs/**'
+      - '**/*.md'
+      - 'OWNERS'
+      - 'OWNERS_ALIASES'
+      - 'LICENSE'
+      - '.tekton/**'
+      - '.konflux/**'
+      - 'renovate.json'
+      - '.gitignore'
+  push:
+    branches:
+      - main
+    paths-ignore: *smoke_paths_ignore
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: olm-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  olm-smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPERATOR_NAMESPACE: openshift-lifecycle-agent
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Start Kubernetes cluster
+        id: k8s
+        uses: palmsoftware/quick-k8s@v1
+        with:
+          clusterProvider: kind
+          ipFamily: ipv4
+          installOLM: "true"
+          installLocalRegistry: "true"
+
+      # operator-sdk run bundle pulls the bundle from a registry; Kind load is
+      # not enough. Push to the HTTP registry quick-k8s started (default :5001).
+      - name: Set image refs from local registry
+        run: |
+          REGISTRY="${{ steps.k8s.outputs.local-registry-url }}"
+          if [ -z "${REGISTRY}" ]; then
+            echo "local-registry-url output was empty"
+            exit 1
+          fi
+          echo "OPERATOR_IMG=${REGISTRY}/lca-operator:smoke" >> "${GITHUB_ENV}"
+          echo "BUNDLE_IMG=${REGISTRY}/lca-bundle:smoke" >> "${GITHUB_ENV}"
+          echo "Using OPERATOR_IMG=${REGISTRY}/lca-operator:smoke"
+          echo "Using BUNDLE_IMG=${REGISTRY}/lca-bundle:smoke"
+
+      - name: Generate bundle manifests
+        run: make bundle IMG="${OPERATOR_IMG}"
+
+      # quick-k8s relocates Docker storage; build after the cluster is up
+      - name: Build operator image
+        run: |
+          # origin-cli is public; the Dockerfile default (registry.redhat.io ose-cli) requires auth
+          docker build --platform=linux/amd64 \
+            --build-arg OPENSHIFT_CLI_IMAGE=quay.io/openshift/origin-cli:latest \
+            -t "${OPERATOR_IMG}" \
+            -f Dockerfile .
+
+      - name: Build bundle image
+        run: docker build -f bundle.Dockerfile -t "${BUNDLE_IMG}" .
+
+      - name: Push images to local registry
+        run: |
+          docker push "${OPERATOR_IMG}"
+          docker push "${BUNDLE_IMG}"
+
+      # Kind nodes resolve localhost to themselves, so OLM unpack jobs cannot
+      # reach the host-published registry. Map localhost:5001 to the registry
+      # container on the Kind network (HTTP). See:
+      # https://kind.sigs.k8s.io/docs/user/local-registry/
+      - name: Configure Kind nodes for local registry
+        run: |
+          set -euo pipefail
+          REGISTRY_DIR="/etc/containerd/certs.d/${{ steps.k8s.outputs.local-registry-url }}"
+          NODES="$(kind get nodes)"
+          if [ -z "${NODES}" ]; then
+            echo "no kind nodes found"
+            exit 1
+          fi
+          for node in ${NODES}; do
+            docker exec "${node}" mkdir -p "${REGISTRY_DIR}"
+            printf '%s\n' \
+              '[host."http://quick-k8s-registry:5000"]' \
+              '  capabilities = ["pull", "resolve"]' \
+              | docker exec -i "${node}" cp /dev/stdin "${REGISTRY_DIR}/hosts.toml"
+            echo "Configured ${node}:${REGISTRY_DIR}/hosts.toml"
+          done
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image "${OPERATOR_IMG}"
+          kind load docker-image "${BUNDLE_IMG}"
+
+      - name: Install operator via OLM
+        continue-on-error: true
+        run: |
+          kubectl create namespace "${OPERATOR_NAMESPACE}" || \
+            kubectl get namespace "${OPERATOR_NAMESPACE}"
+          # OLM lists this SA as a CSV requirement and then checks that it
+          # already has the CSV permission rules. Create the SA and grant
+          # cluster-admin so those checks can pass on Kind.
+          kubectl create serviceaccount lifecycle-agent-controller-manager \
+            -n "${OPERATOR_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create clusterrolebinding lca-smoke-admin \
+            --clusterrole=cluster-admin \
+            --serviceaccount="${OPERATOR_NAMESPACE}:lifecycle-agent-controller-manager" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          ./bin/operator-sdk run bundle "${BUNDLE_IMG}" \
+            --namespace "${OPERATOR_NAMESPACE}" \
+            --image-pull-policy IfNotPresent \
+            --skip-tls-verify \
+            --use-http \
+            --timeout 3m
+
+      - name: Verify operator
+        run: .github/scripts/olm-smoke-verify.sh "${OPERATOR_NAMESPACE}"
+
+      - name: Run operator-sdk scorecard
+        run: |
+          # Status/spec descriptor tests fail on pre-existing CSV gaps
+          # (e.g. SeedGenerator status.completedAt/startedAt). Smoke the
+          # bundle+CRD tests; do not block on catalog UI descriptors.
+          kubectl create namespace lca-scorecard --dry-run=client -o yaml | kubectl apply -f -
+          ./bin/operator-sdk scorecard bundle/ \
+            --namespace lca-scorecard \
+            --wait-time 180s \
+            --output text \
+            --selector='test notin (olm-spec-descriptors-test,olm-status-descriptors-test)'
+
+      - name: Gather diagnostics
+        if: failure()
+        run: .github/scripts/olm-smoke-diagnostics.sh "${OPERATOR_NAMESPACE}"
