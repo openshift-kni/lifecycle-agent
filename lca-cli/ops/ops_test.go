@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -135,10 +136,10 @@ func TestGetExtraPartitionPath(t *testing.T) {
 			o, mockExec := newTestOps(t)
 
 			mockExec.EXPECT().
-				Execute("lsblk", "/dev/sda", "--json", "--output", "NAME,PATH").
+				Execute(gomock.Any(), "lsblk", "/dev/sda", "--json", "--output", "NAME,PATH").
 				Return(tt.lsblkOutput, nil)
 
-			path, err := o.getExtraPartitionPath("/dev/sda", tt.partitionNumber)
+			path, err := o.getExtraPartitionPath(context.Background(), "/dev/sda", tt.partitionNumber)
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -153,117 +154,117 @@ func TestGetExtraPartitionPath_LsblkFails(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	mockExec.EXPECT().
-		Execute("lsblk", "/dev/sda", "--json", "--output", "NAME,PATH").
+		Execute(gomock.Any(), "lsblk", "/dev/sda", "--json", "--output", "NAME,PATH").
 		Return("", fmt.Errorf("command not found"))
 
-	_, err := o.getExtraPartitionPath("/dev/sda", 1)
+	_, err := o.getExtraPartitionPath(context.Background(), "/dev/sda", 1)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to run lsblk")
 }
 
 func expectKubeletStop(mockExec *MockExecute) {
-	mockExec.EXPECT().Execute("systemctl", "stop", "kubelet.service").Return("", nil)
-	mockExec.EXPECT().Execute("systemctl", "disable", "kubelet.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "kubelet.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "disable", "kubelet.service").Return("", nil)
 }
 
 func expectPodSandboxRemoval(mockExec *MockExecute) {
-	mockExec.EXPECT().Execute("bash", "-c", gomock.Any()).Return("", nil).AnyTimes()
+	mockExec.EXPECT().Execute(gomock.Any(), "bash", "-c", gomock.Any()).Return("", nil).AnyTimes()
 }
 
 func TestStopClusterServices_CrictlLoop(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("abc123\ndef456\nghi789", nil)
-	mockExec.EXPECT().Execute("crictl", "stop", "--timeout", "5", gomock.Any()).Return("", nil).Times(3)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("abc123\ndef456\nghi789", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "stop", "--timeout", "5", gomock.Any()).Return("", nil).Times(3)
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_NoContainers(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("", nil)
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_CrioInactive(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("inactive", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("inactive", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_ContainerStopFails(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("abc123\ndef456", nil)
-	mockExec.EXPECT().Execute("crictl", "stop", "--timeout", "5", gomock.Any()).
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("abc123\ndef456", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "stop", "--timeout", "5", gomock.Any()).
 		Return("", fmt.Errorf("container not responding")).AnyTimes()
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_CrictlListFails(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("", fmt.Errorf("crictl unavailable")).AnyTimes()
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("", fmt.Errorf("crictl unavailable")).AnyTimes()
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_SingleContainer(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("only1", nil)
-	mockExec.EXPECT().Execute("crictl", "stop", "--timeout", "5", "only1").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("only1", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "stop", "--timeout", "5", "only1").Return("", nil)
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_WhitespaceOnlyOutput(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("\n\n\n", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("\n\n\n", nil)
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
 
 func TestStopClusterServices_MixedContainerStopResults(t *testing.T) {
 	o, mockExec := newTestOps(t)
 
 	expectKubeletStop(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
-	mockExec.EXPECT().Execute("crictl", "ps", "-q").Return("aaa\nbbb\nccc", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "is-active", "crio").Return("active", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "ps", "-q").Return("aaa\nbbb\nccc", nil)
 	// Use DoAndReturn to simulate mixed results: some succeed, some fail
-	mockExec.EXPECT().Execute("crictl", "stop", "--timeout", "5", gomock.Any()).
-		DoAndReturn(func(cmd string, args ...string) (string, error) {
+	mockExec.EXPECT().Execute(gomock.Any(), "crictl", "stop", "--timeout", "5", gomock.Any()).
+		DoAndReturn(func(_ context.Context, cmd string, args ...string) (string, error) {
 			containerID := args[len(args)-1]
 			if containerID == "bbb" {
 				return "", fmt.Errorf("timeout stopping container bbb")
@@ -271,8 +272,8 @@ func TestStopClusterServices_MixedContainerStopResults(t *testing.T) {
 			return "", nil
 		}).Times(3)
 	expectPodSandboxRemoval(mockExec)
-	mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", nil)
+	mockExec.EXPECT().Execute(gomock.Any(), "systemctl", "stop", "crio.service").Return("", nil)
 
 	// StopClusterServices should succeed overall (PollUntilContextCancel error is ignored)
-	assert.NoError(t, o.StopClusterServices())
+	assert.NoError(t, o.StopClusterServices(context.Background()))
 }
