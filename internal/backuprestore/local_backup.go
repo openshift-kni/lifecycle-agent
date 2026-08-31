@@ -32,7 +32,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	k8syaml "sigs.k8s.io/yaml"
 )
 
@@ -67,17 +66,8 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	}
 
 	for _, spec := range backupSpecs {
-		objs, err := getObjsFromApplyLabel(spec.ApplyLabel)
-		if err != nil {
+		if _, err := getObjsFromApplyLabel(spec.ApplyLabel); err != nil {
 			return NewBRFailedValidationError("Backup", err.Error())
-		}
-		payload := []byte(fmt.Sprintf(`{"metadata": {"labels": {"%s": "%s"}}}`, backupLabel, spec.Name))
-		for _, obj := range objs {
-			err := patchObj(ctx, h.DynamicClient, &obj, true, payload, types.MergePatchType) //nolint:gosec
-			if err != nil {
-				return NewBRFailedValidationError("Backup",
-					fmt.Sprintf("failed to validate apply-label objects: %s", err.Error()))
-			}
 		}
 	}
 
