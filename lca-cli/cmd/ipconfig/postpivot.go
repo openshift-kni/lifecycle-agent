@@ -85,6 +85,7 @@ func runIPConfigPostPivot() (retErr error) {
 		}
 
 		rbClient.AutoRollbackIfEnabled(
+			context.Background(),
 			reboot.IPConfigRunComponent,
 			fmt.Sprintf("automatic rollback: ip-config post-pivot failed: %v", retErr),
 		)

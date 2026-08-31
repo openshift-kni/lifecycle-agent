@@ -1,6 +1,7 @@
 package initmonitor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -51,7 +52,7 @@ func NewInitMonitor(scheme *runtime.Scheme, log *logrus.Logger, hostCommandsExec
 	}
 }
 
-func (m *InitMonitor) RunInitMonitor() error {
+func (m *InitMonitor) RunInitMonitor(ctx context.Context) error {
 	rollbackCfg, err := m.rebootClient.ReadAutoRollbackConfigFile()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -88,7 +89,7 @@ func (m *InitMonitor) RunInitMonitor() error {
 	msg := fmt.Sprintf("Rollback due to LCA Init Monitor timeout, after %s", timeout)
 	m.log.Info(msg)
 
-	if err := m.rebootClient.InitiateRollback(msg); err != nil {
+	if err := m.rebootClient.InitiateRollback(ctx, msg); err != nil {
 		return fmt.Errorf("unable to auto rollback: %w", err)
 	}
 
@@ -129,12 +130,12 @@ func (m *InitMonitor) checkSvcUnitRollbackNeeded() bool {
 	return true
 }
 
-func (m *InitMonitor) RunExitStopPostCheck() error {
+func (m *InitMonitor) RunExitStopPostCheck(ctx context.Context) error {
 	if m.checkSvcUnitRollbackNeeded() {
 		msg := fmt.Sprintf("Rollback due to service-unit failure: component %s", m.component)
 		m.log.Info(msg)
 
-		if err := m.rebootClient.InitiateRollback(msg); err != nil {
+		if err := m.rebootClient.InitiateRollback(ctx, msg); err != nil {
 			return fmt.Errorf("unable to auto rollback: %w", err)
 		}
 	}

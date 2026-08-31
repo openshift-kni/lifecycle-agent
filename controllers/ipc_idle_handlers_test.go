@@ -205,7 +205,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			t.Fatalf("CheckHealth should not be called when stage validation fails")
 			return nil
 		}
-		mockOps.EXPECT().RemountSysroot().Times(0)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Times(0)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.NoError(t, err)
@@ -259,7 +259,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		}
 
 		// Since status update fails before we can proceed, we should not attempt any cleanup.
-		mockOps.EXPECT().RemountSysroot().Times(0)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Times(0)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
@@ -334,7 +334,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		}
 
 		// If health checks are skipped, handler should proceed to cleanup and hit RemountSysroot.
-		mockOps.EXPECT().RemountSysroot().Return(errors.New("remount failed")).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(errors.New("remount failed")).Times(1)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
@@ -372,7 +372,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
-		mockOps.EXPECT().RemountSysroot().Return(errors.New("remount failed")).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(errors.New("remount failed")).Times(1)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
@@ -409,8 +409,8 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 		defer func() { CheckHealth = oldHC }()
 		CheckHealth = func(ctx context.Context, c client.Reader, l logr.Logger) error { return nil }
 
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
-		mockRpm.EXPECT().QueryStatus().Return(nil, errors.New("rpm error")).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
+		mockRpm.EXPECT().QueryStatus(gomock.Any()).Return(nil, errors.New("rpm error")).Times(1)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
@@ -453,12 +453,12 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
 		}
 
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
 		// getStaterootsToRemove + CleanupUnbootedStateroots
-		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(2)
-		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
+		mockRpm.EXPECT().QueryStatus(gomock.Any()).Return(status, nil).Times(2)
+		mockOps.EXPECT().RemountBoot(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(1)
-		mockRpm.EXPECT().RpmOstreeCleanup().Return(nil).Times(1)
+		mockRpm.EXPECT().RpmOstreeCleanup(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().StatFile(gomock.Any()).Return(fakeFileInfo{}, nil).Times(1)
 		mockOps.EXPECT().RemoveAllFiles(gomock.Any()).Return(errors.New("rm failed")).Times(1)
 
@@ -520,11 +520,11 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			Deployments: []rpmostreeclient.Deployment{{OSName: "rhcos", Booted: true}},
 		}
 
-		mockOps.EXPECT().RemountSysroot().Return(nil).Times(1)
-		mockRpm.EXPECT().QueryStatus().Return(status, nil).Times(2) // getStaterootsToRemove + CleanupUnbootedStateroots
-		mockOps.EXPECT().RemountBoot().Return(nil).Times(1)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Return(nil).Times(1)
+		mockRpm.EXPECT().QueryStatus(gomock.Any()).Return(status, nil).Times(2) // getStaterootsToRemove + CleanupUnbootedStateroots
+		mockOps.EXPECT().RemountBoot(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().ReadDir(gomock.Any()).Return([]os.DirEntry{}, nil).Times(1)
-		mockRpm.EXPECT().RpmOstreeCleanup().Return(nil).Times(1)
+		mockRpm.EXPECT().RpmOstreeCleanup(gomock.Any()).Return(nil).Times(1)
 		mockOps.EXPECT().StatFile(gomock.Any()).Return(nil, errors.New("not exist")).Times(1)
 		mockOps.EXPECT().RemoveAllFiles(gomock.Any()).Times(0)
 
@@ -671,7 +671,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			return nil
 		}
 
-		mockOps.EXPECT().RemountSysroot().Times(0)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Times(0)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.NoError(t, err)
@@ -718,7 +718,7 @@ func TestIPCIdleStageHandler_Handle(t *testing.T) {
 			return nil
 		}
 
-		mockOps.EXPECT().RemountSysroot().Times(0)
+		mockOps.EXPECT().RemountSysroot(gomock.Any()).Times(0)
 
 		res, err := h.Handle(ctx, ipc)
 		assert.Error(t, err)
@@ -752,7 +752,7 @@ func TestGetStaterootsToRemove(t *testing.T) {
 
 	mockRPM := rpmostreeclient.NewMockIClient(gc)
 
-	mockRPM.EXPECT().QueryStatus().Return(&rpmostreeclient.Status{
+	mockRPM.EXPECT().QueryStatus(gomock.Any()).Return(&rpmostreeclient.Status{
 		Deployments: []rpmostreeclient.Deployment{
 			{OSName: "booted", Booted: true},
 			{OSName: "old-1", Booted: false},
@@ -760,7 +760,7 @@ func TestGetStaterootsToRemove(t *testing.T) {
 		},
 	}, nil).Times(1)
 
-	got, err := getStaterootsToRemove(mockRPM)
+	got, err := getStaterootsToRemove(context.TODO(), mockRPM)
 	assert.NoError(t, err)
 	// Reverse order because code walks deployments from end to start.
 	assert.Equal(t, []string{"old-2", "old-1"}, got)

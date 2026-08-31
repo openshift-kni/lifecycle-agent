@@ -86,7 +86,7 @@ func ibuStaterootSetupRun() error {
 	}
 
 	logger.Info("Setting up stateroot")
-	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
+	if err := prep.SetupStateroot(ctx, logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
 		return fmt.Errorf("failed to complete stateroot setup: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func initStaterootSetupSigHandler(logger logr.Logger, opsClient ops.Ops, seedIma
 			logger.Error(fmt.Errorf("unexpected SIGTERM received to stop stateroot setup"), "")
 
 			// we consider all the steps after image pull as critical and must be allowed to proceed until SIGKILL arrives. The time between SIGTERM and SIGKILL is controlled with StaterootSetupTerminationGracePeriodSeconds
-			if seedImageExists, _ := opsClient.ImageExists(seedImage); seedImageExists {
+			if seedImageExists, _ := opsClient.ImageExists(context.Background(), seedImage); seedImageExists {
 				sigkillArrivesIn := time.Duration(prep.StaterootSetupTerminationGracePeriodSeconds) * time.Second
 				logger.Error(fmt.Errorf("seed image exists. prepare to shut down in at most %s", sigkillArrivesIn.String()), "")
 				time.Sleep(sigkillArrivesIn) // likely anything beyond this point won't be executed since job should be done before this wakes up

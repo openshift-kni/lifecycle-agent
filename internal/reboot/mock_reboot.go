@@ -9,6 +9,7 @@
 package reboot
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -38,58 +39,58 @@ func (m *MockRebootIntf) EXPECT() *MockRebootIntfMockRecorder {
 }
 
 // AutoRollbackIfEnabled mocks base method.
-func (m *MockRebootIntf) AutoRollbackIfEnabled(component, msg string) {
+func (m *MockRebootIntf) AutoRollbackIfEnabled(ctx context.Context, component, msg string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AutoRollbackIfEnabled", component, msg)
+	m.ctrl.Call(m, "AutoRollbackIfEnabled", ctx, component, msg)
 }
 
 // AutoRollbackIfEnabled indicates an expected call of AutoRollbackIfEnabled.
-func (mr *MockRebootIntfMockRecorder) AutoRollbackIfEnabled(component, msg any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) AutoRollbackIfEnabled(ctx, component, msg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AutoRollbackIfEnabled", reflect.TypeOf((*MockRebootIntf)(nil).AutoRollbackIfEnabled), component, msg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AutoRollbackIfEnabled", reflect.TypeOf((*MockRebootIntf)(nil).AutoRollbackIfEnabled), ctx, component, msg)
 }
 
 // DisableInitMonitor mocks base method.
-func (m *MockRebootIntf) DisableInitMonitor() error {
+func (m *MockRebootIntf) DisableInitMonitor(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DisableInitMonitor")
+	ret := m.ctrl.Call(m, "DisableInitMonitor", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DisableInitMonitor indicates an expected call of DisableInitMonitor.
-func (mr *MockRebootIntfMockRecorder) DisableInitMonitor() *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) DisableInitMonitor(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DisableInitMonitor", reflect.TypeOf((*MockRebootIntf)(nil).DisableInitMonitor))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DisableInitMonitor", reflect.TypeOf((*MockRebootIntf)(nil).DisableInitMonitor), ctx)
 }
 
 // InitiateRollback mocks base method.
-func (m *MockRebootIntf) InitiateRollback(msg string) error {
+func (m *MockRebootIntf) InitiateRollback(ctx context.Context, msg string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InitiateRollback", msg)
+	ret := m.ctrl.Call(m, "InitiateRollback", ctx, msg)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InitiateRollback indicates an expected call of InitiateRollback.
-func (mr *MockRebootIntfMockRecorder) InitiateRollback(msg any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) InitiateRollback(ctx, msg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitiateRollback", reflect.TypeOf((*MockRebootIntf)(nil).InitiateRollback), msg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitiateRollback", reflect.TypeOf((*MockRebootIntf)(nil).InitiateRollback), ctx, msg)
 }
 
 // IsOrigStaterootBooted mocks base method.
-func (m *MockRebootIntf) IsOrigStaterootBooted(identifier string) (bool, error) {
+func (m *MockRebootIntf) IsOrigStaterootBooted(ctx context.Context, identifier string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsOrigStaterootBooted", identifier)
+	ret := m.ctrl.Call(m, "IsOrigStaterootBooted", ctx, identifier)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IsOrigStaterootBooted indicates an expected call of IsOrigStaterootBooted.
-func (mr *MockRebootIntfMockRecorder) IsOrigStaterootBooted(identifier any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) IsOrigStaterootBooted(ctx, identifier any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOrigStaterootBooted", reflect.TypeOf((*MockRebootIntf)(nil).IsOrigStaterootBooted), identifier)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsOrigStaterootBooted", reflect.TypeOf((*MockRebootIntf)(nil).IsOrigStaterootBooted), ctx, identifier)
 }
 
 // ReadAutoRollbackConfigFile mocks base method.
@@ -108,29 +109,29 @@ func (mr *MockRebootIntfMockRecorder) ReadAutoRollbackConfigFile() *gomock.Call 
 }
 
 // Reboot mocks base method.
-func (m *MockRebootIntf) Reboot(rationale string) error {
+func (m *MockRebootIntf) Reboot(ctx context.Context, rationale string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Reboot", rationale)
+	ret := m.ctrl.Call(m, "Reboot", ctx, rationale)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Reboot indicates an expected call of Reboot.
-func (mr *MockRebootIntfMockRecorder) Reboot(rationale any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) Reboot(ctx, rationale any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reboot", reflect.TypeOf((*MockRebootIntf)(nil).Reboot), rationale)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reboot", reflect.TypeOf((*MockRebootIntf)(nil).Reboot), ctx, rationale)
 }
 
 // RebootToNewStateRoot mocks base method.
-func (m *MockRebootIntf) RebootToNewStateRoot(rationale string) error {
+func (m *MockRebootIntf) RebootToNewStateRoot(ctx context.Context, rationale string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RebootToNewStateRoot", rationale)
+	ret := m.ctrl.Call(m, "RebootToNewStateRoot", ctx, rationale)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RebootToNewStateRoot indicates an expected call of RebootToNewStateRoot.
-func (mr *MockRebootIntfMockRecorder) RebootToNewStateRoot(rationale any) *gomock.Call {
+func (mr *MockRebootIntfMockRecorder) RebootToNewStateRoot(ctx, rationale any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebootToNewStateRoot", reflect.TypeOf((*MockRebootIntf)(nil).RebootToNewStateRoot), rationale)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RebootToNewStateRoot", reflect.TypeOf((*MockRebootIntf)(nil).RebootToNewStateRoot), ctx, rationale)
 }

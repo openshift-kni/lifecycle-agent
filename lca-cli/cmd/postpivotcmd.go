@@ -65,9 +65,10 @@ func postPivot() {
 
 	postPivotRunner := postpivot.NewPostPivot(scheme, log, opsClient,
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
-	if err := postPivotRunner.PostPivotConfiguration(context.TODO()); err != nil {
+	ctx := context.Background()
+	if err := postPivotRunner.PostPivotConfiguration(ctx); err != nil {
 		log.Error(err)
-		rebootClient.AutoRollbackIfEnabled(reboot.PostPivotComponent, fmt.Sprintf("Rollback due to postpivot failure: %s", err))
+		rebootClient.AutoRollbackIfEnabled(ctx, reboot.PostPivotComponent, fmt.Sprintf("Rollback due to postpivot failure: %s", err))
 		log.Fatal("Post pivot operation failed")
 	}
 

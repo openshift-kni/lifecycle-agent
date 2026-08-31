@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"os"
 
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
@@ -29,6 +31,20 @@ import (
 	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
+
+// preinstallExecutorAdapter wraps ops.Execute to satisfy the preinstall-utils
+// shared_ops.Execute interface, which does not accept a context.Context.
+type preinstallExecutorAdapter struct {
+	inner ops.Execute
+}
+
+func (a *preinstallExecutorAdapter) Execute(command string, args ...string) (string, error) {
+	out, err := a.inner.Execute(context.TODO(), command, args...)
+	if err != nil {
+		return out, fmt.Errorf("preinstall executor: %w", err)
+	}
+	return out, nil
+}
 
 // ibi represents the ibi preparation command
 var ibi = &cobra.Command{
@@ -68,7 +84,7 @@ func runIBI() {
 		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
 	}
 
-	cleanupDevice := preinstallUtils.NewCleanupDevice(log, preinstallUtils.NewDiskOps(log, hostCommandsExecutor))
+	cleanupDevice := preinstallUtils.NewCleanupDevice(log, preinstallUtils.NewDiskOps(log, &preinstallExecutorAdapter{inner: hostCommandsExecutor}))
 	rpmOstreeClient := ostree.NewClient("lca-cli", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, true)
 
