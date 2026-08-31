@@ -48,7 +48,6 @@ import (
 
 const (
 	applyLabelAnn = "lca.openshift.io/apply-label"
-	backupLabel   = "lca.openshift.io/backup"
 
 	LocalBackupPath = "/var/lib/containers/lca-backups"
 
@@ -189,32 +188,6 @@ func CreateOrUpdateSecret(ctx context.Context, secret *corev1.Secret, c client.C
 			return fmt.Errorf("failed to update secret: %w", err)
 		}
 	}
-	return nil
-}
-
-// patchObj patches a Kubernetes resource using the dynamic client.
-func patchObj(ctx context.Context, dynClient dynamic.Interface, obj *ObjMetadata,
-	isDryRun bool, payload []byte, patchType types.PatchType) error {
-	var err error
-	gvr := obj.GroupVersionResource()
-	resourceClient := dynClient.Resource(gvr)
-
-	patchOptions := metav1.PatchOptions{}
-	if isDryRun {
-		patchOptions = metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}}
-	}
-
-	if obj.Namespace != "" {
-		_, err = resourceClient.Namespace(obj.Namespace).Patch(
-			ctx, obj.Name, patchType, payload, patchOptions,
-		)
-	} else {
-		_, err = resourceClient.Patch(ctx, obj.Name, patchType, payload, patchOptions)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to patch object: %w", err)
-	}
-
 	return nil
 }
 
