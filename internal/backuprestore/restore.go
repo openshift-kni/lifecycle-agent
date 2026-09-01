@@ -121,7 +121,7 @@ func (h *BRHandler) StartOrTrackRestore(ctx context.Context, restores []*velerov
 func (h *BRHandler) LoadRestoresFromOadpRestorePath() ([][]*velerov1.Restore, error) {
 	var sortedRestores [][]*velerov1.Restore
 
-	// The returned list of entries are sorted by name alphabetically
+	// Groups and the files within them are returned sorted numerically by their index
 	basePath := filepath.Join(hostPath, OadpRestorePath)
 	manifests, err := utils.LoadGroupedManifestsFromPath(basePath, &h.Log)
 	if err != nil {
