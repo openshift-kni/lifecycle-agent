@@ -126,10 +126,10 @@ require (
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.23.0 // indirect
-	golang.org/x/term v0.23.0 // indirect
-	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
@@ -151,3 +151,5 @@ require (
 // dependency in your project - it is recommended to use replace to pin the
 // version to the last one with the old import URL:"
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.16
+
+replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.33.0-sec.5
