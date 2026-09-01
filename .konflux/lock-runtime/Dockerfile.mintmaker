@@ -1,5 +1,5 @@
 # Due to a limitation in Mintmaker, we need to create a dummy Dockerfile that does not use ARGs
 # This should match the RUNTIME_IMAGE in container_build_args.conf
 # Mintmaker should keep these in sync automatically when it performs updates
-FROM registry.redhat.io/ubi9/ubi-minimal-pqc:latest@sha256:ef0438e9f078e71a7317c247fdf1d09644441fefe1fe26efbde5f4fa201435fb
+FROM registry.redhat.io/ubi9/ubi-minimal-pqc:latest@sha256:3e009398a8aa8eec621393fbf308c5e622f174900e44e8d5fe224c637920924a
 #
