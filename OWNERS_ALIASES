@@ -16,31 +16,31 @@ aliases:
     - rauhersu
   lifecycle-agent-approvers:
     - browsell
+    - danmanor
     - donpenney
     - eranco74
-    - omertuc
     - imiller0
     - jc-rh
+    - omertuc
     - romfreiman
     - tsorya
-    - danmanor
   lifecycle-agent-reviewers:
     - browsell
+    - by2waysprojects
+    - danmanor
     - donpenney
     - eranco74
+    - fontivan
     - imiller0
+    - javipolo
     - jc-rh
+    - leo8a
+    - Missxiaoguo
+    - mresvanis
+    - omertuc
+    - pixelsoccupied
+    - rauhersu
     - romfreiman
     - sakhoury
     - sudomakeinstall2
-    - Missxiaoguo
-    - pixelsoccupied
     - tsorya
-    - javipolo
-    - leo8a
-    - omertuc
-    - mresvanis
-    - rauhersu
-    - fontivan
-    - danmanor
-    - by2waysprojects
