@@ -454,8 +454,8 @@ image is still present and **no re-pull is needed**. Cost: roughly **2×** the i
 (the writable working copy plus the durable read-only copy) and **no long-running service**. This is
 the single durability model for the secondary profile; it needs no on-node registry and no IDMS.
 
-**Why not an on-node registry (bootstrap circular dependency).** An earlier design ran a persistent
-`localhost:5000` registry over the on-disk copy plus a digest IDMS redirecting canonical →
+**Why not an on-node registry (bootstrap circular dependency).** A rejected alternative is to run a
+persistent `localhost:5000` registry over the on-disk copy plus a digest IDMS redirecting canonical →
 `localhost:5000`. That model has a **circular dependency**: the registry itself runs from a container
 image in CRI-O's store, so the very GC eviction / reboot-time corruption cleanup the registry exists
 to recover from can delete the *registry's own* image — and the IDMS cannot restore it, because the
