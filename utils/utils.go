@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"text/template"
 
 	"github.com/samber/lo"
@@ -501,6 +503,12 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 		return nil, fmt.Errorf("failed to read manifest groups subdirs in %s: %w", basePath, err)
 	}
 
+	// Sort directories numerically by extracting trailing numbers from names
+	// This fixes the issue where restore10, restore11 come before restore2 when sorted alphabetically
+	sort.Slice(groupSubDirs, func(i, j int) bool {
+		return extractTrailingNumber(groupSubDirs[i].Name()) < extractTrailingNumber(groupSubDirs[j].Name())
+	})
+
 	for _, groupSubDir := range groupSubDirs {
 		if !groupSubDir.IsDir() {
 			log.Info("Unexpected file found, skipping...", "file",
@@ -508,12 +516,19 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 			continue
 		}
 
-		// The returned list of entries are sorted by name alphabetically
 		manifestDirPath := filepath.Join(basePath, groupSubDir.Name())
 		manifestYamls, err := os.ReadDir(filepath.Clean(manifestDirPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed get manifest yamls in %s: %w", manifestYamls, err)
 		}
+
+		// Sort files numerically by their leading index prefix.
+		// os.ReadDir returns entries sorted alphabetically, which places 10_, 11_ before
+		// 2_ once a group holds more than 9 files. The leading index encodes the intended
+		// apply order (<n>_<Kind>_<name>_<namespace>.yaml), so sort by it to preserve that order.
+		sort.Slice(manifestYamls, func(i, j int) bool {
+			return extractLeadingNumber(manifestYamls[i].Name()) < extractLeadingNumber(manifestYamls[j].Name())
+		})
 
 		var manifests []*unstructured.Unstructured
 		for _, yamlFile := range manifestYamls {
@@ -536,6 +551,40 @@ func LoadGroupedManifestsFromPath(basePath string, log *logr.Logger) ([][]*unstr
 	}
 
 	return sortedManifests, nil
+}
+
+// extractTrailingNumber extracts the numeric suffix from a string.
+// For example: "restore1" -> 1, "restore10" -> 10, "group2" -> 2.
+// Returns 0 if no trailing number is found.
+func extractTrailingNumber(s string) int {
+	re := regexp.MustCompile(`\d+$`)
+	match := re.FindString(s)
+	if match == "" {
+		return 0
+	}
+	num, err := strconv.Atoi(match)
+	if err != nil {
+		return 0
+	}
+	return num
+}
+
+// extractLeadingNumber extracts the numeric prefix from a string.
+// For example: "1_ConfigMap_x_.yaml" -> 1, "10_SriovNetwork_x_ns.yaml" -> 10.
+// Returns 0 if no leading number is found. Unlike extractTrailingNumber, this
+// must be used for manifest filenames because their trailing characters may be
+// non-index digits (e.g. "16_RoleBinding_x_s000032-001-ec-gnb-001.yaml").
+func extractLeadingNumber(s string) int {
+	re := regexp.MustCompile(`^\d+`)
+	match := re.FindString(s)
+	if match == "" {
+		return 0
+	}
+	num, err := strconv.Atoi(match)
+	if err != nil {
+		return 0
+	}
+	return num
 }
 
 // BuildKernelArguementsFromMCOFile reads the kernel arguments from MCO file
