@@ -271,23 +271,20 @@ it finds `cluster-config` differs by profile:
   the USB thereafter**. At the site, `cluster-config` is provided as the **data image via virtual
   media** through the existing mechanism; the USB need not remain inserted for personalization.
 
-> **Note — the technician must force the initial boot from the USB.** The prepare phase only
-> starts if firmware boots the USB's live ISO (p1). The technician selects the USB as a
-> **one-time boot device** (UEFI/BIOS boot menu) or sets it first in the boot order; do not rely
-> on default boot order, since the `InstallationDisk` may already carry a bootable OS. This is a
-> **one-time** action: the pivot reboot after prepare must land on the *installed disk*, **not**
-> re-boot the USB.
+> **Note — the technician must force the initial boot from the USB.** The prepare phase only starts if
+> firmware boots the USB's live ISO (p1). The technician selects the USB as a **one-time boot device**
+> (UEFI/BIOS boot menu) or first in boot order; do not rely on default order, since the
+> `InstallationDisk` may already carry a bootable OS. This is a **one-time** action: the pivot reboot
+> after prepare must land on the *installed disk*, **not** re-boot the USB.
 >
 > **Boot selection is guidance, not the safety control — prepare guards itself against re-entry.**
-> Firmware boot order is outside LCA's control and one-time selection can be defeated (persistent order
-> leaves the USB first, or a pivot that fails to take returns to the live ISO). A second USB boot would
-> otherwise re-run `lca-cli ibi` and **wipe the freshly installed disk**. So before any destructive
+> Firmware boot order is outside LCA's control and one-time selection can be defeated. A second USB boot
+> would otherwise re-run `lca-cli ibi` and **wipe the freshly installed disk**. So before any destructive
 > action (`cleanupDisk` / `coreos-installer install`), prepare reads a **durable prepare-complete
 > marker** — the `prepare.json: success` record on p4 from the first run — and, if present, **refuses to
 > wipe**: it records the re-entry as `pivot: failed` ([§7.2](#72-result-write-back-primary-signal)) and
 > **halts powered-on** ([§8.C](#8-work-items)). The marker rides on the same stick, so it survives every
-> subsequent USB boot. Correct boot order stays recommended practice, but this on-media guard is what
-> prevents the data-loss path.
+> subsequent USB boot. This on-media guard, not boot order, is what prevents the data-loss path.
 
 Implications: no code is needed to copy config onto the installed disk before reboot — the existing
 labeled-block-device discovery works as-is (USB p3 for secondary, site data image for primary). For
@@ -317,8 +314,7 @@ stored under their canonical names by digest** — the property
 [§5.2](#52-local-resolution-and-runtime-durability) depends on for both flows. Storage *naming* is the
 make-or-break detail: an image under its canonical name (`quay.io/…@sha256:…`) is the one a pod resolves
 locally with no mirror, and the one a runtime IDMS recovers by redirecting canonical → mirror. How
-images get there during prepare is separate from the runtime durability artifact
-([§5.2](#52-local-resolution-and-runtime-durability)).
+images get there during prepare is separate from the runtime durability artifact (§5.2).
 
 > **What the precache set covers differs by profile.** Today `precacheFlow` imports only the seed's
 > `containers.list`; prepare instead drives from the on-media precache list `create-usb` emits
@@ -338,38 +334,38 @@ images get there during prepare is separate from the runtime durability artifact
 2. For the seed and every image in the closure, import it directly into the target container store
    **under its canonical name by digest**:
    `skopeo copy oci:<usb-layout>:<ref> containers-storage:[overlay@/var/lib/containers+...]<canonical>@sha256:D`.
-3. **The target store is the *installed* stateroot's `/var/lib/containers`, not the live-ISO's
-   ephemeral store** — otherwise the imported images vanish at the pivot. This reuses the mechanism
-   the existing precache flow already relies on: prepare sets `OstreeDeployPathPrefix=/mnt/` and
-   deploys the stateroot on the mounted install disk (`ibipreparation.go:66-71`), and `precacheFlow`
-   **chroots to `/host`** (the mounted installed root) before `workload.Precache`
-   (`ibipreparation.go:122-132`), so writes land in the persistent on-disk store. The new
-   `containers-storage` import targets that **same** store (via the chroot, or an explicit
-   `overlay@<installed-root>/var/lib/containers` graphroot), so images imported during prepare are the
-   images CRI-O finds after first boot.
+3. **Two destination stores, sequenced by when they exist:**
+   - **Seed → live-ISO store first.** `SetupStateroot` (`ibipreparation.go:66-71`) consumes the seed
+     *before* any installed stateroot exists — the seed pull today (`ibipreparation.go:60`) precedes
+     stateroot setup for exactly this reason. So the seed replaces that `podman pull` with a
+     `containers-storage` import into the **live** graphroot (no chroot, no `/mnt` prefix): a bootstrap
+     input to stateroot deployment, not a runtime artifact, dropped from the live store afterward.
+   - **Closure (release + user workloads) → *installed* stateroot's `/var/lib/containers`**, not the
+     live-ISO store — else those images vanish at the pivot. This reuses the existing precache
+     mechanism: prepare sets `OstreeDeployPathPrefix=/mnt/`, deploys the stateroot on the mounted
+     install disk, and `precacheFlow` **chroots to `/host`** before `workload.Precache`
+     (`ibipreparation.go:122-132`), so writes land in the persistent on-disk store. The
+     `containers-storage` import targets that **same** store, so images imported during prepare are the
+     images CRI-O finds after first boot.
 
 Because the destination reference is canonical, storage is canonical **by construction** — no
 registry, no `registries.conf`, no reference rewriting. This satisfies
-[§5.2](#52-local-resolution-and-runtime-durability) identically for both profiles: the normal path is
-a local hit under the canonical name. Recovery then differs by profile: **primary** re-pulls from the
-site mirror via the site's runtime IDMS (from the data image); **secondary** finds the image still in
-its read-only additional image store under the *same* canonical name — **no re-pull, no IDMS**. The
+[§5.2](#52-local-resolution-and-runtime-durability) identically for both profiles: the normal path is a
+local hit under the canonical name. Recovery differs by profile: **primary** re-pulls from the site
+mirror via the site's runtime IDMS (from the data image); **secondary** finds the image still in its
+read-only additional image store under the *same* canonical name — **no re-pull, no IDMS**. The
 prepare-time cost is a new local-import path at the two pull sites — `podmanImgPull`
 (`pullImages.go:57`) and the seed pull (`ibipreparation.go:60`) — targeting the mounted store by digest
-instead of `podman pull` ([§8.B](#8-work-items)/[§8.C](#8-work-items)). Import is decoupled from the
-durability artifact ([§5.2](#52-local-resolution-and-runtime-durability), [§8.D](#8-work-items)).
+instead of `podman pull` ([§8.B](#8-work-items)/[§8.C](#8-work-items)).
 
 > **Rejected — local registry + `ReleaseRegistry` remap.** The tempting shortcut — run a
-> `localhost:5000` registry over the layout and reuse the existing `ReleaseRegistry` override so
-> precache "just works" — does not work. `ReleaseRegistry` drives `ReplaceImageRegistry`
-> (`utils/utils.go:263`), a regex that **rewrites the reference hostname**, so images land under
-> `localhost:5000/…`, *not* their canonical names. That breaks the no-mirror normal path
-> ([§5.2](#52-local-resolution-and-runtime-durability)) and strands the **primary** flow: a runtime
-> IDMS mapping canonical → the external site mirror matches nothing in a `localhost:5000`-named store,
-> so every image re-pulls at first boot and the precache is dead weight. Storing canonically would
-> instead need a genuine `registries.conf` digest-mirror plus canonical-ref pulls — more moving parts
-> than the direct import, no advantage. Its one apparent benefit (reusing `ReleaseRegistry`) is the
-> defect.
+> `localhost:5000` registry over the layout and reuse `ReleaseRegistry` so precache "just works" —
+> fails. `ReleaseRegistry` drives `ReplaceImageRegistry` (`utils/utils.go:263`), a regex that
+> **rewrites the reference hostname**, so images land under `localhost:5000/…`, *not* canonical names.
+> That breaks the no-mirror normal path ([§5.2](#52-local-resolution-and-runtime-durability)) and
+> strands the **primary** flow: a runtime IDMS mapping canonical → the external site mirror matches
+> nothing in a `localhost:5000`-named store, so every image re-pulls at first boot. Its one apparent
+> benefit (reusing `ReleaseRegistry`) is the defect.
 
 ### 5.2 Local resolution and runtime durability
 
@@ -383,19 +379,19 @@ collection and on-disk corruption. Two facts hold for both profiles:
   under canonical names by digest (the direct import [§5.1](#51-image-import-during-prepare) does this
   by construction). On this path neither flow contacts any registry.
 - **A single cached copy is not durable.** Images in containers-storage are subject to kubelet
-  **image garbage collection** (unused images are evicted under disk pressure, above
-  `imageGCHighThresholdPercent`) and to ordinary on-disk corruption. Worse, **CRI-O removes corrupted
-  images on reboot** — its storage integrity check wipes invalid images so they re-pull on next use —
-  so a corrupt image is not merely unreadable, it is *deleted* on the next boot. On a connected node
-  this is harmless: the image re-pulls. So the design needs a **recovery source** for evicted or
-  corruption-wiped images — and *where that source lives is what differs between the two flows.*
+  **image garbage collection** (unused images evicted under disk pressure, above
+  `imageGCHighThresholdPercent`) and to on-disk corruption. Worse, **CRI-O removes corrupted images on
+  reboot** — its storage integrity check wipes invalid images so they re-pull on next use — so a corrupt
+  image is not merely unreadable, it is *deleted* on the next boot. On a connected node this is harmless
+  (it re-pulls). So the design needs a **recovery source** for evicted or corruption-wiped images — and
+  *where that source lives is what differs between the two flows.*
 
 **Primary profile — recovery is the site's job, not the USB's.** The warehouse-prepared node activates
 at a site with a **mirror registry external to the SNO** — a standard mirror-connected SNO at run time.
 The digest **`ImageDigestMirrorSet`** mapping each canonical source registry → the site mirror arrives
 in the **site's standard disconnected config, delivered as the data image**
-([§3.1](#31-config-delivery-by-labeled-block-device-already-works)) — **`create-usb` does not synthesize
-or ship it**. Normal resolution stays local (images precached under canonical names); the site IDMS's
+([§3.1](#31-config-delivery-by-labeled-block-device-already-works)) — **`create-usb` ships none of it**.
+Normal resolution stays local (images precached under canonical names); the site IDMS's
 job is **recovery**: a GC-evicted or corruption-wiped image re-fetches from the site mirror via CRI-O's
 standard pull path — automatic across a reboot, no upstream internet, exactly how disconnected OpenShift
 already works. **The SNO runs no registry**, and the USB's only obligation is **canonical storage**
@@ -560,12 +556,12 @@ leaving them to chance ([§8.A](#8-work-items) mirrors these in `IBIPrepareConfi
   and `extraManifests` are copied to p3 and **applied verbatim by `post-pivot`**, so a user-supplied
   `ImageDigestMirrorSet`/`ImageContentSourcePolicy` becomes live CRI-O config on the forever-offline
   node. If one lists an **external** mirror, or leaves source fallback enabled (`mirrorSourcePolicy`
-  unset or `AllowContactSource`), CRI-O will try that network endpoint on a local miss — silently
-  breaking the zero-network guarantee. `create-usb` therefore **scans the rendered p3 manifests and
-  fails the build** on any IDMS/ICSP unless **both**: every `mirrors` entry is the on-node local
-  endpoint (the additional-store model ships **no** IDMS, so any IDMS here is already suspect; the
-  registry fallback allows only `localhost:5000`), **and** `mirrorSourcePolicy: NeverContactSource` is
-  set. *(N/A to `install-only`, which ships no p3 — its mirror config rides in the site data image.)*
+  unset or `AllowContactSource`), CRI-O tries that network endpoint on a local miss — silently breaking
+  the zero-network guarantee. So `create-usb` **scans the rendered p3 manifests and fails the build** on
+  any IDMS/ICSP unless **both**: every `mirrors` entry is the on-node local endpoint (the
+  additional-store model ships **no** IDMS, so any IDMS is already suspect; the registry fallback allows
+  only `localhost:5000`), **and** `mirrorSourcePolicy: NeverContactSource` is set. *(N/A to
+  `install-only`, which ships no p3.)*
 
 **Install-only carries no site config.** All personalization inputs (`siteConfig`, `clusterManifests`,
 runtime pull secret, mirror/IDMS config) are delivered **later, at the site, in the data image**
@@ -650,11 +646,8 @@ for a block device), not a manifest field.
    `self-contained` it issues the **pivot reboot** into the installed disk (`Shutdown: false`,
    [§8.I](#8-work-items)) so the on-USB reconfigure phase can run. `coreos-installer iso ignition
    embed` / `iso customize`.
-   **Package the `lca-cli` executable into p1.** The stock RHCOS live ISO does not ship `lca-cli` (it
-   lives only inside the p2 runtime image), so the ignition unit's `lca-cli ibi` would fail `command not
-   found` before any disk prep. v1 **embeds the static binary** via ignition (deterministic, no image
-   load), tested end-to-end with the exact binary that ships ([§8](#8-work-items)); loading the lca-cli
-   image from p2 is the rejected alternative (extra load step, container surface).
+   **Package the `lca-cli` executable into p1** — the stock live ISO ships no `lca-cli`, so v1 embeds
+   the static binary via ignition (details and rejected alternative in [§8.E](#8-work-items)).
 4. **Build the p3 config tree — `self-contained` only.** *(Skipped for `install-only`, which ships no
    p3; its personalization comes from the site data image.)* Render the `/opt/openshift/...` layout
    from `siteConfig`: `cluster-configuration/manifest.json` (`SeedReconfiguration`),
@@ -825,51 +818,53 @@ success means per phase and deliver that status off-box.
   stateroot deployed, and **every image in the profile's precache scope resident in
   `/var/lib/containers`** (seed closure + extras for `install-only`, full closure for
   `self-contained`). The image self-check is a **mandatory success gate, not optional hardening**:
-  `Run()` verifies that the imported image count/digests match the **on-media** digest manifest
-  (embedded at `ExpectedDigestsPath`, [§6.4](#64-steps-the-tool-performs) step 6, scoped to the
-  profile) and **returns an error on any mismatch or missing image**, so the phase fails *before* the
-  terminal action (shutdown/reboot/halt) rather than shipping an incomplete node. The
-  `<output>.digests.json` written on the workstation is not present on the disconnected node, so the
-  check reads the embedded copy. Fully determinable locally.
+  `Run()` verifies the imported image count/digests match the **on-media** digest manifest (embedded at
+  `ExpectedDigestsPath`, [§6.4](#64-steps-the-tool-performs) step 6, scoped to the profile) and
+  **returns an error on any mismatch or missing image**, so the phase fails *before* the terminal
+  action rather than shipping an incomplete node. The `<output>.digests.json` written on the
+  workstation is absent on the disconnected node, so the check reads the embedded copy.
 - **Reconfigure** (`lca-cli post-pivot`, **`self-contained` only** — in `install-only` this step runs
   at the site from the existing IBI data image and is reported by that mechanism, not the USB): a
   **single** success criterion — `PostPivotConfiguration()` returns nil **and** the node reports
-  `Ready` **and** all cluster operators report `Available=True`. (Node-`Ready` alone can be reached
-  before operators settle; requiring operators `Available` is the meaningful "cluster is up" gate, so
-  it is the one used.) This same criterion is used **both** for the p4 result record and for the
-  completion signal — no second, looser definition anywhere.
+  `Ready` **and** all cluster operators report `Available=True`. (Node-`Ready` alone can precede
+  operators settling; requiring operators `Available` is the meaningful "cluster is up" gate.) This
+  same criterion is used **both** for the p4 result record and the completion signal — no looser
+  definition anywhere.
   - **Clock/RTC precondition (gate, not just a risk).** recert regenerates cluster certificates at
     reconfigure time; with no NTP offline and a warehouse→ship→field time gap, an implausible RTC
-    yields bad certificate validity windows and can block `Available=True`
-    ([§10](#10-open-questions--risks)). So before recert runs, reconfigure **verifies the system clock
-    is plausible** (RTC present and within a sane bound of `seedVersion`'s build/expiry, or a
-    `ChronyConfig`-supplied local time source is set); if it is not, the phase **fails to the
-    powered-on halt** with a clear `reconfigure.json` reason rather than minting certificates with a
-    bad validity window ([§8.F](#8-work-items)).
+    yields bad validity windows and can block `Available=True` ([§10](#10-open-questions--risks)). So
+    before recert runs, reconfigure **verifies the clock is plausible** (RTC within a sane bound of
+    `seedVersion`'s build/expiry, or a `ChronyConfig` local time source); if not, the phase **fails to
+    the powered-on halt** with a clear `reconfigure.json` reason ([§8.F](#8-work-items)).
   - **Owner of the wait + p4 write.** Operators reaching `Available` can take many minutes after
     `PostPivotConfiguration()` returns, so the wait **must not** block inside `post-pivot`. A
-    **dedicated result-writer systemd unit** (candidate host: `lca-cli init-monitor`, today an IBU
-    auto-rollback monitor — a new mode) polls the criterion with a timeout and writes `reconfigure.json`
-    to p4 — `success` when met, `failure` (with the unmet condition) on timeout. `post-pivot` records an
-    early `failure` only if `PostPivotConfiguration()` errors; the success record is the result-writer's
-    job. Post-pivot already waits for the kube API (`postpivot.go:191-207`); the new unit adds
-    node-`Ready` + operator-`Available` polling ([§8.H](#8-work-items)).
-    - **Activation + failure propagation (against the real installed unit).** post-pivot on the
-      installed disk runs as **`installation-configuration.service`** (`ExecStart=lca-cli post-pivot`,
-      `Type=oneshot`, `RemainAfterExit=no`, `Restart=on-failure`) — there is **no `post-pivot.service`**.
-      The result-writer is **pulled into the boot target** (`WantedBy=multi-user.target`) and ordered
-      **`After=installation-configuration.service`**. It **cannot** use
-      `Requisite=installation-configuration.service`: `RemainAfterExit=no` means a *successful* post-pivot
-      goes **inactive**, so a `Requisite` checked when the result-writer starts would fail on the very
-      success path it must handle (and `Restart=on-failure` delays the terminal state). Success/failure
-      is therefore gated on the **on-p4 record**: post-pivot writes an early `reconfigure.json: failure`
-      (and exits non-zero) if `PostPivotConfiguration()` errors; the result-writer exits untouched if
-      that record already exists, else polls the criterion and writes `success` (or timeout-`failure`).
-      The two records stay mutually exclusive — post-pivot owns the error path, the result-writer the
+    **dedicated result-writer systemd unit** (candidate host: `lca-cli init-monitor`, a new mode) polls
+    the criterion with a timeout and writes `reconfigure.json` to p4 — `success` when met, `failure`
+    (with the unmet condition) on timeout. Post-pivot already waits for the kube API
+    (`postpivot.go:191-207`); the new unit adds node-`Ready` + operator-`Available` polling
+    ([§8.H](#8-work-items)).
+    - **Activation + terminal-failure propagation (against the real installed unit, retry-safe).**
+      post-pivot on the installed disk runs as **`installation-configuration.service`**
+      (`ExecStart=lca-cli post-pivot`, `Type=oneshot`, `RemainAfterExit=no`, `Restart=on-failure`,
+      `RestartSec=5s`) — there is **no `post-pivot.service`**. The `Restart=on-failure` policy is why
+      post-pivot **must not** write a failure record on each error: a *transient* failure would write
+      `reconfigure.json: failure`, systemd would restart, a later attempt would succeed, and the USB
+      would be **stuck showing a false failure**. So the terminal failure is written **only when the
+      unit reaches `failed`** (`Restart=` attempts exhausted, start limit hit) via a systemd
+      **`OnFailure=ibi-reconfigure-failed.service`** handler (a small `lca-cli` mode) that writes
+      `reconfigure.json: failure` with the terminal reason and halts powered-on. `OnFailure=` fires on
+      the *unit's* failed transition, not per `ExecStart` attempt, so it fires **once**, only when
+      retries are genuinely exhausted — no race with the retry loop.
+      The success/timeout record stays with the result-writer: **pulled into the boot target**
+      (`WantedBy=multi-user.target`), ordered **`After=installation-configuration.service`**. It
+      **cannot** use `Requisite=installation-configuration.service` — `RemainAfterExit=no` means a
+      *successful* post-pivot goes **inactive**, so a `Requisite` would fail on the very success path it
+      must handle. It instead **exits untouched if a `failure` record already exists** (the `OnFailure`
+      handler got there first), else polls and writes `success` (or timeout-`failure`). The two writers
+      are mutually exclusive — `OnFailure` owns the terminal-error path, the result-writer the
       success/timeout path — both tested ([§8.H](#8-work-items)).
-- **`install-only` caveat:** an `install-only` success certifies *prepare only*, not a working
-  cluster — the cluster is validated later, when the site personalizes the node via the existing IBI
-  data image. A green prepare result ≠ guaranteed-working node.
+- **`install-only` caveat:** an `install-only` success certifies *prepare only*, not a working cluster
+  — the cluster is validated later, when the site personalizes the node via the existing IBI data image.
 
 ### 7.2 Result write-back (primary signal)
 
@@ -881,11 +876,12 @@ partition (p4, [§4](#4-usb-media-layout)) on **both** the success and failure p
 reboot in `self-contained`); **this is the only record `install-only` produces on the USB** — its
 personalization result is reported by the site data-image flow. If the `self-contained` pivot reboot
 fails to transition to the installed disk, the live-ISO unit amends `prepare.json` with a
-`pivot: failed` sub-status and halts powered-on rather than idling ([§8.I](#8-work-items)) — so a
-`self-contained` stick showing `prepare: success` with **no** `reconfigure.json` and a `pivot: failed`
-marker is unambiguously a pivot failure, not a stalled reconfigure. In `self-contained`, the result-writer
-unit ([§7.1](#71-per-phase-success-criteria)) additionally writes `reconfigure.json` once the success
-criterion is met or on timeout (post-pivot writes an early `failure` record if it errors out first).
+`pivot: failed` sub-status and halts powered-on ([§8.I](#8-work-items)) — so a `self-contained` stick
+showing `prepare: success` with **no** `reconfigure.json` and a `pivot: failed` marker is unambiguously
+a pivot failure, not a stalled reconfigure. In `self-contained`, the result-writer unit
+([§7.1](#71-per-phase-success-criteria)) writes `reconfigure.json` once the success criterion is met or
+on timeout; a terminal reconfigure failure (post-pivot retries exhausted) is written instead by the
+`OnFailure=` handler, never by post-pivot per-error.
 For example, `prepare.json`:
 
 ```json
@@ -924,32 +920,40 @@ own contract so writes are deterministic and durable:
 - **Discovery.** On-USB phases locate p4 by scanning for the FS label `ibi-status` (same
   labeled-block-device approach as `cluster-config`), mount it read-write, and unmount when done.
   Prepare runs in the live ISO (both profiles). In `self-contained`, reconfigure also runs on the
-  installed disk with the USB still inserted
-  ([§4.1](#41-first-boot--config-discovery-per-profile)); `install-only` has no on-USB
-  reconfigure, so p4 carries only `prepare.json`.
-- **Missing / read-only (best-effort, not a precondition).** p4 is **observability, not a required
-  precondition** — its absence never changes the terminal action. If p4 is absent or cannot be
-  mounted read-write, the phase logs loudly and proceeds to the terminal action **its actual result
-  dictates** via the [§7.3](#73-at-a-glance-signal-secondary-best-effort) power-state convention: a
-  *successful* phase still powers off (`install-only`) / stays up (`self-contained`); only a *failed*
-  phase halts powered-on. p4 unavailability must **not** map to `fail → halt` — doing so would halt an otherwise
-  successful install and corrupt the very success signal §7.3 provides. The lost detail is the
-  per-phase record only; the coarse power-state signal still reflects the real outcome. A missing p4
-  should be flagged by `create-usb` at build time so it is caught before the field.
-- **Per-phase records, not one overwrite.** A single `status.json` cannot distinguish "prepare
-  done" from "reconfigure not yet started." Write **separate per-phase records** —
-  `prepare.json` and `reconfigure.json` (or a keyed object per phase) — each with its own
-  result/timestamp, so the stick unambiguously shows how far the install progressed.
+  installed disk with the USB still inserted; `install-only` has no on-USB reconfigure, so p4 carries
+  only `prepare.json`.
+- **Missing / read-only — best-effort for `install-only`, a HARD precondition for `self-contained`.**
+  The profiles differ because only `self-contained` depends on the p4 record for *safety*, not just
+  observability:
+  - **`install-only` (primary): observability only.** p4's absence never changes the terminal action.
+    If p4 is absent or cannot be mounted read-write, prepare logs loudly and proceeds to the terminal
+    action **its actual result dictates** via the [§7.3](#73-at-a-glance-signal-secondary-best-effort)
+    power-state convention: a *successful* prepare still powers off; only a *failed* prepare halts
+    powered-on. p4 unavailability must **not** map to `fail → halt` — that would halt an otherwise
+    successful install and corrupt the very success signal §7.3 provides. Only the per-phase record is
+    lost; the coarse power-state signal still reflects the real outcome.
+  - **`self-contained` (secondary): p4 is a hard precondition of destructive prepare.** The re-entry
+    data-loss guard ([§8.C](#8-work-items)) keys off the durable `prepare.json: success` marker, which
+    **cannot** live on the installation disk — prepare wipes it. p4 is the only writable surface that
+    survives the wipe, so without it the guard is blind and a re-boot would silently re-wipe a completed
+    install. So before the first destructive step, `self-contained` requires
+    **exactly one** writable `ibi-status` device: **fail fast (halt powered-on, no wipe)** on **0**
+    (marker unreadable on re-entry) or **>1** (ambiguous which stick governs). This is the one place p4
+    absence *does* map to `fail → halt`, only in `self-contained`, and `create-usb` should also flag a
+    missing/duplicated p4 at build time.
+- **Per-phase records, not one overwrite.** A single `status.json` cannot distinguish "prepare done"
+  from "reconfigure not yet started." Write **separate per-phase records** — `prepare.json` and
+  `reconfigure.json` (or a keyed object per phase) — each with its own result/timestamp, so the stick
+  shows how far the install progressed.
 - **Atomic & durable.** Write to a temp file, `fsync` it, `rename` into place, then `fsync` the
-  directory and `sync` the filesystem **before** `shutdown now` / reboot / halt. Otherwise the
-  result can be lost in the buffer cache when the box powers off — defeating the primary signal.
+  directory and `sync` **before** `shutdown now` / reboot / halt — else the result can be lost in the
+  buffer cache when the box powers off, defeating the primary signal.
 - **p4 must be a journaled filesystem (`ext4`), not `vfat`.** The `fsync`/`rename`/`sync` sequence
-  above only yields crash-safe atomic persistence on a filesystem that journals metadata against data.
-  **VFAT/FAT32 is non-journaled**: a power loss mid-`rename` (or after the data `fsync` but before the
-  FAT directory entry lands) can leave the *only* phase-result record truncated or absent despite every
-  `fsync`/`sync`. Since p4 carries the sole off-box signal on a headless node, `create-usb` **formats p4
-  as `ext4`** and rejects `vfat`; the atomic-write contract is claimed only against `ext4`. (Read-only
-  p3 is never written on-node, so its FS choice is out of scope.)
+  above only yields crash-safe atomic persistence on a journaled filesystem. **VFAT/FAT32 is
+  non-journaled**: a power loss mid-`rename` (or after the data `fsync` but before the FAT directory
+  entry lands) can leave the *only* phase-result record truncated or absent despite every
+  `fsync`/`sync`. So `create-usb` **formats p4 as `ext4`** and rejects `vfat`; the atomic-write contract
+  holds only against `ext4`. (Read-only p3 is never written on-node, so its FS choice is out of scope.)
 
 ### 7.5 Media integrity (Secure Boot; signing deferred)
 
@@ -959,13 +963,13 @@ already exist or are cheap, and treats cryptographic media signing as requiremen
 rather than designed-in default. The three that carry their weight in v1:
 
 - **UEFI Secure Boot is the primary integrity anchor** for the code that executes. Firmware
-  validates the p1 boot chain (shim → GRUB → kernel/initramfs) against keys already provisioned in
-  the platform (the RHCOS live ISO ships Red Hat-signed shim/GRUB). This is verified independently
-  of the media, so it is the real root of trust — not anything the USB asserts about itself. The
-  Phase 0 spike ([§9](#9-phasing)) must confirm the assembled stick boots with Secure Boot enabled.
+  validates the p1 boot chain (shim → GRUB → kernel/initramfs) against platform-provisioned keys (the
+  RHCOS live ISO ships Red Hat-signed shim/GRUB). Verified independently of the media, so it is the
+  real root of trust — not anything the USB asserts about itself. The Phase 0 spike
+  ([§9](#9-phasing)) must confirm the assembled stick boots with Secure Boot enabled.
 - **Verified ISO source.** `create-usb` fetches the RHCOS live ISO over **HTTPS** and verifies its
-  published checksum/signature before it becomes boot media (never plain HTTP, never unverified).
-  See [§6.1](#61-prerequisites). Cheap and standard, so it stays in the default flow.
+  published checksum/signature before it becomes boot media (never plain HTTP, never unverified;
+  [§6.1](#61-prerequisites)). Cheap and standard, so it stays in the default flow.
 - **Mandatory image self-check (completeness, not crypto).** Prepare fails unless every image in
   the on-media digest manifest is resident locally ([§7.1](#71-per-phase-success-criteria)). This
   is a *correctness* gate — it protects the make-or-break offline-resolution requirement — and is
@@ -1031,52 +1035,54 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
   images land under their **canonical** names by digest **by construction**, so the installed node
   resolves them locally without consulting any mirror on the normal path.
 - **Runtime durability is a separate, profile-conditional concern
-  ([§5.2](#52-local-resolution-and-runtime-durability), §8.D)** — not the import path, and only the
-  `self-contained` (secondary) profile ships an on-node artifact for it. The `install-only` (primary)
-  node's runtime durability is the **site's** responsibility once personalized — its standard
-  disconnected config (external mirror + IDMS) arrives with the site data image, not from the USB. In
-  `self-contained`, a read-only additional image store on the installed disk (a second canonical copy
-  of the closure, built from the OCI layout, not served off USB) is CRI-O's durable recovery source;
-  this durable copy is distinct from the prepare-time import above.
+  ([§5.2](#52-local-resolution-and-runtime-durability), §8.D)** — not the import path. `install-only`
+  durability is the **site's** responsibility once personalized (external mirror + IDMS via the data
+  image, not the USB); only `self-contained` ships an on-node artifact (the read-only additional image
+  store, distinct from the prepare-time import above). Detail in [§8.D](#8-work-items).
 
 ### C. Wire into prepare — `lca-cli/ibi-preparation/ibipreparation.go`
 
 - Redirect the two pull sites to a **local import by digest** from the mounted layout instead of
   `podman pull`: the seed pull (line 60) and `precacheFlow` (line 73, via `podmanImgPull` /
-  `workload.Precache`). Mount USB images first; after precache, unmount the USB. Do **not** set
-  `ReleaseRegistry`/`ReplaceImageRegistry` — that rewrites references to non-canonical names
-  ([§5.1](#51-image-import-during-prepare)); the import writes canonical refs directly. Only
-  `self-contained` additionally installs the read-only additional image store: while the installed
-  stateroot is still mounted in the live ISO, copy `store/` from the p2 mount into
-  `/var/lib/containers/ro-store` (read-only, `root:root`) and drop the path-rewritten `storage.conf`
-  drop-in into the installed stateroot **before unmounting the USB** ([§8.D](#8-work-items)).
+  `workload.Precache`). Do **not** set `ReleaseRegistry`/`ReplaceImageRegistry` — that rewrites
+  references to non-canonical names ([§5.1](#51-image-import-during-prepare)); the import writes
+  canonical refs directly.
+- **One explicit p2 lifecycle — mount once, unmount last (both flows).** p2 must stay mounted through
+  the *entire* import, because the `self-contained` store handoff reads from it after precache. Ordered:
+  (1) **mount p2** (OCI layout, plus read-only `store/` for `self-contained`); (2) **import + precache**
+  into the installed store via chroot `/host` ([§5.1](#51-image-import-during-prepare)); (3)
+  **`self-contained` only** — with the stateroot still mounted, **copy + validate** `store/` into
+  `/var/lib/containers/ro-store` and install the path-rewritten `storage.conf` drop-in
+  ([§8.D](#8-work-items)); (4) **`sync`, then unmount p2 last** — never before step 3, so
+  `additionalimagestores` never points at a path gone with the USB.
 - **Guard against a second destructive prepare on USB re-entry (data-loss prevention).** Before
-  `diskPreparation()` runs `cleanupDisk()` / `coreos-installer install` (`ibipreparation.go:182-207`),
-  add a **prepare-complete check**: mount p4 by label and look for an existing `prepare.json` with
-  `result: success` (the durable first-run marker, [§7.2](#72-result-write-back-primary-signal)). If
-  present, this boot is a re-entry (pivot failed to take, or the USB was booted again) over a
-  completed install — so **do not wipe**: amend `prepare.json` with `pivot: failed` and **halt
-  powered-on** (as [§8.I](#8-work-items)). This is the actual safety control; firmware one-time-boot
-  selection ([§4.1](#41-first-boot--config-discovery-per-profile)) is only advisory. Test the re-entry
-  path (marker present ⇒ no wipe, halt) alongside the first-run path.
+  `diskPreparation()` runs `cleanupDisk()` / `coreos-installer install` (`ibipreparation.go:182-207`):
+  - **`self-contained` first requires exactly one writable p4** (the hard precondition,
+    [§7.4](#74-the-ibi-status-partition-contract-discovery--persistence)): halt powered-on **without
+    wiping** on 0 or >1 `ibi-status` devices, since the guard below cannot otherwise function.
+  - Then add a **prepare-complete check**: mount p4 by label, look for an existing `prepare.json` with
+    `result: success` (the durable first-run marker, [§7.2](#72-result-write-back-primary-signal)). If
+    present, this boot is a re-entry over a completed install — so **do not wipe**: amend `prepare.json`
+    with `pivot: failed` and **halt powered-on** ([§8.I](#8-work-items)). This is the actual safety
+    control; firmware one-time-boot selection is only advisory. Test the re-entry path (marker present ⇒
+    no wipe, halt) alongside the first-run path.
 - **Drive precache from the profile's declared scope, not just the seed `containers.list`.**
   `precacheFlow` currently reads only `common.ContainersListFilePath`; extend it to precache **every
   image in the on-media precache manifest** ([§8.A](#8-work-items)) — for `install-only`, the seed
-  closure **+ `ExtraPrecacheImages`** (site-only images are left to the site mirror at
-  personalization); for `self-contained`, the **full site closure** emitted by `create-usb` alongside
-  p2 (superset of the seed list, including p3-manifest/extra-manifest images). Otherwise, in
-  `self-contained`, those images stay on p2, never reach `/var/lib/containers`, and the prepare
-  self-check ([§7.1](#71-per-phase-success-criteria)) fails.
+  closure **+ `ExtraPrecacheImages`** (site-only images left to the site mirror at personalization);
+  for `self-contained`, the **full site closure** emitted by `create-usb` alongside p2 (superset of the
+  seed list, including p3-manifest/extra-manifest images). Otherwise those images stay on p2, never
+  reach `/var/lib/containers`, and the `self-contained` prepare self-check fails.
 
 ### D. Persist the runtime durability artifact into the installed stateroot — `self-contained` only
 
 - The normal path is local: canonical-by-digest images are found by CRI-O with no mirror. But a single
   cached copy is not durable (kubelet GC evicts under disk pressure; CRI-O *deletes* a corrupt image on
-  reboot), so a runtime recovery source is needed. **Only `self-contained` (secondary) ships one** — it
-  is the only profile that personalizes offline from the USB.
+  reboot), so a runtime recovery source is needed. **Only `self-contained` (secondary) ships one** — the
+  only profile that personalizes offline from the USB.
 - **`install-only` (primary): no artifact from the USB.** Runtime durability arrives later with the
-  **site's own** standard disconnected config (external mirror + digest IDMS) via the data image;
-  `create-usb` synthesizes none. This work item does not run for `install-only`.
+  **site's own** disconnected config (external mirror + digest IDMS) via the data image; `create-usb`
+  synthesizes none. This work item does not run for `install-only`.
 - **`self-contained` (secondary): read-only additional image store.** Persist a second canonical copy
   of the closure as a **read-only `containers/storage` store** on the installed disk (outside CRI-O's
   writable graphroot), registered via `additionalimagestores` in `storage.conf`. CRI-O resolves from it
@@ -1088,21 +1094,21 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
     containers-storage:[overlay@<store>]...` and **validates** against the target CRI-O
     ([§6.4](#64-steps-the-tool-performs) step 4); matching the node's driver/layer format is a compat
     gate ([§6.6](#66-open-tooling-questions)).
-  - **Carry (media).** The store ships **read-only on p2** at `store/`, with its `storage.conf` drop-in
-    beside it. Nothing is written to the installed disk at build time; the media is the only carrier.
-  - **Install (prepare, in the live ISO).** While the freshly written stateroot is still mounted
-    (`/mnt`, chroot `/host`), prepare copies `store/` from p2 into the installed stateroot at
-    **`/var/lib/containers/ro-store`** (outside the writable graphroot) as **read-only, `root:root`**,
-    and installs the drop-in as **`/etc/containers/storage.conf.d/50-ibi-ro-store.conf`** with its
-    `additionalimagestores` path rewritten to `/var/lib/containers/ro-store` (the installed-disk path —
-    the USB mount is gone after the pivot). Runs **before** the USB is unmounted, so
-    `additionalimagestores` never points at a path that disappears. No systemd service, no registry.
+  - **Carry (media).** The store ships **read-only on p2** at `store/` with its `storage.conf` drop-in
+    beside it; the media is the only carrier (nothing written to the installed disk at build time).
+  - **Install (prepare, in the live ISO).** Per the ordered p2 lifecycle ([§8.C](#8-work-items)), while
+    the stateroot is still mounted (`/mnt`, chroot `/host`) and **before p2 is unmounted**, prepare
+    copies `store/` into **`/var/lib/containers/ro-store`** (outside the writable graphroot) as
+    **read-only, `root:root`**, and installs the drop-in
+    **`/etc/containers/storage.conf.d/50-ibi-ro-store.conf`** with `additionalimagestores` rewritten to
+    `/var/lib/containers/ro-store` (the installed-disk path — the USB mount is gone after the pivot). No
+    systemd service, no registry.
 - **Registry fallback only (if the compat spike fails).** A host-level (non-CRI-O) registry serving the
   on-disk copy + a **digest** IDMS → `localhost:5000` (`mirrorSourcePolicy: NeverContactSource`). Only
   here do the registry's own image, a systemd unit, and layout→registry-storage conversion apply — run
-  as a *host* process (static binary, or podman with a separate `--root`) outside the GC/corruption
-  path. The IDMS must land in the `cluster-configuration/manifests/` set `post-pivot` applies (it runs
-  `deleteAllOldMirrorResources` first).
+  as a *host* process outside the GC/corruption path. The IDMS must land in the
+  `cluster-configuration/manifests/` set `post-pivot` applies (it runs `deleteAllOldMirrorResources`
+  first).
 
 ### E. USB media creation tooling (automated) — see [§6](#6-usb-creation-tooling-automated)
 
@@ -1111,10 +1117,11 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
   OCI layout, an empty writable p4 `ibi-status` (result partition — see item H below), and — **only
   for `self-contained`** — a p3 `cluster-config` tree (`install-only` media omit p3 entirely;
   personalization comes from the site data image, [§4](#4-usb-media-layout)).
-- **Package the `lca-cli` executable into p1** ([§6.4](#64-steps-the-tool-performs) step 3): the
-  stock RHCOS live ISO has no `lca-cli` (it ships only inside the p2 runtime image), so the embedded
-  ignition unit's `lca-cli ibi` would fail `command not found`. Embed the static binary via ignition
-  (v1) and **test the embedded unit end-to-end with the exact binary that ships**.
+- **Package the `lca-cli` executable into p1** ([§6.4](#64-steps-the-tool-performs) step 3): the stock
+  RHCOS live ISO has no `lca-cli` (it ships only inside the p2 runtime image), so the embedded ignition
+  unit's `lca-cli ibi` would fail `command not found`. Embed the static binary via ignition (v1) and
+  **test the embedded unit end-to-end with the exact binary that ships**; loading the lca-cli image from
+  p2 is the rejected alternative (extra load step, container surface).
 - Resolve the **profile's image scope** ([§6.4](#64-steps-the-tool-performs) step 1): reuse the seed
   `containers.list` extraction (`seedcreator.go:282`); for `install-only`, add the manifest's
   `extraPrecacheImages`; for `self-contained`, additionally scan the rendered p3 manifests /
@@ -1127,9 +1134,8 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
   manifests to rewrite.)
 - **Build + stage the runtime durability artifact on p2 — `self-contained` only**
   ([§6.4](#64-steps-the-tool-performs) step 4, [§8.D](#8-work-items)): a **read-only `containers/storage`
-  store** (validated against the target CRI-O) + a `storage.conf` drop-in — **no IDMS, no registry**
-  (registry fallback: digest IDMS → `localhost:5000` `NeverContactSource` + a host registry). Prepare
-  performs the disk handoff ([§8.D](#8-work-items)). `install-only` emits neither.
+  store** (validated against the target CRI-O) + a `storage.conf` drop-in — **no IDMS, no registry**.
+  Prepare performs the disk handoff ([§8.D](#8-work-items)). `install-only` emits neither.
 - Emit the on-media precache-scope digest manifest that doubles as the prepare precache list and
   self-check reference ([§6.4](#64-steps-the-tool-performs) step 6, [§8.A](#8-work-items)) — seed
   closure + extras for `install-only`, full closure for `self-contained`.
@@ -1239,6 +1245,11 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
      pivot reboot) and reaches a running cluster with the NIC still unplugged — then force-evict/corrupt
      an image and confirm on-node recovery from the read-only additional image store (no re-pull, no
      registry; the registry fallback, if used, must also recover with the NIC unplugged).
+     - **Clock/RTC gate (pass path,
+       [§7.1](#71-per-phase-success-criteria)/[§8.F](#8-work-items)):** with a plausible RTC (or a
+       `ChronyConfig` local time source), reconfigure passes the pre-recert clock check, recert mints
+       certificates with valid windows, and operators reach `Available=True` so the result-writer
+       records `reconfigure.json: success`.
    - **`install-only` (primary):** a node prepared offline (seed closure + extras resident in
      `/var/lib/containers` under canonical names), powered off, then **personalized at a
      mirror-connected site via the existing IBI data-image (virtual media) mechanism** — no USB
@@ -1258,6 +1269,11 @@ Boot-validated ignition) before consuming p2/p3. Captured as [§8.J](#8-work-ite
    `install-only` warehouse-install → ship → **standard IBI data-image personalization at a
    mirror-connected site** path (durability from the site's own mirror), and the `self-contained`
    flow personalized entirely from the USB with no mirror at all.
+   - **Clock/RTC gate (fail path,
+     [§7.1](#71-per-phase-success-criteria)/[§8.F](#8-work-items)):** with the RTC deliberately skewed
+     to an implausible time and no local time source, `self-contained` reconfigure **fails the
+     pre-recert clock check**, recert never runs, and the phase writes a `reconfigure.json` failure
+     reason and **halts powered-on** — no certificates minted with a bad validity window.
 
 ## 10. Open questions / risks
 
