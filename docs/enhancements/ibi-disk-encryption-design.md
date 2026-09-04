@@ -225,11 +225,20 @@ diskEncryption: {}      # presence enables unattended TPM2-only root LUKS
 - No `type`/mechanism validation — TPM2 is implied.
 - **Fail-closed version gate (contract compatibility).** `diskEncryption` is a new JSON field, so
   an **older seed-provided `lca-cli`** would silently ignore it, skip `--ignition-file`, and
-  install **plaintext with no error**. To prevent this silent downgrade, the contract must carry a
-  feature marker and the install must **abort** when the running `lca-cli` is too old to honor
-  `diskEncryption` (e.g. openshift/installer records the required feature version; `lca-cli ibi`
-  refuses an encrypted config it cannot satisfy). Covered by a **mixed-version contract test**:
-  old `lca-cli` + `diskEncryption` set ⇒ hard failure, never a plaintext install ([Section 12](#12-test--validation-plan)).
+  install **plaintext with no error**. Critically, a new field cannot make an *old* binary reject
+  anything — an old `lca-cli` just drops what it doesn't recognize — so the gate must live on a
+  path the old binary's flow already runs **before any seed write**:
+  - **Primary — pre-write check in the installer/ISO flow.** The (newer) openshift/installer, or
+    the `install-rhcos-and-restore-seed.sh` unit that pulls `lca-cli` from the seed, must read the
+    seed `lca-cli`'s advertised version/feature list (e.g. `lca-cli version --output json`) and
+    **abort before `cleanupDisk()`/`coreos-installer`** if it does not support `diskEncryption`.
+    This is the enforceable gate, because it runs regardless of how old the seed binary is.
+  - **Secondary — defense in depth.** Once `lca-cli` is new enough to know the field, `lca-cli ibi`
+    also refuses an encrypted config it cannot satisfy. This only helps for
+    new-enough-to-check-but-still-unsupported cases; it cannot cover a genuinely old binary.
+
+  Covered by a **mixed-version contract test**: old `lca-cli` + `diskEncryption` set ⇒ hard
+  failure at the pre-write check, never a plaintext install ([Section 12](#12-test--validation-plan)).
 
 ## 5. Ignition generation (lifecycle-agent)
 
@@ -264,10 +273,15 @@ Rules: `device: by-partlabel/root`; `wipeVolume: true` + filesystem `label: root
 mandatory for root reprovisioning; never set `path: "/"`; `clevis.tpm2: true` default, or
 `clevis.custom` with a `tpm2` pin + PCR config when `PCRList` is set.
 
-Ignition version: the emitted spec is **3.4.0**, so the seed's RHCOS must ship an Ignition
-**binary ≥ 2.15.0** to parse it. A seed carrying only an older binary (2.11–2.14, spec ≤ 3.3.x)
-would fail to apply the config; emit spec **3.3.0** for such seeds instead. Confirm per seed
-version (spike S8, [Section 12](#12-test--validation-plan)).
+Ignition version — **one contract, fail-closed.** `buildRootLuksIgnition` returns a fixed spec
+**3.4.0** config, which requires the seed's RHCOS to ship an Ignition **binary ≥ 2.15.0** to
+parse it. Rather than silently produce something a seed can't apply, the install **rejects any
+seed whose Ignition binary is < 2.15.0** (checked in the pre-write preflight, [Section 6](#6-wiring-into-the-disk-write-lifecycle-agent), alongside
+the seed-format check) — a seed carrying only 2.11–2.14 (spec ≤ 3.3.x) cannot be encrypted with
+this generator and the install aborts before any disk mutation. Supporting such seeds is
+**optional future work**: a parallel spec-3.3.0 generator plus version-selection (pick the
+generator from the seed's Ignition version), with unit tests for the selection logic. Confirm the
+target seed's Ignition version per build (spike S8, [Section 12](#12-test--validation-plan)).
 
 Root filesystem `format`: the generated config hardcodes `"format": "xfs"` (RHCOS's default
 rootfs) together with `wipeVolume: true` and `wipeFilesystem: true`. **This is destructive if it
@@ -297,19 +311,41 @@ mounted plaintext partitions during install; encryption happens on the target's 
 staging the deployed seed content through RAM. No `ops` interface change ⇒ **no `make generate`**
 for this scope.
 
-**Install-time safety gates (fail-closed, before the destructive `--ignition-file` write):**
+**Install-time safety gates (fail-closed) — must run before the *first* destructive step.**
+Critically, `diskPreparation()` calls `i.cleanupDisk()` → `CleanupInstallDevice` (which **wipes
+the installation disk**) *before* `coreos-installer` (ibipreparation.go:185 then :188). So gating
+only around the `--ignition-file` write is too late — a gate failure would still have erased the
+disk. When `DiskEncryption != nil`, run **all** gates at the very top of `diskPreparation()`,
+before `cleanupDisk()`:
+
+```go
+func (i *IBIPrepare) diskPreparation() error {
+    if i.config.DiskEncryption != nil {
+        if err := i.encryptionPreflight(); err != nil { // TPM2 + seed-format + Ignition-version
+            return fmt.Errorf("disk-encryption preflight failed, aborting before disk cleanup: %w", err)
+        }
+    }
+    i.cleanupDisk()          // destructive — only reached once gates pass
+    // ... coreos-installer install [--ignition-file ...] ...
+}
+```
 
 - **TPM2 preflight.** Ignition's LUKS path honors `wipeVolume: true` and runs `wipefs` +
   `cryptsetup luksFormat` *before* `clevis luks bind tpm2` — so on a machine with **no usable
   TPM2** the root partition is destroyed and left unencrypted (the bind only fails afterward).
-  `lca-cli` must probe for a usable TPM2 in the live ISO and **abort before any wipe** if none is
-  present. This confirms only that *a* TPM2 is usable; it cannot distinguish a discrete TPM from a
-  firmware/virtual one ([Section 7](#7-tpm2-binding-policy)).
+  Probe for a usable TPM2 in the live ISO and **abort** if none is present. This confirms only
+  that *a* TPM2 is usable; it cannot distinguish a discrete TPM from a firmware/virtual one
+  ([Section 7](#7-tpm2-binding-policy)).
 - **Seed-format check.** Validate the seed's root FS is xfs (or derive the Ignition `format` from
-  it) before writing the config, so `wipeFilesystem` cannot reformat a non-xfs root ([Section 5](#5-ignition-generation-lifecycle-agent)).
-- **Feature/version gate.** The seed-provided `lca-cli` must actually support `diskEncryption`, or
-  the install must fail rather than silently omit `--ignition-file` and write plaintext
-  ([Section 4](#4-user-facing-api-two-structs-same-shape)).
+  it), so `wipeFilesystem` cannot reformat a non-xfs root ([Section 5](#5-ignition-generation-lifecycle-agent)).
+- **Ignition-version check.** Reject seeds whose Ignition binary is < 2.15.0 (cannot parse the
+  emitted spec-3.4.0 config; [Section 5](#5-ignition-generation-lifecycle-agent)).
+- **Feature/version gate.** The seed-provided `lca-cli` must actually support `diskEncryption`;
+  this is enforced by the installer/ISO flow *before* it invokes `lca-cli` ([Section 4](#4-user-facing-api-two-structs-same-shape)), so a genuinely
+  old binary never reaches `cleanupDisk()`.
+
+Test: assert `CleanupInstallDevice` is **not** called when any encrypted-install gate fails
+([Section 12](#12-test--validation-plan)).
 
 **Plaintext window (residual):** `coreos-installer` writes the seed to plaintext partitions and
 encryption only takes effect on first boot, so root content sits unencrypted on disk from the end
@@ -497,7 +533,7 @@ tracked rather than a surprise.
 |------|--------|
 | `api/ibiconfig/ibiconfig.go` | Add `DiskEncryption` type + field on `IBIPrepareConfig`; extend `Validate()` (line 224). |
 | `lca-cli/ibi-preparation/ignition.go` (new) | `buildRootLuksIgnition()` + marshal/merge helpers (vendored `ignition/v2/config/v3_4`). |
-| `lca-cli/ibi-preparation/ibipreparation.go` | `writeRootLuksIgnition()`; add `--ignition-file` in `diskPreparation()` (line 188). Fail-closed preflights **before** the write: usable TPM2 present, seed root FS is xfs, and seed `lca-cli` supports `diskEncryption` (Section 4, Section 6). |
+| `lca-cli/ibi-preparation/ibipreparation.go` | `writeRootLuksIgnition()`; add `--ignition-file` in `diskPreparation()` (`:188`). `encryptionPreflight()` (TPM2 + seed xfs + Ignition ≥2.15.0) runs **before `cleanupDisk()` (`:185`)**, so a gate failure never wipes the disk. |
 | `lca-cli/ibi-preparation/ignition_test.go` (new) | Unit tests: config gen, PCR handling. |
 | `lca-cli/ibi-preparation/ibipreparation_test.go` | Assert `--ignition-file` present when enabled, absent otherwise (~line 112). |
 
@@ -542,8 +578,11 @@ tracked rather than a surprise.
 
 - **Unit:** Ignition generation (default TPM2, PCR list); `Validate()` in both repos;
   contract round-trip (installer JSON → `IBIPrepareConfig`); install-args assembly; **seed-format
-  guard** (non-xfs seed ⇒ install rejected, no reformat); **mixed-version contract** (old
-  `lca-cli` + `diskEncryption` set ⇒ hard failure, never a plaintext install; [Section 4](#4-user-facing-api-two-structs-same-shape)); **IBU
+  guard** (non-xfs seed ⇒ install rejected, no reformat); **Ignition-version guard** (seed binary
+  < 2.15.0 ⇒ rejected); **gate ordering** (`CleanupInstallDevice` is *not* called when any
+  encrypted-install gate fails; [Section 6](#6-wiring-into-the-disk-write-lifecycle-agent)); **mixed-version contract** (old
+  `lca-cli` + `diskEncryption` set ⇒ hard failure at the pre-write check, never a plaintext
+  install; [Section 4](#4-user-facing-api-two-structs-same-shape)); **IBU
   propagation** — `rd.luks.*` added to the deploy kargs when the booted root is LUKS (and not
   touched when it is not), and `/etc/crypttab` carried into the new deployment only when non-root
   encrypted mounts exist ([Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api)).
