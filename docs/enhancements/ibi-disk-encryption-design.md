@@ -19,6 +19,7 @@ root partition into LUKS2 and Clevis seals the key to the TPM2. No custom bootlo
 crypttab code.
 
 **This is a two-repo feature** (see [Section 3](#3-verified-end-to-end-ibi-architecture-why-this-is-a-two-repo-change-not-an-ibi-operator-change), verified against the code):
+
 - **lifecycle-agent** — three touch points: (a) the install-time encryption engine
   (`lca-cli ibi`) + the `IBIPrepareConfig` field; (b) the **IBU Prep path** and (c) the
   **`IPConfig` CRD pivot path** — both stateroot-deploy paths must propagate the node's existing
@@ -29,12 +30,19 @@ crypttab code.
   config phase; [Section 3](#3-verified-end-to-end-ibi-architecture-why-this-is-a-two-repo-change-not-an-ibi-operator-change)).
 
 ### Goals
+
 - **Encrypt the root filesystem at install time.** The node's root FS — etcd, secrets, `/etc`,
-  kubelet state, and logs — is written as a TPM2-bound LUKS2 container during the IBI flow, so it
-  is protected from the moment the machine first boots. There is no window in which a fully
-  provisioned node sits on disk unencrypted, and no day-2 re-provisioning step for an operator to
-  run or forget. This directly answers the target threat: a **disk (or whole node) physically
-  removed from a far-edge site must not yield cluster data**.
+  kubelet state, and logs — becomes a TPM2-bound LUKS2 container as part of the IBI flow, with no
+  day-2 re-provisioning step for an operator to run or forget. Encryption is established by
+  first-boot Ignition reprovisioning, so there is a brief window during install — after
+  `coreos-installer` writes the seed and before first-boot reprovisioning completes — in which
+  root content sits on disk in **plaintext**; the target must be in trusted physical custody
+  until first boot (see [Section 6](#6-wiring-into-the-disk-write-lifecycle-agent)). Once
+  reprovisioned, this answers the target threat: a **disk physically removed from a far-edge site
+  must not yield cluster data**. The guarantee is scoped to *disk* theft — with unattended
+  TPM2-presence-only unlock, a thief who takes the **whole node** (disk plus its TPM) can still
+  auto-unlock it; whole-node theft is out of scope unless a PCR policy or second factor is added
+  ([Section 7](#7-tpm2-binding-policy)).
 - **Unlock unattended, with no operator interaction.** The key is sealed to the platform's TPM2
   via Clevis, so the node decrypts and boots on its own after any power-cycle or reboot — no
   passphrase prompt, no remote key server, no human at the console. This is mandatory for the
@@ -60,6 +68,7 @@ crypttab code.
   ([Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api)).
 
 ### Non-goals (this iteration)
+
 - Encrypting the `/var/lib/containers` extra partition (precached images stay plaintext; [Section 9](#9-deferred-varlibcontainers-partition-residual-risk)).
 - Tang / NBDE. **Out of scope permanently** — there is no requirement to ever support Tang.
   TPM2 is the only mechanism.
@@ -87,7 +96,9 @@ crypttab code.
 - Root reprovisioning: Ignition copies root content to RAM (**≥ 4 GiB RAM**, plus enough to
   stage the root FS), wipes the partition (`wipeVolume: true`), creates the LUKS2 container
   (located by `by-partlabel/root`), Clevis-binds TPM2, recreates the FS labeled `root`, copies
-  content back. Requires **Ignition ≥ 3.3.0**. `/boot` + ESP stay plaintext (kernel/initramfs).
+  content back. Root reprovisioning needs Ignition **spec ≥ 3.3.0**; the config this design emits
+  is spec **3.4.0**, which requires the seed's RHCOS to ship an Ignition **binary ≥ 2.15.0**
+  ([Section 5](#5-ignition-generation-lifecycle-agent), spike S8). `/boot` + ESP stay plaintext (kernel/initramfs).
 - TPM2-only (no PCRs) unlocks unattended and survives firmware/kernel updates; PCR binding
   adds tamper detection but breaks on measured-boot changes.
 
@@ -96,13 +107,14 @@ crypttab code.
 IBI is split into two phases with **different tools and different config**:
 
 ### Phase 1 — Preinstallation / imaging (the disk is written here)
+
 `openshift-install image-based create image` consumes **`ImageBasedInstallationConfig`**
 (v1beta1) and builds the **live installation ISO**. That ISO enables one systemd unit,
 `install-rhcos-and-restore-seed.service`, whose script
 (`data/data/imagebased/files/usr/local/bin/install-rhcos-and-restore-seed.sh`) pulls `lca-cli`
 out of the seed image and runs:
 
-```
+```text
 /usr/local/bin/lca-cli ibi -f /var/tmp/ibi-configuration.json
 ```
 
@@ -120,6 +132,7 @@ Important: `ignitionConfigOverride` is **not** in that contract and is **not** a
 root encryption — see [Section 11](#11-alternatives-considered).
 
 ### Phase 2 — Deployment / config (post-write)
+
 Driven by the **IBI Operator** (`ImageClusterInstall` CR) *or* `openshift-install image-based
 create config-image`. Produces only the **configuration ISO** (cluster-specific reconfig via
 `SeedReconfiguration`), applied *after* the disk is already written.
@@ -129,7 +142,7 @@ disk cleaning, has **zero** `coreos-installer`/disk-write code, and `ImageCluste
 has **no** disk/seed/encryption fields. **The IBI Operator cannot carry install-time
 encryption** — it is not in the disk-write path. This is why the knob must live in Phase 1.
 
-```
+```text
 Phase 1 (writes disk):
   ImageBasedInstallationConfig ──openshift-install──▶ live ISO
         │  (diskEncryption)                              │ runs
@@ -194,6 +207,7 @@ For reference, `InstallationConfig` today carries: required `installationDisk`, 
 `skipDiskCleanup`, `sshKey`, `coreosInstallerArgs`. `diskEncryption` joins this set.
 
 Example `image-based-installation-config.yaml`:
+
 ```yaml
 apiVersion: v1beta1
 kind: ImageBasedInstallationConfig
@@ -204,10 +218,18 @@ diskEncryption: {}      # presence enables unattended TPM2-only root LUKS
 ```
 
 ### Validation
+
 - lifecycle-agent `IBIPrepareConfig.Validate()` (ibiconfig.go:224) and openshift/installer
   `validate()` (`pkg/asset/imagebased/image/imagebased_config.go:165-206`): if
   `DiskEncryption != nil` and `PCRList` set, each element parses as an integer in `[0,23]`.
 - No `type`/mechanism validation — TPM2 is implied.
+- **Fail-closed version gate (contract compatibility).** `diskEncryption` is a new JSON field, so
+  an **older seed-provided `lca-cli`** would silently ignore it, skip `--ignition-file`, and
+  install **plaintext with no error**. To prevent this silent downgrade, the contract must carry a
+  feature marker and the install must **abort** when the running `lca-cli` is too old to honor
+  `diskEncryption` (e.g. openshift/installer records the required feature version; `lca-cli ibi`
+  refuses an encrypted config it cannot satisfy). Covered by a **mixed-version contract test**:
+  old `lca-cli` + `diskEncryption` set ⇒ hard failure, never a plaintext install ([Section 12](#12-test--validation-plan)).
 
 ## 5. Ignition generation (lifecycle-agent)
 
@@ -217,12 +239,15 @@ config from these typed structs directly (consistent with `postpivot.go:836` bui
 programmatically).
 
 New file `lca-cli/ibi-preparation/ignition.go`:
+
 ```go
 // buildRootLuksIgnition returns an Ignition v3.4.0 config that reprovisions the
 // existing root partition into a TPM2-bound LUKS2 container.
 func buildRootLuksIgnition(enc *ibiconfig.DiskEncryption) (types.Config, error)
 ```
+
 Emits (JSON):
+
 ```json
 {
   "ignition": { "version": "3.4.0" },
@@ -234,13 +259,22 @@ Emits (JSON):
   }
 }
 ```
+
 Rules: `device: by-partlabel/root`; `wipeVolume: true` + filesystem `label: root` are
 mandatory for root reprovisioning; never set `path: "/"`; `clevis.tpm2: true` default, or
 `clevis.custom` with a `tpm2` pin + PCR config when `PCRList` is set.
 
-Assumption: the root filesystem `format` is **xfs** — RHCOS's default rootfs — so the generated
-config hardcodes `"format": "xfs"`. This holds for stock RHCOS seeds; if a seed ever shipped a
-non-xfs root the format would have to match it (worth confirming alongside spike S8, [Section 12](#12-test--validation-plan)).
+Ignition version: the emitted spec is **3.4.0**, so the seed's RHCOS must ship an Ignition
+**binary ≥ 2.15.0** to parse it. A seed carrying only an older binary (2.11–2.14, spec ≤ 3.3.x)
+would fail to apply the config; emit spec **3.3.0** for such seeds instead. Confirm per seed
+version (spike S8, [Section 12](#12-test--validation-plan)).
+
+Root filesystem `format`: the generated config hardcodes `"format": "xfs"` (RHCOS's default
+rootfs) together with `wipeVolume: true` and `wipeFilesystem: true`. **This is destructive if it
+does not match the seed** — a non-xfs seed root would be recreated as xfs and could fail to boot.
+The install path must therefore **fail closed**: validate that the seed's root FS is xfs (or
+derive the `format` from the seed) before writing the encryption Ignition, and reject the install
+otherwise rather than reformatting blindly (spike S8, [Section 12](#12-test--validation-plan)).
 
 ## 6. Wiring into the disk write (lifecycle-agent)
 
@@ -263,7 +297,27 @@ mounted plaintext partitions during install; encryption happens on the target's 
 staging the deployed seed content through RAM. No `ops` interface change ⇒ **no `make generate`**
 for this scope.
 
+**Install-time safety gates (fail-closed, before the destructive `--ignition-file` write):**
+
+- **TPM2 preflight.** Ignition's LUKS path honors `wipeVolume: true` and runs `wipefs` +
+  `cryptsetup luksFormat` *before* `clevis luks bind tpm2` — so on a machine with **no usable
+  TPM2** the root partition is destroyed and left unencrypted (the bind only fails afterward).
+  `lca-cli` must probe for a usable TPM2 in the live ISO and **abort before any wipe** if none is
+  present. This confirms only that *a* TPM2 is usable; it cannot distinguish a discrete TPM from a
+  firmware/virtual one ([Section 7](#7-tpm2-binding-policy)).
+- **Seed-format check.** Validate the seed's root FS is xfs (or derive the Ignition `format` from
+  it) before writing the config, so `wipeFilesystem` cannot reformat a non-xfs root ([Section 5](#5-ignition-generation-lifecycle-agent)).
+- **Feature/version gate.** The seed-provided `lca-cli` must actually support `diskEncryption`, or
+  the install must fail rather than silently omit `--ignition-file` and write plaintext
+  ([Section 4](#4-user-facing-api-two-structs-same-shape)).
+
+**Plaintext window (residual):** `coreos-installer` writes the seed to plaintext partitions and
+encryption only takes effect on first boot, so root content sits unencrypted on disk from the end
+of the disk write until first-boot reprovisioning completes. The target must be in trusted
+physical custody across that window ([Section 1](#1-summary) Goals).
+
 ## 7. TPM2 binding policy
+
 - **Discrete hardware TPM2 only (supported configuration).** The key is sealed to a **physical,
   discrete TPM2 chip**. **Firmware TPMs** (Intel PTT, AMD fTPM) and **virtual TPMs** are **not a
   supported configuration** for this feature, even though they present the same TPM2 interface —
@@ -279,7 +333,19 @@ for this scope.
   pivot ([Section 8](#8-ibu-upgrade-interaction--required), required); right for unattended far-edge. This default is load-bearing for IBU:
   PCR binding would break unlock when the upgrade changes the measured boot chain.
 - **Optional `pcrList`** — tamper detection at the cost of re-enrollment after measured-boot
-  changes; if used, prefer stable PCRs (e.g. 7) and document recovery.
+  changes; if used, prefer stable PCRs (e.g. 7) and document recovery. **The "survives IBU with no
+  re-enrollment" guarantee ([Section 8](#8-ibu-upgrade-interaction--required)) holds only when `pcrList` is empty.** A Clevis TPM2
+  binding requires the current PCR values to match its sealed policy; if an upgrade changes a
+  selected PCR, copying `rd.luks.*` forward cannot update that policy and the new stateroot will
+  fail to auto-unlock. A non-empty `pcrList` therefore requires a tested, upgrade-stable PCR
+  selection plus a documented re-enrollment/recovery step — otherwise the no-re-enrollment
+  guarantee does not apply.
+- **Threat scope: disk theft, not whole-node theft.** TPM2-presence-only unlock is unattended by
+  design, so it protects a disk removed from its machine, **not** a whole node carried off with
+  its TPM — that node will auto-unlock for whoever powers it on. Defending whole-node theft needs
+  a factor the thief does not also carry (a PCR policy that tamper trips, a passphrase, or an
+  external/network unlock), all of which trade away unattended boot and are out of scope here
+  ([Section 1](#1-summary)).
 - **No passphrase** ⇒ losing the TPM = data loss by design. A future recovery-key escrow option
   is out of scope; document the caveat.
 - **Encryption cannot be disabled in place.** There is no supported way to remove LUKS from an
@@ -299,6 +365,7 @@ An encrypted node **must** survive an Image-Based Upgrade: after the pivot the n
 must auto-unlock the root FS via TPM2, unattended. Hard requirement, not a follow-up.
 
 ### 8.1 Why the container survives a pivot for free
+
 The LUKS2 container sits at the **root-partition** level (`by-partlabel/root`), *below* the
 OSTree stateroot layer. An IBU pivot deploys a new stateroot *inside* the already-unlocked root
 FS (`ostree admin deploy` — it never reformats the partition). So the LUKS header, the Clevis
@@ -313,6 +380,7 @@ forward pivot only; a rollback boots straight into an entry that already auto-un
 spike S7, [Section 12](#12-test--validation-plan)).
 
 ### 8.2 What actually unlocks root — and what the pivot drops
+
 How RHCOS unlocks an encrypted root at boot: root is opened **in the
 initramfs**, before `/sysroot` is mounted, from three inputs — (a) the **clevis TPM2 token in
 the on-disk LUKS2 header** (survives a pivot; it lives on the partition), (b) the **initramfs
@@ -342,6 +410,7 @@ The IBU Prep path drops exactly that, because the seed is unencrypted:
 for extra kargs or /etc files — verified.)
 
 ### 8.3 Design: propagate the running node's unlock config (no new IBU API)
+
 IBU needs **no new CRD/API surface** for encryption. Encryption is an auto-detected,
 node-intrinsic property; during Prep, LCA detects the booted root is LUKS-encrypted and
 replicates *that node's own* unlock configuration into the new deployment:
@@ -392,6 +461,7 @@ during install the booted environment is the live installer ISO, whose root is *
 `ibuStaterootSetup.go:89`) that can gate the propagation to the IBU path explicitly.
 
 ### 8.4 Seed constraint (not seed encryption)
+
 The seed need not be encrypted, but the seed's RHCOS ostree commit must ship an initramfs
 containing the clevis/tpm2 dracut modules so the upgraded stateroot can unlock at boot. **Low
 risk:** unlike stock RHEL (where you install `clevis-dracut` and regenerate the initramfs), RHCOS
@@ -399,6 +469,7 @@ integrates LUKS/clevis unlock into its initramfs via ignition-dracut and ships t
 default. Still worth a per-target-seed-version confirmation (spike S8, [Section 12](#12-test--validation-plan)).
 
 ### 8.5 Remaining empirical confirmation
+
 Research indicates root unlock is driven by the **initramfs + `rd.luks.*`
 kargs + the on-disk clevis token**, and that the deployed root's `/etc/crypttab` does not affect
 root unlock ([Section 8.2](#82-what-actually-unlocks-root--and-what-the-pivot-drops)) — so the propagation target is the kargs. Confirm on a **real RHCOS-IBU node**
@@ -407,13 +478,17 @@ that re-attaching it to the new deployment yields unattended unlock. The same-ma
 unchanged across the pivot, so no re-enrollment is expected with the no-PCR default.
 
 ## 9. Deferred: `/var/lib/containers` partition (residual risk)
+
 Precached images stay **plaintext**. That partition is `mkfs`'d and populated by precache
 *during the ISO install* (ibipreparation.go:88, ops.go:696), so first-boot Ignition
 reprovisioning cannot protect its install-time contents without discarding the precache.
 Encrypting it needs an **in-ISO cryptsetup** approach in `lca-cli` (luksFormat + `clevis luks
 bind tpm2` before precache, `/etc/crypttab` into the stateroot) — larger, mock-touching
-(`make generate`), proposed as **Phase 2**. Document that image content is readable from a
-stolen disk until then.
+(`make generate`), proposed as **Phase 2**. Until then this is a **documented release
+limitation**: precached image content on `/var/lib/containers` is readable from a stolen disk. It
+must be called out in the feature's release notes and covered by a security acceptance test
+(spike S10, [Section 12](#12-test--validation-plan)) asserting the partition is plaintext — so the exposure is known and
+tracked rather than a surprise.
 
 ## 10. Code change map
 
@@ -422,29 +497,30 @@ stolen disk until then.
 |------|--------|
 | `api/ibiconfig/ibiconfig.go` | Add `DiskEncryption` type + field on `IBIPrepareConfig`; extend `Validate()` (line 224). |
 | `lca-cli/ibi-preparation/ignition.go` (new) | `buildRootLuksIgnition()` + marshal/merge helpers (vendored `ignition/v2/config/v3_4`). |
-| `lca-cli/ibi-preparation/ibipreparation.go` | `writeRootLuksIgnition()`; add `--ignition-file` in `diskPreparation()` (line 188). |
+| `lca-cli/ibi-preparation/ibipreparation.go` | `writeRootLuksIgnition()`; add `--ignition-file` in `diskPreparation()` (line 188). Fail-closed preflights **before** the write: usable TPM2 present, seed root FS is xfs, and seed `lca-cli` supports `diskEncryption` (Section 4, Section 6). |
 | `lca-cli/ibi-preparation/ignition_test.go` (new) | Unit tests: config gen, PCR handling. |
 | `lca-cli/ibi-preparation/ibipreparation_test.go` | Assert `--ignition-file` present when enabled, absent otherwise (~line 112). |
 
 **lifecycle-agent — IBU pivot path (encryption must survive upgrade, [Section 8](#8-ibu-upgrade-interaction--required)):**
 | File | Change |
 |------|--------|
-| `internal/prep/prep.go` | In `SetupStateroot` (`:93`, shared by IBU **and** install — [Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api)): detect booted-root LUKS; inject the node's `rd.luks.*` into the `kargs` slice before `Deploy` (`:183`), i.e. in the karg-build region (lines 173-181) — **the load-bearing step for root unlock**. No-op at install time (live-ISO root is not LUKS); gate on the `ibi bool` param (`:94`) if belt-and-suspenders is wanted. Only if non-root encrypted mounts exist, also write `/etc/crypttab` into the new `deploymentDir/etc` after the `etc.tgz` extraction (~206-215); not required for root ([Section 8.2](#82-what-actually-unlocks-root--and-what-the-pivot-drops)). |
+| `internal/prep/prep.go` | Detect booted-root LUKS in `SetupStateroot` (`:93`); inject `rd.luks.*` into `kargs` (`:173-181`) before `Deploy` (`:183`) — **load-bearing**. No-op at install (gate on `ibi bool` `:94`). Non-root `/etc/crypttab` carry-forward (`~206-215`) optional. See Section 8.3. |
 | new helper (e.g. `internal/prep/` or `utils/`) | `isRootEncrypted()` + read current `rd.luks.*` kargs / `/etc/crypttab`. |
 | `internal/prep/prep_test.go` | Assert `rd.luks.*` + crypttab propagated when booted root is LUKS; unchanged otherwise. |
-| `lca-cli/ipconfig/prepivot.go` | **Required (kargs only).** The `IPConfig` CRD (separate flow) deploys the booted commit + reboots (`deployNewStateroot`, called at `:262-266`, defined at `:315-341`; kargs from MCO at `:147`) — same `rd.luks.*` drop risk, so call the shared detect+karg-propagate helper here. No crypttab injection needed: `copyEtc` (`:405-418`) already copies `/etc` forward from the running deployment. |
+| `lca-cli/ipconfig/prepivot.go` | **Required (kargs only).** Call the shared detect+karg-propagate helper here (`deployNewStateroot` `:315-341` drops `rd.luks.*`; kargs from MCO `:147`). No crypttab needed — `copyEtc` (`:405-418`) already copies `/etc` forward. |
 
 **openshift/installer (user-facing knob + contract):**
 | File | Change |
 |------|--------|
 | `pkg/types/imagebased/imagebased_config_types.go` | Add `DiskEncryption` type + field on `InstallationConfig` (after the `CoreosInstallerArgs` field). Not on the sibling `Config` struct. |
-| `pkg/asset/imagebased/image/ignition.go` | Add field to `ibiConfigurationFile` (lines 45-56) and map it in the populate block (lines 95-106) so it lands in `ibi-configuration.json`. **Load-bearing spot.** |
+| `pkg/asset/imagebased/image/ignition.go` | Add field to `ibiConfigurationFile` (`:45-56`) and map it in the populate block (`:95-106`) so it lands in `ibi-configuration.json`. **Load-bearing.** Also record the feature marker so an older seed `lca-cli` fails closed, not plaintext (Section 4). |
 | `pkg/asset/imagebased/image/imagebased_config.go` | Add `validateDiskEncryption`, register in `validate()` (lines 165-206). |
 | docs / template | Surface `diskEncryption` in the `image-based-installation-config.yaml` template + docs. |
 
 **image-based-install-operator:** none.
 
 ## 11. Alternatives considered
+
 - **`ImageBasedInstallationConfig.ignitionConfigOverride`** — rejected, two verified reasons:
   (1) it is parsed with `v3_2.Parse` (`ignition.go:162`), **hard-pinned to Ignition 3.2.0**,
   which predates `storage.luks` root reprovisioning (needs ≥ 3.3.0) and rejects a newer config;
@@ -463,14 +539,17 @@ stolen disk until then.
 - **Day-2 MachineConfig** — violates the "during installation, not post-deploy" requirement.
 
 ## 12. Test & validation plan
+
 - **Unit:** Ignition generation (default TPM2, PCR list); `Validate()` in both repos;
-  contract round-trip (installer JSON → `IBIPrepareConfig`); install-args assembly; **IBU
+  contract round-trip (installer JSON → `IBIPrepareConfig`); install-args assembly; **seed-format
+  guard** (non-xfs seed ⇒ install rejected, no reformat); **mixed-version contract** (old
+  `lca-cli` + `diskEncryption` set ⇒ hard failure, never a plaintext install; [Section 4](#4-user-facing-api-two-structs-same-shape)); **IBU
   propagation** — `rd.luks.*` added to the deploy kargs when the booted root is LUKS (and not
   touched when it is not), and `/etc/crypttab` carried into the new deployment only when non-root
   encrypted mounts exist ([Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api)).
 - **Spikes / e2e** — a virtual TPM may be used for early functional iteration, but the
   supported configuration is a **discrete hardware TPM2 ([Section 7](#7-tpm2-binding-policy))**, so final validation of every spike
-  below must run on real hardware with a discrete TPM. Stable labels `S1`–`S8`:
+  below must run on real hardware with a discrete TPM. Stable labels `S1`–`S10`:
   - **S1 — First-boot reprovisioning actually fires** on an IBI-installed node given `lca-cli`'s
     post-`coreos-installer` seed deploy + `cleanupRhcosSysroot()` — verify root comes up as
     `/dev/mapper/root` (LUKS2), TPM2-unlocked, unattended. **Highest-risk install item.**
@@ -487,14 +566,25 @@ stolen disk until then.
     the new stateroot boots and TPM2-unlocks root unattended, no passphrase, no re-enrollment.
     Include a Rollback: the previous (still-encrypted) deployment must also auto-unlock.
   - **S8 — Seed/RHCOS build check ([Section 8.4](#84-seed-constraint-not-seed-encryption), [Section 2](#2-background-how-rhcos-tpm2-root-luks-works)):** confirm the target seed's RHCOS initramfs carries
-    the clevis/tpm2 dracut modules and ships an Ignition new enough for root reprovisioning (≥3.3).
+    the clevis/tpm2 dracut modules and ships an Ignition binary new enough (**≥ 2.15.0**) to parse
+    the emitted spec-3.4.0 config (spec ≥ 3.3.0 is the reprovisioning minimum).
+  - **S9 — TPM2-absent preflight ([Section 6](#6-wiring-into-the-disk-write-lifecycle-agent)):** on a machine with no usable TPM2, `lca-cli`
+    aborts an encrypted install **before** any wipe; the target disk is left intact and no
+    plaintext-but-unencrypted root is produced.
+  - **S10 — Security acceptance (residual plaintext):** confirm and document that
+    `/var/lib/containers` ([Section 9](#9-deferred-varlibcontainers-partition-residual-risk)) and the install-time plaintext window
+    ([Section 6](#6-wiring-into-the-disk-write-lifecycle-agent)) are the only readable-from-stolen-disk surfaces; assert the root FS is
+    `crypto_LUKS` and the containers partition is not.
 
 ## 13. Phasing & effort
-- **Phase 1 (this doc) — install-time encryption:** root-FS TPM2 via native Ignition.
-  lifecycle-agent: ~1 new file + 2 edits + tests. openshift/installer: type + 1 contract mapping
-  + validator + template. Effort dominated by spike S1 and hardware validation. Sequence: land +
-  test the `lca-cli` engine first (works via standalone `lca-cli ibi -f`), then the
-  openshift/installer knob to expose it.
+
+- **Phase 1 (this doc) — install-time encryption:** root-FS TPM2 via native Ignition, plus the
+  fail-closed install-time guards (TPM2 preflight, seed-format check, feature/version gate;
+  [Section 6](#6-wiring-into-the-disk-write-lifecycle-agent)). lifecycle-agent: ~1 new file, 2 edits, and tests. openshift/installer: a type,
+  one contract mapping, a validator, and a template. Effort dominated by spike S1 and hardware
+  validation.
+  Sequence: land and test the `lca-cli` engine first (works via standalone `lca-cli ibi -f`),
+  then the openshift/installer knob to expose it.
 - **Phase 1b (this doc) — IBU survival (REQUIRED, ships with the feature):** propagate the
   node's unlock config across the pivot ([Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api)) — `rd.luks.*` karg injection in **both** the IBU
   Prep path and the `IPConfig` pivot path + a shared detection helper + unit tests; plus
@@ -505,9 +595,13 @@ stolen disk until then.
 - **Phase 3:** recovery-key escrow.
 
 ## 14. Open questions
-The design questions are answered inline in the sections above (architecture [Section 3](#3-verified-end-to-end-ibi-architecture-why-this-is-a-two-repo-change-not-an-ibi-operator-change); root-unlock
-mechanism [Section 8.2](#82-what-actually-unlocks-root--and-what-the-pivot-drops)/[Section 8.5](#85-remaining-empirical-confirmation); seed constraint [Section 8.4](#84-seed-constraint-not-seed-encryption); encryption detection [Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api); version/RAM requirements
-[Section 2](#2-background-how-rhcos-tpm2-root-luks-works)). What remains is purely **empirical validation**, each tracked as a spike in [Section 12](#12-test--validation-plan):
+
+The design questions are answered inline in the sections above (architecture [Section 3](#3-verified-end-to-end-ibi-architecture-why-this-is-a-two-repo-change-not-an-ibi-operator-change);
+root-unlock mechanism [Section 8.2](#82-what-actually-unlocks-root--and-what-the-pivot-drops)/[Section 8.5](#85-remaining-empirical-confirmation);
+seed constraint [Section 8.4](#84-seed-constraint-not-seed-encryption);
+encryption detection [Section 8.3](#83-design-propagate-the-running-nodes-unlock-config-no-new-ibu-api);
+version/RAM requirements [Section 2](#2-background-how-rhcos-tpm2-root-luks-works)).
+What remains is purely **empirical validation**, each tracked as a spike in [Section 12](#12-test--validation-plan):
 
 1. **Does first-boot Ignition reprovisioning actually fire** after `lca-cli`'s seed redeploy?
    Highest-risk install item. (spike **S1**)
@@ -515,4 +609,5 @@ mechanism [Section 8.2](#82-what-actually-unlocks-root--and-what-the-pivot-drops
    **encrypted node upgrade end-to-end** — new stateroot TPM2-unlocks unattended, and a rollback
    to the previous (still-encrypted) deployment also auto-unlocks? (spikes **S6**, **S7**)
 3. **Does the target seed/RHCOS build** ship the clevis/tpm2 initramfs modules and an Ignition
-   new enough (≥3.3) for root reprovisioning? (spike **S8**)
+   binary new enough (**≥ 2.15.0**) to parse the emitted spec-3.4.0 config (spec ≥ 3.3.0 is the
+   reprovisioning minimum)? (spike **S8**)
