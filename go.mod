@@ -23,7 +23,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/vmware-tanzu/velero v1.15.2
 	go.uber.org/mock v0.5.1
-	golang.org/x/crypto v0.40.0
+	golang.org/x/crypto v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.32.3
 	k8s.io/apiextensions-apiserver v0.32.3
@@ -180,3 +180,5 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.16
 
 replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.41.0-sec.4
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.4
