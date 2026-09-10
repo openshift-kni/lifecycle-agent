@@ -38,10 +38,10 @@ import (
 )
 
 var (
-	testScheme        = runtime.NewScheme()
-	testTLSKeyPEM     = mustKeyPEM()
+	testScheme         = runtime.NewScheme()
+	testTLSKeyPEM      = mustKeyPEM()
 	testIngressCertPEM = mustCertPEM("ingress-operator@123456")
-	testMCOConfigData []byte
+	testMCOConfigData  []byte
 )
 
 func init() {
