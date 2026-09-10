@@ -1,3 +1,7 @@
-catalog-template.out.yaml
-lifecycle-agent/catalog.yaml
-lifecycle-agent/catalog.json
+# Generated for Konflux FBC builds; do not commit.
+5.0/catalog-template.out.yaml
+5.0/lifecycle-agent/catalog.yaml
+5.0/lifecycle-agent/catalog.json
+4.22/catalog-template.out.yaml
+4.22/lifecycle-agent/catalog.yaml
+4.22/lifecycle-agent/catalog.json
