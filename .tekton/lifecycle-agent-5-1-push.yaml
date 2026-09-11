@@ -16,7 +16,7 @@ metadata:
         '.konflux/container_build_args.conf'.pathChanged() ||
         '.konflux/lock-runtime/***'.pathChanged() ||
         '.tekton/build-pipeline.yaml'.pathChanged() ||
-        '.tekton/lifecycle-agent-5-0-push.yaml'.pathChanged() ||
+        '.tekton/lifecycle-agent-5-1-push.yaml'.pathChanged() ||
         'api/***'.pathChanged() ||
         'config/***'.pathChanged() ||
         'controllers/***'.pathChanged() ||
@@ -36,10 +36,10 @@ metadata:
       )
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: lifecycle-agent-5-0
-    appstudio.openshift.io/component: lifecycle-agent-5-0
+    appstudio.openshift.io/application: lifecycle-agent-5-1
+    appstudio.openshift.io/component: lifecycle-agent-5-1
     pipelines.appstudio.openshift.io/type: build
-  name: lifecycle-agent-5-0-on-push
+  name: lifecycle-agent-5-1-on-push
   namespace: telco-5g-tenant
 spec:
   params:
@@ -48,7 +48,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-5-0:{{revision}}
+      value: quay.io/redhat-user-workloads/telco-5g-tenant/lifecycle-agent-5-1:{{revision}}
     - name: build-platforms
       value:
         - linux/x86_64
@@ -75,7 +75,7 @@ spec:
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
-    serviceAccountName: build-pipeline-lifecycle-agent-5-0
+    serviceAccountName: build-pipeline-lifecycle-agent-5-1
   workspaces:
     - name: git-auth
       secret:
