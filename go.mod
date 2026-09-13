@@ -24,7 +24,7 @@ require (
 	github.com/vmware-tanzu/velero v1.13.2
 	go.etcd.io/etcd/client/v3 v3.5.12
 	go.uber.org/mock v0.4.0
-	golang.org/x/crypto v0.24.0
+	golang.org/x/crypto v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.4
 	k8s.io/apiextensions-apiserver v0.29.4
@@ -151,3 +151,5 @@ replace k8s.io/client-go => k8s.io/client-go v0.29.4
 //replace github.com/vmware-tanzu/velero => github.com/openshift/velero v0.10.2-0.20231002153713-b470b0211e1f
 
 replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.33.0-sec.5
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
