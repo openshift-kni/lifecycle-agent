@@ -45,12 +45,12 @@ func (r *UpgradeClusterConfigGather) FetchLvmConfig(ctx context.Context, ostreeD
 	}
 
 	if err := r.fetchLvmDevices(lvmConfigPath); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch LVM devices: %w", err)
 	}
 
 	manifestsDir := filepath.Join(ostreeDir, common.OptOpenshift, common.ClusterConfigDir, ManifestDir)
 	if err := r.fetchLocalVolumes(ctx, manifestsDir); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch local volumes: %w", err)
 	}
 
 	r.Log.Info("Successfully fetched lvm configuration")
