@@ -754,7 +754,7 @@ go.yaml.in/yaml/v3
 # go4.org v0.0.0-20200104003542-c7e774b10ea0
 ## explicit
 go4.org/errorutil
-# golang.org/x/crypto v0.47.0 => github.com/openshift-sustaining/crypto v0.48.0-sec.3
+# golang.org/x/crypto v0.48.0 => github.com/openshift-sustaining/crypto v0.48.0-sec.3
 ## explicit; go 1.24.0
 golang.org/x/crypto/bcrypt
 golang.org/x/crypto/blowfish
@@ -774,13 +774,14 @@ golang.org/x/exp/slices
 golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.49.0
+# golang.org/x/net v0.49.0 => github.com/openshift-sustaining/net v0.50.0-sec.4
 ## explicit; go 1.24.0
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/httpsfv
 golang.org/x/net/internal/timeseries
 golang.org/x/net/trace
 golang.org/x/net/websocket
@@ -1664,3 +1665,4 @@ sigs.k8s.io/structured-merge-diff/v6/value
 sigs.k8s.io/yaml
 # github.com/imdario/mergo => github.com/imdario/mergo v0.3.16
 # golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.48.0-sec.3
+# golang.org/x/net => github.com/openshift-sustaining/net v0.50.0-sec.4
