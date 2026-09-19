@@ -204,7 +204,7 @@ func (h *IPCIdleStageHandler) cleanuoUnbootedStateroots(logger logr.Logger) erro
 	}
 
 	if err := removeBootDirsByStaterootPrefixes(logger, h.ChrootOps, staterootsToRemove); err != nil {
-		return err
+		return fmt.Errorf("failed to remove boot dirs by stateroot prefixes: %w", err)
 	}
 
 	if err := CleanupUnbootedStateroots(logger, h.ChrootOps, h.OstreeClient, h.RPMOstreeClient); err != nil {
