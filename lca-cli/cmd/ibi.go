@@ -33,7 +33,15 @@ import (
 // ibi represents the ibi preparation command
 var ibi = &cobra.Command{
 	Use:   "ibi",
-	Short: "prepare ibi",
+	Short: "Prepare a node for Image Based Install",
+	Long: `Prepare a node for Image Based Install (IBI) by setting up the OSTree
+stateroot from a seed image. Requires a YAML configuration file specifying
+the seed image reference, pull secret, and target disk.
+
+This command is typically invoked inside a privileged container with access
+to the host filesystem mounted at /host.`,
+	Example: `  # Run IBI preparation with a config file
+  lca-cli ibi -f /path/to/ibi-config.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runIBI()
 	},
