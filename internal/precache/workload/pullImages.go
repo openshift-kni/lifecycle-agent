@@ -38,6 +38,14 @@ const (
 	DefaultAuthFile string = "/var/lib/kubelet/config.json"
 )
 
+func maxPullThreads(value string) int {
+	numThreads, err := strconv.Atoi(value)
+	if err != nil || numThreads < 1 {
+		return precache.DefaultMaxConcurrentPulls
+	}
+	return numThreads
+}
+
 var (
 	logExec = &log.Logger{
 		Level: log.ErrorLevel, // reducing log level and only report if the exec calls fail
@@ -132,10 +140,7 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 
 	// Create wait group and pull images
 	var wg sync.WaitGroup
-	numThreads, err := strconv.Atoi(os.Getenv(precache.EnvMaxPullThreads))
-	if err != nil {
-		numThreads = precache.DefaultMaxConcurrentPulls
-	}
+	numThreads := maxPullThreads(os.Getenv(precache.EnvMaxPullThreads))
 	threads := make(chan struct{}, numThreads)
 	log.Infof("Configured precaching job to concurrently pull %d images.", numThreads)
 
