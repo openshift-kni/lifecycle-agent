@@ -26,7 +26,6 @@ import (
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigpools,verbs=list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=clusteroperators,verbs=list;watch
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=clusterserviceversions,verbs=list;watch
-// +kubebuilder:rbac:groups=config.openshift.io,resources=clusterversions,verbs=list;watch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodestates,verbs=get;list;watch
@@ -41,11 +40,12 @@ const (
 	SriovNetworkNodeStateNotPresentMsg = "no SriovNetworkNodeStates present"
 )
 
-func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
+// MandatoryHealthChecks runs the checks required before OADP restore can begin:
+// ClusterOperators, MachineConfigPools, SRIOV, and OADP (DPA + BSL).
+func MandatoryHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	var failures []string
 
 	clusterOperatorsReady := false
-	clusterServiceVersionsReady := false
 
 	if err := AreClusterOperatorsReady(ctx, c, l); err != nil {
 		l.Info("co health check failure", "error", err.Error())
@@ -59,36 +59,12 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 		failures = append(failures, err.Error())
 	}
 
-	if err := IsNodeReady(ctx, c, l); err != nil {
-		l.Info("node health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
-	}
-
-	if err := AreClusterServiceVersionsReady(ctx, c, l); err != nil {
-		l.Info("csv health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
-	} else {
-		clusterServiceVersionsReady = true
-	}
-
-	if err := IsClusterVersionReady(ctx, c, l); err != nil {
-		l.Info("clusterVersion health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
-	}
-
-	if err := AreCertificateSigningRequestsReady(ctx, c, l); err != nil {
-		l.Info("certificateSigningRequest (csr) health check failure", "error", err.Error())
-		failures = append(failures, err.Error())
-	}
-
-	if clusterOperatorsReady && clusterServiceVersionsReady {
-		// Only check SriovNetworkNodeState once cluster operators and CSVs are stable
+	if clusterOperatorsReady {
 		if err := IsSriovNetworkNodeReady(ctx, c, l); err != nil {
 			l.Info("sriovNetworkNodeState health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
 		}
 
-		// Check oadp storage backend connection when DPA exists and is reconciled
 		if ok, err := IsDataProtectionApplicationReconciled(ctx, c, l); err != nil {
 			l.Info("dataProtentionApplication health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
@@ -101,13 +77,52 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	}
 
 	if len(failures) > 0 {
-		l.Info("One or more health checks failed")
+		l.Info("One or more mandatory health checks failed")
 		// nolint: staticcheck
 		return fmt.Errorf("one or more health checks failed: %s", strings.Join(failures, "\n  - "))
 	}
 
-	l.Info("Health checks done")
+	l.Info("Mandatory health checks done")
 	return nil
+}
+
+// DeferredHealthChecks runs checks that are only required after OADP restore completes,
+// before declaring the upgrade finished: Node readiness, CSVs, and CSRs.
+func DeferredHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
+	var failures []string
+
+	if err := IsNodeReady(ctx, c, l); err != nil {
+		l.Info("node health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if err := AreClusterServiceVersionsReady(ctx, c, l); err != nil {
+		l.Info("csv health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if err := AreCertificateSigningRequestsReady(ctx, c, l); err != nil {
+		l.Info("certificateSigningRequest (csr) health check failure", "error", err.Error())
+		failures = append(failures, err.Error())
+	}
+
+	if len(failures) > 0 {
+		l.Info("One or more deferred health checks failed")
+		// nolint: staticcheck
+		return fmt.Errorf("one or more health checks failed: %s", strings.Join(failures, "\n  - "))
+	}
+
+	l.Info("Deferred health checks done")
+	return nil
+}
+
+// HealthChecks runs all health checks (mandatory + deferred). Used by PrePivot
+// and other callers that need the full check set in a single call.
+func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
+	if err := MandatoryHealthChecks(ctx, c, l); err != nil {
+		return err
+	}
+	return DeferredHealthChecks(ctx, c, l)
 }
 
 func IsDataProtectionApplicationReconciled(ctx context.Context, c client.Reader, l logr.Logger) (bool, error) {
@@ -195,28 +210,6 @@ func AreClusterServiceVersionsReady(ctx context.Context, c client.Reader, l logr
 	}
 
 	l.Info("All CSVs are ready")
-	return nil
-}
-
-func IsClusterVersionReady(ctx context.Context, c client.Reader, l logr.Logger) error {
-	clusterVersionList := configv1.ClusterVersionList{}
-	err := c.List(ctx, &clusterVersionList)
-	if err != nil {
-		return fmt.Errorf("failed to get cv list: %w", err)
-	}
-
-	// As we would only have one ClusterVersion currently, we don't need to build a list of not-ready CVs.
-	// Instead, we can return on first error.
-	for _, co := range clusterVersionList.Items {
-		if !getClusterOperatorStatusCondition(co.Status.Conditions, configv1.OperatorAvailable) {
-			msg := fmt.Sprintf("clusterVersion %s not ready", co.Name)
-			l.Info(msg)
-			// nolint: staticcheck
-			return fmt.Errorf("clusterVersion %s not ready", co.Name)
-		}
-	}
-
-	l.Info("Cluster version is ready")
 	return nil
 }
 
