@@ -113,8 +113,17 @@ func create() error {
 		return fmt.Errorf("failed to create runtime client: %w", err)
 	}
 
-	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
-		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
+	seedCreator := seedcreator.NewSeedCreator(seedcreator.Options{
+		Client:               client,
+		Log:                  log,
+		Ops:                  op,
+		OstreeClient:         rpmOstreeClient,
+		Kubeconfig:           common.KubeconfigFile,
+		ContainerRegistry:    containerRegistry,
+		AuthFile:             authFile,
+		RecertContainerImage: recertContainerImage,
+		RecertSkipValidation: recertSkipValidation,
+	})
 	if err = seedCreator.CreateSeedImage(); err != nil {
 		err = fmt.Errorf("failed to create seed image: %w", err)
 		log.Error(err)

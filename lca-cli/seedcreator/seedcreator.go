@@ -18,7 +18,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
-	ostree "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
@@ -29,13 +29,94 @@ FROM scratch
 COPY . /
 `
 
-// SeedCreator TODO: move params to Options
+// Paths holds filesystem paths used during seed image creation.
+type Paths struct {
+	BackupChecksDir            string
+	InstallationConfigFilesDir string
+	SeedDataDir                string
+	LCABinarySource            string
+	LCABinaryDest              string
+	MCDCurrentConfig           string
+	SystemdUnitDestDir         string
+	DockerfileTempDir          string
+	BackupCertsDir             string
+	OvnCertDirs                []string
+}
+
+// DefaultPaths returns production path defaults.
+func DefaultPaths() Paths {
+	return Paths{
+		BackupChecksDir:            common.BackupChecksDir,
+		InstallationConfigFilesDir: common.InstallationConfigurationFilesDir,
+		SeedDataDir:                common.SeedDataDir,
+		LCABinarySource:            "/usr/local/bin/lca-cli",
+		LCABinaryDest:              common.LcaCliBinaryHostPath,
+		MCDCurrentConfig:           common.MCDCurrentConfig,
+		SystemdUnitDestDir:         "/etc/systemd/system/",
+		DockerfileTempDir:          "/var/tmp",
+		BackupCertsDir:             common.BackupCertsDir,
+		OvnCertDirs:                []string{common.OvnNodeCerts, common.MultusCerts},
+	}
+}
+
+func applyPathDefaults(paths Paths) Paths {
+	defaults := DefaultPaths()
+	if paths.BackupChecksDir == "" {
+		paths.BackupChecksDir = defaults.BackupChecksDir
+	}
+	if paths.InstallationConfigFilesDir == "" {
+		paths.InstallationConfigFilesDir = defaults.InstallationConfigFilesDir
+	}
+	if paths.SeedDataDir == "" {
+		paths.SeedDataDir = defaults.SeedDataDir
+	}
+	if paths.LCABinarySource == "" {
+		paths.LCABinarySource = defaults.LCABinarySource
+	}
+	if paths.LCABinaryDest == "" {
+		paths.LCABinaryDest = defaults.LCABinaryDest
+	}
+	if paths.MCDCurrentConfig == "" {
+		paths.MCDCurrentConfig = defaults.MCDCurrentConfig
+	}
+	if paths.SystemdUnitDestDir == "" {
+		paths.SystemdUnitDestDir = defaults.SystemdUnitDestDir
+	}
+	if paths.DockerfileTempDir == "" {
+		paths.DockerfileTempDir = defaults.DockerfileTempDir
+	}
+	if paths.BackupCertsDir == "" {
+		paths.BackupCertsDir = defaults.BackupCertsDir
+	}
+	if len(paths.OvnCertDirs) == 0 {
+		paths.OvnCertDirs = defaults.OvnCertDirs
+	}
+	return paths
+}
+
+// Options configures a SeedCreator instance.
+type Options struct {
+	Client               runtime.Client
+	Log                  *logrus.Logger
+	Ops                  ops.Ops
+	OstreeClient         rpmostreeclient.IClient
+	BackupDir            string
+	Paths                Paths
+	Kubeconfig           string
+	ContainerRegistry    string
+	AuthFile             string
+	RecertContainerImage string
+	RecertSkipValidation bool
+}
+
+// SeedCreator creates OCI seed images from a running SNO cluster.
 type SeedCreator struct {
 	client               runtime.Client
 	log                  *logrus.Logger
 	ops                  ops.Ops
-	ostreeClient         *ostree.Client
+	ostreeClient         rpmostreeclient.IClient
 	backupDir            string
+	paths                Paths
 	kubeconfig           string
 	containerRegistry    string
 	authFile             string
@@ -43,21 +124,25 @@ type SeedCreator struct {
 	recertSkipValidation bool
 }
 
-// NewSeedCreator is a constructor function for SeedCreator
-func NewSeedCreator(client runtime.Client, log *logrus.Logger, ops ops.Ops, ostreeClient *ostree.Client, backupDir,
-	kubeconfig, containerRegistry, authFile, recertContainerImage string, recertSkipValidation bool) *SeedCreator {
+// NewSeedCreator constructs a SeedCreator from Options.
+func NewSeedCreator(opts Options) *SeedCreator {
+	backupDir := opts.BackupDir
+	if backupDir == "" {
+		backupDir = common.BackupDir
+	}
 
 	return &SeedCreator{
-		client:               client,
-		log:                  log,
-		ops:                  ops,
-		ostreeClient:         ostreeClient,
+		client:               opts.Client,
+		log:                  opts.Log,
+		ops:                  opts.Ops,
+		ostreeClient:         opts.OstreeClient,
 		backupDir:            backupDir,
-		kubeconfig:           kubeconfig,
-		containerRegistry:    containerRegistry,
-		authFile:             authFile,
-		recertContainerImage: recertContainerImage,
-		recertSkipValidation: recertSkipValidation,
+		paths:                applyPathDefaults(opts.Paths),
+		kubeconfig:           opts.Kubeconfig,
+		containerRegistry:    opts.ContainerRegistry,
+		authFile:             opts.AuthFile,
+		recertContainerImage: opts.RecertContainerImage,
+		recertSkipValidation: opts.RecertSkipValidation,
 	}
 }
 
@@ -75,28 +160,27 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed to backup dir for seed image to %s: %w", s.backupDir, err)
 	}
 
-	lcaBinaryPath := "/usr/local/bin/lca-cli"
 	s.log.Info("Copy lca-cli binary")
-	err := cp.Copy(lcaBinaryPath, "/var/usrlocal/bin/lca-cli", cp.Options{AddPermission: os.FileMode(0o777)})
+	err := cp.Copy(s.paths.LCABinarySource, s.paths.LCABinaryDest, cp.Options{AddPermission: os.FileMode(0o777)})
 	if err != nil {
 		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
 	}
 
 	// copied to backup dir in order to be included in the seed image without being part of the var archive
 	s.log.Info("Copy lca-cli binary, into backup dir")
-	if err := cp.Copy(lcaBinaryPath, path.Join(s.backupDir, "lca-cli"), cp.Options{AddPermission: os.FileMode(0o777)}); err != nil {
+	if err := cp.Copy(s.paths.LCABinarySource, path.Join(s.backupDir, "lca-cli"), cp.Options{AddPermission: os.FileMode(0o777)}); err != nil {
 		return fmt.Errorf("failed to copy lca-cli binary: %w", err)
 	}
 
-	if err := os.MkdirAll(common.BackupChecksDir, 0o700); err != nil {
-		return fmt.Errorf("failed to make dir in %s: %w", common.BackupChecksDir, err)
+	if err := os.MkdirAll(s.paths.BackupChecksDir, 0o700); err != nil {
+		return fmt.Errorf("failed to make dir in %s: %w", s.paths.BackupChecksDir, err)
 	}
 
-	if err := utils.RunOnce("create_container_list", common.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
+	if err := utils.RunOnce("create_container_list", s.paths.BackupChecksDir, s.log, s.createContainerList, ctx); err != nil {
 		return fmt.Errorf("failed to run once create_container_list: %w", err)
 	}
 
-	if err := utils.RunOnce("gather_cluster_info", common.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
+	if err := utils.RunOnce("gather_cluster_info", s.paths.BackupChecksDir, s.log, s.gatherClusterInfo, ctx); err != nil {
 		return fmt.Errorf("failed to run once gather_cluster_info: %w", err)
 	}
 
@@ -105,10 +189,10 @@ func (s *SeedCreator) CreateSeedImage() error {
 		s.log.Info("Skipping seed certificates backing up.")
 	} else {
 		s.log.Info("Backing up seed cluster certificates for recert tool")
-		if err := utils.BackupKubeconfigCrypto(ctx, s.client, common.BackupCertsDir); err != nil {
+		if err := utils.BackupKubeconfigCrypto(ctx, s.client, s.paths.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backing up seed cluster certificates for recert tool: %w", err)
 		}
-		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, common.BackupCertsDir); err != nil {
+		if seedHasKubeadminPassword, err = utils.BackupKubeadminPasswordHash(ctx, s.client, s.paths.BackupCertsDir); err != nil {
 			return fmt.Errorf("failed to backup kubeadmin password hash: %w", err)
 		}
 		s.log.Info("Seed cluster certificates backed up successfully for recert tool")
@@ -121,7 +205,7 @@ func (s *SeedCreator) CreateSeedImage() error {
 	if s.recertSkipValidation {
 		s.log.Info("Skipping recert validation.")
 	} else {
-		if err := utils.RunOnce("recert", common.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto,
+		if err := utils.RunOnce("recert", s.paths.BackupChecksDir, s.log, s.ops.ForceExpireSeedCrypto,
 			s.recertContainerImage, s.authFile, seedHasKubeadminPassword); err != nil {
 			return fmt.Errorf("failed to run once recert: %w", err)
 		}
@@ -130,23 +214,23 @@ func (s *SeedCreator) CreateSeedImage() error {
 		return fmt.Errorf("failed remove all OVN certs folders: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_var", common.BackupChecksDir, s.log, s.backupVar); err != nil {
+	if err := utils.RunOnce("backup_var", s.paths.BackupChecksDir, s.log, s.backupVar); err != nil {
 		return fmt.Errorf("failed to run once backup_var: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_etc", common.BackupChecksDir, s.log, s.backupEtc); err != nil {
+	if err := utils.RunOnce("backup_etc", s.paths.BackupChecksDir, s.log, s.backupEtc); err != nil {
 		return fmt.Errorf("failed to run once backup_etc: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_ostree", common.BackupChecksDir, s.log, s.backupOstree); err != nil {
+	if err := utils.RunOnce("backup_ostree", s.paths.BackupChecksDir, s.log, s.backupOstree); err != nil {
 		return fmt.Errorf("failed to run once backup_ostree: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_rpmostree", common.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
+	if err := utils.RunOnce("backup_rpmostree", s.paths.BackupChecksDir, s.log, s.backupRPMOstree); err != nil {
 		return fmt.Errorf("failed to run once backup_rpmostree: %w", err)
 	}
 
-	if err := utils.RunOnce("backup_mco_config", common.BackupChecksDir, s.log, s.backupMCOConfig); err != nil {
+	if err := utils.RunOnce("backup_mco_config", s.paths.BackupChecksDir, s.log, s.backupMCOConfig); err != nil {
 		return fmt.Errorf("failed to run once backup_mco_config: %w", err)
 	}
 
@@ -169,12 +253,12 @@ func (s *SeedCreator) copyConfigurationFiles() error {
 }
 
 func (s *SeedCreator) handleServices() error {
-	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
+	dir := filepath.Join(s.paths.InstallationConfigFilesDir, "services")
 	return utils.HandleFilesWithCallback(dir, func(path string) error { //nolint:wrapcheck
 		serviceName := filepath.Base(path)
 
 		s.log.Infof("Creating service %s", serviceName)
-		if err := cp.Copy(path, filepath.Join("/etc/systemd/system/", serviceName)); err != nil {
+		if err := cp.Copy(path, filepath.Join(s.paths.SystemdUnitDestDir, serviceName)); err != nil {
 			return fmt.Errorf("failed create service %s: %w", serviceName, err)
 		}
 
@@ -237,21 +321,20 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		clusterInfo.IngressCertificateCN,
 	)
 
-	if err := os.MkdirAll(common.SeedDataDir, 0700); err != nil {
-		return fmt.Errorf("error creating SeedDataDir %s: %w", common.SeedDataDir, err)
+	if err := os.MkdirAll(s.paths.SeedDataDir, 0700); err != nil {
+		return fmt.Errorf("error creating SeedDataDir %s: %w", s.paths.SeedDataDir, err)
 	}
 
 	s.log.Infof("Creating seed information file in %s", common.SeedClusterInfoFileName)
-	p := path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)
+	p := path.Join(s.paths.SeedDataDir, common.SeedClusterInfoFileName)
 	if err := utils.MarshalToFile(seedClusterInfo, p); err != nil {
 		return fmt.Errorf("error creating seed info file in %s: %w", p, err)
 	}
 
 	// in order to allow lca to verify version we need to provide file not as part of var archive too
-	src := path.Join(common.SeedDataDir, common.SeedClusterInfoFileName)
 	dest := path.Join(s.backupDir, common.SeedClusterInfoFileName)
-	if err := cp.Copy(src, dest); err != nil {
-		return fmt.Errorf("error copying from %s to %s: %w", src, dest, err)
+	if err := cp.Copy(p, dest); err != nil {
+		return fmt.Errorf("error copying from %s to %s: %w", p, dest, err)
 	}
 
 	return nil
@@ -287,7 +370,7 @@ func (s *SeedCreator) createContainerList(ctx context.Context) error {
 	s.log.Info("Cleaning image list")
 	// Don't ever add -a option as we don't want to delete unused images
 	if _, err := s.ops.RunBashInHostNamespace("podman", "image", "prune", "-f"); err != nil {
-		return fmt.Errorf("failed to prune with podmamn: %w", err)
+		return fmt.Errorf("failed to prune with podman: %w", err)
 	}
 
 	// Execute 'crictl images -o json' command, parse the JSON output and extract image references using 'jq'
@@ -354,7 +437,7 @@ func (s *SeedCreator) backupVar() error {
 	tarArgs := []string{"czf", varTarFile} //nolint:goconst
 
 	// Ensure all MCD-managed files in /var/lib are explicitly included, to avoid accidental exclusion
-	if managedfiles, err := utils.GetMCDManagedVarLibFiles(common.MCDCurrentConfig); err != nil {
+	if managedfiles, err := utils.GetMCDManagedVarLibFiles(s.paths.MCDCurrentConfig); err != nil {
 		return fmt.Errorf("unable to get list of MCD managed files: %w", err)
 	} else {
 		for _, fname := range managedfiles {
@@ -444,7 +527,7 @@ func (s *SeedCreator) backupRPMOstree() error {
 
 func (s *SeedCreator) backupMCOConfig() error {
 	mcoJSON := s.backupDir + "/mco-currentconfig.json"
-	if _, err := s.ops.RunBashInHostNamespace("cp", common.MCDCurrentConfig, mcoJSON); err != nil {
+	if _, err := s.ops.RunBashInHostNamespace("cp", s.paths.MCDCurrentConfig, mcoJSON); err != nil {
 		return fmt.Errorf("failed to backup MCO config: %w", err)
 	}
 	s.log.Info("Backup of mco-currentconfig created successfully.")
@@ -466,7 +549,7 @@ func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	}
 
 	// Create a temporary file for the Dockerfile content
-	tmpfile, err := os.CreateTemp("/var/tmp", "dockerfile-")
+	tmpfile, err := os.CreateTemp(s.paths.DockerfileTempDir, "dockerfile-")
 	if err != nil {
 		return fmt.Errorf("error creating temporary file: %w", err)
 	}
@@ -504,7 +587,7 @@ func (s *SeedCreator) createAndPushSeedImage(clusterInfo string) error {
 	return nil
 }
 
-func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *ostree.Status) error {
+func (s *SeedCreator) backupOstreeOrigin(statusRpmOstree *rpmostreeclient.Status) error {
 
 	// Get OSName for booted ostree deployment
 	bootedOSName := statusRpmOstree.Deployments[0].OSName
@@ -565,9 +648,8 @@ func (s *SeedCreator) filterCatalogImages(ctx context.Context, images []string) 
 
 func (s *SeedCreator) removeOvnCertsFolders() error {
 	s.log.Infof("Removing ovn certs folders")
-	dirs := []string{common.OvnNodeCerts, common.MultusCerts}
-	if err := utils.RemoveListOfFiles(s.log, dirs); err != nil {
-		return fmt.Errorf("failed to remove ovn certs in %s: %w", dirs, err)
+	if err := utils.RemoveListOfFiles(s.log, s.paths.OvnCertDirs); err != nil {
+		return fmt.Errorf("failed to remove ovn certs in %s: %w", s.paths.OvnCertDirs, err)
 	}
 	return nil
 }
