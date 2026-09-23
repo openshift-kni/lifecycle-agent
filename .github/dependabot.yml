@@ -14,6 +14,8 @@ updates:
         update-types: ["major", "minor", "patch"]
       ocm:
         patterns: ["open-cluster-management.io/*"]
+      otel:
+        patterns: ["go.opentelemetry.io/otel/*"]
     open-pull-requests-limit: 5
     package-ecosystem: "gomod"  # See documentation for possible values
     schedule:
