@@ -167,9 +167,9 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 		handleError(err, "failed to remove extra manifest warning annotation from IBU")
 	}
 
-	r.Log.Info("Cleaning up OADP resources")
-	if err := r.cleanupOADPResources(ctx); err != nil {
-		handleError(err, "failed to cleanup OADP resources")
+	r.Log.Info("Cleaning up backup resources")
+	if err := r.cleanupBackupResources(ctx); err != nil {
+		handleError(err, "failed to cleanup backup resources")
 	}
 
 	r.Log.Info("Cleaning up IBU files")
@@ -180,21 +180,11 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	return successful, errorMessage
 }
 
-// cleanupOADPResources clean resources from backup/restore as long as OADP is present
-func (r *ImageBasedUpgradeReconciler) cleanupOADPResources(ctx context.Context) error {
-	if !r.BackupRestore.IsOadpInstalled(ctx) {
-		r.Log.Info("OADP not installed, nothing to cleanup")
-		return nil
-	}
-
-	r.Log.Info("Cleaning up DeleteBackupRequest")
-	if err := r.BackupRestore.CleanupDeleteBackupRequests(ctx); err != nil {
-		return fmt.Errorf("failed to cleanup DeleteBackupRequest CRs: %w", err)
-	}
-
-	r.Log.Info("Cleaning up Backup")
+// cleanupBackupResources cleans up local backup files and restores PV reclaim policy
+func (r *ImageBasedUpgradeReconciler) cleanupBackupResources(ctx context.Context) error {
+	r.Log.Info("Cleaning up local backup files")
 	if err := r.BackupRestore.CleanupBackups(ctx); err != nil {
-		return fmt.Errorf("failed to cleanup backups: %w", err)
+		return fmt.Errorf("failed to cleanup local backups: %w", err)
 	}
 
 	r.Log.Info("Restoring PV reclaim policy")
@@ -202,7 +192,7 @@ func (r *ImageBasedUpgradeReconciler) cleanupOADPResources(ctx context.Context) 
 		return fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err)
 	}
 
-	r.Log.Info("Successfully cleaned all resources related to backup and restore (OADP)")
+	r.Log.Info("Successfully cleaned all backup resources")
 	return nil
 }
 
