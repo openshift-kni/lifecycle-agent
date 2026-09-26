@@ -67,7 +67,18 @@ func init() {
 // createCmd represents the create command
 var createCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create OCI image and push it to a container registry.",
+	Short: "Create a seed OCI image and push it to a container registry",
+	Long: `Create a seed OCI image from the current Single Node OpenShift cluster and
+push it to a container registry. The seed image captures the OS and cluster
+state for use in Image Based Upgrades or Image Based Installs on other nodes.
+
+The cluster is automatically restored to its original state after image
+creation unless --skip-cleanup is specified.`,
+	Example: `  # Create and push a seed image
+  lca-cli create -i quay.io/myrepo/seed:latest -a /path/to/auth.json
+
+  # Create without automatic cleanup
+  lca-cli create -i quay.io/myrepo/seed:latest -a /path/to/auth.json --skip-cleanup`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := create(); err != nil {
 			log.Fatalf("Error executing create command: %v", err)
