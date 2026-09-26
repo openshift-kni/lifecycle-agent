@@ -17,8 +17,10 @@
 package workload
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,8 +76,82 @@ func podmanImgExists(image string) bool {
 	return err == nil
 }
 
+type manifestPlatform struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+}
+
+type manifestEntry struct {
+	Platform *manifestPlatform `json:"platform,omitempty"`
+}
+
+type manifestList struct {
+	MediaType string          `json:"mediaType"`
+	Manifests []manifestEntry `json:"manifests"`
+}
+
+const (
+	dockerManifestListMediaType = "application/vnd.docker.distribution.manifest.list.v2+json"
+	ociImageIndexMediaType      = "application/vnd.oci.image.index.v1+json"
+)
+
+// imageSupportsArch checks whether the image's manifest list includes an entry
+// for the current architecture. OLM CSVs declare multi-arch support but their
+// relatedImages list is a flat union of all images across all architectures —
+// some images may only ship manifests for a subset of platforms. When podman
+// pulls a manifest list that has no entry for the current architecture, it
+// fails hard (exit 125, "no image found in manifest list for architecture").
+// In contrast, pulling a direct single-arch image built for a different
+// architecture succeeds (exit 0) with just a warning, so only the manifest
+// list case needs guarding. Returns true (allow pull) when the manifest cannot
+// be determined or is not a multi-arch manifest list. Returns false only when
+// the manifest list is successfully parsed and contains no entry matching
+// runtime.GOARCH.
+func imageSupportsArch(image, authFile string) bool {
+	args := []string{"manifest", "inspect", image}
+	if authFile != "" {
+		args = append(args, "--authfile", authFile)
+	}
+
+	output, err := Executor.Execute("podman", args...)
+	if err != nil {
+		log.Debugf("podman manifest inspect failed for %s (will attempt pull): %v", image, err)
+		return true
+	}
+
+	var ml manifestList
+	if err := json.Unmarshal([]byte(output), &ml); err != nil {
+		log.Debugf("Failed to parse manifest inspect output for %s (will attempt pull): %v", image, err)
+		return true
+	}
+
+	// Both Docker manifest list v2 and OCI image index use the same JSON
+	// structure (a "manifests" array with platform entries); they differ only
+	// in mediaType. If it's neither, this is a single-image manifest and
+	// podman pull handles it fine regardless of architecture.
+	if ml.MediaType != dockerManifestListMediaType && ml.MediaType != ociImageIndexMediaType {
+		return true
+	}
+
+	currentArch := runtime.GOARCH
+	for _, entry := range ml.Manifests {
+		if entry.Platform != nil && entry.Platform.Architecture == currentArch {
+			return true
+		}
+	}
+
+	return false
+}
+
 // pullImage attempts to pull an image via podman CLI
 func pullImage(image, authFile string, progress *precache.Progress) error {
+
+	if !imageSupportsArch(image, authFile) {
+		log.Infof("Skipping image %s: not available for architecture %s", image, runtime.GOARCH)
+		progress.Skip(image)
+		progress.Persist(precache.StatusFile)
+		return nil
+	}
 
 	var err error
 	for i := 0; i < MaxRetries; i++ {
