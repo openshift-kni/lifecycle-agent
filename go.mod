@@ -28,9 +28,9 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.35.7
 	k8s.io/apiextensions-apiserver v0.35.7
-	k8s.io/apimachinery v0.37.0
+	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.35.7
-	k8s.io/code-generator v0.37.0
+	k8s.io/code-generator v0.37.1
 	open-cluster-management.io/api v1.3.0
 	open-cluster-management.io/config-policy-controller v0.19.0
 	open-cluster-management.io/governance-policy-propagator v0.20.0
@@ -104,7 +104,7 @@ require (
 	k8s.io/gengo/v2 v2.0.0-20260408192533-25e2208e0dc3 // indirect
 	k8s.io/kube-aggregator v0.35.1 // indirect
 	k8s.io/kubectl v0.35.0 // indirect
-	k8s.io/streaming v0.37.0 // indirect
+	k8s.io/streaming v0.37.1 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.6-0.20230721195810-5c8923c5ff96 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
