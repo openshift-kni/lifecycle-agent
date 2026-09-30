@@ -36,8 +36,8 @@ COPY version version
 RUN LDFLAGS="-X github.com/openshift-kni/lifecycle-agent/version.Version=${VERSION} -X github.com/openshift-kni/lifecycle-agent/version.GitCommit=${GIT_COMMIT} -X github.com/openshift-kni/lifecycle-agent/version.BuildTime=${BUILD_TIME}" && \
     if [[ "${KONFLUX}" == "true" ]]; then \
         echo "Compiling with fips" && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -ldflags "${LDFLAGS}" -o build/manager main/main.go && \
-        GOEXPERIMENT=strictfipsruntime CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime -ldflags "${LDFLAGS}" -a -o build/lca-cli main/lca-cli/main.go; \
+        GOFIPS140=v1.26.0 GOEXPERIMENT=strictfipsruntime CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime,no_openssl -ldflags "${LDFLAGS}" -o build/manager main/main.go && \
+        GOFIPS140=v1.26.0 GOEXPERIMENT=strictfipsruntime CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -tags strictfipsruntime,no_openssl -ldflags "${LDFLAGS}" -a -o build/lca-cli main/lca-cli/main.go; \
     else \
         echo "Compiling without fips" && \
         CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -mod=vendor -ldflags "${LDFLAGS}" -a -o build/manager main/main.go && \
