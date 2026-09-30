@@ -872,3 +872,107 @@ func TestCleanupBackups(t *testing.T) {
 	}
 	assert.Equal(t, 0, len(deletionRequests.Items))
 }
+
+func TestBRStatusErrorConstructors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		err            *BRStatusError
+		wantType       string
+		wantReason     string
+		wantErrMessage string
+	}{
+		{
+			name:           "NewBRFailedError",
+			err:            NewBRFailedError("Backup", "backup failed"),
+			wantType:       "Backup",
+			wantReason:     "Failed",
+			wantErrMessage: "backup failed",
+		},
+		{
+			name:           "NewBRFailedValidationError",
+			err:            NewBRFailedValidationError("OADP", "validation failed"),
+			wantType:       "OADP",
+			wantReason:     "FailedValidation",
+			wantErrMessage: "validation failed",
+		},
+		{
+			name:           "NewBRStorageBackendUnavailableError",
+			err:            NewBRStorageBackendUnavailableError("storage unavailable"),
+			wantType:       "StorageBackend",
+			wantReason:     "Unavailable",
+			wantErrMessage: "storage unavailable",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.wantType, tc.err.Type)
+			assert.Equal(t, tc.wantReason, tc.err.Reason)
+			assert.Equal(t, tc.wantErrMessage, tc.err.Error())
+		})
+	}
+}
+
+func TestBRStatusErrorPredicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                       string
+		err                        error
+		wantIsBRFailed             bool
+		wantIsBRFailedValidation   bool
+		wantIsBRStorageUnavailable bool
+	}{
+		{
+			name:           "BRFailedError with Backup type matches IsBRFailedError",
+			err:            NewBRFailedError("Backup", "msg"),
+			wantIsBRFailed: true,
+		},
+		{
+			name:           "BRFailedError with Restore type matches IsBRFailedError",
+			err:            NewBRFailedError("Restore", "msg"),
+			wantIsBRFailed: true,
+		},
+		{
+			name:           "BRFailedError with OADP type matches IsBRFailedError",
+			err:            NewBRFailedError("OADP", "msg"),
+			wantIsBRFailed: true,
+		},
+		{
+			name:                     "BRFailedValidationError does not match IsBRFailedError",
+			err:                      NewBRFailedValidationError("Backup", "msg"),
+			wantIsBRFailedValidation: true,
+		},
+		{
+			name:                       "BRStorageBackendUnavailableError matches IsBRStorageBackendUnavailableError",
+			err:                        NewBRStorageBackendUnavailableError("msg"),
+			wantIsBRStorageUnavailable: true,
+		},
+		{
+			name:           "BRFailedError wrapped with fmt.Errorf still matches IsBRFailedError",
+			err:            fmt.Errorf("wrapped: %w", NewBRFailedError("Backup", "msg")),
+			wantIsBRFailed: true,
+		},
+		{
+			name:                     "BRFailedValidationError wrapped with fmt.Errorf still matches",
+			err:                      fmt.Errorf("wrapped: %w", NewBRFailedValidationError("OADP", "msg")),
+			wantIsBRFailedValidation: true,
+		},
+		{
+			name: "BRFailedError with unknown type does not match any predicate",
+			err:  NewBRFailedError("Unknown", "msg"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.wantIsBRFailed, IsBRFailedError(tc.err))
+			assert.Equal(t, tc.wantIsBRFailedValidation, IsBRFailedValidationError(tc.err))
+			assert.Equal(t, tc.wantIsBRStorageUnavailable, IsBRStorageBackendUnavailableError(tc.err))
+		})
+	}
+}
