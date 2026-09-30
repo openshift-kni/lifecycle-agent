@@ -566,7 +566,7 @@ func (h *BRHandler) waitForDeleteBackupRequests(ctx context.Context, backups []v
 func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1.Backup) error {
 	if err := h.waitForDeleteBackupRequests(ctx, backups); err != nil {
 		h.Log.Error(err, "Failed to delete backups")
-		return NewBRFailedError("backup", fmt.Sprintf("failed to delete backups: %s", err.Error()))
+		return NewBRFailedError("Backup", fmt.Sprintf("failed to delete backups: %s", err.Error()))
 	}
 
 	for _, backup := range backups {
@@ -580,7 +580,7 @@ func (h *BRHandler) ensureBackupsDeleted(ctx context.Context, backups []velerov1
 			}
 			return fmt.Errorf("failed to ensure backup %s is deleted: %w", backup.GetName(), err)
 		} else {
-			return NewBRFailedError("backup", fmt.Sprintf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName()))
+			return NewBRFailedError("Backup", fmt.Sprintf("all DeleteBackupRequests are processed, but backup %s is not deleted", backup.GetName()))
 		}
 	}
 	h.Log.Info("All Backup CRs have been deleted successfully")
