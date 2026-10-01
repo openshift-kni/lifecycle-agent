@@ -82,6 +82,11 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to cleanup rhcos sysroot: %w", err)
 	}
 
+	i.log.Info("Syncing filesystems to disk")
+	if _, err := i.ops.RunInHostNamespace("sync"); err != nil {
+		return fmt.Errorf("failed to sync filesystems: %w", err)
+	}
+
 	return i.shutdownNode()
 }
 
