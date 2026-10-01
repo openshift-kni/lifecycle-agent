@@ -1414,6 +1414,70 @@ func TestStatusIPsMatchSpec(t *testing.T) {
 	})
 }
 
+func TestValidateAddressChanges(t *testing.T) {
+	t.Run("nil status network returns nil", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("IPv4 validation error is wrapped", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{
+			Address:        "192.0.2.10",
+			MachineNetwork: "192.0.3.0/24",
+		}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10", MachineNetwork: "192.0.2.0/24"}
+		err := validateAddressChanges(ipc)
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "failed to validate IPv4 address changes:")
+			assert.Contains(t, err.Error(), "machineNetwork can be changed only if address is also changed")
+		}
+	})
+
+	t.Run("IPv6 validation error is wrapped", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv6 = &ipcv1.IPv6Config{
+			Address: "2001:db8::10",
+			Gateway: "fe80::2",
+		}
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{Address: "2001:db8::10", Gateway: "fe80::1"}
+		err := validateAddressChanges(ipc)
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "failed to validate IPv6 address changes:")
+		}
+	})
+
+	t.Run("both families valid returns nil", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.11"}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10"}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("nil IPC returns nil", func(t *testing.T) {
+		assert.NoError(t, validateAddressChanges(nil))
+	})
+
+	t.Run("equal DNS servers returns nil early", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv4 = &ipcv1.IPv4Config{Address: "192.0.2.10"}
+		ipc.Status.IPv4 = &ipcv1.IPv4Status{Address: "192.0.2.10"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"192.0.2.53"}
+		ipc.Status.DNSServers = []string{"192.0.2.53"}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+
+	t.Run("IPv6 address change allows DNS server change", func(t *testing.T) {
+		ipc := mkConfigIPC(t, false)
+		ipc.Spec.IPv6 = &ipcv1.IPv6Config{Address: "2001:db8::11"}
+		ipc.Status.IPv6 = &ipcv1.IPv6Status{Address: "2001:db8::10"}
+		ipc.Spec.DNSServers = []ipcv1.IPAddress{"2001:db8::53"}
+		ipc.Status.DNSServers = []string{"2001:db8::52"}
+		assert.NoError(t, validateAddressChanges(ipc))
+	})
+}
+
 func TestIPAndCIDRHelpers(t *testing.T) {
 	t.Run("ipEqual normalizes CIDR", func(t *testing.T) {
 		assert.True(t, ipEqual("192.0.2.10/24", "192.0.2.10"))
