@@ -45,6 +45,7 @@ var ibuStaterootSetupCmd = &cobra.Command{
 }
 
 func init() {
+	addUseBootcFlag(ibuStaterootSetupCmd)
 	rootCmd.AddCommand(ibuStaterootSetupCmd)
 }
 
@@ -86,7 +87,7 @@ func ibuStaterootSetupRun() error {
 	}
 
 	logger.Info("Setting up stateroot")
-	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false); err != nil {
+	if err := prep.SetupStateroot(logger, opsClient, ostreeClient, rpmOstreeClient, ibu.Spec.SeedImageRef.Image, ibu.Spec.SeedImageRef.Version, false, useBootc); err != nil {
 		return fmt.Errorf("failed to complete stateroot setup: %w", err)
 	}
 
