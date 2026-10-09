@@ -31,7 +31,7 @@ require (
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.35.7
 	k8s.io/code-generator v0.37.1
-	open-cluster-management.io/api v1.3.0
+	open-cluster-management.io/api v1.4.0
 	open-cluster-management.io/config-policy-controller v0.19.0
 	open-cluster-management.io/governance-policy-propagator v0.20.0
 	sigs.k8s.io/controller-runtime v0.23.3
