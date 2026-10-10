@@ -321,7 +321,7 @@ func (p *PrePivotHandler) deployNewStateroot(
 		return fmt.Errorf("failed to initialize ostree for new stateroot %s: %w", ostreeData.NewStateroot.Name, err)
 	}
 
-	if err := p.ostree.Deploy(ostreeData.NewStateroot.Name, bootedCommit, kargs, p.rpm, false); err != nil {
+	if err := p.ostree.Deploy(ostreeData.NewStateroot.Name, bootedCommit, kargs, p.rpm, false, false); err != nil {
 		return fmt.Errorf("failed ostree admin deploy: %w", err)
 	}
 

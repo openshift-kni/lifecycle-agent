@@ -52,6 +52,8 @@ var (
 	recertSkipValidation bool
 
 	skipCleanup bool
+
+	useBootc bool
 )
 
 func init() {
@@ -114,7 +116,7 @@ func create() error {
 	}
 
 	seedCreator := seedcreator.NewSeedCreator(client, log, op, rpmOstreeClient, common.BackupDir, common.KubeconfigFile,
-		containerRegistry, authFile, recertContainerImage, recertSkipValidation)
+		containerRegistry, authFile, recertContainerImage, recertSkipValidation, useBootc)
 	if err = seedCreator.CreateSeedImage(); err != nil {
 		err = fmt.Errorf("failed to create seed image: %w", err)
 		log.Error(err)
