@@ -47,7 +47,10 @@ func init() {
 
 var ipConfigRollbackCmd = &cobra.Command{
 	Use:   rollbackCmd,
-	Short: "Execute IP configuration rollback",
+	Short: "Roll back IP configuration to the previous stateroot",
+	Long: `Roll back IP configuration changes by reverting the node to the previous
+OSTree stateroot. Restores the original network settings and cluster
+certificates from before the IP change.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runIPConfigRollback(); err != nil {
 			pkgLog.Fatalf("Error executing ip-config rollback: %v", err)

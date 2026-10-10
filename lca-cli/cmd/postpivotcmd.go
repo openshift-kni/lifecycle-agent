@@ -31,10 +31,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// createCmd represents the create command
 var postPivotCmd = &cobra.Command{
 	Use:   "post-pivot",
-	Short: "post pivot configuration",
+	Short: "Apply post-pivot configuration after an image-based upgrade",
+	Long: `Apply post-pivot configuration after the node has rebooted into the new
+OSTree stateroot during an Image Based Upgrade. Reconfigures cluster
+certificates, network settings, and operator state to match the target
+cluster identity.
+
+Triggers an automatic rollback if post-pivot configuration fails and
+auto-rollback is enabled.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		postPivot()
 	},
