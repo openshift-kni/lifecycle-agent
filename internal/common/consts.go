@@ -145,8 +145,12 @@ const (
 
 	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
 
-	PullSecretName           = "pull-secret"
-	PullSecretEmptyData      = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}" //nolint:gosec
+	PullSecretName      = "pull-secret"
+	PullSecretEmptyData = "{\"auths\":{\"registry.connect.redhat.com\":{\"username\":\"empty\",\"password\":\"empty\",\"auth\":\"ZW1wdHk6ZW1wdHk=\",\"email\":\"\"}}}" //nolint:gosec
+	// IBIEmptyPullSecret is a truly empty authfile used for the disconnected IBI prepare
+	// direct-import path, which needs no credentials. It is deliberately distinct from
+	// PullSecretEmptyData, which embeds a registry.connect.redhat.com credential.
+	IBIEmptyPullSecret       = "{\"auths\":{}}" //nolint:gosec
 	OpenshiftConfigNamespace = "openshift-config"
 
 	NMConnectionFolder = "/etc/NetworkManager/system-connections"

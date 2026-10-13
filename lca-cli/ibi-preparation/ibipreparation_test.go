@@ -166,6 +166,96 @@ func TestPostDeployment(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
+func TestSetupPrepareAuthFileCreatesAndCleansUp(t *testing.T) {
+	// Absent file: the helper creates it with the synthetic empty authfile content and
+	// 0600 mode (parent dirs created as needed); cleanup removes it.
+	p := filepath.Join(t.TempDir(), "sub", "pull-secret.json")
+
+	cleanup, err := setupPrepareAuthFile(p)
+	assert.NoError(t, err)
+
+	content, err := os.ReadFile(p) //nolint:gosec // test path
+	assert.NoError(t, err)
+	assert.Equal(t, common.IBIEmptyPullSecret, string(content))
+
+	info, err := os.Stat(p)
+	assert.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	cleanup()
+	_, err = os.Stat(p)
+	assert.True(t, os.IsNotExist(err), "synthetic authfile should be removed by cleanup")
+}
+
+func TestSetupPrepareAuthFilePreservesExisting(t *testing.T) {
+	// A pre-existing file (operator-provided or a leftover from an interrupted run) must be
+	// left byte-for-byte unchanged and must NOT be removed by cleanup.
+	p := filepath.Join(t.TempDir(), "pull-secret.json")
+	sentinel := `{"auths":{"real.registry.example.com":{"auth":"c2VjcmV0"}}}`
+	assert.NoError(t, os.WriteFile(p, []byte(sentinel), 0o600))
+
+	cleanup, err := setupPrepareAuthFile(p)
+	assert.NoError(t, err)
+
+	content, err := os.ReadFile(p) //nolint:gosec // test path
+	assert.NoError(t, err)
+	assert.Equal(t, sentinel, string(content), "pre-existing authfile must be left untouched")
+
+	cleanup()
+	content, err = os.ReadFile(p) //nolint:gosec // test path
+	assert.NoError(t, err)
+	assert.Equal(t, sentinel, string(content), "cleanup must not remove a file this run did not create")
+}
+
+func TestSetupPrepareAuthFileCleanupOnFailure(t *testing.T) {
+	dir := t.TempDir()
+
+	// Synthetic file created by this run: a later-step failure triggers the deferred
+	// cleanup, which must remove the leaked authfile.
+	created := filepath.Join(dir, "created.json")
+	func() {
+		cleanup, err := setupPrepareAuthFile(created)
+		assert.NoError(t, err)
+		defer cleanup()
+		// Simulate a later step in Run() failing; the deferred cleanup still runs.
+	}()
+	_, err := os.Stat(created)
+	assert.True(t, os.IsNotExist(err), "synthetic authfile must be removed on the error path")
+
+	// Pre-existing file must survive the same error path.
+	existing := filepath.Join(dir, "existing.json")
+	sentinel := `{"auths":{"real":{}}}`
+	assert.NoError(t, os.WriteFile(existing, []byte(sentinel), 0o600))
+	func() {
+		cleanup, err := setupPrepareAuthFile(existing)
+		assert.NoError(t, err)
+		defer cleanup()
+	}()
+	content, err := os.ReadFile(existing) //nolint:gosec // test path
+	assert.NoError(t, err)
+	assert.Equal(t, sentinel, string(content), "pre-existing authfile must survive the error path")
+}
+
+func TestPrepareAuthFilePathCrossChroot(t *testing.T) {
+	// Run() writes the synthetic authfile to common.PathOutsideChroot(common.IBIPullSecretFilePath),
+	// while both consumers reference common.IBIPullSecretFilePath directly: the seed pull in the
+	// host namespace (ibipreparation.go) and the precache after chrooting into common.Host. This
+	// asserts the write target and the consumer reference resolve to the same file, so one
+	// outside-chroot write covers both. common.Host is a const and absent in the test env, so
+	// PathOutsideChroot is the identity; t.Chdir makes the relative var/tmp path land under temp.
+	t.Chdir(t.TempDir())
+
+	writeTarget := common.PathOutsideChroot(common.IBIPullSecretFilePath)
+	cleanup, err := setupPrepareAuthFile(writeTarget)
+	assert.NoError(t, err)
+	defer cleanup()
+
+	content, err := os.ReadFile(common.IBIPullSecretFilePath) //nolint:gosec // test path
+	assert.NoError(t, err)
+	assert.Equal(t, common.IBIEmptyPullSecret, string(content),
+		"file written to the outside-chroot path must be visible at the consumer reference path")
+}
+
 func TestCleanupRhcosSysroot(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockOps := ops.NewMockOps(ctrl)

@@ -1,6 +1,7 @@
 package ibi_preparation
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,18 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 }
 
 func (i *IBIPrepare) Run() error {
+	// In a disconnected prepare there is no operator-provided pull secret, but Run() still
+	// passes common.IBIPullSecretFilePath to the seed pull and precache, so a synthetic empty
+	// authfile must exist. Provision it non-destructively and remove it on completion (including
+	// the error path via defer). The connected flow is untouched.
+	if i.config.Disconnected {
+		cleanup, err := setupPrepareAuthFile(common.PathOutsideChroot(common.IBIPullSecretFilePath))
+		if err != nil {
+			return fmt.Errorf("failed to set up prepare auth file: %w", err)
+		}
+		defer cleanup()
+	}
+
 	// Pull seed image
 	if err := i.diskPreparation(); err != nil {
 		return fmt.Errorf("failed to prepare disk: %w", err)
@@ -88,6 +101,35 @@ func (i *IBIPrepare) Run() error {
 	}
 
 	return i.shutdownNode()
+}
+
+// setupPrepareAuthFile ensures a synthetic empty authfile exists at path for the
+// disconnected seed pull / precache, without disturbing any operator-provided file.
+// It creates the file only if it is absent (atomically, via O_EXCL) and returns a
+// cleanup func that removes the file ONLY if this call created it. A pre-existing file
+// (operator-provided or a leftover from an interrupted run) is left byte-for-byte
+// untouched and is never removed.
+func setupPrepareAuthFile(path string) (func(), error) {
+	noop := func() {}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return noop, fmt.Errorf("failed to create authfile dir: %w", err)
+	}
+	// O_EXCL => atomically create only if absent; tells us definitively whether THIS run
+	// created the file (no TOCTOU, safe after a crashed run).
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // path is provided by the caller (Run passes the validated IBI pull-secret path)
+	if errors.Is(err, os.ErrExist) {
+		// Pre-existing file (operator-provided or leftover): leave it untouched.
+		return noop, nil
+	}
+	if err != nil {
+		return noop, fmt.Errorf("failed to create synthetic authfile %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteString(common.IBIEmptyPullSecret); err != nil {
+		_ = os.Remove(path) // roll back our own partial create
+		return noop, fmt.Errorf("failed to write synthetic authfile: %w", err)
+	}
+	return func() { _ = os.Remove(path) }, nil
 }
 
 func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) error {
