@@ -223,7 +223,10 @@ function fixup_gpt {
     local dev="/dev/${base}"
     echo "==> Relocating GPT backup header to the end of ${dev} and verifying"
     sgdisk --move-second-header "${dev}" || die "could not relocate GPT backup header on ${dev}"
-    partprobe "${dev}" 2>/dev/null || true
+    # A failed reread means the kernel may still expose the old layout, so treat
+    # it as a write failure rather than continuing: 'sgdisk --verify' only checks
+    # the on-disk GPT and can pass while the kernel map is stale. (CodeRabbit review)
+    partprobe "${dev}" 2>/dev/null || die "could not reread partition table on ${dev}"
     sgdisk --verify "${dev}" || die "GPT verification failed on ${dev} after write"
 }
 

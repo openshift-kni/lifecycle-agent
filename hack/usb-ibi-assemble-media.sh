@@ -172,6 +172,13 @@ function validate_args {
     esac
 
     [ -f "${ISO}" ] || die "ISO not found: ${ISO}"
+    # create_image runs 'dd if=${ISO} of=${OUTPUT}', which truncates the output
+    # before reading the source. If --output aliases --iso the ISO is destroyed
+    # and the padded image is invalid, so reject the alias while still allowing a
+    # distinct existing output to be replaced. (CodeRabbit review)
+    if [ -e "${OUTPUT}" ] && [ "${ISO}" -ef "${OUTPUT}" ]; then
+        die "--output must not refer to the same file as --iso: ${OUTPUT}"
+    fi
     [ -d "${IBI_IMAGES_SRC}" ] || die "--ibi-images directory not found: ${IBI_IMAGES_SRC}"
     if [ -n "${CLUSTER_CONFIG_SRC}" ]; then
         [ -d "${CLUSTER_CONFIG_SRC}" ] || die "--cluster-config directory not found: ${CLUSTER_CONFIG_SRC}"
