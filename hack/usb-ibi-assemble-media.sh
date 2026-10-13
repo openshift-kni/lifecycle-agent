@@ -416,11 +416,43 @@ function populate {
     sync
 }
 
+# verify_mbr_table runs 'sfdisk --verify' but tolerates the one overlap that is
+# inherent to a RHCOS isohybrid ISO: its partition 1 (the whole ISO9660 image)
+# deliberately contains partition 2 (the ESP), so sfdisk always reports
+# "Partition 1: overlaps partition 2" for the untouched ISO entries. That single
+# overlap is expected and harmless - the data partitions we appended sit after the
+# ISO and overlap nothing - so we accept it here and fail only if sfdisk flags
+# anything else. (fontivan / Developer of Record)
+function verify_mbr_table {
+    local dev="$1"
+    local out rc=0
+    out=$(sfdisk --verify "${dev}" 2>&1) || rc=$?
+
+    # Everything sfdisk reported except the expected ISO p1/p2 overlap.
+    local other
+    other=$(printf '%s\n' "${out}" | grep -vE 'Partition 1: overlaps partition 2\.?$' || true)
+    if printf '%s\n' "${other}" | grep -qiE 'overlap|error|invalid|corrupt|cannot|unable|not correct'; then
+        printf '%s\n' "${out}" >&2
+        die "partition table verification failed on ${dev}"
+    fi
+    # A non-zero exit with no other reported problem means sfdisk flagged only the
+    # expected overlap; treat that as success. Any other non-zero exit is fatal.
+    if [ "${rc}" -ne 0 ] && ! printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+        printf '%s\n' "${out}" >&2
+        die "partition table verification failed on ${dev} (sfdisk exit ${rc})"
+    fi
+    if printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+        echo "    ok: partition table verified (ISO's expected p1/p2 hybrid overlap ignored)"
+    else
+        echo "    ok: partition table verified"
+    fi
+}
+
 # verify asserts the partition table is consistent and every expected label
 # resolves, so a failed assembly fails loudly rather than producing bad media.
 function verify {
     echo "==> Verifying partition table and filesystem labels"
-    sfdisk --verify "${LOOP_DEV}" || die "partition table verification failed on ${LOOP_DEV}"
+    verify_mbr_table "${LOOP_DEV}"
 
     local expected=("${LABEL_IMAGES}" "${LABEL_STATUS}")
     if [ "${PROFILE}" = "self-contained" ]; then

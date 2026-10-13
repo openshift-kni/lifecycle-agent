@@ -134,7 +134,8 @@ The concrete steps:
    (`skopeo copy` / OCI layout into `ibi-images`; the `/opt/openshift/...` tree into `cluster-config` for
    self-contained; leave `ibi-status` empty), unmount, `sync`.
 5. Re-read the table with `blockdev --rereadpt` + `udevadm settle` (**not** `partprobe` — it is absent on
-   the RHCOS base OS; see §2.4), run `sfdisk --verify`, and assert every expected label resolves.
+   the RHCOS base OS; see §2.4), run `sfdisk --verify` (tolerating the ISO's expected `Partition 1: overlaps
+   partition 2` hybrid-layout report — see below), and assert every expected label resolves.
 
 Layouts **(b)** fresh-partitioned and **(c)** files-in-ISO remain **documented, un-implemented**
 alternatives for the hardware spike to fall back to — (a) (DOS/MBR) is the default and the next thing to
@@ -285,6 +286,12 @@ After `dd`, the writer **detects the table type** (`blkid -s PTTYPE`) and valida
   the stick being larger than the image, so there is nothing to relocate. The writer re-reads the table
   (`blockdev --rereadpt` + `udevadm settle`; `partprobe` is absent on RHCOS), runs `sfdisk --verify`, and
   confirms the `ibi-images` / `ibi-status` labels resolve on the target.
+  - **Expected `sfdisk --verify` overlap:** a RHCOS isohybrid ISO has a hybrid DOS/GPT layout whose
+    partition 1 (the whole ISO9660 image) deliberately contains partition 2 (the ESP), so `sfdisk --verify`
+    always prints `Partition 1: overlaps partition 2` for the untouched ISO entries. Both scripts recognise
+    that single overlap as expected and harmless (the appended data partitions sit after the ISO and overlap
+    nothing) and fail only if `sfdisk` reports any *other* problem, so a clean run no longer looks like a
+    silent failure.
 - **GPT** (kept for a GPT image): a byte-for-byte `dd` to a larger stick leaves the backup header partway
   into the device, so the writer relocates it (`sgdisk --move-second-header`), re-reads, and runs
   `sgdisk --verify`.

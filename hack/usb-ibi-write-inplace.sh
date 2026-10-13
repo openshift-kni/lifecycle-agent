@@ -210,7 +210,7 @@ function cmd_write {
                 ;;
             dos)
                 echo "    blockdev --rereadpt ${TARGET} && udevadm settle   # partprobe is absent on RHCOS"
-                echo "    sfdisk --verify ${TARGET}                    # validate the MBR table"
+                echo "    sfdisk --verify ${TARGET}                    # validate the MBR table (ISO's expected p1/p2 overlap tolerated)"
                 echo "    # confirm the ibi-images / ibi-status FS labels resolve on ${TARGET}"
                 ;;
             *)
@@ -236,6 +236,38 @@ function reread_table {
     local dev="$1"
     blockdev --rereadpt "${dev}" || die "could not reread partition table on ${dev}"
     udevadm settle 2>/dev/null || true
+}
+
+# verify_mbr_table runs 'sfdisk --verify' but tolerates the one overlap that is
+# inherent to a RHCOS isohybrid ISO carried onto the stick: its partition 1 (the
+# whole ISO9660 image) deliberately contains partition 2 (the ESP), so sfdisk
+# always reports "Partition 1: overlaps partition 2" for the untouched ISO
+# entries. That single overlap is expected and harmless - the appended data
+# partitions sit after the ISO and overlap nothing - so we accept it here and fail
+# only if sfdisk flags anything else. (fontivan / Developer of Record)
+function verify_mbr_table {
+    local dev="$1"
+    local out rc=0
+    out=$(sfdisk --verify "${dev}" 2>&1) || rc=$?
+
+    # Everything sfdisk reported except the expected ISO p1/p2 overlap.
+    local other
+    other=$(printf '%s\n' "${out}" | grep -vE 'Partition 1: overlaps partition 2\.?$' || true)
+    if printf '%s\n' "${other}" | grep -qiE 'overlap|error|invalid|corrupt|cannot|unable|not correct'; then
+        printf '%s\n' "${out}" >&2
+        die "partition table verification failed on ${dev} after write"
+    fi
+    # A non-zero exit with no other reported problem means sfdisk flagged only the
+    # expected overlap; treat that as success. Any other non-zero exit is fatal.
+    if [ "${rc}" -ne 0 ] && ! printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+        printf '%s\n' "${out}" >&2
+        die "partition table verification failed on ${dev} after write (sfdisk exit ${rc})"
+    fi
+    if printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+        echo "    ok: partition table verified (ISO's expected p1/p2 hybrid overlap ignored)"
+    else
+        echo "    ok: partition table verified"
+    fi
 }
 
 # fixup_table makes the freshly written stick's partition table valid for its
@@ -269,7 +301,7 @@ function fixup_table {
         dos)
             echo "==> DOS/MBR target: re-reading and validating the partition table on ${dev}"
             reread_table "${dev}"
-            sfdisk --verify "${dev}" || die "partition table verification failed on ${dev} after write"
+            verify_mbr_table "${dev}"
             verify_contract_labels "${base}"
             ;;
         *)
