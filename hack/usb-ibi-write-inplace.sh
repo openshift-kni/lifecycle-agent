@@ -206,9 +206,44 @@ function cmd_write {
     echo "==> Write complete. Run '${PROG} arm-boot --target ${TARGET}' to one-shot boot into it."
 }
 
+# entry_matches_target returns success only if the given efibootmgr boot entry's
+# device path points at a GPT partition on /dev/${base}. A four-hex-digit entry
+# can equally name the host disk, a NIC/PXE path, or another device, so the
+# format check alone proves nothing. 'efibootmgr -v' prints each entry's device
+# path, e.g.
+#   Boot0003* RHCOS  HD(1,GPT,2b2f...-...,0x800,0x64000)/File(\EFI\BOOT\BOOTX64.EFI)
+# We extract the GPT partition UUID from the HD(...) node and match it (case-
+# insensitively) against the PARTUUIDs of the target disk's partitions. If no
+# GPT UUID can be extracted, or it matches no partition on the target, the match
+# cannot be established and we fail so the caller aborts.
+function entry_matches_target {
+    local entry="$1" base="$2"
+    local line entry_uuid part_uuids u
+
+    line=$(efibootmgr -v | grep -iE "^Boot${entry}\*? " || true)
+    [ -n "${line}" ] || return 1
+
+    entry_uuid=$(printf '%s\n' "${line}" \
+        | grep -ioE 'HD\([0-9]+,GPT,[0-9a-fA-F-]+' \
+        | head -n1 \
+        | sed -E 's/.*,GPT,//')
+    [ -n "${entry_uuid}" ] || return 1
+
+    part_uuids=$(lsblk -nro PARTUUID "/dev/${base}" 2>/dev/null || true)
+    [ -n "${part_uuids}" ] || return 1
+
+    while read -r u; do
+        [ -n "${u}" ] || continue
+        if [ "${u,,}" = "${entry_uuid,,}" ]; then
+            return 0
+        fi
+    done <<< "${part_uuids}"
+    return 1
+}
+
 function cmd_arm_boot {
     [ -n "${TARGET}" ] || { echo "${PROG}: --target is required for 'arm-boot'" >&2; usage 1; }
-    require_cmd efibootmgr readlink lsblk
+    require_cmd efibootmgr readlink lsblk grep sed
 
     local base
     base=$(resolve_target "${TARGET}")
@@ -228,6 +263,15 @@ function cmd_arm_boot {
     read -r -p "Enter the 4-digit boot entry to set as BootNext (or blank to abort): " entry
     [ -n "${entry}" ] || die "no boot entry selected; aborting"
     [[ "${entry}" =~ ^[0-9A-Fa-f]{4}$ ]] || die "invalid boot entry (expected 4 hex digits): ${entry}"
+
+    # The format check does not prove the entry boots the target media. Confirm
+    # the entry's device path resolves to a partition on /dev/${base} before
+    # arming it, so arm-boot cannot reboot the host into its own disk, the
+    # network, or some other device.
+    if ! entry_matches_target "${entry}" "${base}"; then
+        die "boot entry ${entry} does not resolve to a GPT partition on /dev/${base}; refusing to set BootNext. Verify the entry with 'efibootmgr -v' and that the target media is enumerated."
+    fi
+    echo "==> Verified boot entry ${entry} points at a partition on /dev/${base}"
 
     local arm_cmd="efibootmgr --bootnext ${entry}"
     if [ "${DRY_RUN}" = "true" ]; then

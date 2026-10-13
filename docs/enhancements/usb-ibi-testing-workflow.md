@@ -140,8 +140,12 @@ sudo hack/usb-ibi-assemble-media.sh \
     --profile install-only \
     --iso rhcos-live.iso \
     --output usb-ibi.img \
-    --ibi-images ./oci-layout
+    --ibi-images ./oci-layout \
+    --ignition ./ibi.ign
 ```
+
+Both examples pass `--ignition ./ibi.ign` so a pristine RHCOS live ISO auto-runs `lca-cli ibi` on
+boot (§3, step 3). Omit it only when the ISO already carries an embedded ignition config.
 
 The output `usb-ibi.img` is then either written to a physical stick, written in place (§5), or attached as
 BMC virtual media (§4).

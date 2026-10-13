@@ -275,36 +275,48 @@ function format_and_label {
 }
 
 # mount_by_label mounts the partition with the given label under a fresh temp
-# dir and records it for cleanup. Addressing by label (not number) keeps the two
+# dir and records it for cleanup. It sets MOUNT_PATH (a global in the parent
+# shell) to the mount point instead of printing it: it MUST NOT be called via
+# command substitution, because that runs in a subshell where the MOUNTS update
+# would never reach cleanup, leaking the mounts and the loop device on exit.
+#
+# The partition is resolved on LOOP_DEV by its GPT name (not with a global
+# 'blkid -L', which could match a same-labelled partition on another attached
+# disk and make populate write onto the wrong media), and its filesystem label
+# is confirmed before mounting. Addressing by label (not number) keeps the two
 # profiles on one code path.
+declare MOUNT_PATH=
 function mount_by_label {
     local label="$1"
-    local dev mp
-    dev=$(blkid -L "${label}") || die "could not resolve partition by label: ${label}"
-    mp=$(mktemp -d)
-    mount "${dev}" "${mp}"
-    MOUNTS+=("${mp}")
-    echo "${mp}"
+    local dev fslabel
+    dev=$(part_dev_by_gpt_label "${label}")
+    fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
+    [ "${fslabel}" = "${label}" ] || \
+        die "filesystem label mismatch on ${dev}: expected '${label}', found '${fslabel:-<none>}'"
+    MOUNT_PATH=$(mktemp -d)
+    mount "${dev}" "${MOUNT_PATH}"
+    MOUNTS+=("${MOUNT_PATH}")
 }
 
 # populate copies the source payloads into each partition, addressing them by
 # label, then syncs. ibi-status is intentionally left empty.
 function populate {
     echo "==> Populating partitions (addressed by label)"
-    local mp
-    mp=$(mount_by_label "${LABEL_IMAGES}")
+    # mount_by_label sets MOUNT_PATH in this (parent) shell; it must not be called
+    # via command substitution or the MOUNTS registration would be lost.
+    mount_by_label "${LABEL_IMAGES}"
     echo "    ${LABEL_IMAGES} <- ${IBI_IMAGES_SRC}"
-    cp -a "${IBI_IMAGES_SRC}/." "${mp}/"
+    cp -a "${IBI_IMAGES_SRC}/." "${MOUNT_PATH}/"
 
     if [ "${PROFILE}" = "self-contained" ]; then
-        mp=$(mount_by_label "${LABEL_CONFIG}")
+        mount_by_label "${LABEL_CONFIG}"
         echo "    ${LABEL_CONFIG} <- ${CLUSTER_CONFIG_SRC}"
-        cp -a "${CLUSTER_CONFIG_SRC}/." "${mp}/"
+        cp -a "${CLUSTER_CONFIG_SRC}/." "${MOUNT_PATH}/"
     fi
 
     # ibi-status is left empty (the prepare/reconfigure flow writes it on-node);
     # mounting it here only confirms the filesystem is writable.
-    mp=$(mount_by_label "${LABEL_STATUS}")
+    mount_by_label "${LABEL_STATUS}"
     echo "    ${LABEL_STATUS} <- (left empty, writable)"
 
     sync
@@ -320,10 +332,16 @@ function verify {
     if [ "${PROFILE}" = "self-contained" ]; then
         expected=("${LABEL_IMAGES}" "${LABEL_CONFIG}" "${LABEL_STATUS}")
     fi
-    local label
+    # Resolve each label on LOOP_DEV by its GPT name and confirm the filesystem
+    # label there, rather than with a global 'blkid -L' that could match a
+    # same-labelled partition on another attached disk and report a false "ok".
+    local label dev fslabel
     for label in "${expected[@]}"; do
-        blkid -L "${label}" >/dev/null || die "expected label did not resolve after assembly: ${label}"
-        echo "    ok: ${label} -> $(blkid -L "${label}")"
+        dev=$(part_dev_by_gpt_label "${label}")
+        fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
+        [ "${fslabel}" = "${label}" ] || \
+            die "expected label did not resolve on ${LOOP_DEV} after assembly: ${label} (found '${fslabel:-<none>}' on ${dev})"
+        echo "    ok: ${label} -> ${dev}"
     done
 }
 
