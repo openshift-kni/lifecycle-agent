@@ -179,7 +179,11 @@ function cmd_write {
     [ -n "${IMAGE}" ] || { echo "${PROG}: --image is required for 'write'" >&2; usage 1; }
     [ -n "${TARGET}" ] || { echo "${PROG}: --target is required for 'write'" >&2; usage 1; }
     [ -f "${IMAGE}" ] || die "image not found: ${IMAGE}"
-    require_cmd dd sync stat lsblk blkid readlink findmnt blockdev awk sgdisk partprobe
+    # partprobe is absent on the RHCOS base OS, so the table reread uses
+    # 'blockdev --rereadpt'. sgdisk is only needed for a GPT image (required
+    # lazily inside fixup_table), because the media this tooling assembles is now
+    # DOS/MBR. (fontivan / DoR)
+    require_cmd dd sync stat lsblk blkid readlink findmnt blockdev awk sfdisk udevadm
 
     if [ "$(id -u)" -ne 0 ] && [ "${DRY_RUN}" != "true" ]; then
         die "must run as root to write to a block device"
@@ -193,12 +197,26 @@ function cmd_write {
 
     local dd_cmd="dd if=${IMAGE} of=${TARGET} bs=4M conv=fsync status=progress"
     if [ "${DRY_RUN}" = "true" ]; then
+        local img_pttype
+        img_pttype=$(blkid -s PTTYPE -o value "${IMAGE}" 2>/dev/null || true)
         echo "==> [dry-run] all safety checks passed. Would run:"
         echo "    ${dd_cmd}"
         echo "    sync"
-        echo "    sgdisk --move-second-header ${TARGET}    # relocate backup GPT to device end"
-        echo "    partprobe ${TARGET}"
-        echo "    sgdisk --verify ${TARGET}                # confirm the GPT is valid"
+        case "${img_pttype}" in
+            gpt)
+                echo "    sgdisk --move-second-header ${TARGET}        # relocate backup GPT to device end"
+                echo "    blockdev --rereadpt ${TARGET} && udevadm settle"
+                echo "    sgdisk --verify ${TARGET}                    # confirm the GPT is valid"
+                ;;
+            dos)
+                echo "    blockdev --rereadpt ${TARGET} && udevadm settle   # partprobe is absent on RHCOS"
+                echo "    sfdisk --verify ${TARGET}                    # validate the MBR table"
+                echo "    # confirm the ibi-images / ibi-status FS labels resolve on ${TARGET}"
+                ;;
+            *)
+                echo "    # WARNING: could not detect a GPT or DOS table on ${IMAGE} (PTTYPE='${img_pttype:-<none>}')"
+                ;;
+        esac
         return 0
     fi
 
@@ -206,68 +224,139 @@ function cmd_write {
     echo "==> Writing ${IMAGE} to ${TARGET}"
     dd if="${IMAGE}" of="${TARGET}" bs=4M conv=fsync status=progress
     sync
-    fixup_gpt "${base}"
+    fixup_table "${base}"
     echo "==> Write complete. Run '${PROG} arm-boot --target ${TARGET}' to one-shot boot into it."
 }
 
-# fixup_gpt repairs the GPT after a byte-for-byte dd. image_fits only guarantees
-# the image is no larger than the target, so when the stick is bigger than the
-# image (the common case) dd leaves the image's backup GPT header partway into
-# the device instead of at its last sector - an invalid secondary GPT that
-# firmware and tooling may reject. 'sgdisk --move-second-header' relocates the
-# backup structures to the real end of the device (a no-op when sizes match),
-# then we re-read the table and verify it so a broken GPT fails loudly here
-# rather than at boot time on the lab host. (fontivan review)
-function fixup_gpt {
+# reread_table asks the kernel to re-read the device's partition table and waits
+# for the nodes to settle. partprobe is absent on the RHCOS base OS, so the reread
+# uses 'blockdev --rereadpt'. A failed reread means the kernel may still expose the
+# stale layout, so it is treated as a write failure. (fontivan / DoR; CodeRabbit)
+function reread_table {
+    local dev="$1"
+    blockdev --rereadpt "${dev}" || die "could not reread partition table on ${dev}"
+    udevadm settle 2>/dev/null || true
+}
+
+# fixup_table makes the freshly written stick's partition table valid for its
+# label type. dd copies the image byte-for-byte, and image_fits only guarantees
+# the image is no larger than the target, so:
+#   * GPT  - when the stick is bigger than the image the backup GPT header lands
+#            partway into the device instead of at its last sector (an invalid
+#            secondary GPT). 'sgdisk --move-second-header' relocates it to the real
+#            end (a no-op when sizes match), then we verify it.
+#   * DOS/MBR - what usb-ibi-assemble-media.sh now produces. The MBR table lives at
+#            sector 0 and is valid regardless of device size; there is NO secondary
+#            header to relocate, so GPT relocation and 'sgdisk --verify' must NOT
+#            run on it. We validate the MBR table and the data-partition labels
+#            instead. (fontivan / DoR)
+# In both cases the kernel reread uses reread_table (blockdev --rereadpt).
+function fixup_table {
     local base="$1"
     local dev="/dev/${base}"
-    echo "==> Relocating GPT backup header to the end of ${dev} and verifying"
-    sgdisk --move-second-header "${dev}" || die "could not relocate GPT backup header on ${dev}"
-    # A failed reread means the kernel may still expose the old layout, so treat
-    # it as a write failure rather than continuing: 'sgdisk --verify' only checks
-    # the on-disk GPT and can pass while the kernel map is stale. (CodeRabbit review)
-    partprobe "${dev}" 2>/dev/null || die "could not reread partition table on ${dev}"
-    sgdisk --verify "${dev}" || die "GPT verification failed on ${dev} after write"
+    local pttype
+    pttype=$(blkid -s PTTYPE -o value "${dev}" 2>/dev/null || true)
+    case "${pttype}" in
+        gpt)
+            require_cmd sgdisk
+            echo "==> GPT target: relocating backup header to the end of ${dev} and verifying"
+            sgdisk --move-second-header "${dev}" || die "could not relocate GPT backup header on ${dev}"
+            reread_table "${dev}"
+            # 'sgdisk --verify' only checks the on-disk GPT; the reread above is
+            # what guarantees the kernel map is not stale. (CodeRabbit review)
+            sgdisk --verify "${dev}" || die "GPT verification failed on ${dev} after write"
+            ;;
+        dos)
+            echo "==> DOS/MBR target: re-reading and validating the partition table on ${dev}"
+            reread_table "${dev}"
+            sfdisk --verify "${dev}" || die "partition table verification failed on ${dev} after write"
+            verify_contract_labels "${base}"
+            ;;
+        *)
+            die "unrecognized partition table type on ${dev} (PTTYPE='${pttype:-<none>}'); refusing to validate the write"
+            ;;
+    esac
+}
+
+# verify_contract_labels confirms the data partitions survived the write by
+# resolving the contract filesystem labels among the TARGET device's own
+# partitions (never a global 'blkid -L', which could match another disk). Both
+# media profiles carry ibi-images and ibi-status; cluster-config is self-contained
+# only and therefore not required here.
+function verify_contract_labels {
+    local base="$1"
+    local label dev fslabel found
+    for label in ibi-images ibi-status; do
+        found=
+        while read -r dev; do
+            [ -b "${dev}" ] || continue
+            fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
+            if [ "${fslabel}" = "${label}" ]; then
+                found="${dev}"
+                break
+            fi
+        done < <(lsblk -rno NAME,TYPE "/dev/${base}" | awk '$2 == "part" { print "/dev/"$1 }')
+        [ -n "${found}" ] || \
+            die "expected data-partition label '${label}' not found on /dev/${base} after write"
+        echo "    ok: ${label} -> ${found}"
+    done
 }
 
 # entry_matches_target returns success only if the given efibootmgr boot entry's
-# device path points at a GPT partition on /dev/${base}. A four-hex-digit entry
-# can equally name the host disk, a NIC/PXE path, or another device, so the
-# format check alone proves nothing. 'efibootmgr -v' prints each entry's device
-# path, e.g.
+# device path points at the target disk /dev/${base}. A four-hex-digit entry can
+# equally name the host disk, a NIC/PXE path, or another device, so the format
+# check alone proves nothing. 'efibootmgr -v' prints each entry's device path with
+# an HD(...) node that carries either a GPT partition UUID or, for a DOS/MBR disk
+# (what this tooling now assembles), the 32-bit MBR disk signature, e.g.
 #   Boot0003* RHCOS  HD(1,GPT,2b2f...-...,0x800,0x64000)/File(\EFI\BOOT\BOOTX64.EFI)
-# We extract the GPT partition UUID from the HD(...) node and match it (case-
-# insensitively) against the PARTUUIDs of the target disk's partitions. If no
-# GPT UUID can be extracted, or it matches no partition on the target, the match
-# cannot be established and we fail so the caller aborts.
+#   Boot0004* RHCOS  HD(1,MBR,0x0980183f,0x800,0x64000)/File(\EFI\BOOT\BOOTX64.EFI)
+# We extract whichever identifier is present and match it (case-insensitively)
+# against the target:
+#   * GPT -> the PARTUUIDs of /dev/${base}'s partitions
+#   * MBR -> the disk's PTUUID (its MBR signature)
+# If no identifier can be extracted, or none matches, the match cannot be
+# established and we fail so the caller aborts.
 function entry_matches_target {
     local entry="$1" base="$2"
-    local line entry_uuid part_uuids u
+    local line
 
     line=$(efibootmgr -v | grep -iE "^Boot${entry}\*? " || true)
     [ -n "${line}" ] || return 1
 
-    entry_uuid=$(printf '%s\n' "${line}" \
+    # GPT partition-UUID form: HD(<n>,GPT,<uuid>,...).
+    local gpt_uuid u
+    gpt_uuid=$(printf '%s\n' "${line}" \
         | grep -ioE 'HD\([0-9]+,GPT,[0-9a-fA-F-]+' \
         | head -n1 \
         | sed -E 's/.*,GPT,//')
-    [ -n "${entry_uuid}" ] || return 1
+    if [ -n "${gpt_uuid}" ]; then
+        while read -r u; do
+            [ -n "${u}" ] || continue
+            [ "${u,,}" = "${gpt_uuid,,}" ] && return 0
+        done < <(lsblk -nro PARTUUID "/dev/${base}" 2>/dev/null || true)
+        return 1
+    fi
 
-    part_uuids=$(lsblk -nro PARTUUID "/dev/${base}" 2>/dev/null || true)
-    [ -n "${part_uuids}" ] || return 1
+    # MBR disk-signature form: HD(<n>,MBR,0x<sig>,...). blkid prints the PTUUID
+    # without the leading 0x, so normalize both before comparing.
+    local mbr_sig ptuuid
+    mbr_sig=$(printf '%s\n' "${line}" \
+        | grep -ioE 'HD\([0-9]+,MBR,0x[0-9a-fA-F]+' \
+        | head -n1 \
+        | sed -E 's/.*,MBR,0x//')
+    if [ -n "${mbr_sig}" ]; then
+        ptuuid=$(blkid -s PTUUID -o value "/dev/${base}" 2>/dev/null | sed -E 's/^0x//')
+        [ -n "${ptuuid}" ] || return 1
+        [ "${mbr_sig,,}" = "${ptuuid,,}" ] && return 0
+        return 1
+    fi
 
-    while read -r u; do
-        [ -n "${u}" ] || continue
-        if [ "${u,,}" = "${entry_uuid,,}" ]; then
-            return 0
-        fi
-    done <<< "${part_uuids}"
     return 1
 }
 
 function cmd_arm_boot {
     [ -n "${TARGET}" ] || { echo "${PROG}: --target is required for 'arm-boot'" >&2; usage 1; }
-    require_cmd efibootmgr readlink lsblk grep sed
+    require_cmd efibootmgr readlink lsblk blkid grep sed
 
     local base
     base=$(resolve_target "${TARGET}")
@@ -289,13 +378,13 @@ function cmd_arm_boot {
     [[ "${entry}" =~ ^[0-9A-Fa-f]{4}$ ]] || die "invalid boot entry (expected 4 hex digits): ${entry}"
 
     # The format check does not prove the entry boots the target media. Confirm
-    # the entry's device path resolves to a partition on /dev/${base} before
-    # arming it, so arm-boot cannot reboot the host into its own disk, the
-    # network, or some other device.
+    # the entry's device path resolves to /dev/${base} (by GPT partition UUID or
+    # MBR disk signature) before arming it, so arm-boot cannot reboot the host into
+    # its own disk, the network, or some other device.
     if ! entry_matches_target "${entry}" "${base}"; then
-        die "boot entry ${entry} does not resolve to a GPT partition on /dev/${base}; refusing to set BootNext. Verify the entry with 'efibootmgr -v' and that the target media is enumerated."
+        die "boot entry ${entry} does not resolve to /dev/${base}; refusing to set BootNext. Verify the entry with 'efibootmgr -v' and that the target media is enumerated."
     fi
-    echo "==> Verified boot entry ${entry} points at a partition on /dev/${base}"
+    echo "==> Verified boot entry ${entry} points at /dev/${base}"
 
     local arm_cmd="efibootmgr --bootnext ${entry}"
     if [ "${DRY_RUN}" = "true" ]; then

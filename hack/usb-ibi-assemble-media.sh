@@ -2,28 +2,38 @@
 #
 # usb-ibi-assemble-media.sh - throwaway bootstrap tooling for USB-IBI testing (CNF-27197).
 #
-# Hand-assembles the initial four-partition USB-IBI test media before the
-# create-usb stories (CNF-27158 and later) land, so the media can be boot-tested
-# on reference GNR-D lab hardware under UEFI Secure Boot. This is a Phase-0 spike
-# aid - it is deliberately simple and NOT a replacement for the eventual
-# `lca-cli create-usb` command.
+# Hand-assembles the initial USB-IBI test media before the create-usb stories
+# (CNF-27158 and later) land, so the media can be boot-tested on reference GNR-D
+# lab hardware under UEFI Secure Boot. This is a Phase-0 spike aid - it is
+# deliberately simple and NOT a replacement for the eventual `lca-cli create-usb`
+# command.
 #
-# It implements candidate layout (a) - "append after the isohybrid ISO":
-# the RHCOS live ISO is written to the front of the image as an isohybrid, then
-# the data partitions are appended in the free space after it. See
-# docs/enhancements/usb-ibi-testing-workflow.md for the full rationale and the
-# un-implemented alternatives (b) and (c).
+# It implements candidate layout (a) - "append after the live ISO", using the
+# ISO's own DOS/MBR table: the RHCOS live ISO is copied unchanged to the front of
+# the image, then the data partitions are appended in the free MBR slots after it.
 #
-# Partitions are addressed BY FILESYSTEM LABEL, never by a hard-coded GPT number,
-# so both media profiles share one code path. GPT partitions are numbered
-# contiguously 1..N in on-disk order; the pN names from the proposal are logical
-# roles identified by label:
+# WHY MBR, not GPT (fontivan / Developer of Record, milestone-2 hardware test):
+# a real RHCOS isohybrid live ISO has a hybrid DOS/GPT layout, and
+# 'sgdisk --move-second-header' fails on it with "Invalid partition data!", so a
+# GPT append path cannot assemble media. Appending into the ISO's existing DOS/MBR
+# table with sfdisk preserved the ISO and its EFI entries; Linux exposed the added
+# partitions and their XFS/ext4 labels resolved (validated via loop-device
+# inspection; not yet booted on hardware - see the findings doc).
 #
-#   self-contained : GPT1 live ISO | GPT2 ibi-images | GPT3 cluster-config | GPT4 ibi-status
-#   install-only   : GPT1 live ISO | GPT2 ibi-images | GPT3 ibi-status
+# Partitions are addressed BY FILESYSTEM LABEL, never by a hard-coded partition
+# number, so both media profiles share one discovery path. They are CREATED in a
+# fixed order in the free MBR slots after the ISO:
+#
+#   install-only   : <ISO primaries> | p3 ibi-images | p4 ibi-status
+#   self-contained : <ISO primaries> | p3 ibi-images | p4 extended
+#                                       -> p5 cluster-config | p6 ibi-status
+#
+# The ISO's own primary partitions are snapshotted before the append and are never
+# touched, so mkfs can never clobber the ISO's ISO9660 / EFI partitions.
 #
 # Requires (run as root, destructive to the output image/device):
-#   sgdisk, losetup, partprobe, blkid, mkfs.xfs, mkfs.ext4, cp/dd, mount, sync
+#   sfdisk, losetup, blockdev, udevadm, blkid, lsblk, awk, mkfs.xfs, mkfs.ext4,
+#   dd, truncate, stat, mktemp, mount, umount, sync
 #   coreos-installer (only when --ignition is given, to embed the ignition config)
 #
 
@@ -41,6 +51,9 @@ declare -i IMAGES_SIZE_MB=4096
 declare -i CONFIG_SIZE_MB=512
 declare -i STATUS_SIZE_MB=256
 declare -i SLACK_MB=64
+# EXT_SLACK_MB pads the self-contained extended container so it holds both logical
+# partitions plus their per-logical EBR + 1 MiB alignment overhead.
+declare -i EXT_SLACK_MB=16
 declare KEEP_LOOP=false
 
 # FS labels - the on-node code (prepare / post-pivot) discovers partitions by
@@ -51,18 +64,21 @@ declare -r LABEL_STATUS="ibi-status"
 
 declare LOOP_DEV=
 declare -a MOUNTS=()
+# ISO_PARTS holds the partition device nodes that belong to the live ISO (captured
+# before the data partitions are appended). They are never formatted or mounted.
+declare -a ISO_PARTS=()
 
 function usage {
     cat <<EOF
 Usage: ${PROG} --profile <self-contained|install-only> --iso <live.iso> --output <media.img> --ibi-images <oci-dir> [--cluster-config <tree-dir>] [--ignition <config.ign>] [--images-size <MB>] [--config-size <MB>] [--status-size <MB>]
 
-Assembles the initial USB-IBI test media (layout "a": append after the ISO).
+Assembles the initial USB-IBI test media (layout "a": append after the ISO, MBR).
 
 Options:
     --profile         Media profile. "self-contained" builds the ISO plus the
                       ibi-images, cluster-config and ibi-status partitions;
                       "install-only" omits cluster-config. (required)
-    --iso             RHCOS live ISO written to the front of the media. (required)
+    --iso             RHCOS live ISO copied unchanged to the front of the media. (required)
     --output          Output image (.img) file to assemble. (required)
     --ibi-images      Directory populated into the ${LABEL_IMAGES} partition
                       (an OCI image layout, e.g. from 'skopeo copy oci:...' or
@@ -83,7 +99,8 @@ Example:
     sudo ${PROG} --profile self-contained --iso rhcos-live.iso --output usb-ibi.img --ibi-images ./oci-layout --cluster-config ./opt-openshift --ignition ./ibi.ign
 
 Note: this is throwaway spike tooling (CNF-27197). It is destructive to the
-output image/device and must run as root.
+output image/device and must run as root. It operates entirely on the output
+image file; write it to a stick or attach it as virtual media separately.
 EOF
     exit "${1:-1}"
 }
@@ -204,8 +221,9 @@ function embed_ignition {
     coreos-installer iso ignition embed --force --ignition-file "${IGNITION}" "${ISO}"
 }
 
-# create_image sizes and lays down the output image, writes the ISO to the front
-# as an isohybrid, then attaches it to a loop device.
+# create_image sizes and lays down the output image, copies the live ISO unchanged
+# to the front, then attaches it to a loop device. The ISO is copied byte-for-byte
+# so its DOS/MBR table (and the EFI entries that make it bootable) are preserved.
 function create_image {
     local iso_bytes total_mb iso_mb
     iso_bytes=$(stat -c %s "${ISO}")
@@ -213,12 +231,12 @@ function create_image {
 
     total_mb=$(( iso_mb + IMAGES_SIZE_MB + STATUS_SIZE_MB + SLACK_MB ))
     if [ "${PROFILE}" = "self-contained" ]; then
-        total_mb=$(( total_mb + CONFIG_SIZE_MB ))
+        total_mb=$(( total_mb + CONFIG_SIZE_MB + EXT_SLACK_MB ))
     fi
 
     echo "==> Creating ${OUTPUT} (${total_mb} MB; ISO ${iso_mb} MB + data partitions)"
-    # Step 1: write the isohybrid live ISO to the front of the output, then grow
-    # the file to the full media size so the data partitions have room to follow.
+    # Step 1: copy the live ISO unchanged to the front of the output, then grow the
+    # file to the full media size so the data partitions have room to follow.
     dd if="${ISO}" of="${OUTPUT}" bs=1M conv=fsync status=none
     truncate -s "${total_mb}M" "${OUTPUT}"
 
@@ -226,80 +244,135 @@ function create_image {
     echo "==> Attached ${OUTPUT} to ${LOOP_DEV}"
 }
 
-# append_partitions converts the ISO's table to GPT, moves the backup header to
-# the end of the grown media, and appends the data partitions in free space.
-function append_partitions {
-    echo "==> Repairing GPT and moving backup header to end of device"
-    # Step 2: the ISO wrote a protective MBR / small table at the front; relocate
-    # the secondary GPT header to the end of the now-larger device.
-    sgdisk --move-second-header "${LOOP_DEV}"
-
-    echo "==> Appending data partitions (first-free-sector, sized)"
-    # Step 3: append each data partition into the free space after the ISO, in
-    # label order. partition number 0 means "next free number".
-    sgdisk --new=0:0:+"${IMAGES_SIZE_MB}"M \
-        --change-name=0:"${LABEL_IMAGES}" "${LOOP_DEV}"
-    if [ "${PROFILE}" = "self-contained" ]; then
-        sgdisk --new=0:0:+"${CONFIG_SIZE_MB}"M \
-            --change-name=0:"${LABEL_CONFIG}" "${LOOP_DEV}"
-    fi
-    sgdisk --new=0:0:+"${STATUS_SIZE_MB}"M \
-        --change-name=0:"${LABEL_STATUS}" "${LOOP_DEV}"
-
-    partprobe "${LOOP_DEV}"
+# reread_table asks the kernel to re-read LOOP_DEV's partition table and waits for
+# the device nodes to settle. partprobe is NOT used: it is absent on the RHCOS
+# base OS (fontivan / DoR), so the supported reread is 'blockdev --rereadpt'. A
+# failed reread means the kernel may still expose the old layout, so it aborts.
+function reread_table {
+    blockdev --rereadpt "${LOOP_DEV}" || die "could not reread partition table on ${LOOP_DEV}"
     udevadm settle 2>/dev/null || true
 }
 
-# part_dev_by_gpt_label prints the partition device node whose GPT partition name
-# matches the given label (set with --change-name above). We resolve by GPT name
-# rather than by a hard-coded number: the live ISO itself contributes a VARIABLE
-# number of GPT partitions (ISO9660 filesystem + EFI System Partition), so the
-# appended data partitions are not at fixed indices. Addressing anything by a
-# fixed number here risks running mkfs over the ISO's ESP and breaking boot.
-function part_dev_by_gpt_label {
-    local label="$1"
-    local name
-    name=$(lsblk -rno NAME,PARTLABEL "${LOOP_DEV}" \
-        | awk -v l="${label}" '$2 == l { print $1; exit }')
-    [ -n "${name}" ] || die "could not resolve partition by GPT label: ${label}"
-    echo "/dev/${name}"
+# iso_part_nodes prints every partition device node currently in LOOP_DEV's table.
+function iso_part_nodes {
+    sfdisk --dump "${LOOP_DEV}" 2>/dev/null | awk '/ : start=/ { print $1 }'
+}
+
+# is_iso_part returns success if the given device node is one of the ISO's own
+# partitions snapshotted before the append (and therefore must never be touched).
+function is_iso_part {
+    local d="$1" p
+    for p in "${ISO_PARTS[@]}"; do
+        [ "${p}" = "${d}" ] && return 0
+    done
+    return 1
+}
+
+# data_part_devs prints the data partition device nodes we appended, in creation
+# order (ibi-images, [cluster-config,] ibi-status). It selects the Linux (type 83)
+# partitions from the current table and excludes both the ISO's own partitions and
+# the extended container (type 5), so the mapping never depends on a fixed index
+# and can never pick an ISO partition.
+function data_part_devs {
+    local dev
+    while read -r dev; do
+        is_iso_part "${dev}" && continue
+        echo "${dev}"
+    done < <(sfdisk --dump "${LOOP_DEV}" 2>/dev/null | awk '/ : start=/ && /type=83/ { print $1 }')
+}
+
+# append_partitions appends the data partitions into the free MBR slots after the
+# ISO using sfdisk. The ISO's hybrid DOS/GPT layout is left intact (no GPT backup
+# relocation - it fails on the real ISO); sfdisk --append only adds partitions.
+function append_partitions {
+    echo "==> Snapshotting the ISO's partitions (never touched) before appending"
+    mapfile -t ISO_PARTS < <(iso_part_nodes)
+    [ "${#ISO_PARTS[@]}" -gt 0 ] || \
+        die "no partitions found on ${LOOP_DEV}; is ${ISO} a RHCOS isohybrid live ISO?"
+
+    echo "==> Appending data partitions into the free MBR slots after the ISO"
+    if [ "${PROFILE}" = "self-contained" ]; then
+        # p3 = ibi-images (primary), p4 = extended container, p5 = cluster-config
+        # (logical), p6 = ibi-status (logical). The extended is sized to hold both
+        # logicals plus their EBR/alignment overhead (EXT_SLACK_MB).
+        local -i ext_mb
+        ext_mb=$(( CONFIG_SIZE_MB + STATUS_SIZE_MB + EXT_SLACK_MB ))
+        sfdisk --append "${LOOP_DEV}" <<EOF
+size=${IMAGES_SIZE_MB}M, type=83
+size=${ext_mb}M, type=5
+size=${CONFIG_SIZE_MB}M, type=83
+size=${STATUS_SIZE_MB}M, type=83
+EOF
+    else
+        # install-only: the two free primary slots p3 = ibi-images, p4 = ibi-status.
+        sfdisk --append "${LOOP_DEV}" <<EOF
+size=${IMAGES_SIZE_MB}M, type=83
+size=${STATUS_SIZE_MB}M, type=83
+EOF
+    fi
+
+    reread_table
 }
 
 # format_and_label creates the filesystem on each data partition and sets its FS
-# label to the exact contract string. The label - not the GPT number - is how
-# the on-node code finds each partition, so this step is mandatory. Partitions
-# are located by their GPT name (set during append), never by a fixed index.
+# label to the exact contract string. The label - not the partition number - is
+# how the on-node code finds each partition, so this step is mandatory. The
+# partitions are addressed in creation order from data_part_devs (which already
+# excludes the ISO's partitions and the extended container).
 function format_and_label {
     echo "==> Formatting and labelling data partitions"
-    mkfs.xfs -f -L "${LABEL_IMAGES}" "$(part_dev_by_gpt_label "${LABEL_IMAGES}")"
-    if [ "${PROFILE}" = "self-contained" ]; then
-        mkfs.ext4 -F -L "${LABEL_CONFIG}" "$(part_dev_by_gpt_label "${LABEL_CONFIG}")"
-    fi
-    mkfs.ext4 -F -L "${LABEL_STATUS}" "$(part_dev_by_gpt_label "${LABEL_STATUS}")"
+    local -a parts
+    mapfile -t parts < <(data_part_devs)
 
-    partprobe "${LOOP_DEV}"
+    local -i want=2
+    [ "${PROFILE}" = "self-contained" ] && want=3
+    [ "${#parts[@]}" -eq "${want}" ] || \
+        die "expected ${want} appended data partitions, found ${#parts[@]}: ${parts[*]:-<none>}"
+
+    mkfs.xfs -f -L "${LABEL_IMAGES}" "${parts[0]}"
+    if [ "${PROFILE}" = "self-contained" ]; then
+        mkfs.ext4 -F -L "${LABEL_CONFIG}" "${parts[1]}"
+        mkfs.ext4 -F -L "${LABEL_STATUS}" "${parts[2]}"
+    else
+        mkfs.ext4 -F -L "${LABEL_STATUS}" "${parts[1]}"
+    fi
+
     udevadm settle 2>/dev/null || true
 }
 
-# mount_by_label mounts the partition with the given label under a fresh temp
-# dir and records it for cleanup. It sets MOUNT_PATH (a global in the parent
+# part_dev_by_fs_label prints the partition device node on LOOP_DEV whose
+# FILESYSTEM label matches the given label. It scans only LOOP_DEV's own
+# partitions (not a global 'blkid -L', which could match a same-labelled partition
+# on another attached disk and make populate write onto the wrong media). MBR
+# partitions carry no partition name, so the filesystem label set by
+# format_and_label is the only reliable, profile-independent key.
+function part_dev_by_fs_label {
+    local label="$1"
+    local dev fslabel
+    while read -r dev; do
+        [ -b "${dev}" ] || continue
+        fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
+        if [ "${fslabel}" = "${label}" ]; then
+            echo "${dev}"
+            return 0
+        fi
+    done < <(lsblk -rno NAME,TYPE "${LOOP_DEV}" | awk '$2 == "part" { print "/dev/"$1 }')
+    die "could not resolve partition by filesystem label on ${LOOP_DEV}: ${label}"
+}
+
+# mount_by_label mounts the partition with the given filesystem label under a fresh
+# temp dir and records it for cleanup. It sets MOUNT_PATH (a global in the parent
 # shell) to the mount point instead of printing it: it MUST NOT be called via
 # command substitution, because that runs in a subshell where the MOUNTS update
 # would never reach cleanup, leaking the mounts and the loop device on exit.
 #
-# The partition is resolved on LOOP_DEV by its GPT name (not with a global
-# 'blkid -L', which could match a same-labelled partition on another attached
-# disk and make populate write onto the wrong media), and its filesystem label
-# is confirmed before mounting. Addressing by label (not number) keeps the two
-# profiles on one code path.
+# The partition is resolved on LOOP_DEV by its filesystem label (see
+# part_dev_by_fs_label), which also confirms the label before we mount it.
 declare MOUNT_PATH=
 function mount_by_label {
     local label="$1"
-    local dev fslabel
-    dev=$(part_dev_by_gpt_label "${label}")
-    fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
-    [ "${fslabel}" = "${label}" ] || \
-        die "filesystem label mismatch on ${dev}: expected '${label}', found '${fslabel:-<none>}'"
+    local dev
+    dev=$(part_dev_by_fs_label "${label}")
     MOUNT_PATH=$(mktemp -d)
     mount "${dev}" "${MOUNT_PATH}"
     MOUNTS+=("${MOUNT_PATH}")
@@ -332,22 +405,19 @@ function populate {
 # verify asserts the partition table is consistent and every expected label
 # resolves, so a failed assembly fails loudly rather than producing bad media.
 function verify {
-    echo "==> Verifying partition table and labels"
-    sgdisk --verify "${LOOP_DEV}"
+    echo "==> Verifying partition table and filesystem labels"
+    sfdisk --verify "${LOOP_DEV}" || die "partition table verification failed on ${LOOP_DEV}"
 
     local expected=("${LABEL_IMAGES}" "${LABEL_STATUS}")
     if [ "${PROFILE}" = "self-contained" ]; then
         expected=("${LABEL_IMAGES}" "${LABEL_CONFIG}" "${LABEL_STATUS}")
     fi
-    # Resolve each label on LOOP_DEV by its GPT name and confirm the filesystem
-    # label there, rather than with a global 'blkid -L' that could match a
-    # same-labelled partition on another attached disk and report a false "ok".
-    local label dev fslabel
+    # Resolve each label on LOOP_DEV by its filesystem label and confirm it, rather
+    # than with a global 'blkid -L' that could match a same-labelled partition on
+    # another attached disk and report a false "ok".
+    local label dev
     for label in "${expected[@]}"; do
-        dev=$(part_dev_by_gpt_label "${label}")
-        fslabel=$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)
-        [ "${fslabel}" = "${label}" ] || \
-            die "expected label did not resolve on ${LOOP_DEV} after assembly: ${label} (found '${fslabel:-<none>}' on ${dev})"
+        dev=$(part_dev_by_fs_label "${label}")
         echo "    ok: ${label} -> ${dev}"
     done
 }
@@ -355,7 +425,7 @@ function verify {
 function main {
     parse_args "$@"
     validate_args
-    require_cmd sgdisk losetup partprobe blkid lsblk awk mkfs.xfs mkfs.ext4 mount umount dd truncate stat mktemp
+    require_cmd sfdisk losetup blockdev udevadm blkid lsblk awk mkfs.xfs mkfs.ext4 mount umount dd truncate stat mktemp
 
     trap cleanup EXIT
 

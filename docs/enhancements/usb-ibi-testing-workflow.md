@@ -1,8 +1,11 @@
 # USB-IBI Testing Workflow — Findings & Decision Note
 
 > **Status:** Spike / investigation in progress (CNF-27197). Milestone 1 (tooling + this note) is
-> delivered by this PR. Milestone 2 (the hardware findings) is completed on lab hardware and recorded
-> below. Sections marked **TODO: complete on lab hardware** are filled in during milestone 2.
+> delivered by this PR. Milestone 2 (the hardware findings) is in progress on lab hardware and recorded
+> below; the first results (a codex-driven dry run on a real RHCOS 9.8 ISO) have already redirected the
+> assembly method from GPT to DOS/MBR — see §2.2. Sections marked **TODO: complete on lab hardware** are
+> filled in as milestone 2 proceeds; results **validated through loop-device inspection** are called out as
+> such and are **not** a substitute for a confirmed on-hardware boot.
 > **Jira:** [CNF-27197](https://redhat.atlassian.net/browse/CNF-27197) — *[Spike] Establish an initial
 > testing workflow for USB-IBI (real lab hardware vs. virtual media)*.
 > **Design reference:** [USB-Based IBI for Disconnected SNO](https://github.com/openshift-kni/lifecycle-agent/pull/8693)
@@ -72,56 +75,69 @@ that tooling lands, this spike owns producing the initial test images with throw
 
 ### 2.1 Precise media layout rule
 
-The on-node code discovers data partitions **by filesystem label**, not by GPT partition number (proposal
+The on-node code discovers data partitions **by filesystem label**, not by partition number (proposal
 §4: `ibi-images` is found by label; `post-pivot`'s `waitForConfiguration` scans for the `cluster-config`
-label; `ibi-status` is found by label). The numbering rule follows from that:
+label; `ibi-status` is found by label). The layout rule follows from that:
 
-- **GPT partitions are numbered contiguously 1..N in on-disk order.** The `pN` names in the proposal are
-  **logical roles identified by filesystem label**, not fixed GPT partition numbers.
-- **Self-contained** (data partitions, in on-disk order): `ibi-images`, then `cluster-config`, then
-  `ibi-status`, appended after the live ISO.
-- **Install-only** (no `cluster-config`): `ibi-images`, then `ibi-status`, appended after the live ISO.
-  The writable status partition is still discovered by its `ibi-status` label, so nothing on-node cares
-  where it lands in GPT order relative to the self-contained layout.
-- The script addresses partitions **by label after creation**, never by a hard-coded number, so both
-  profiles use one code path.
-- **Caveat — the live ISO is not a single GPT partition.** A real RHCOS isohybrid live ISO contributes
-  **more than one** GPT partition (the ISO9660 filesystem plus an EFI System Partition), so the appended
-  data partitions do **not** start at GPT index 2. The "GPT N" column below is the *logical role order*
-  for readability only. The assembly script therefore sets a GPT partition **name** on each appended
-  partition (`sgdisk --change-name`) and resolves the node by that name before running `mkfs` — it never
-  assumes a fixed index, which is what keeps it from clobbering the ISO's EFI partition.
+- The assembly script addresses partitions **by filesystem label**, never by a hard-coded number, so both
+  profiles share one discovery path. The `pN` names in the proposal are **logical roles identified by
+  filesystem label**, not fixed partition numbers.
+- **The media uses the ISO's own DOS/MBR table** (see §2.2 for why GPT was ruled out). The live ISO
+  occupies the first MBR primary slots; the data partitions are appended into the **free slots after it**:
+  - **Install-only** — the two free primary slots: `p3 = ibi-images`, `p4 = ibi-status`.
+  - **Self-contained** — `p3 = ibi-images`, `p4 = an MBR extended container`, with logical partitions
+    `p5 = cluster-config` and `p6 = ibi-status` inside it.
+- **The ISO's own partitions are never touched.** The script snapshots them before the append and formats
+  only the partitions it added, so `mkfs` can never clobber the ISO's ISO9660 / EFI partitions.
+- The `pN` numbers above describe how the script *creates* the partitions; on-node code and the script's
+  own mount/verify steps still locate each one **by filesystem label**.
 
-| Role (logical order) | Label | FS | Self-contained | Install-only | Contents |
+| Role | Label | FS | Self-contained | Install-only | Contents |
 | --- | --- | --- | --- | --- | --- |
-| live ISO | — (ISO9660/EFI) | — | first (1+ GPT parts) | first (1+ GPT parts) | RHCOS live ISO + embedded ignition that auto-runs `lca-cli ibi -f <cfg>` |
-| images | `ibi-images` | xfs | appended | appended | OCI image layout (seed + referenced images) |
-| config | `cluster-config` | ext4 | appended | — | `/opt/openshift/...` reconfigure tree |
-| status | `ibi-status` | ext4 | appended | appended | per-phase records + logs (writable, journaled) |
+| live ISO | — (ISO9660/EFI) | — | first (MBR primaries) | first (MBR primaries) | RHCOS live ISO + embedded ignition that auto-runs `lca-cli ibi -f <cfg>` |
+| images | `ibi-images` | xfs | `p3` (primary) | `p3` (primary) | OCI image layout (seed + referenced images) |
+| config | `cluster-config` | ext4 | `p5` (logical) | — | `/opt/openshift/...` reconfigure tree |
+| status | `ibi-status` | ext4 | `p6` (logical) | `p4` (primary) | per-phase records + logs (writable, journaled) |
 
-### 2.2 Append method — layout (a) "append after the isohybrid ISO"
+### 2.2 Append method — layout (a) "append after the live ISO" (DOS/MBR)
 
-The script implements candidate layout **(a)** because it has RHCOS precedent. The concrete steps:
+The script implements candidate layout **(a)** because it has RHCOS precedent.
 
-1. Write the RHCOS live ISO to the front of the image/stick as an isohybrid (`coreos-installer iso
-   ignition embed` to auto-run `lca-cli ibi -f <cfg>`, then `dd` the ISO to the target). This lays down
-   the ISO's own protective MBR / EFI (El Torito) entries.
-2. Grow the target and move the backup GPT header to the end of the larger device
-   (`sgdisk --move-second-header`).
-3. Append the data partitions in the free space **after** the ISO region with `sgdisk --new=0:0:+<size>`
-   (next free number, first-free-sector, sized), in order `ibi-images` → [`cluster-config`] →
-   `ibi-status`, and set a GPT partition **name** on each with `sgdisk --change-name` so the node can be
-   located without assuming an index.
-4. Resolve each appended partition by its GPT name, then `mkfs` it and **set the FS label** to the exact
-   strings `ibi-images` / `cluster-config` / `ibi-status` (`mkfs.xfs -L` / `mkfs.ext4 -L`). The label is
-   the contract, so this step is mandatory and validated.
-5. Mount **by label**, populate (`skopeo copy` / OCI layout into `ibi-images`; the `/opt/openshift/...`
-   tree into `cluster-config` for self-contained; leave `ibi-status` empty), unmount, `sync`.
-6. `sgdisk --verify` + `partprobe`, and assert every expected label resolves.
+**Milestone-2 finding — GPT was ruled out, the method is now DOS/MBR.** The first hardware-side dry run
+(codex, on a real RHCOS 9.8 live ISO; Developer of Record) showed the ISO has a **hybrid DOS/GPT** layout
+on which `sgdisk --move-second-header` fails with *"Invalid partition data!"* — so a GPT append path
+**cannot** assemble media. Appending the data partitions into the ISO's **existing DOS/MBR** table instead
+preserved the ISO and its EFI boot entries; Linux exposed the added partitions and their XFS/ext4 labels
+resolved. This was **validated through loop-device inspection only — the modified MBR media has not yet
+been booted on hardware** (that, and the Secure Boot result, remain milestone-2 gates below). If the
+modified MBR media does not boot under Secure Boot, that result is recorded and a fresh-partitioned layout
+(b) is evaluated as the next candidate — the GPT path is not resurrected.
+
+The concrete steps:
+
+1. Copy the RHCOS live ISO **unchanged** to the front of the image (`coreos-installer iso ignition embed`
+   to auto-run `lca-cli ibi -f <cfg>`, then `dd` the ISO to the target), then grow the image to the full
+   media size. The byte-for-byte copy preserves the ISO's DOS/MBR table and its EFI entries.
+2. Append the data partitions into the free MBR slots **after** the ISO with `sfdisk --append` (it adds
+   partitions without disturbing the ISO's entries). No GPT backup-header relocation is performed —
+   `sgdisk --move-second-header` fails on the hybrid ISO.
+   - **Install-only** — two primaries: `p3 = ibi-images`, `p4 = ibi-status`.
+   - **Self-contained** — `p3 = ibi-images`, `p4 = extended container` sized to hold the logicals plus
+     their EBR/alignment overhead, then logical `p5 = cluster-config` and `p6 = ibi-status`.
+3. `mkfs` each appended partition and **set the FS label** to the exact strings `ibi-images` /
+   `cluster-config` / `ibi-status` (`mkfs.xfs -L` / `mkfs.ext4 -L`). The appended partitions are
+   identified as the Linux (type 83) partitions that are **not** part of the ISO's snapshot, so the ISO's
+   partitions are never formatted. The label is the contract, so this step is mandatory and validated.
+4. Mount **by filesystem label** (scanning only the assembled image's own partitions), populate
+   (`skopeo copy` / OCI layout into `ibi-images`; the `/opt/openshift/...` tree into `cluster-config` for
+   self-contained; leave `ibi-status` empty), unmount, `sync`.
+5. Re-read the table with `blockdev --rereadpt` + `udevadm settle` (**not** `partprobe` — it is absent on
+   the RHCOS base OS; see §2.4), run `sfdisk --verify`, and assert every expected label resolves.
 
 Layouts **(b)** fresh-partitioned and **(c)** files-in-ISO remain **documented, un-implemented**
-alternatives for the hardware spike to choose between — (a) is the default. Implementing all three up
-front is wasted throwaway effort; the hardware run decides whether (a) is sufficient or (b)/(c) is needed.
+alternatives for the hardware spike to fall back to — (a) (DOS/MBR) is the default and the next thing to
+boot-test. Implementing all three up front is wasted throwaway effort; the hardware run decides whether
+(a) boots under Secure Boot or (b)/(c) is needed.
 
 ### 2.3 Invoking the bootstrap script
 
@@ -152,8 +168,41 @@ BMC virtual media (§4).
 
 | Media-assembly finding | Result |
 | --- | --- |
-| Layout (a) assembles cleanly and all labels resolve | **TODO: complete on lab hardware** |
-| Whether (b) or (c) is needed instead | **TODO: complete on lab hardware** |
+| GPT append (`sgdisk --move-second-header`) on the real RHCOS ISO | **Fails** — *"Invalid partition data!"* on the hybrid DOS/GPT ISO; method changed to DOS/MBR |
+| Layout (a), DOS/MBR, assembles and all labels resolve (loop-device inspection) | **Validated via loop device** (ISO + EFI preserved; added partitions enumerated; XFS/ext4 labels resolved) |
+| Layout (a) media boots on hardware under Secure Boot | **TODO: complete on lab hardware** |
+| Whether (b) or (c) is needed instead | **TODO: complete on lab hardware** (only if (a) does not boot) |
+
+### 2.4 Supported assembly host
+
+Assembly runs **entirely on an image file** (loop-mounted); nothing is written to a USB until §5. Target a
+Linux host that ships:
+
+- `sfdisk`, `losetup`, `blockdev`, `udevadm` (partitioning and table reread),
+- `mkfs.xfs`, `mkfs.ext4` (data filesystems),
+- `blkid`, `lsblk` (label/partition resolution),
+- `coreos-installer` (only when `--ignition` is given).
+
+**`partprobe` is intentionally not required.** It is absent on the RHCOS base OS, so both scripts re-read
+the partition table with `blockdev --rereadpt` followed by `udevadm settle`. This keeps the tooling runnable
+on the lab SNO's own RHCOS base OS as well as a general Linux host. Labels are always validated before any
+USB write.
+
+### 2.5 Concrete test inputs (payload + ignition)
+
+To exercise the IBI `prepare` flow — not just bootability — supply real inputs:
+
+- **`--ibi-images` (the `ibi-images` partition):** a valid **OCI image layout** containing the seed image
+  and everything it references, e.g. produced by `skopeo copy docker://<seed> oci:./oci-layout:<tag>` or by
+  `oc-mirror` into an OCI directory. The `lca-cli ibi` prepare step imports from this partition by label.
+- **`--ignition` (embedded in the ISO):** an Ignition config that lays down the matching `lca-cli` invocation
+  and the IBI prepare configuration (the `--config`/seed reference) so the live environment auto-runs
+  `lca-cli ibi -f <cfg>` on boot. The `lca-cli` version embedded here must match the seed/payload.
+
+> **Caveat — an empty-payload image proves bootability and label discovery only.** Assembling with a stub
+> or empty `--ibi-images` directory is enough to confirm the media **boots** and that the data partitions
+> **enumerate and resolve by label**, but it **cannot** validate the IBI `prepare` step (image import,
+> precache, reconfigure). A real OCI payload plus the matching Ignition is required for that.
 
 ## 3. Manual boot-and-observe loop
 
@@ -227,6 +276,20 @@ sudo hack/usb-ibi-write-inplace.sh write \
 # 3. Arm a one-shot boot into the live media and reboot (separate step):
 sudo hack/usb-ibi-write-inplace.sh arm-boot --target /dev/disk/by-id/usb-<id>
 ```
+
+After `dd`, the writer **detects the table type** (`blkid -s PTTYPE`) and validates accordingly:
+
+- **DOS/MBR** (what the assembler now produces): the MBR table lives at sector 0 and is valid regardless of
+  the stick being larger than the image, so there is nothing to relocate. The writer re-reads the table
+  (`blockdev --rereadpt` + `udevadm settle`; `partprobe` is absent on RHCOS), runs `sfdisk --verify`, and
+  confirms the `ibi-images` / `ibi-status` labels resolve on the target.
+- **GPT** (kept for a GPT image): a byte-for-byte `dd` to a larger stick leaves the backup header partway
+  into the device, so the writer relocates it (`sgdisk --move-second-header`), re-reads, and runs
+  `sgdisk --verify`.
+
+`arm-boot` verifies the chosen UEFI entry's device path resolves to the target before setting `BootNext` —
+matching either the GPT partition UUID or, for the MBR media, the disk's MBR signature — so it cannot reboot
+the host into its own disk, the network, or another device.
 
 | In-place-write finding | Result |
 | --- | --- |
