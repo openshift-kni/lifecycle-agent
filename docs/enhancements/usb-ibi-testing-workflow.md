@@ -115,9 +115,11 @@ modified MBR media does not boot under Secure Boot, that result is recorded and 
 
 The concrete steps:
 
-1. Copy the RHCOS live ISO **unchanged** to the front of the image (`coreos-installer iso ignition embed`
-   to auto-run `lca-cli ibi -f <cfg>`, then `dd` the ISO to the target), then grow the image to the full
-   media size. The byte-for-byte copy preserves the ISO's DOS/MBR table and its EFI entries.
+1. Copy the RHCOS live ISO **unchanged** to the front of the image. When `--ignition` is given,
+   `coreos-installer iso ignition embed` runs against a **temporary copy** of the ISO (never the operator's
+   source ISO) so the live environment auto-runs `lca-cli ibi -f <cfg>`; that copy is then `dd`'d to the
+   target. Finally grow the image to the full media size. The byte-for-byte copy preserves the ISO's
+   DOS/MBR table and its EFI entries.
 2. Append the data partitions into the free MBR slots **after** the ISO with `sfdisk --append` (it adds
    partitions without disturbing the ISO's entries). No GPT backup-header relocation is performed —
    `sgdisk --move-second-header` fails on the hybrid ISO.

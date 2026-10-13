@@ -67,6 +67,9 @@ declare -a MOUNTS=()
 # ISO_PARTS holds the partition device nodes that belong to the live ISO (captured
 # before the data partitions are appended). They are never formatted or mounted.
 declare -a ISO_PARTS=()
+# EMBEDDED_ISO_DIR holds the temp copy of the ISO that embed_ignition writes to so
+# the operator's source ISO is never modified in place; cleanup removes it.
+declare EMBEDDED_ISO_DIR=
 
 function usage {
     cat <<EOF
@@ -133,6 +136,9 @@ function cleanup {
     fi
     if [ -n "${LOOP_DEV}" ] && [ "${KEEP_LOOP}" != "true" ]; then
         losetup -d "${LOOP_DEV}" 2>/dev/null || true
+    fi
+    if [ -n "${EMBEDDED_ISO_DIR}" ]; then
+        rm -rf -- "${EMBEDDED_ISO_DIR}" 2>/dev/null || true
     fi
     return "${rc}"
 }
@@ -212,13 +218,21 @@ function validate_args {
     fi
 }
 
-# embed_ignition optionally embeds the ignition config into the ISO so the live
-# environment auto-runs 'lca-cli ibi -f <cfg>'.
+# embed_ignition optionally embeds the ignition config so the live environment
+# auto-runs 'lca-cli ibi -f <cfg>'. 'coreos-installer iso ignition embed' rewrites
+# the positional ISO in place, so we embed into a throwaway copy and repoint ISO at
+# it; the operator's source ISO is left untouched (create_image then copies the
+# embedded copy). cleanup removes the temp dir.
 function embed_ignition {
     [ -n "${IGNITION}" ] || return 0
-    require_cmd coreos-installer
-    echo "==> Embedding ignition config into ${ISO}"
-    coreos-installer iso ignition embed --force --ignition-file "${IGNITION}" "${ISO}"
+    require_cmd coreos-installer mktemp
+    local embedded_iso
+    EMBEDDED_ISO_DIR=$(mktemp -d)
+    embedded_iso="${EMBEDDED_ISO_DIR}/$(basename "${ISO}")"
+    echo "==> Embedding ignition config into a temporary copy of ${ISO}"
+    coreos-installer iso ignition embed --force --ignition-file "${IGNITION}" \
+        --output "${embedded_iso}" "${ISO}"
+    ISO="${embedded_iso}"
 }
 
 # create_image sizes and lays down the output image, copies the live ISO unchanged
