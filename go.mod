@@ -31,7 +31,7 @@ require (
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.35.7
 	k8s.io/code-generator v0.37.1
-	open-cluster-management.io/api v1.3.0
+	open-cluster-management.io/api v1.4.0
 	open-cluster-management.io/config-policy-controller v0.19.0
 	open-cluster-management.io/governance-policy-propagator v0.20.0
 	sigs.k8s.io/controller-runtime v0.23.3
@@ -73,7 +73,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/opencontainers/runtime-spec v1.2.1 // indirect
