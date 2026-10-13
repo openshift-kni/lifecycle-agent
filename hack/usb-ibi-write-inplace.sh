@@ -179,7 +179,7 @@ function cmd_write {
     [ -n "${IMAGE}" ] || { echo "${PROG}: --image is required for 'write'" >&2; usage 1; }
     [ -n "${TARGET}" ] || { echo "${PROG}: --target is required for 'write'" >&2; usage 1; }
     [ -f "${IMAGE}" ] || die "image not found: ${IMAGE}"
-    require_cmd dd sync stat lsblk blkid readlink findmnt blockdev awk
+    require_cmd dd sync stat lsblk blkid readlink findmnt blockdev awk sgdisk partprobe
 
     if [ "$(id -u)" -ne 0 ] && [ "${DRY_RUN}" != "true" ]; then
         die "must run as root to write to a block device"
@@ -196,6 +196,9 @@ function cmd_write {
         echo "==> [dry-run] all safety checks passed. Would run:"
         echo "    ${dd_cmd}"
         echo "    sync"
+        echo "    sgdisk --move-second-header ${TARGET}    # relocate backup GPT to device end"
+        echo "    partprobe ${TARGET}"
+        echo "    sgdisk --verify ${TARGET}                # confirm the GPT is valid"
         return 0
     fi
 
@@ -203,7 +206,25 @@ function cmd_write {
     echo "==> Writing ${IMAGE} to ${TARGET}"
     dd if="${IMAGE}" of="${TARGET}" bs=4M conv=fsync status=progress
     sync
+    fixup_gpt "${base}"
     echo "==> Write complete. Run '${PROG} arm-boot --target ${TARGET}' to one-shot boot into it."
+}
+
+# fixup_gpt repairs the GPT after a byte-for-byte dd. image_fits only guarantees
+# the image is no larger than the target, so when the stick is bigger than the
+# image (the common case) dd leaves the image's backup GPT header partway into
+# the device instead of at its last sector - an invalid secondary GPT that
+# firmware and tooling may reject. 'sgdisk --move-second-header' relocates the
+# backup structures to the real end of the device (a no-op when sizes match),
+# then we re-read the table and verify it so a broken GPT fails loudly here
+# rather than at boot time on the lab host. (fontivan review)
+function fixup_gpt {
+    local base="$1"
+    local dev="/dev/${base}"
+    echo "==> Relocating GPT backup header to the end of ${dev} and verifying"
+    sgdisk --move-second-header "${dev}" || die "could not relocate GPT backup header on ${dev}"
+    partprobe "${dev}" 2>/dev/null || true
+    sgdisk --verify "${dev}" || die "GPT verification failed on ${dev} after write"
 }
 
 # entry_matches_target returns success only if the given efibootmgr boot entry's
