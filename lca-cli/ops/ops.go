@@ -50,6 +50,9 @@ const (
 	defaultEtcdHealthTimeout = 1 * time.Minute
 	etcdPollInterval         = 1 * time.Second
 	etcdRequestTimeout       = 5 * time.Second
+
+	defaultContainerStopTimeout = 2 * time.Minute
+	containerStopPollInterval   = 1 * time.Second
 )
 
 var podmanRecertArgs = []string{
@@ -123,6 +126,7 @@ type ops struct {
 	log                  *logrus.Logger
 	hostCommandsExecutor Execute
 	etcdTimeout          time.Duration
+	containerStopTimeout time.Duration
 }
 
 // NewOps creates and returns an Ops interface for executing host namespace operations
@@ -886,16 +890,25 @@ func (o *ops) StopClusterServices() error {
 	}
 	o.log.Info("crio status is ", crioSystemdStatus)
 	if crioSystemdStatus == "active" {
+		stopTimeout := o.containerStopTimeout
+		if stopTimeout == 0 {
+			stopTimeout = defaultContainerStopTimeout
+		}
+
 		// CRI-O is active, so stop running containers with retry
-		_ = wait.PollUntilContextCancel(context.TODO(), time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err = wait.PollUntilContextTimeout(context.Background(), containerStopPollInterval, stopTimeout, true, func(_ context.Context) (bool, error) {
 			o.log.Info("Stop running containers")
 			args := []string{"ps", "-q", "|", "xargs", "--no-run-if-empty", "--max-args", "1", "--max-procs", "10", "crictl", "stop", "--timeout", "5"}
-			_, err = o.RunBashInHostNamespace("crictl", args...)
-			if err != nil {
-				return false, fmt.Errorf("failed to stop running containers: %w", err)
+			if _, err := o.RunBashInHostNamespace("crictl", args...); err != nil {
+				o.log.Warnf("Failed to stop running containers, will retry: %v", err)
+				return false, nil
 			}
 			return true, nil
 		})
+		if err != nil {
+			// Log warning but don't fail - pod sandbox removal below force-removes remaining containers
+			o.log.Warnf("Failed to stop running containers gracefully (non-fatal): %v", err)
+		}
 
 		// Remove all pod sandboxes to prevent CRI-O startup delays during seedgen restoration.
 		// When CRI-O starts after restoration, it attempts to restore network status for each
