@@ -256,6 +256,61 @@ func TestPrepareAuthFilePathCrossChroot(t *testing.T) {
 		"file written to the outside-chroot path must be visible at the consumer reference path")
 }
 
+func TestChrootIfPathExists(t *testing.T) {
+	log := &logrus.Logger{}
+
+	// When the path is absent there is nothing to chroot into: no Chroot call, the working
+	// directory is left untouched, and the returned unchroot is a no-op.
+	t.Run("absent path skips chroot and leaves cwd untouched", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		ibi := NewIBIPrepare(log, mockOps, nil, nil, nil, &ibiconfig.IBIPrepareConfig{})
+
+		wdBefore, err := os.Getwd()
+		assert.NoError(t, err)
+
+		unchroot, err := ibi.chrootIfPathExists(filepath.Join(t.TempDir(), "does-not-exist"))
+		assert.NoError(t, err)
+		assert.NoError(t, unchroot())
+
+		wdAfter, err := os.Getwd()
+		assert.NoError(t, err)
+		assert.Equal(t, wdBefore, wdAfter, "cwd must be unchanged when chroot is skipped")
+	})
+
+	// When the path exists the process is chrooted and the working directory is moved into the
+	// new root ("/"), so relative paths (e.g. the precache --authfile) resolve against the new
+	// root instead of escaping to the pre-chroot directory. The unchroot func is propagated.
+	t.Run("present path chroots and chdirs into the new root", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		ibi := NewIBIPrepare(log, mockOps, nil, nil, nil, &ibiconfig.IBIPrepareConfig{})
+
+		wdBefore, err := os.Getwd()
+		assert.NoError(t, err)
+		// Chroot is mocked, so the os.Chdir("/") inside chrootIfPathExists really changes this
+		// process's cwd; restore it so later tests are unaffected.
+		defer func() { _ = os.Chdir(wdBefore) }()
+
+		chrootPath := t.TempDir()
+		unchrootCalled := false
+		mockOps.EXPECT().Chroot(chrootPath).Return(func() error {
+			unchrootCalled = true
+			return nil
+		}, nil).Times(1)
+
+		unchroot, err := ibi.chrootIfPathExists(chrootPath)
+		assert.NoError(t, err)
+
+		wdAfter, err := os.Getwd()
+		assert.NoError(t, err)
+		assert.Equal(t, "/", wdAfter, "cwd must be the new root after a successful chroot")
+
+		assert.NoError(t, unchroot())
+		assert.True(t, unchrootCalled, "the ops.Chroot unchroot func must be propagated to the caller")
+	})
+}
+
 func TestCleanupRhcosSysroot(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockOps := ops.NewMockOps(ctrl)

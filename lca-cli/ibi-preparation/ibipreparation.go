@@ -56,12 +56,17 @@ func (i *IBIPrepare) Run() error {
 	// passes common.IBIPullSecretFilePath to the seed pull and precache, so a synthetic empty
 	// authfile must exist. Provision it non-destructively and remove it on completion (including
 	// the error path via defer). The connected flow is untouched.
+	var removeAuthFile func()
 	if i.config.Disconnected {
 		cleanup, err := setupPrepareAuthFile(common.PathOutsideChroot(common.IBIPullSecretFilePath))
 		if err != nil {
 			return fmt.Errorf("failed to set up prepare auth file: %w", err)
 		}
-		defer cleanup()
+		removeAuthFile = cleanup
+		// Covers the error paths. On the success path the authfile is removed explicitly
+		// before the final sync below (so the removal is flushed to disk before shutdown);
+		// cleanup is idempotent, so this deferred call then becomes a no-op.
+		defer removeAuthFile()
 	}
 
 	// Pull seed image
@@ -93,6 +98,13 @@ func (i *IBIPrepare) Run() error {
 
 	if err := i.cleanupRhcosSysroot(); err != nil {
 		return fmt.Errorf("failed to cleanup rhcos sysroot: %w", err)
+	}
+
+	// Remove the synthetic authfile before the final sync so its removal is persisted to disk.
+	// shutdownNode may terminate the process before the deferred cleanup runs, and even if the
+	// defer does run it would execute after this final sync, leaving the removal unflushed.
+	if removeAuthFile != nil {
+		removeAuthFile()
 	}
 
 	i.log.Info("Syncing filesystems to disk")
@@ -132,7 +144,7 @@ func setupPrepareAuthFile(path string) (func(), error) {
 	return func() { _ = os.Remove(path) }, nil
 }
 
-func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) error {
+func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) (retErr error) {
 	if i.config.PrecacheDisabled {
 		i.log.Info("Precache disabled, skipping it")
 		return nil
@@ -171,6 +183,15 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
 
 	}
+	// Restore the root on every return path. Otherwise an error after chrooting would leave
+	// the process rooted at /host while Run()'s deferred authfile cleanup (an absolute /host
+	// path) executes, resolving it under the wrong root and leaking the synthetic authfile.
+	// Preserve any earlier error; only surface the unchroot failure when the flow succeeded.
+	defer func() {
+		if unchrootErr := unchroot(); retErr == nil {
+			retErr = unchrootErr
+		}
+	}()
 
 	if err := os.MkdirAll(filepath.Dir(precache.StatusFile), 0o700); err != nil {
 		return fmt.Errorf("failed to create status file dir, err %w", err)
@@ -180,7 +201,7 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
-	return unchroot()
+	return nil
 }
 
 func (i *IBIPrepare) shutdownNode() error {
@@ -207,6 +228,17 @@ func (i *IBIPrepare) chrootIfPathExists(chrootPath string) (func() error, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
 
+	}
+
+	// syscall.Chroot changes the root but not the working directory, so the cwd still points
+	// outside the new root. Move into the new root so relative paths passed to subsequent
+	// commands (e.g. the precache --authfile common.IBIPullSecretFilePath) resolve against it
+	// instead of escaping to the pre-chroot directory. On failure, undo the chroot.
+	if err := os.Chdir("/"); err != nil {
+		if unchrootErr := unchroot(); unchrootErr != nil {
+			i.log.Warnf("failed to restore root after chdir error: %v", unchrootErr)
+		}
+		return nil, fmt.Errorf("failed to change directory to chroot root %s: %w", chrootPath, err)
 	}
 
 	i.log.Infof("chroot %s successful", chrootPath)
