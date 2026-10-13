@@ -419,29 +419,53 @@ function populate {
 # verify_mbr_table runs 'sfdisk --verify' but tolerates the one overlap that is
 # inherent to a RHCOS isohybrid ISO: its partition 1 (the whole ISO9660 image)
 # deliberately contains partition 2 (the ESP), so sfdisk always reports
-# "Partition 1: overlaps partition 2" for the untouched ISO entries. That single
-# overlap is expected and harmless - the data partitions we appended sit after the
-# ISO and overlap nothing - so we accept it here and fail only if sfdisk flags
-# anything else. (fontivan / Developer of Record)
+# "Partition 1: overlaps partition 2" for the untouched ISO entries. sfdisk then
+# counts that overlap in a trailing "N error(s) detected." summary and exits
+# non-zero. Both the overlap line and the summary it produces are expected and
+# harmless - the data partitions we appended sit after the ISO and overlap
+# nothing - so we strip both before judging the rest, and fail only if sfdisk
+# reports (or counts) anything beyond the expected overlap. (fontivan /
+# Developer of Record)
 function verify_mbr_table {
     local dev="$1"
     local out rc=0
     out=$(sfdisk --verify "${dev}" 2>&1) || rc=$?
 
-    # Everything sfdisk reported except the expected ISO p1/p2 overlap.
-    local other
-    other=$(printf '%s\n' "${out}" | grep -vE 'Partition 1: overlaps partition 2\.?$' || true)
-    if printf '%s\n' "${other}" | grep -qiE 'overlap|error|invalid|corrupt|cannot|unable|not correct'; then
+    # Count the expected ISO p1/p2 overlap(s) and the total errors sfdisk reported
+    # in its "N error(s) detected." summary. The summary counts the expected
+    # overlap, so comparing the two counts - rather than scanning for the word
+    # "error" - is what lets us tolerate "1 error detected." on valid media while
+    # still failing on anything sfdisk counts beyond the expected overlap.
+    local expected_overlaps detected
+    expected_overlaps=$(printf '%s\n' "${out}" | grep -cE 'Partition 1: overlaps partition 2\.?$')
+    detected=$(printf '%s\n' "${out}" | sed -nE 's/^[[:space:]]*([0-9]+) error[s]? detected.*/\1/p' | tail -n1)
+    : "${detected:=0}"
+
+    # Any overlap sfdisk reports other than the expected ISO p1/p2 overlap is
+    # fatal. (sfdisk's own "...no partition is overlapped." progress line is not a
+    # finding, so it is excluded.)
+    local other_overlaps
+    other_overlaps=$(printf '%s\n' "${out}" \
+        | grep -iE 'overlap' \
+        | grep -vE 'Partition 1: overlaps partition 2\.?$' \
+        | grep -ivE 'no partition is overlapped' || true)
+    if [ -n "${other_overlaps}" ]; then
         printf '%s\n' "${out}" >&2
-        die "partition table verification failed on ${dev}"
+        die "partition table verification failed on ${dev} (unexpected overlap)"
     fi
-    # A non-zero exit with no other reported problem means sfdisk flagged only the
-    # expected overlap; treat that as success. Any other non-zero exit is fatal.
-    if [ "${rc}" -ne 0 ] && ! printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+
+    # Every error sfdisk counted must be one of the expected ISO overlaps; any
+    # extra error - or a non-zero exit we cannot attribute to the overlap - is fatal.
+    if [ "${detected}" -gt "${expected_overlaps}" ]; then
+        printf '%s\n' "${out}" >&2
+        die "partition table verification failed on ${dev} (${detected} error(s) detected, ${expected_overlaps} expected)"
+    fi
+    if [ "${rc}" -ne 0 ] && [ "${detected}" -eq 0 ] && [ "${expected_overlaps}" -eq 0 ]; then
         printf '%s\n' "${out}" >&2
         die "partition table verification failed on ${dev} (sfdisk exit ${rc})"
     fi
-    if printf '%s\n' "${out}" | grep -qE 'Partition 1: overlaps partition 2'; then
+
+    if [ "${expected_overlaps}" -gt 0 ]; then
         echo "    ok: partition table verified (ISO's expected p1/p2 hybrid overlap ignored)"
     else
         echo "    ok: partition table verified"
