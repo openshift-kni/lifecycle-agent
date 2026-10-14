@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -166,11 +167,21 @@ func TestImportImage_StoresCanonicalByDigest(t *testing.T) {
 func TestImportImage_MultiArchIndex(t *testing.T) {
 	requireCopyCapable(t)
 	im, graphRoot := newImporter(t)
-	mediaRoot, m := buildLayout(t, []layoutImage{{tag: testOCITag, name: testImageName, arches: []string{"amd64", "arm64"}}})
+
+	// A genuine multi-arch index that includes the host platform. containers-storage
+	// stores single-platform images, so ImportImage materialises only the instance
+	// matching the host architecture; the index (list) digest is still recorded, so
+	// the canonical name@<index-digest> reference resolves and round-trips.
+	otherArch := "arm64"
+	if runtime.GOARCH == "arm64" {
+		otherArch = "amd64"
+	}
+	mediaRoot, m := buildLayout(t, []layoutImage{{tag: testOCITag, name: testImageName, arches: []string{runtime.GOARCH, otherArch}}})
 
 	require.NoError(t, im.ImportImage(context.Background(), mediaRoot, m, m.Images[0]))
 
-	// The multi-arch index digest round-trips and is stored under name@digest.
+	// The multi-arch index digest round-trips: the stored host-platform image
+	// resolves under the canonical name@<index-digest>.
 	img := resolveStored(t, graphRoot, m.Images[0])
 	assertNameAndDigest(t, img, m.Images[0])
 }

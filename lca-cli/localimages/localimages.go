@@ -43,21 +43,29 @@
 // entry.Digest is the digest of the top-level descriptor as it appears in the
 // layout's index.json (manifests array). For OpenShift release content this is
 // normally a multi-arch image index, but it may also be a single-platform image
-// manifest. The descriptor is imported as-is: a multi-arch index is preserved
-// (no platform flattening, no re-digesting), so the stored object's digest
-// equals entry.Digest exactly and the canonical name@digest reference round
-// trips end-to-end.
+// manifest.
+//
+// containers-storage stores single-platform images; it cannot hold a manifest
+// list and all of its instances as a group. So for a multi-arch index the
+// package imports the single instance matching the target platform (the host
+// architecture/OS, which for IBI is the node being installed): that instance's
+// layers are materialised. The index manifest is still recorded against the
+// stored image, so the canonical name@<entry.Digest> reference resolves to it
+// and round-trips end-to-end -- the index digest is preserved as a resolvable
+// reference, even though the non-host platforms' layers are not copied. A
+// single-platform descriptor is imported directly.
 //
 // # Selection and verification
 //
 // For each image the package locates the single index.json descriptor that
 // matches both entry.Digest and the (mandatory) org.opencontainers.image.ref.name
-// annotation equal to entry.OCITag, then
-// copies that exact descriptor by its index position via
-// oci/layout.NewIndexReference. A digested destination reference is used so
-// copy.Image independently verifies the copied bytes against entry.Digest, and
-// the stored image is re-resolved after the copy to confirm it is present under
-// its canonical digest.
+// annotation equal to entry.OCITag, then copies that exact descriptor by its
+// index position via oci/layout.NewIndexReference. A digested destination
+// reference is used so copy.Image verifies the copied content against
+// entry.Digest (for a single-platform descriptor, directly; for a multi-arch
+// index, against the index manifest the selected instance belongs to), and the
+// stored image is re-resolved after the copy to confirm it is present under its
+// canonical digest.
 package localimages
 
 import (
@@ -120,7 +128,9 @@ type ImageEntry struct {
 	// (e.g. quay.io/openshift-release-dev/ocp-release).
 	Name string `json:"name"`
 	// Digest is the digest of the top-level index.json descriptor to import.
-	// It may name a multi-arch image index, which is imported as-is.
+	// It may name a multi-arch image index; the instance matching the target
+	// platform is imported, and the index digest remains the canonical
+	// reference (see the package doc).
 	Digest string `json:"digest"`
 	// OCITag is the layout reference name (org.opencontainers.image.ref.name)
 	// for the descriptor.
@@ -338,13 +348,17 @@ func (im *Importer) ImportImage(ctx context.Context, mediaRoot string, m *Digest
 		return fmt.Errorf("building containers-storage reference for %s@%s: %w", e.Name, e.Digest, err)
 	}
 
-	// Import the descriptor as-is (preserve a multi-arch index when that is what
-	// the digest names). The digested destination makes copy.Image verify the
-	// copied bytes against e.Digest.
+	// containers-storage stores single-platform images and cannot hold a
+	// manifest list as a group, so for a multi-arch index copy the single
+	// instance matching the target platform (the host architecture/OS). The
+	// index manifest is still recorded against the stored image, so the digested
+	// destination (name@<index-digest>) resolves and copy.Image verifies the
+	// copied content against e.Digest. A single-platform descriptor is copied
+	// directly.
 	if _, err := copy.Image(ctx, im.policyCtx, destRef, srcRef, &copy.Options{
 		SourceCtx:          im.sysCtx,
 		DestinationCtx:     im.sysCtx,
-		ImageListSelection: copy.CopyAllImages,
+		ImageListSelection: copy.CopySystemImage,
 	}); err != nil {
 		return fmt.Errorf("copying %s@%s into containers-storage: %w", e.Name, e.Digest, err)
 	}
