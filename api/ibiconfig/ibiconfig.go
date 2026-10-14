@@ -132,6 +132,29 @@ type IBIPrepareConfig struct {
 	// this will save previously created partition number 6
 	// +optional
 	CoreosInstallerArgs []string `json:"coreosInstallerArgs,omitempty"`
+
+	// LocalImagesPath is the mount point of the on-media OCI image layout (the p2
+	// partition of the USB) from which the prepare phase sources container images.
+	// Required when Disconnected is set, since there is no network to source images from.
+	// +optional
+	LocalImagesPath string `json:"localImagesPath,omitempty"`
+
+	// Disconnected selects zero-network image sourcing for the prepare phase.
+	// When set, an empty/synthetic prepare-time PullSecret is accepted (no authenticated
+	// network registry is contacted during a disconnected prepare).
+	// Note: this flag alone does not enforce no-network access; an empty authfile only
+	// avoids presenting real credentials and still permits an attempted network pull.
+	// The actual offline guarantee is enforced by the local OCI layout (LocalImagesPath)
+	// plus registries.conf mirror wiring added in downstream stories (CNF-27161/CNF-27162).
+	// +optional
+	Disconnected bool `json:"disconnected,omitempty"`
+
+	// ExpectedDigestsPath is the path to the on-media digest manifest. It is used as both
+	// the prepare precache list and the self-check reference. Its scope is profile-dependent
+	// (seed closure plus optional extras for install-only, full site closure for self-contained).
+	// Enforcement of this field is profile-dependent and is deferred to CNF-27162.
+	// +optional
+	ExpectedDigestsPath string `json:"expectedDigestsPath,omitempty"`
 }
 
 type ImageDigestSource struct {
@@ -153,13 +176,18 @@ func (i *ImageBasedInstallConfig) Validate() error {
 	if i.RHCOSLiveISO == "" {
 		return fmt.Errorf("rhcosLiveIso is required")
 	}
+	// In a disconnected prepare no authenticated network registry is contacted, so an
+	// empty (or synthetic) prepare-time pull secret is allowed. When a value is provided
+	// it must still be valid JSON. The connected flow keeps pullSecret mandatory.
 	if i.PullSecret == "" {
-		return fmt.Errorf("pullSecret is required")
-	}
-
-	var ps interface{}
-	if err := json.Unmarshal([]byte(i.PullSecret), &ps); err != nil {
-		return fmt.Errorf("pullSecret is not a valid json")
+		if !i.Disconnected {
+			return fmt.Errorf("pullSecret is required")
+		}
+	} else {
+		var ps interface{}
+		if err := json.Unmarshal([]byte(i.PullSecret), &ps); err != nil {
+			return fmt.Errorf("pullSecret is not a valid json")
+		}
 	}
 
 	if i.SSHKey != "" {
@@ -230,6 +258,15 @@ func (c *IBIPrepareConfig) Validate() error {
 	}
 	if c.InstallationDisk == "" {
 		return fmt.Errorf("installationDisk is required")
+	}
+
+	// A disconnected prepare has no network to source images from, so the on-media
+	// local OCI layout is mandatory. ExpectedDigestsPath enforcement is profile-dependent
+	// (mandatory for self-contained, optional-with-extras for install-only) and is deferred
+	// to CNF-27162; its enforcement point is co-located here. When Disconnected is false the
+	// local-image fields are ignored (harmless) and are not enforced.
+	if c.Disconnected && c.LocalImagesPath == "" {
+		return fmt.Errorf("localImagesPath is required when disconnected is set")
 	}
 
 	return nil
