@@ -155,6 +155,11 @@ run:
   concurrency: 6
   timeout: 5m
   tests: false
+  # Required to type-check packages that use containers/image + containers/storage
+  # (e.g. lca-cli/localimages). See GO_BUILD_TAGS in the Makefile.
+  build-tags:
+    - containers_image_openpgp
+    - exclude_graphdriver_btrfs
 
 issues:
   # No exclude-rules needed - using inline nolint directives instead

@@ -35,6 +35,17 @@ YAMLLINT_VERSION ?= 1.37.1
 # YQ_VERSION defines the yq version to download from GitHub releases.
 YQ_VERSION ?= v4.45.4
 
+# GO_BUILD_TAGS are the build tags required to compile packages that use the
+# containers/image + containers/storage libraries (e.g. lca-cli/localimages):
+#   - containers_image_openpgp: use the pure-Go OpenPGP implementation instead
+#     of cgo gpgme (no gpgme-devel headers required).
+#   - exclude_graphdriver_btrfs: drop the btrfs graph driver, which needs btrfs
+#     development headers.
+# These keep `go vet`, unit tests, and the lint type-check building without extra
+# system packages. The release binaries do not import these libraries, so the
+# Dockerfile build invocations are intentionally left untagged.
+GO_BUILD_TAGS ?= containers_image_openpgp exclude_graphdriver_btrfs
+
 # You can use podman or docker as a container engine. Notice that there are some options that might be only valid for one of them.
 ENGINE ?= docker
 
@@ -190,12 +201,12 @@ fmt: ## Run go fmt against code.
 .PHONY: vet
 vet: ## Run go vet against code.
 	@echo "Running go vet"
-	go vet ./...
+	go vet -tags "$(GO_BUILD_TAGS)" ./...
 
 .PHONY: unittest
 unittest:
 	@echo "Running unit tests"
-	GOTOOLCHAIN=go1.25.0+auto go test -coverprofile=coverage.out -v ./...
+	GOTOOLCHAIN=go1.25.0+auto go test -tags "$(GO_BUILD_TAGS)" -coverprofile=coverage.out -v ./...
 
 .PHONY: common-deps-update
 common-deps-update:	controller-gen kustomize
