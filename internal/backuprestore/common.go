@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8syaml "sigs.k8s.io/yaml"
@@ -74,7 +75,12 @@ type BackuperRestorer interface {
 type BRHandler struct {
 	client.Client
 	DynamicClient dynamic.Interface
-	Log           logr.Logger
+	// DiscoveryClient is used to discover the server's preferred API resources
+	// at backup time, so that CRDs installed after the controller started (e.g.
+	// lvmclusters) are visible and resources configured by name only can be
+	// resolved to their preferred GVR.
+	DiscoveryClient discovery.DiscoveryInterface
+	Log             logr.Logger
 }
 
 // BRStatusError type
