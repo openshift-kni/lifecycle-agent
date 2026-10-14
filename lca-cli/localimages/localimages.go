@@ -33,9 +33,10 @@
 //	  ]
 //	}
 //
-// ociLayoutPath is the layout directory relative to the media root. Each image
-// is located by its ociTag (the org.opencontainers.image.ref.name annotation in
-// the layout index) and bound to its digest.
+// ociLayoutPath is the layout directory relative to the media root; it is
+// resolved so it always stays inside the media root (symlinks included). Each
+// image is located by its ociTag (the required org.opencontainers.image.ref.name
+// annotation in the layout index) and bound to its digest.
 //
 // # What entry.Digest represents
 //
@@ -50,8 +51,8 @@
 // # Selection and verification
 //
 // For each image the package locates the single index.json descriptor that
-// matches both entry.Digest and (when the descriptor carries one) the
-// org.opencontainers.image.ref.name annotation equal to entry.OCITag, then
+// matches both entry.Digest and the (mandatory) org.opencontainers.image.ref.name
+// annotation equal to entry.OCITag, then
 // copies that exact descriptor by its index position via
 // oci/layout.NewIndexReference. A digested destination reference is used so
 // copy.Image independently verifies the copied bytes against entry.Digest, and
@@ -77,6 +78,7 @@ import (
 	// store can be opened at runtime. btrfs/devmapper are excluded via build
 	// tags to keep the build CGO-light (see the Makefile build tags).
 	_ "github.com/containers/storage/drivers/register"
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
@@ -302,7 +304,15 @@ func (im *Importer) ImportImage(ctx context.Context, mediaRoot string, m *Digest
 		return fmt.Errorf("invalid image entry: %w", err)
 	}
 
-	srcDir := filepath.Join(mediaRoot, m.OCILayoutPath)
+	// Keep the layout directory inside the media root. ociLayoutPath is a
+	// relative path from an on-media manifest; SecureJoin resolves it (symlinks
+	// included) so the result can never escape mediaRoot, e.g. a "../.." prefix
+	// is clamped rather than allowed to select a layout outside the mounted
+	// media.
+	srcDir, err := securejoin.SecureJoin(mediaRoot, m.OCILayoutPath)
+	if err != nil {
+		return fmt.Errorf("resolving OCI layout path %q under media root %q: %w", m.OCILayoutPath, mediaRoot, err)
+	}
 
 	index, err := loadLayoutIndex(srcDir)
 	if err != nil {
@@ -367,12 +377,14 @@ func loadLayoutIndex(srcDir string) (*imgspecv1.Index, error) {
 
 // selectManifestIndex returns the zero-based position in index.Manifests of the
 // single descriptor that matches entry e. A descriptor matches when its digest
-// equals e.Digest and, if it carries an org.opencontainers.image.ref.name
-// annotation, that annotation equals e.OCITag.
+// equals e.Digest and it carries an org.opencontainers.image.ref.name
+// annotation equal to e.OCITag. The tag is mandatory: an untagged descriptor
+// never matches, so an image cannot be imported for a tag it does not identify.
 //
 // It returns an error wrapping ErrDigestNotFound when no descriptor carries the
 // digest, and ErrAmbiguousSelection when more than one descriptor matches or the
-// digest is present only under a descriptor whose tag differs from e.OCITag.
+// digest is present only under a descriptor that is untagged or tagged
+// differently from e.OCITag.
 func selectManifestIndex(index *imgspecv1.Index, e ImageEntry) (int, error) {
 	matches := make([]int, 0, 1)
 	digestPresent := false
@@ -384,9 +396,15 @@ func selectManifestIndex(index *imgspecv1.Index, e ImageEntry) (int, error) {
 		}
 		digestPresent = true
 
+		// The requested tag is mandatory: a descriptor only matches when it
+		// carries an org.opencontainers.image.ref.name annotation equal to
+		// e.OCITag. An untagged descriptor does not identify the requested tag
+		// and is rejected, so an image is never imported for a tag it does not
+		// carry.
 		tag := d.Annotations[imgspecv1.AnnotationRefName]
-		if tag != "" && tag != e.OCITag {
-			// Digest is present but under a different tag.
+		if tag != e.OCITag {
+			// Digest is present but not under the requested tag (untagged or
+			// tagged differently).
 			continue
 		}
 		matches = append(matches, i)

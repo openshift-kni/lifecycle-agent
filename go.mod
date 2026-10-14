@@ -7,6 +7,7 @@ require (
 	github.com/containers/storage v1.59.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.27.0
+	github.com/cyphar/filepath-securejoin v0.6.1
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/sriov-network-operator v1.6.0
@@ -62,7 +63,6 @@ require (
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/ocicrypt v1.2.1 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
-	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
 	github.com/docker/docker v28.3.2+incompatible // indirect
 	github.com/docker/go-connections v0.5.0 // indirect

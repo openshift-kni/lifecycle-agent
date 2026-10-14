@@ -113,11 +113,13 @@ func TestSelectManifestIndex(t *testing.T) {
 		assert.Equal(t, 1, pos)
 	})
 
-	t.Run("digest match with no tag annotation", func(t *testing.T) {
+	t.Run("digest present but untagged is rejected", func(t *testing.T) {
+		// The requested tag is mandatory: a descriptor carrying the digest but
+		// no org.opencontainers.image.ref.name annotation must not be selected,
+		// so an image is never imported for a tag it does not identify.
 		idx := &imgspecv1.Index{Manifests: []imgspecv1.Descriptor{desc(digA, ""), desc(digB, "")}}
-		pos, err := selectManifestIndex(idx, ImageEntry{Name: testImageName, Digest: digA, OCITag: testOCITag})
-		require.NoError(t, err)
-		assert.Equal(t, 0, pos)
+		_, err := selectManifestIndex(idx, ImageEntry{Name: testImageName, Digest: digA, OCITag: testOCITag})
+		assert.ErrorIs(t, err, ErrAmbiguousSelection)
 	})
 
 	t.Run("multi-arch index descriptor selected", func(t *testing.T) {
@@ -215,6 +217,34 @@ func TestImportImage_DigestAbsentFromLayout(t *testing.T) {
 	imgs, err := im.store.Images()
 	require.NoError(t, err)
 	assert.Empty(t, imgs, "no image should have been imported for an absent digest")
+}
+
+// TestImportImage_LayoutPathStaysInMediaRoot verifies that an ociLayoutPath
+// which traverses out of the media root cannot select a layout outside it. A
+// complete, valid layout is placed outside the media root; the import must not
+// read it. Runs in all environments (the escaping read fails before any copy).
+func TestImportImage_LayoutPathStaysInMediaRoot(t *testing.T) {
+	im, _ := newImporter(t)
+
+	// A valid layout that lives OUTSIDE the media root. Without containment, a
+	// "../" ociLayoutPath could reach it.
+	outsideRoot, outside := buildLayout(t, []layoutImage{{tag: testOCITag, name: testImageName, arches: []string{"amd64"}}})
+
+	// Media root with no layout of its own. Point ociLayoutPath at the outside
+	// layout via a traversal sequence; containment must prevent the escape.
+	mediaRoot := t.TempDir()
+	rel, err := filepath.Rel(mediaRoot, filepath.Join(outsideRoot, outside.OCILayoutPath))
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(rel, ".."), "test setup: path must traverse out of the media root")
+
+	m := &DigestManifest{Version: 1, OCILayoutPath: rel, Images: outside.Images}
+	err = im.ImportImage(context.Background(), mediaRoot, m, m.Images[0])
+	require.Error(t, err, "import must not read a layout outside the media root")
+
+	// Nothing was imported.
+	imgs, err := im.store.Images()
+	require.NoError(t, err)
+	assert.Empty(t, imgs, "no image should have been imported from outside the media root")
 }
 
 func TestImportAll_FailFast(t *testing.T) {
