@@ -5,13 +5,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestExtractBackupSpecsFromConfigmaps(t *testing.T) {
@@ -175,72 +171,127 @@ func TestParseResourceType(t *testing.T) {
 	}
 }
 
-func TestResolveResourceType(t *testing.T) {
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{
-		{Group: "", Version: "v1"},
-		{Group: "apps", Version: "v1"},
-		{Group: "route.openshift.io", Version: "v1"},
-		{Group: "example.io", Version: "v1alpha1"},
-	})
-	mapper.Add(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}, meta.RESTScopeNamespace)
-	mapper.Add(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"}, meta.RESTScopeNamespace)
-	mapper.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace)
-	mapper.Add(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "StatefulSet"}, meta.RESTScopeNamespace)
-	mapper.Add(schema.GroupVersionKind{Group: "route.openshift.io", Version: "v1", Kind: "Route"}, meta.RESTScopeNamespace)
-	mapper.Add(schema.GroupVersionKind{Group: "example.io", Version: "v1alpha1", Kind: "Widget"}, meta.RESTScopeNamespace)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithRESTMapper(mapper).Build()
-	handler := &BRHandler{
-		Client: fakeClient,
-		Log:    ctrl.Log.WithName("test"),
+func TestResolveResourceGVR(t *testing.T) {
+	// Simulated output of discovery.ServerPreferredResources(): one preferred
+	// version per API group. "widgets" intentionally appears in two groups to
+	// exercise the ambiguity path, and "deployments/status" exercises the
+	// subresource-skipping path.
+	apiResourceLists := []*metav1.APIResourceList{
+		{
+			GroupVersion: "v1",
+			APIResources: []metav1.APIResource{
+				{Name: "secrets", Namespaced: true, Kind: "Secret"},
+				{Name: "services", Namespaced: true, Kind: "Service"},
+				{Name: "namespaces", Namespaced: false, Kind: "Namespace"},
+			},
+		},
+		{
+			GroupVersion: "apps/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "deployments", Namespaced: true, Kind: "Deployment"},
+				{Name: "deployments/status", Namespaced: true, Kind: "Deployment"},
+				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet"},
+			},
+		},
+		{
+			GroupVersion: "route.openshift.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "routes", Namespaced: true, Kind: "Route"},
+			},
+		},
+		{
+			GroupVersion: "lvm.topolvm.io/v1alpha1",
+			APIResources: []metav1.APIResource{
+				{Name: "lvmclusters", Namespaced: false, Kind: "LVMCluster"},
+			},
+		},
+		{
+			GroupVersion: "example.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "widgets", Namespaced: true, Kind: "Widget"},
+			},
+		},
+		{
+			GroupVersion: "other.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "widgets", Namespaced: true, Kind: "Widget"},
+			},
+		},
 	}
 
 	testcases := []struct {
 		name         string
 		resourceType string
 		expected     schema.GroupVersionResource
+		expectFound  bool
+		expectErr    bool
 	}{
 		{
-			name:         "bare 'deployments' resolves to apps group via REST mapper",
+			name:         "bare 'deployments' resolves to apps group",
 			resourceType: "deployments",
 			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectFound:  true,
 		},
 		{
 			name:         "qualified 'deployments.apps' uses explicit group",
 			resourceType: "deployments.apps",
 			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectFound:  true,
 		},
 		{
 			name:         "bare 'secrets' resolves to core group",
 			resourceType: "secrets",
 			expected:     schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"},
-		},
-		{
-			name:         "bare 'services' resolves to core group",
-			resourceType: "services",
-			expected:     schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"},
-		},
-		{
-			name:         "bare 'statefulsets' resolves to apps group",
-			resourceType: "statefulsets",
-			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"},
+			expectFound:  true,
 		},
 		{
 			name:         "qualified 'routes.route.openshift.io' uses explicit group",
 			resourceType: "routes.route.openshift.io",
 			expected:     schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"},
+			expectFound:  true,
 		},
 		{
-			name:         "qualified non-v1 CRD discovers correct API version via REST mapper",
+			name:         "bare CRD 'lvmclusters' discovers non-core group and preferred version",
+			resourceType: "lvmclusters",
+			expected:     schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"},
+			expectFound:  true,
+		},
+		{
+			name:         "ambiguous bare name matching multiple groups returns error",
+			resourceType: "widgets",
+			expectErr:    true,
+		},
+		{
+			name:         "qualified 'widgets.example.io' disambiguates by explicit group",
 			resourceType: "widgets.example.io",
-			expected:     schema.GroupVersionResource{Group: "example.io", Version: "v1alpha1", Resource: "widgets"},
+			expected:     schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "widgets"},
+			expectFound:  true,
+		},
+		{
+			name:         "unknown resource is not found and skippable",
+			resourceType: "doesnotexist",
+			expectFound:  false,
+		},
+		{
+			name:         "qualified name with unknown group is not found and skippable",
+			resourceType: "deployments.unknown.io",
+			expectFound:  false,
 		},
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := handler.resolveResourceType(tc.resourceType)
-			assert.Equal(t, tc.expected, result)
+			result, found, err := resolveResourceGVR(tc.resourceType, apiResourceLists)
+			if tc.expectErr {
+				assert.Error(t, err)
+				assert.False(t, found)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectFound, found)
+			if tc.expectFound {
+				assert.Equal(t, tc.expected, result)
+			}
 		})
 	}
 }

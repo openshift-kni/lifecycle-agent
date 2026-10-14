@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	k8syaml "sigs.k8s.io/yaml"
 )
 
@@ -294,26 +296,54 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 		return deduplicateResources(resources), nil
 	}
 
+	// Discover the server's preferred API resources on every fetch so that CRDs
+	// installed after the controller started (e.g. lvmclusters) are visible and
+	// resources configured by name only can be resolved to their preferred GVR.
+	apiResourceLists, err := h.getServerPreferredResources()
+	if err != nil {
+		return nil, err
+	}
+
 	// No apply-label: back up all resources of the included types in each
 	// included namespace and every included cluster-scoped resource type.
 	for _, ns := range spec.IncludedNamespaces {
-		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec)
+		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec, apiResourceLists)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch resources in namespace %s: %w", ns, err)
 		}
 		resources = append(resources, nsResources...)
 	}
 
-	for _, gvr := range spec.IncludedClusterScopedResources {
-		clusterResources, err := h.fetchClusterScopedResources(ctx, gvr, spec)
+	for _, resourceType := range spec.IncludedClusterScopedResources {
+		clusterResources, err := h.fetchClusterScopedResources(ctx, resourceType, spec, apiResourceLists)
 		if err != nil {
-			h.Log.Info("Skipping cluster-scoped resource", "resource", gvr, "reason", err.Error())
-			continue
+			return nil, fmt.Errorf("failed to fetch cluster-scoped resource %s: %w", resourceType, err)
 		}
 		resources = append(resources, clusterResources...)
 	}
 
 	return deduplicateResources(resources), nil
+}
+
+// getServerPreferredResources returns the server's preferred API resources via
+// the discovery client. A partial discovery failure (e.g. a single aggregated
+// API group being unavailable) is tolerated: the successfully discovered
+// resources are returned and the error is logged, matching how kubectl behaves.
+func (h *BRHandler) getServerPreferredResources() ([]*metav1.APIResourceList, error) {
+	if h.DiscoveryClient == nil {
+		return nil, fmt.Errorf("discovery client is not initialized")
+	}
+
+	lists, err := h.DiscoveryClient.ServerPreferredResources()
+	if err != nil {
+		if discovery.IsGroupDiscoveryFailedError(err) {
+			h.Log.Info("Partial API discovery failure, continuing with available resources",
+				"error", err.Error())
+		} else {
+			return nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
+		}
+	}
+	return lists, nil
 }
 
 func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata) (*unstructured.Unstructured, error) {
@@ -342,7 +372,7 @@ func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata)
 	return result, nil
 }
 
-func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec) ([]*unstructured.Unstructured, error) {
+func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList) ([]*unstructured.Unstructured, error) {
 	var resources []*unstructured.Unstructured
 
 	resourceTypes := spec.IncludedNamespaceScopedResources
@@ -370,7 +400,16 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 			continue
 		}
 
-		gvr := h.resolveResourceType(resourceType)
+		gvr, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			h.Log.Info("Resource type not found in API discovery, skipping",
+				"resource", resourceType, "namespace", namespace)
+			continue
+		}
+
 		list, err := h.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOpts)
 		if err != nil {
 			if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
@@ -388,12 +427,20 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	return resources, nil
 }
 
-func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec) ([]*unstructured.Unstructured, error) {
+func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList) ([]*unstructured.Unstructured, error) {
 	if isExcluded(resourceType, spec.ExcludedResources, spec.ExcludedClusterScopedResources) {
 		return nil, nil
 	}
 
-	gvr := h.resolveResourceType(resourceType)
+	gvr, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		h.Log.Info("Cluster-scoped resource type not found in API discovery, skipping",
+			"resource", resourceType)
+		return nil, nil
+	}
 
 	listOpts := metav1.ListOptions{}
 	if spec.LabelSelector != nil {
@@ -406,6 +453,9 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 
 	list, err := h.DynamicClient.Resource(gvr).List(ctx, listOpts)
 	if err != nil {
+		if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to list cluster-scoped resource %s: %w", resourceType, err)
 	}
 
@@ -497,25 +547,65 @@ func parseResourceType(resourceType string) schema.GroupVersionResource {
 	}
 }
 
-// resolveResourceType resolves a user-provided resource type string to its
-// GVR using the REST mapper. For qualified names like "deployments.apps" or
-// "routes.route.openshift.io" the explicit group is used directly. For bare
-// names like "deployments" the REST mapper discovers the correct API group.
-func (h *BRHandler) resolveResourceType(resourceType string) schema.GroupVersionResource {
+// resolveResourceGVR resolves a user-provided resource type string to its
+// preferred GroupVersionResource using the supplied server-preferred API
+// resource lists (from discovery).
+//
+// For qualified names like "deployments.apps" or "routes.route.openshift.io"
+// the explicit group is honored. For bare names like "lvmclusters" the matching
+// API group is discovered. If a bare name matches more than one API group, an
+// ambiguity error is returned instead of silently falling back to core/v1, so
+// the caller can surface the conflict and fail the backup.
+//
+// The second return value reports whether the resource type was found in
+// discovery at all; a value of false (with a nil error) means the resource is
+// absent from the cluster and should be skipped.
+func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResourceList) (schema.GroupVersionResource, bool, error) {
 	parsed := parseResourceType(resourceType)
+	resourceName := strings.ToLower(parsed.Resource)
+	explicitGroup := parsed.Group
 
-	// Use REST mapper to discover the API group (for bare names) and the correct preferred API version.
-	partialGVR := schema.GroupVersionResource{
-		Group:    parsed.Group,
-		Resource: parsed.Resource,
+	// Collect one candidate GVR per matching API group (ServerPreferredResources
+	// already returns only the preferred version for each group).
+	candidatesByGroup := make(map[string]schema.GroupVersionResource)
+	var groups []string
+	for _, list := range apiResourceLists {
+		if list == nil {
+			continue
+		}
+		gv, err := schema.ParseGroupVersion(list.GroupVersion)
+		if err != nil {
+			continue
+		}
+		for _, apiResource := range list.APIResources {
+			// Skip subresources such as "pods/status".
+			if strings.Contains(apiResource.Name, "/") {
+				continue
+			}
+			if !strings.EqualFold(apiResource.Name, resourceName) {
+				continue
+			}
+			if explicitGroup != "" && gv.Group != explicitGroup {
+				continue
+			}
+			if _, ok := candidatesByGroup[gv.Group]; !ok {
+				candidatesByGroup[gv.Group] = gv.WithResource(apiResource.Name)
+				groups = append(groups, gv.Group)
+			}
+		}
 	}
-	resolved, err := h.RESTMapper().ResourceFor(partialGVR)
-	if err != nil {
-		h.Log.Info("REST mapper lookup failed for resource, defaulting to parsed GVR",
-			"resource", resourceType, "error", err.Error())
-		return parsed
+
+	switch len(candidatesByGroup) {
+	case 0:
+		return schema.GroupVersionResource{}, false, nil
+	case 1:
+		return candidatesByGroup[groups[0]], true, nil
+	default:
+		sort.Strings(groups)
+		return schema.GroupVersionResource{}, false, fmt.Errorf(
+			"ambiguous resource %q matches multiple API groups %v; qualify it as <resource>.<group>",
+			resourceType, groups)
 	}
-	return resolved
 }
 
 func isResourceNotRegistered(err error) bool {

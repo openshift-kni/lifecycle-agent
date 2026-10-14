@@ -267,8 +267,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	discoveryClient, err := lcautils.CreateDiscoveryClient(common.PathOutsideChroot(common.KubeconfigFile), true, log.WithName("ibu-discovery-client"))
+	if err != nil {
+		setupLog.Error(err, "unable to create discovery client")
+		os.Exit(1)
+	}
+
 	backupRestore := &backuprestore.BRHandler{
-		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("BackupRestore")}
+		Client: mgr.GetClient(), DynamicClient: dynamicClient, DiscoveryClient: discoveryClient, Log: log.WithName("BackupRestore")}
 	extraManifest := &extramanifest.EMHandler{
 		Client: mgr.GetClient(), DynamicClient: dynamicClient, Log: log.WithName("ExtraManifest")}
 
