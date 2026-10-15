@@ -6,7 +6,7 @@ require (
 	github.com/containers/image/v5 v5.36.2
 	github.com/containers/storage v1.59.1
 	github.com/coreos/go-semver v0.3.1
-	github.com/coreos/ignition/v2 v2.27.0
+	github.com/coreos/ignition/v2 v2.28.0
 	github.com/cyphar/filepath-securejoin v0.6.1
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0

@@ -83,8 +83,8 @@ github.com/coreos/ign-converter v0.0.0-20241125185625-2f773079ca81/go.mod h1:Q7S
 github.com/coreos/ignition v0.35.0 h1:UFodoYq1mOPrbEjtxIsZbThcDyQwAI1owczRDqWmKkQ=
 github.com/coreos/ignition v0.35.0/go.mod h1:WJQapxzEn9DE0ryxsGvm8QnBajm/XsS/PkrDqSpz+bA=
 github.com/coreos/ignition/v2 v2.1.1/go.mod h1:RqmqU64zxarUJa3l4cHtbhcSwfQLpUhv0WVziZwoXvE=
-github.com/coreos/ignition/v2 v2.27.0 h1:kEWbmy7HnDeOAOxQOrZFPcyvL2GPCOZSW6Tu+f7IhTA=
-github.com/coreos/ignition/v2 v2.27.0/go.mod h1:/TFCOigkyeJze8G74Dev5MXB9Zcz4I+GLgHrBr/cTrA=
+github.com/coreos/ignition/v2 v2.28.0 h1:BLnAiFjxosJl68WmVcWrHFlUWnWsrL8I6KS79NTCTW4=
+github.com/coreos/ignition/v2 v2.28.0/go.mod h1:/TFCOigkyeJze8G74Dev5MXB9Zcz4I+GLgHrBr/cTrA=
 github.com/coreos/rpmostree-client-go v0.0.0-20230914135003-fae0786302f7 h1:gpIn0B0F00GJPlI1iPjJbHMS01QoxDs7Bf8UgH9D3wg=
 github.com/coreos/rpmostree-client-go v0.0.0-20230914135003-fae0786302f7/go.mod h1:WiAXRoGnl4Lwr7OM5izCLWMLH6Y43sYWJREoeeHEg4E=
 github.com/coreos/vcontext v0.0.0-20190529201340-22b159166068/go.mod h1:E+6hug9bFSe0KZ2ZAzr8M9F5JlArJjv5D1JS7KSkPKE=
