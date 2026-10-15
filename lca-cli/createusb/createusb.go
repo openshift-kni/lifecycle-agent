@@ -107,8 +107,11 @@ type Manifest struct {
 
 	// Disconnected must be true for both profiles (it is not a knob).
 	Disconnected bool `json:"disconnected,omitempty"`
-	// Shutdown must match the mode (install-only ⇒ true, self-contained ⇒ false).
-	Shutdown bool `json:"shutdown,omitempty"`
+	// Shutdown must match the mode (install-only ⇒ true, self-contained ⇒ false). It is a
+	// pointer so an omitted field is distinguishable from an explicit false: self-contained
+	// requires false, which is also the zero value, so omission would otherwise pass
+	// silently. A nil Shutdown is rejected as a missing required field.
+	Shutdown *bool `json:"shutdown,omitempty"`
 
 	// RHCOSLiveISO is required; the --rhcos-live-iso* flags override it (flag wins).
 	RHCOSLiveISO RHCOSLiveISO `json:"rhcosLiveIso,omitempty"`
@@ -167,14 +170,18 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("disconnected must be true")
 	}
 
-	// 4. shutdown must match the mode.
+	// 4. shutdown is required and must match the mode. It is required for both profiles, so
+	// an omitted value fails rather than defaulting to the self-contained-valid false.
+	if m.Shutdown == nil {
+		return fmt.Errorf("shutdown is required")
+	}
 	switch m.Mode {
 	case ModeInstallOnly:
-		if !m.Shutdown {
+		if !*m.Shutdown {
 			return fmt.Errorf("shutdown must be true for mode %q", ModeInstallOnly)
 		}
 	case ModeSelfContained:
-		if m.Shutdown {
+		if *m.Shutdown {
 			return fmt.Errorf("shutdown must be false for mode %q", ModeSelfContained)
 		}
 	}
@@ -296,7 +303,28 @@ func (m *Manifest) validateSelfContained() error {
 	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
 		return fmt.Errorf("clusterManifests is required for mode %q", ModeSelfContained)
 	}
+	if err := validateManifestSources("clusterManifests", *m.ClusterManifests); err != nil {
+		return err
+	}
+	// extraManifests is optional, but any entry present must reference a real file.
+	if m.ExtraManifests != nil {
+		if err := validateManifestSources("extraManifests", *m.ExtraManifests); err != nil {
+			return err
+		}
+	}
 
+	return nil
+}
+
+// validateManifestSources rejects a manifest source with an empty path: each entry must
+// name a file for the later media build to render, so clusterManifests: [{path: ""}] fails
+// the build rather than being carried through as an unusable source.
+func validateManifestSources(field string, sources []ManifestSource) error {
+	for i, s := range sources {
+		if strings.TrimSpace(s.Path) == "" {
+			return fmt.Errorf("%s[%d].path is required", field, i)
+		}
+	}
 	return nil
 }
 

@@ -170,7 +170,7 @@ Fields common to both profiles (all required):
 | `releaseVersion` | string | The OpenShift release version. |
 | `installationDisk` | string | The target installation disk (e.g. `/dev/disk/by-id/ata-xxxx`). |
 | `disconnected` | bool | Must be `true` for both profiles (it is not a knob). |
-| `shutdown` | bool | Must match the mode: `true` for `install-only`, `false` for `self-contained`. |
+| `shutdown` | bool | Must be set explicitly and match the mode: `true` for `install-only`, `false` for `self-contained`. Omitting it fails the build. |
 | `rhcosLiveIso.url` | string | HTTPS URL of the RHCOS live ISO. |
 | `rhcosLiveIso.sha256` | string | SHA-256 digest of the RHCOS live ISO (64-character lowercase hex). |
 
@@ -184,8 +184,8 @@ Fields common to both profiles (all required):
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `clusterManifests` | list of `{path}` | Cluster manifest files to render onto the media (required). |
-| `extraManifests` | list of `{path}` | Additional manifest files to render onto the media. |
+| `clusterManifests` | list of `{path}` | Cluster manifest files to render onto the media (required; each entry's `path` must be non-empty). |
+| `extraManifests` | list of `{path}` | Additional manifest files to render onto the media (each entry's `path` must be non-empty). |
 | `siteConfig` | object | The site configuration (see below). |
 
 `siteConfig` (self-contained only):
