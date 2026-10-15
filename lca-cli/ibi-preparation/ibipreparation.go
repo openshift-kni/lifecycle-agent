@@ -2,6 +2,7 @@ package ibi_preparation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -293,12 +294,65 @@ func (i *IBIPrepare) preflightValidateManifest() (*localimages.DigestManifest, l
 		i.config.SeedImage, i.config.ExpectedDigestsPath)
 }
 
+// podmanStoreInfo is the subset of `podman info --format json` the prepare flow
+// consumes to resolve the host containers-storage store.
+type podmanStoreInfo struct {
+	Store struct {
+		GraphDriverName string `json:"graphDriverName"`
+		GraphRoot       string `json:"graphRoot"`
+		RunRoot         string `json:"runRoot"`
+	} `json:"store"`
+}
+
+// hostSeedStoreConfig resolves the containers-storage configuration of the exact
+// store that ops.MountImage reads the seed from, so the seed import lands where
+// SetupStateroot later looks for it.
+//
+// A zero-value StoreConfig would open the Go-resolved default store
+// (cstorage.DefaultStoreOptions), which is resolved against this process's own
+// (container) environment and can differ from the store the host-namespace
+// `podman image mount` uses -- leaving the seed imported into a store nothing
+// reads. Instead, ask the host podman itself (`podman info`) for its resolved
+// driver/graphroot/runroot. The paths podman reports are host-root-relative;
+// they are translated into this process's mount namespace with PathOutsideChroot
+// because the importer opens the store directly in-process (as the closure import
+// does for the installed stateroot) rather than through the host namespace.
+func (i *IBIPrepare) hostSeedStoreConfig() (localimages.StoreConfig, error) {
+	out, err := i.ops.RunInHostNamespace("podman", "info", "--format", "json")
+	if err != nil {
+		return localimages.StoreConfig{}, fmt.Errorf("failed to query host podman store configuration: %w", err)
+	}
+
+	var info podmanStoreInfo
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		return localimages.StoreConfig{}, fmt.Errorf("failed to parse host podman store configuration: %w", err)
+	}
+	if info.Store.GraphDriverName == "" || info.Store.GraphRoot == "" || info.Store.RunRoot == "" {
+		return localimages.StoreConfig{}, fmt.Errorf(
+			"host podman reported an incomplete store configuration: driver=%q graphRoot=%q runRoot=%q",
+			info.Store.GraphDriverName, info.Store.GraphRoot, info.Store.RunRoot)
+	}
+
+	return localimages.StoreConfig{
+		GraphDriverName: info.Store.GraphDriverName,
+		GraphRoot:       common.PathOutsideChroot(info.Store.GraphRoot),
+		RunRoot:         common.PathOutsideChroot(info.Store.RunRoot),
+	}, nil
+}
+
 // importSeedToLiveStore imports the single seed entry from the mounted p2 layout
-// into the live/default containers-storage (zero-value StoreConfig). The seed is a
-// bootstrap input consumed by SetupStateroot and then dropped with the ephemeral
-// live store on reboot, so only the seed -- not the full closure -- is imported here.
+// into the host containers-storage store that ops.MountImage reads -- resolved
+// from the host podman's own configuration (hostSeedStoreConfig), not assumed
+// defaults. The seed is a bootstrap input consumed by SetupStateroot and then
+// dropped with the ephemeral live store on reboot, so only the seed -- not the
+// full closure -- is imported here.
 func (i *IBIPrepare) importSeedToLiveStore(ctx context.Context, manifest *localimages.DigestManifest, seedEntry localimages.ImageEntry) error {
-	importer, err := newImageImporter(i.log, localimages.StoreConfig{})
+	storeCfg, err := i.hostSeedStoreConfig()
+	if err != nil {
+		return fmt.Errorf("failed to resolve host containers-storage configuration: %w", err)
+	}
+
+	importer, err := newImageImporter(i.log, storeCfg)
 	if err != nil {
 		return fmt.Errorf("failed to open live containers-storage: %w", err)
 	}

@@ -101,6 +101,42 @@ func TestPullImageConnectedStillPulls(t *testing.T) {
 	}
 }
 
+// TestValidatePrecacheDisconnectedIgnoresBestEffort proves a missing image is always
+// fatal in disconnected mode, regardless of the best-effort setting, while the
+// connected path still honors best-effort. The failed image uses a digest that is not
+// present locally, so the podman-exists re-check inside ValidatePrecache reports it
+// absent.
+func TestValidatePrecacheDisconnectedIgnoresBestEffort(t *testing.T) {
+	cases := []struct {
+		name         string
+		bestEffort   bool
+		disconnected bool
+		wantErr      bool
+	}{
+		{name: "disconnected best-effort still fatal", bestEffort: true, disconnected: true, wantErr: true},
+		{name: "disconnected non-best-effort fatal", bestEffort: false, disconnected: true, wantErr: true},
+		{name: "connected best-effort skips error", bestEffort: true, disconnected: false, wantErr: false},
+		{name: "connected non-best-effort fatal", bestEffort: false, disconnected: false, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status := &precache.Progress{
+				Total:          1,
+				Failed:         1,
+				FailedPullList: []string{"quay.io/missing@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			}
+			err := ValidatePrecache(status, tc.bestEffort, tc.disconnected)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected an error (bestEffort=%v disconnected=%v)", tc.bestEffort, tc.disconnected)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error (bestEffort=%v disconnected=%v): %v", tc.bestEffort, tc.disconnected, err)
+			}
+		})
+	}
+}
+
 func TestMaxPullThreads(t *testing.T) {
 	tests := []struct {
 		name  string

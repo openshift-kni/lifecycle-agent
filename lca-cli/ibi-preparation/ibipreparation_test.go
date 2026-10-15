@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -362,6 +363,38 @@ const (
 
 func testSeedImageRef() string { return testSeedName + "@" + testSeedDigest }
 
+// Host containers-storage configuration the fake host podman reports. The seed
+// import must target this store (the one ops.MountImage reads) rather than the
+// Go-resolved default store.
+const (
+	testHostGraphDriver = "overlay"
+	testHostGraphRoot   = "/var/lib/containers/storage"
+	testHostRunRoot     = "/run/containers/storage"
+)
+
+func testPodmanInfoJSON() string {
+	return fmt.Sprintf(`{"store":{"graphDriverName":%q,"graphRoot":%q,"runRoot":%q}}`,
+		testHostGraphDriver, testHostGraphRoot, testHostRunRoot)
+}
+
+// wantSeedStoreConfig is the StoreConfig the seed import must build from the host
+// podman info: the reported driver, with graphroot/runroot translated into this
+// process's mount namespace (PathOutsideChroot).
+func wantSeedStoreConfig() localimages.StoreConfig {
+	return localimages.StoreConfig{
+		GraphDriverName: testHostGraphDriver,
+		GraphRoot:       common.PathOutsideChroot(testHostGraphRoot),
+		RunRoot:         common.PathOutsideChroot(testHostRunRoot),
+	}
+}
+
+// expectPodmanInfo registers the host podman store-config query the seed import
+// performs to resolve the store ops.MountImage reads.
+func expectPodmanInfo(mockOps *ops.MockOps) {
+	mockOps.EXPECT().RunInHostNamespace("podman", "info", "--format", "json").
+		Return(testPodmanInfoJSON(), nil).Times(1)
+}
+
 func testManifest() *localimages.DigestManifest {
 	return &localimages.DigestManifest{
 		Version:       1,
@@ -412,8 +445,10 @@ func (f *fakeImporter) Close() error {
 	return nil
 }
 
-// importerFactory routes newImageImporter calls to the seed importer (default
-// store, empty graphroot) or the closure importer (explicit graphroot).
+// importerFactory routes newImageImporter calls to the seed importer (the host
+// store resolved from podman info) or the closure importer (the installed
+// stateroot graphroot under ostree/deploy). Both stores are now explicit, so the
+// closure is distinguished by its graphroot living under the stateroot deploy path.
 type importerFactory struct {
 	seed      *fakeImporter
 	closure   *fakeImporter
@@ -423,10 +458,10 @@ type importerFactory struct {
 
 func (ff *importerFactory) new(_ *logrus.Logger, cfg localimages.StoreConfig) (imageImporter, error) {
 	imp := &fakeImporter{cfg: cfg, events: ff.events, importErr: ff.importErr}
-	if cfg.GraphRoot == "" && cfg.GraphDriverName == "" {
-		ff.seed = imp
-	} else {
+	if strings.Contains(cfg.GraphRoot, "ostree/deploy") {
 		ff.closure = imp
+	} else {
+		ff.seed = imp
 	}
 	return imp, nil
 }
@@ -645,7 +680,10 @@ func TestSeedReferenceMatchesSetupStaterootLookup(t *testing.T) {
 			SeedImage:           testSeedImageRef(),
 			SeedVersion:         "4.15.0",
 		}
-		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil, cfg)
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		expectPodmanInfo(mockOps)
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
 
 		manifest, seedEntry, err := ibi.preflightValidateManifest()
 		assert.NoError(t, err)
@@ -680,22 +718,30 @@ func TestSeedReferenceMatchesSetupStaterootLookup(t *testing.T) {
 	})
 }
 
-// TestSeedImportedIntoLiveStore asserts the seed is imported into the live/default
-// store (zero-value StoreConfig) and the importer is closed.
-func TestSeedImportedIntoLiveStore(t *testing.T) {
+// TestSeedImportedIntoHostStore asserts the seed is imported into the host
+// containers-storage store that ops.MountImage reads -- resolved from the host
+// podman's own configuration (driver + graphroot/runroot translated into this
+// process's mount namespace), not the Go-resolved default store -- and that the
+// importer is closed.
+func TestSeedImportedIntoHostStore(t *testing.T) {
 	saveSeams(t)
 	ff := &importerFactory{}
 	newImageImporter = ff.new
 
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	expectPodmanInfo(mockOps)
+
 	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedImage: testSeedImageRef()}
-	ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil, cfg)
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
 
 	manifest := testManifest()
 	seedEntry := manifest.Images[0]
 	assert.NoError(t, ibi.importSeedToLiveStore(context.Background(), manifest, seedEntry))
 
 	if assert.NotNil(t, ff.seed) {
-		assert.Equal(t, localimages.StoreConfig{}, ff.seed.cfg, "seed must target the live/default store")
+		assert.Equal(t, wantSeedStoreConfig(), ff.seed.cfg,
+			"seed must target the host store resolved from podman info, not the default store")
 		assert.Equal(t, []string{cfg.LocalImagesPath}, ff.seed.mediaRoots)
 		if assert.Len(t, ff.seed.importedOne, 1) {
 			assert.Equal(t, seedEntry, ff.seed.importedOne[0])
@@ -703,6 +749,29 @@ func TestSeedImportedIntoLiveStore(t *testing.T) {
 		assert.True(t, ff.seed.closed, "seed importer must be closed")
 	}
 	assert.Nil(t, ff.closure, "the closure store must not be opened for the seed import")
+}
+
+// TestSeedImportFailsOnIncompleteHostStoreConfig proves the seed import fails fast
+// (before opening a store) when the host podman reports an incomplete store
+// configuration, rather than silently falling back to the Go-resolved default store.
+func TestSeedImportFailsOnIncompleteHostStoreConfig(t *testing.T) {
+	saveSeams(t)
+	newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
+		t.Fatal("importer must not be opened when the host store config is incomplete")
+		return nil, nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	// Missing graphRoot/runRoot in the reported store config.
+	mockOps.EXPECT().RunInHostNamespace("podman", "info", "--format", "json").
+		Return(`{"store":{"graphDriverName":"overlay"}}`, nil).Times(1)
+
+	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedImage: testSeedImageRef()}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	manifest := testManifest()
+	assert.Error(t, ibi.importSeedToLiveStore(context.Background(), manifest, manifest.Images[0]))
 }
 
 // TestClosureImportedIntoInstalledGraphroot asserts the closure is imported into the
@@ -792,6 +861,8 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	// seed import resolves the host store from podman info.
+	expectPodmanInfo(mockOps)
 	// precache fails reading the seed info file before chrooting or pulling.
 	mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
 	// p2 is unmounted on the error path.
@@ -862,6 +933,8 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 		events = append(events, "setupContainersFolder")
 		return nil
 	}).Times(1)
+	// seed import resolves the host store from podman info before SetupStateroot.
+	expectPodmanInfo(mockOps)
 	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).DoAndReturn(func(int) error {
 		events = append(events, "undeploy")
 		return nil
@@ -943,6 +1016,8 @@ func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	// seed import resolves the host store from podman info.
+	expectPodmanInfo(mockOps)
 	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
 	// Explicit final unmount fails; the deferred cleanup then retries it (also fails),

@@ -203,7 +203,7 @@ func PullImages(precacheSpec []string, authFile string, disconnected bool) *prec
 	return progress
 }
 
-func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
+func ValidatePrecache(status *precache.Progress, bestEffort, disconnected bool) error {
 	// Check pre-caching execution status
 	if status.Failed != 0 {
 		var imagesFound []string
@@ -220,7 +220,11 @@ func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 		if len(imagesFound) == status.Failed {
 			return nil
 		}
-		if bestEffort {
+		// best-effort is deliberately ignored in disconnected mode: every image must
+		// already be present locally (imported from the offline media), so a still-missing
+		// image means the closure import was incomplete and prepare must fail rather than
+		// silently report success with an image absent.
+		if bestEffort && !disconnected {
 			log.Info("Failed to precache, running in best-effort mode, skip error")
 			return nil
 		}
@@ -238,7 +242,7 @@ func Precache(precacheSpec []string, authFile string, bestEffort, disconnected b
 	status := PullImages(precacheSpec, authFile, disconnected)
 	log.Info("Completed executing pre-caching")
 
-	if err := ValidatePrecache(status, bestEffort); err != nil {
+	if err := ValidatePrecache(status, bestEffort, disconnected); err != nil {
 		return fmt.Errorf("failed to pre-cache one or more images")
 	}
 
