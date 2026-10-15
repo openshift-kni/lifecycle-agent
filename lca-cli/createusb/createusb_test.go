@@ -44,6 +44,9 @@ func writeManifest(t *testing.T, content string) string {
 	return path
 }
 
+// ptrTo returns a pointer to v (used for the *bool Shutdown field).
+func ptrTo[T any](v T) *T { return &v }
+
 // validInstallOnly returns a fully valid install-only manifest.
 func validInstallOnly() *Manifest {
 	return &Manifest{
@@ -53,7 +56,7 @@ func validInstallOnly() *Manifest {
 		ReleaseVersion:      testRelease,
 		InstallationDisk:    testInstallDisk,
 		Disconnected:        true,
-		Shutdown:            true,
+		Shutdown:            ptrTo(true),
 		RHCOSLiveISO:        RHCOSLiveISO{URL: testISOURL, SHA256: validSHA256},
 		ExtraPrecacheImages: &[]string{"quay.io/example/extra@sha256:" + validSHA256},
 	}
@@ -68,7 +71,7 @@ func validSelfContained() *Manifest {
 		ReleaseVersion:   testRelease,
 		InstallationDisk: testInstallDisk,
 		Disconnected:     true,
-		Shutdown:         false,
+		Shutdown:         ptrTo(false),
 		RHCOSLiveISO:     RHCOSLiveISO{URL: testISOURL, SHA256: validSHA256},
 		ClusterManifests: &[]ManifestSource{{Path: "manifests/cluster.yaml"}},
 		SiteConfig: &SiteConfig{
@@ -100,7 +103,8 @@ extraPrecacheImages:
 	assert.Equal(t, testSeedImage, m.SeedImage)
 	assert.Equal(t, testRelease, m.ReleaseVersion)
 	assert.True(t, m.Disconnected)
-	assert.True(t, m.Shutdown)
+	require.NotNil(t, m.Shutdown)
+	assert.True(t, *m.Shutdown)
 	assert.Equal(t, testISOURL, m.RHCOSLiveISO.URL)
 	assert.Equal(t, validSHA256, m.RHCOSLiveISO.SHA256)
 	require.NotNil(t, m.ExtraPrecacheImages)
@@ -128,7 +132,8 @@ siteConfig:
 	m, err = ParseManifest(writeManifest(t, selfContained))
 	require.NoError(t, err)
 	assert.Equal(t, ModeSelfContained, m.Mode)
-	assert.False(t, m.Shutdown)
+	require.NotNil(t, m.Shutdown)
+	assert.False(t, *m.Shutdown)
 	require.NotNil(t, m.SiteConfig)
 	assert.Equal(t, "example", m.SiteConfig.ClusterName)
 	assert.Equal(t, validPullSecret, m.SiteConfig.PullSecret)
@@ -180,13 +185,51 @@ func TestValidateDisconnectedMustBeTrue(t *testing.T) {
 func TestValidateShutdownMatchesMode(t *testing.T) {
 	t.Run("install-only requires shutdown true", func(t *testing.T) {
 		m := validInstallOnly()
-		m.Shutdown = false
+		m.Shutdown = ptrTo(false)
 		assert.ErrorContains(t, m.Validate(), "shutdown must be true")
 	})
 	t.Run("self-contained requires shutdown false", func(t *testing.T) {
 		m := validSelfContained()
-		m.Shutdown = true
+		m.Shutdown = ptrTo(true)
 		assert.ErrorContains(t, m.Validate(), "shutdown must be false")
+	})
+	// Regression for the review's P2: an omitted shutdown decodes to a nil pointer and must
+	// fail as a missing required field rather than defaulting to the self-contained-valid
+	// false (an explicit false still succeeds for self-contained).
+	t.Run("omitted shutdown fails for self-contained", func(t *testing.T) {
+		m := validSelfContained()
+		m.Shutdown = nil
+		assert.ErrorContains(t, m.Validate(), "shutdown is required")
+	})
+	t.Run("omitted shutdown fails for install-only", func(t *testing.T) {
+		m := validInstallOnly()
+		m.Shutdown = nil
+		assert.ErrorContains(t, m.Validate(), "shutdown is required")
+	})
+	t.Run("omitted shutdown via strict parse fails", func(t *testing.T) {
+		// A self-contained manifest with no shutdown key must fail (missing boolean would
+		// otherwise decode to the self-contained-valid false).
+		selfContained := `mode: self-contained
+seedImage: ` + testSeedImage + `
+seedVersion: ` + testSeedVersion + `
+releaseVersion: ` + testRelease + `
+installationDisk: ` + testInstallDisk + `
+disconnected: true
+rhcosLiveIso:
+  url: ` + testISOURL + `
+  sha256: ` + validSHA256 + `
+clusterManifests:
+  - path: manifests/cluster.yaml
+siteConfig:
+  clusterName: example
+  baseDomain: example.com
+  hostname: node0
+  pullSecret: '` + validPullSecret + `'
+`
+		m, err := ParseManifest(writeManifest(t, selfContained))
+		require.NoError(t, err)
+		assert.Nil(t, m.Shutdown)
+		assert.ErrorContains(t, m.Validate(), "shutdown is required")
 	})
 }
 
@@ -283,6 +326,28 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 		m := validSelfContained()
 		m.ClusterManifests = &[]ManifestSource{}
 		assert.ErrorContains(t, m.Validate(), "clusterManifests is required")
+	})
+	// Regression for the review's P2: a source with an empty path must be rejected — there
+	// is no file for the later media build to render.
+	t.Run("clusterManifests entry with empty path fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.ClusterManifests = &[]ManifestSource{{Path: ""}}
+		assert.ErrorContains(t, m.Validate(), "clusterManifests[0].path is required")
+	})
+	t.Run("clusterManifests entry with blank path fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.ClusterManifests = &[]ManifestSource{{Path: "manifests/cluster.yaml"}, {Path: "   "}}
+		assert.ErrorContains(t, m.Validate(), "clusterManifests[1].path is required")
+	})
+	t.Run("extraManifests entry with empty path fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.ExtraManifests = &[]ManifestSource{{Path: ""}}
+		assert.ErrorContains(t, m.Validate(), "extraManifests[0].path is required")
+	})
+	t.Run("extraManifests with valid paths passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.ExtraManifests = &[]ManifestSource{{Path: "manifests/extra.yaml"}}
+		assert.NoError(t, m.Validate())
 	})
 }
 
