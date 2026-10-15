@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 func newTestOps(t *testing.T, timeout time.Duration) *ops {
@@ -17,6 +20,69 @@ func newTestOps(t *testing.T, timeout time.Duration) *ops {
 	log := logrus.New()
 	log.SetLevel(logrus.DebugLevel)
 	return &ops{log: log, etcdTimeout: timeout}
+}
+
+func TestMountReadOnly(t *testing.T) {
+	const deviceName = "sdb1"
+
+	t.Run("mounts the discovered device read-only", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		exec := NewMockExecute(ctrl)
+		log := logrus.New()
+		o := &ops{log: log, hostCommandsExecutor: exec}
+
+		mountFolder := filepath.Join(t.TempDir(), "p2")
+		// The device path returned by discovery is mounted read-only (-o ro).
+		exec.EXPECT().
+			Execute("mount", "-o", "ro", fmt.Sprintf("/dev/%s", deviceName), mountFolder).
+			Return("", nil).
+			Times(1)
+
+		err := o.MountReadOnly(deviceName, mountFolder)
+		assert.NoError(t, err)
+		// The mountpoint is created.
+		_, statErr := os.Stat(mountFolder)
+		assert.NoError(t, statErr)
+	})
+
+	t.Run("cleans up the mountpoint it created on a failed mount", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		exec := NewMockExecute(ctrl)
+		log := logrus.New()
+		o := &ops{log: log, hostCommandsExecutor: exec}
+
+		mountFolder := filepath.Join(t.TempDir(), "p2")
+		exec.EXPECT().
+			Execute("mount", "-o", "ro", fmt.Sprintf("/dev/%s", deviceName), mountFolder).
+			Return("mount: wrong fs type", fmt.Errorf("exit status 32")).
+			Times(1)
+
+		err := o.MountReadOnly(deviceName, mountFolder)
+		assert.Error(t, err)
+		// A failed attempt must leave no partial state: the mountpoint is removed.
+		_, statErr := os.Stat(mountFolder)
+		assert.True(t, os.IsNotExist(statErr), "mountpoint must be removed after a failed mount")
+	})
+
+	t.Run("preserves a pre-existing mountpoint on a failed mount", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		exec := NewMockExecute(ctrl)
+		log := logrus.New()
+		o := &ops{log: log, hostCommandsExecutor: exec}
+
+		// A mountpoint that already exists (e.g. operator-configured) must not be removed.
+		mountFolder := filepath.Join(t.TempDir(), "p2")
+		assert.NoError(t, os.MkdirAll(mountFolder, 0o700))
+		exec.EXPECT().
+			Execute("mount", "-o", "ro", fmt.Sprintf("/dev/%s", deviceName), mountFolder).
+			Return("", fmt.Errorf("exit status 32")).
+			Times(1)
+
+		err := o.MountReadOnly(deviceName, mountFolder)
+		assert.Error(t, err)
+		_, statErr := os.Stat(mountFolder)
+		assert.NoError(t, statErr, "a pre-existing mountpoint must not be removed")
+	})
 }
 
 func TestWaitForEtcd_ImmediateSuccess(t *testing.T) {

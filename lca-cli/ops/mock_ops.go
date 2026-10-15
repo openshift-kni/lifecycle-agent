@@ -270,6 +270,20 @@ func (mr *MockOpsMockRecorder) MountImage(img any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MountImage", reflect.TypeOf((*MockOps)(nil).MountImage), img)
 }
 
+// MountReadOnly mocks base method.
+func (m *MockOps) MountReadOnly(deviceName, mountFolder string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MountReadOnly", deviceName, mountFolder)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MountReadOnly indicates an expected call of MountReadOnly.
+func (mr *MockOpsMockRecorder) MountReadOnly(deviceName, mountFolder any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MountReadOnly", reflect.TypeOf((*MockOps)(nil).MountReadOnly), deviceName, mountFolder)
+}
+
 // ReadDir mocks base method.
 func (m *MockOps) ReadDir(path string) ([]os.DirEntry, error) {
 	m.ctrl.T.Helper()
