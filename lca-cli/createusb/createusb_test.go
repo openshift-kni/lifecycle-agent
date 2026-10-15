@@ -1,5 +1,5 @@
 /*
-Copyright 2023.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -302,9 +302,9 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 	})
 	t.Run("missing identity fields fail", func(t *testing.T) {
 		for _, tc := range []struct {
-			name   string
-			mutate func(*SiteConfig)
-			want   string
+			name     string
+			mutate   func(*SiteConfig)
+			expected string
 		}{
 			{"clusterName", func(s *SiteConfig) { s.ClusterName = "" }, "clusterName is required"},
 			{"baseDomain", func(s *SiteConfig) { s.BaseDomain = "" }, "baseDomain is required"},
@@ -313,7 +313,7 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				m := validSelfContained()
 				tc.mutate(m.SiteConfig)
-				assert.ErrorContains(t, m.Validate(), tc.want)
+				assert.ErrorContains(t, m.Validate(), tc.expected)
 			})
 		}
 	})
@@ -361,9 +361,9 @@ func TestValidateUnknownOrEmptyMode(t *testing.T) {
 
 func TestValidateRequiredFields(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		mutate func(*Manifest)
-		want   string
+		name     string
+		mutate   func(*Manifest)
+		expected string
 	}{
 		{"missing seedImage", func(m *Manifest) { m.SeedImage = "" }, "seedImage is required"},
 		{"non-digest-pinned seedImage", func(m *Manifest) { m.SeedImage = "quay.io/example/seed:latest" }, "digest-pinned"},
@@ -377,16 +377,16 @@ func TestValidateRequiredFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := validInstallOnly()
 			tc.mutate(m)
-			assert.ErrorContains(t, m.Validate(), tc.want)
+			assert.ErrorContains(t, m.Validate(), tc.expected)
 		})
 	}
 }
 
 func TestValidateRHCOSLiveISO(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		mutate func(*Manifest)
-		want   string
+		name     string
+		mutate   func(*Manifest)
+		expected string
 	}{
 		{"missing url", func(m *Manifest) { m.RHCOSLiveISO.URL = "" }, "url is required"},
 		{"non-https url", func(m *Manifest) { m.RHCOSLiveISO.URL = "http://example.com/x.iso" }, "https url"},
@@ -400,7 +400,7 @@ func TestValidateRHCOSLiveISO(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := validInstallOnly()
 			tc.mutate(m)
-			assert.ErrorContains(t, m.Validate(), tc.want)
+			assert.ErrorContains(t, m.Validate(), tc.expected)
 		})
 	}
 	t.Run("valid pair passes", func(t *testing.T) {
