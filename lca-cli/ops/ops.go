@@ -496,9 +496,16 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 
 // ListBlockDevices runs lsblk command and not using go library cause
 // each library that i was looking into doesn't show label for block device and shows labels only for partitions
+//
+// --list is passed so lsblk emits every disk and partition as a flat top-level
+// entry in "blockdevices" rather than nesting partitions under their parent disk
+// as "children". BlockDevice only carries Name/Label (no Children), so without
+// --list a label that lives on a partition (e.g. the "ibi-images" label on sdb2)
+// would be dropped during unmarshal. Flat output lets callers match labels on both
+// whole devices and partitions without changing the BlockDevice shape.
 func (o *ops) ListBlockDevices() ([]BlockDevice, error) {
 	o.log.Info("Listing block devices")
-	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f",
+	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f", "--list",
 		"--json", "--output", "NAME,LABEL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to run lsblk, err: %w", err)

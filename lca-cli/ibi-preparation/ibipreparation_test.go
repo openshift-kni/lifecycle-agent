@@ -458,10 +458,10 @@ func TestMountLocalImages(t *testing.T) {
 	const localImagesPath = "/var/mnt/ibi-images"
 
 	cases := []struct {
-		name        string
-		devices     []ops.BlockDevice
-		expectMount bool
-		expectErr   bool
+		name       string
+		devices    []ops.BlockDevice
+		wantDevice string // device mountLocalImages should select (empty => expect error)
+		expectErr  bool
 	}{
 		{
 			name:      "zero matches fails before mount",
@@ -469,7 +469,7 @@ func TestMountLocalImages(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "more than one match fails before mount",
+			name: "ambiguous matches fail before mount",
 			devices: []ops.BlockDevice{
 				{Name: "sdb1", Label: common.LocalImagesFSLabel},
 				{Name: "sdc1", Label: common.LocalImagesFSLabel},
@@ -477,12 +477,22 @@ func TestMountLocalImages(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "exactly one proceeds to MountReadOnly",
+			name: "label on a partition proceeds to MountReadOnly",
 			devices: []ops.BlockDevice{
-				{Name: "sdd", Label: "other"},
-				{Name: "sdb1", Label: common.LocalImagesFSLabel},
+				// With lsblk --list, partitions surface as flat top-level entries.
+				{Name: "sdb", Label: ""},
+				{Name: "sdb1", Label: "boot"},
+				{Name: "sdb2", Label: common.LocalImagesFSLabel},
 			},
-			expectMount: true,
+			wantDevice: "sdb2",
+		},
+		{
+			name: "label on a whole device proceeds to MountReadOnly",
+			devices: []ops.BlockDevice{
+				{Name: "sda", Label: "root"},
+				{Name: "sdb", Label: common.LocalImagesFSLabel},
+			},
+			wantDevice: "sdb",
 		},
 	}
 
@@ -494,8 +504,8 @@ func TestMountLocalImages(t *testing.T) {
 				&ibiconfig.IBIPrepareConfig{LocalImagesPath: localImagesPath})
 
 			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
-			if tc.expectMount {
-				mockOps.EXPECT().MountReadOnly("sdb1", localImagesPath).Return(nil).Times(1)
+			if tc.wantDevice != "" {
+				mockOps.EXPECT().MountReadOnly(tc.wantDevice, localImagesPath).Return(nil).Times(1)
 			} else {
 				mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 			}
@@ -510,9 +520,9 @@ func TestMountLocalImages(t *testing.T) {
 			if assert.NotNil(t, unmount) {
 				// Idempotent: Umount runs at most once even if the closure is called
 				// twice (explicit happy-path call + deferred error-path call).
-				mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
-				unmount()
-				unmount()
+				mockOps.EXPECT().Umount(tc.wantDevice).Return(nil).Times(1)
+				assert.NoError(t, unmount())
+				assert.NoError(t, unmount())
 			}
 		})
 	}
@@ -894,6 +904,55 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 		assert.Equal(t, filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage"),
 			ff.closure.cfg.GraphRoot)
 	}
+}
+
+// TestRunReturnsErrorOnFailedFinalUnmount proves that when the final p2 unmount
+// keeps failing, Run surfaces the failure as its result (regardless of Shutdown)
+// rather than reporting success with p2 still mounted, and that the deferred cleanup
+// retries the unmount on the way out.
+func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	newImageImporter = (&importerFactory{}).new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+		Shutdown:            false, // the unmount error must surface regardless of Shutdown
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().
+		Return([]ops.BlockDevice{{Name: "sdb2", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb2", cfg.LocalImagesPath).Return(nil).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	// Explicit final unmount fails; the deferred cleanup then retries it (also fails),
+	// so Umount is attempted twice. shutdown must never be invoked.
+	mockOps.EXPECT().Umount("sdb2").Return(fmt.Errorf("device busy")).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unmount local images")
 }
 
 // TestConnectedFlowUnchanged proves the connected flow is untouched: no p2

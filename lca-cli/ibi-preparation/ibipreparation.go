@@ -92,7 +92,7 @@ func (i *IBIPrepare) Run() error {
 	var (
 		manifest  *localimages.DigestManifest
 		seedEntry localimages.ImageEntry
-		unmountP2 func()
+		unmountP2 func() error
 	)
 	if i.config.Disconnected {
 		// Preflight precondition 1: discover p2 by label and mount it read-only.
@@ -102,10 +102,13 @@ func (i *IBIPrepare) Run() error {
 		}
 		unmountP2 = unmount
 		// Keep p2 mounted through the entire import; this deferred unmount covers the
-		// error paths. On the happy path p2 is unmounted explicitly as the last p2
-		// action after the final sync (the installed store handoff reads it after
-		// precache), and this deferred call then becomes a no-op (unmount is idempotent).
-		defer unmountP2()
+		// error paths (its result is intentionally discarded -- it is best-effort
+		// cleanup while Run is already failing, and also acts as the retry of a failed
+		// explicit final unmount). On the happy path p2 is unmounted explicitly as the
+		// last p2 action after the final sync (the installed store handoff reads it
+		// after precache), and this deferred call then becomes a no-op (unmount is
+		// idempotent).
+		defer func() { _ = unmountP2() }()
 
 		// Preflight precondition 2: parse the manifest and resolve the seed entry,
 		// before any disk write.
@@ -201,9 +204,14 @@ func (i *IBIPrepare) Run() error {
 
 	// Unmount p2 last: only after the final sync and the installed store handoff, so
 	// additionalimagestores never points at a path that has already gone away. This is
-	// idempotent, so the deferred unmount registered above then becomes a no-op.
+	// idempotent, so the deferred unmount registered above then becomes a no-op on
+	// success. A failed final unmount is a failed lifecycle step: surface it as Run's
+	// result regardless of i.config.Shutdown rather than reporting success (or shutting
+	// down) with p2 still mounted. The deferred unmount above then retries on the way out.
 	if unmountP2 != nil {
-		unmountP2()
+		if err := unmountP2(); err != nil {
+			return fmt.Errorf("failed to unmount local images partition after import: %w", err)
+		}
 	}
 
 	return i.shutdownNode()
@@ -216,7 +224,9 @@ func (i *IBIPrepare) Run() error {
 // and because Run calls it before diskPreparation the installation disk is still
 // untouched. It returns an idempotent unmount closure so the caller can both defer
 // it (error paths) and invoke it explicitly as the last p2 action on the happy path.
-func (i *IBIPrepare) mountLocalImages() (func(), error) {
+// The closure returns the umount error so the caller can surface a failed final
+// unmount as Run's result.
+func (i *IBIPrepare) mountLocalImages() (func() error, error) {
 	blockDevices, err := i.ops.ListBlockDevices()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list block devices: %w", err)
@@ -239,18 +249,19 @@ func (i *IBIPrepare) mountLocalImages() (func(), error) {
 	}
 
 	var unmounted bool
-	unmount := func() {
+	unmount := func() error {
 		if unmounted {
-			return
+			return nil
 		}
 		if err := i.ops.Umount(deviceName); err != nil {
 			// Leave unmounted false so a subsequent (deferred) call retries; a second
 			// umount of an already-unmounted device would otherwise error, which is why
 			// the flag is only set once the unmount actually succeeds.
 			i.log.Warnf("failed to unmount local images device %s: %v", deviceName, err)
-			return
+			return fmt.Errorf("failed to unmount local images device %s: %w", deviceName, err)
 		}
 		unmounted = true
+		return nil
 	}
 	return unmount, nil
 }
@@ -425,7 +436,9 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort); err != nil {
+	// Disconnected: the image closure was imported into the installed stateroot store
+	// up front, so precache must verify local presence rather than pull from the network.
+	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort, i.config.Disconnected); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
