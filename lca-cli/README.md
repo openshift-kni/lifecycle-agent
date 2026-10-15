@@ -165,7 +165,7 @@ Fields common to both profiles (all required):
 | Field | Type | Description |
 | --- | --- | --- |
 | `mode` | string | `install-only` or `self-contained`. |
-| `seedImage` | string | The seed OCI image. Must be digest-pinned (contain `@sha256:`). |
+| `seedImage` | string | The seed OCI image. Must be digest-pinned with a full digest (`repo@sha256:<64-char lowercase hex>`). |
 | `seedVersion` | string | The seed image version. |
 | `releaseVersion` | string | The OpenShift release version. |
 | `installationDisk` | string | The target installation disk (e.g. `/dev/disk/by-id/ata-xxxx`). |
