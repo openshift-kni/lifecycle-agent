@@ -277,7 +277,7 @@ github.com/coreos/ignition/config/validate
 github.com/coreos/ignition/config/validate/astjson
 github.com/coreos/ignition/config/validate/astnode
 github.com/coreos/ignition/config/validate/report
-# github.com/coreos/ignition/v2 v2.27.0
+# github.com/coreos/ignition/v2 v2.28.0
 ## explicit; go 1.25.0
 github.com/coreos/ignition/v2/butane/base/util
 github.com/coreos/ignition/v2/butane/base/v0_1
@@ -336,6 +336,10 @@ github.com/coreos/ignition/v2/butane/config/openshift/v4_8
 github.com/coreos/ignition/v2/butane/config/openshift/v4_8/result
 github.com/coreos/ignition/v2/butane/config/openshift/v4_9
 github.com/coreos/ignition/v2/butane/config/openshift/v4_9/result
+github.com/coreos/ignition/v2/butane/config/openshift/v5_0
+github.com/coreos/ignition/v2/butane/config/openshift/v5_0/result
+github.com/coreos/ignition/v2/butane/config/openshift/v5_1_exp
+github.com/coreos/ignition/v2/butane/config/openshift/v5_1_exp/result
 github.com/coreos/ignition/v2/butane/config/r4e/v1_0
 github.com/coreos/ignition/v2/butane/config/r4e/v1_1
 github.com/coreos/ignition/v2/butane/config/r4e/v1_2_exp
