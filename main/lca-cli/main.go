@@ -16,8 +16,17 @@ limitations under the License.
 
 package main
 
-import "github.com/openshift-kni/lifecycle-agent/lca-cli/cmd"
+import (
+	"os"
+
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/cmd"
+)
 
 func main() {
-	_ = cmd.Execute()
+	// Exit non-zero when a command fails so automation never treats a failed
+	// (or not-yet-implemented) build as success. cobra has already printed the
+	// error to stderr by this point.
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

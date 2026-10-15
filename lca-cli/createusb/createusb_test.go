@@ -55,7 +55,7 @@ func validInstallOnly() *Manifest {
 		Disconnected:        true,
 		Shutdown:            true,
 		RHCOSLiveISO:        RHCOSLiveISO{URL: testISOURL, SHA256: validSHA256},
-		ExtraPrecacheImages: []string{"quay.io/example/extra@sha256:" + validSHA256},
+		ExtraPrecacheImages: &[]string{"quay.io/example/extra@sha256:" + validSHA256},
 	}
 }
 
@@ -70,7 +70,7 @@ func validSelfContained() *Manifest {
 		Disconnected:     true,
 		Shutdown:         false,
 		RHCOSLiveISO:     RHCOSLiveISO{URL: testISOURL, SHA256: validSHA256},
-		ClusterManifests: []ManifestSource{{Path: "manifests/cluster.yaml"}},
+		ClusterManifests: &[]ManifestSource{{Path: "manifests/cluster.yaml"}},
 		SiteConfig: &SiteConfig{
 			ClusterName: "example",
 			BaseDomain:  "example.com",
@@ -103,7 +103,8 @@ extraPrecacheImages:
 	assert.True(t, m.Shutdown)
 	assert.Equal(t, testISOURL, m.RHCOSLiveISO.URL)
 	assert.Equal(t, validSHA256, m.RHCOSLiveISO.SHA256)
-	assert.Equal(t, []string{"quay.io/example/extra@sha256:" + validSHA256}, m.ExtraPrecacheImages)
+	require.NotNil(t, m.ExtraPrecacheImages)
+	assert.Equal(t, []string{"quay.io/example/extra@sha256:" + validSHA256}, *m.ExtraPrecacheImages)
 	assert.NoError(t, m.Validate())
 
 	selfContained := `mode: self-contained
@@ -131,8 +132,9 @@ siteConfig:
 	require.NotNil(t, m.SiteConfig)
 	assert.Equal(t, "example", m.SiteConfig.ClusterName)
 	assert.Equal(t, validPullSecret, m.SiteConfig.PullSecret)
-	assert.Len(t, m.ClusterManifests, 1)
-	assert.Equal(t, "manifests/cluster.yaml", m.ClusterManifests[0].Path)
+	require.NotNil(t, m.ClusterManifests)
+	assert.Len(t, *m.ClusterManifests, 1)
+	assert.Equal(t, "manifests/cluster.yaml", (*m.ClusterManifests)[0].Path)
 	assert.NoError(t, m.Validate())
 }
 
@@ -196,18 +198,42 @@ func TestValidateModeFieldPresence(t *testing.T) {
 	})
 	t.Run("clusterManifests under install-only fails", func(t *testing.T) {
 		m := validInstallOnly()
-		m.ClusterManifests = []ManifestSource{{Path: "x"}}
+		m.ClusterManifests = &[]ManifestSource{{Path: "x"}}
 		assert.ErrorContains(t, m.Validate(), "clusterManifests is only valid")
 	})
 	t.Run("extraManifests under install-only fails", func(t *testing.T) {
 		m := validInstallOnly()
-		m.ExtraManifests = []ManifestSource{{Path: "x"}}
+		m.ExtraManifests = &[]ManifestSource{{Path: "x"}}
 		assert.ErrorContains(t, m.Validate(), "extraManifests is only valid")
 	})
 	t.Run("extraPrecacheImages under self-contained fails", func(t *testing.T) {
 		m := validSelfContained()
-		m.ExtraPrecacheImages = []string{"quay.io/example/extra@sha256:" + validSHA256}
+		m.ExtraPrecacheImages = &[]string{"quay.io/example/extra@sha256:" + validSHA256}
 		assert.ErrorContains(t, m.Validate(), "extraPrecacheImages is only valid")
+	})
+	// Regression for the review's P2: presence (not length) disqualifies a field under
+	// the wrong mode — an explicit empty list must still be rejected.
+	t.Run("empty clusterManifests under install-only fails", func(t *testing.T) {
+		m := validInstallOnly()
+		m.ClusterManifests = &[]ManifestSource{}
+		assert.ErrorContains(t, m.Validate(), "clusterManifests is only valid")
+	})
+	t.Run("empty extraManifests under install-only fails", func(t *testing.T) {
+		m := validInstallOnly()
+		m.ExtraManifests = &[]ManifestSource{}
+		assert.ErrorContains(t, m.Validate(), "extraManifests is only valid")
+	})
+	t.Run("empty extraPrecacheImages under self-contained fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.ExtraPrecacheImages = &[]string{}
+		assert.ErrorContains(t, m.Validate(), "extraPrecacheImages is only valid")
+	})
+	t.Run("empty list via strict parse is rejected under wrong mode", func(t *testing.T) {
+		// An install-only manifest that explicitly sets clusterManifests: [] must fail.
+		m, err := ParseManifest(writeManifest(t, "mode: install-only\nclusterManifests: []\n"))
+		require.NoError(t, err)
+		require.NotNil(t, m.ClusterManifests)
+		assert.ErrorContains(t, m.Validate(), "clusterManifests is only valid")
 	})
 	t.Run("valid combinations pass", func(t *testing.T) {
 		assert.NoError(t, validInstallOnly().Validate())
@@ -253,6 +279,11 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 		m.ClusterManifests = nil
 		assert.ErrorContains(t, m.Validate(), "clusterManifests is required")
 	})
+	t.Run("empty clusterManifests fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.ClusterManifests = &[]ManifestSource{}
+		assert.ErrorContains(t, m.Validate(), "clusterManifests is required")
+	})
 }
 
 func TestValidateUnknownOrEmptyMode(t *testing.T) {
@@ -271,6 +302,9 @@ func TestValidateRequiredFields(t *testing.T) {
 	}{
 		{"missing seedImage", func(m *Manifest) { m.SeedImage = "" }, "seedImage is required"},
 		{"non-digest-pinned seedImage", func(m *Manifest) { m.SeedImage = "quay.io/example/seed:latest" }, "digest-pinned"},
+		{"empty-digest seedImage", func(m *Manifest) { m.SeedImage = "quay.io/example/seed@sha256:" }, "digest-pinned"},
+		{"short-digest seedImage", func(m *Manifest) { m.SeedImage = "quay.io/example/seed@sha256:abcd" }, "digest-pinned"},
+		{"no-name seedImage", func(m *Manifest) { m.SeedImage = "@sha256:" + validSHA256 }, "digest-pinned"},
 		{"missing seedVersion", func(m *Manifest) { m.SeedVersion = "" }, "seedVersion is required"},
 		{"missing releaseVersion", func(m *Manifest) { m.ReleaseVersion = "" }, "releaseVersion is required"},
 		{"missing installationDisk", func(m *Manifest) { m.InstallationDisk = "" }, "installationDisk is required"},
@@ -291,6 +325,8 @@ func TestValidateRHCOSLiveISO(t *testing.T) {
 	}{
 		{"missing url", func(m *Manifest) { m.RHCOSLiveISO.URL = "" }, "url is required"},
 		{"non-https url", func(m *Manifest) { m.RHCOSLiveISO.URL = "http://example.com/x.iso" }, "https url"},
+		{"https url without host", func(m *Manifest) { m.RHCOSLiveISO.URL = "https://" }, "host"},
+		{"scheme-only no host", func(m *Manifest) { m.RHCOSLiveISO.URL = "https:///path/x.iso" }, "host"},
 		{"missing sha256", func(m *Manifest) { m.RHCOSLiveISO.SHA256 = "" }, "sha256 is required"},
 		{"short sha256", func(m *Manifest) { m.RHCOSLiveISO.SHA256 = "abcd" }, "64-character"},
 		{"non-hex sha256", func(m *Manifest) { m.RHCOSLiveISO.SHA256 = "g" + validSHA256[1:] }, "64-character"},

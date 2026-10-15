@@ -29,6 +29,7 @@ package createusb
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,16 +55,15 @@ const (
 	// reference to be resolved at build time (build-time only; never survives into
 	// rendered output).
 	pullSecretFilePrefix = "@"
-
-	// seedImageDigestMarker is required in seedImage so the seed is digest-pinned.
-	seedImageDigestMarker = "@sha256:"
-
-	// httpsScheme is the only scheme accepted for the RHCOS live ISO URL.
-	httpsScheme = "https://"
 )
 
 // sha256HexRegex matches a 64-character lowercase hex SHA-256 digest.
 var sha256HexRegex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// seedImageDigestRegex matches a digest-pinned image reference: a non-empty name
+// component followed by a full 64-character lowercase hex sha256 digest. It rejects a
+// bare tag (no digest) and a malformed digest such as "repo@sha256:" with no hex.
+var seedImageDigestRegex = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 // RHCOSLiveISO is the structured reference to the RHCOS live ISO used to build the media.
 type RHCOSLiveISO struct {
@@ -113,13 +113,17 @@ type Manifest struct {
 	// RHCOSLiveISO is required; the --rhcos-live-iso* flags override it (flag wins).
 	RHCOSLiveISO RHCOSLiveISO `json:"rhcosLiveIso,omitempty"`
 
-	// ExtraPrecacheImages is install-only only.
-	ExtraPrecacheImages []string `json:"extraPrecacheImages,omitempty"`
+	// ExtraPrecacheImages is install-only only. It is a pointer so a present-but-empty
+	// list (extraPrecacheImages: []) is distinguishable from an absent field and is
+	// still rejected under self-contained.
+	ExtraPrecacheImages *[]string `json:"extraPrecacheImages,omitempty"`
 
-	// ClusterManifests/ExtraManifests/SiteConfig are self-contained only.
-	ClusterManifests []ManifestSource `json:"clusterManifests,omitempty"`
-	ExtraManifests   []ManifestSource `json:"extraManifests,omitempty"`
-	SiteConfig       *SiteConfig      `json:"siteConfig,omitempty"`
+	// ClusterManifests/ExtraManifests/SiteConfig are self-contained only. The slice
+	// fields are pointers so a present-but-empty list is distinguishable from an absent
+	// field (and rejected under install-only).
+	ClusterManifests *[]ManifestSource `json:"clusterManifests,omitempty"`
+	ExtraManifests   *[]ManifestSource `json:"extraManifests,omitempty"`
+	SiteConfig       *SiteConfig       `json:"siteConfig,omitempty"`
 }
 
 // ParseManifest reads and strictly decodes the manifest at path.
@@ -195,19 +199,22 @@ func (m *Manifest) Validate() error {
 
 // validateFieldPresence rejects a mode-specific field that appears under the wrong mode.
 func (m *Manifest) validateFieldPresence() error {
+	// Presence (not length) is what disqualifies a field under the wrong mode: an
+	// explicit empty list (e.g. clusterManifests: []) is still a use of the field and
+	// must be rejected, so these check for a non-nil pointer rather than len() > 0.
 	switch m.Mode {
 	case ModeInstallOnly:
 		if m.SiteConfig != nil {
 			return fmt.Errorf("siteConfig is only valid for mode %q", ModeSelfContained)
 		}
-		if len(m.ClusterManifests) > 0 {
+		if m.ClusterManifests != nil {
 			return fmt.Errorf("clusterManifests is only valid for mode %q", ModeSelfContained)
 		}
-		if len(m.ExtraManifests) > 0 {
+		if m.ExtraManifests != nil {
 			return fmt.Errorf("extraManifests is only valid for mode %q", ModeSelfContained)
 		}
 	case ModeSelfContained:
-		if len(m.ExtraPrecacheImages) > 0 {
+		if m.ExtraPrecacheImages != nil {
 			return fmt.Errorf("extraPrecacheImages is only valid for mode %q", ModeInstallOnly)
 		}
 	}
@@ -219,8 +226,8 @@ func (m *Manifest) validateRequiredFields() error {
 	if m.SeedImage == "" {
 		return fmt.Errorf("seedImage is required")
 	}
-	if !strings.Contains(m.SeedImage, seedImageDigestMarker) {
-		return fmt.Errorf("seedImage must be digest-pinned (contain %q)", seedImageDigestMarker)
+	if !seedImageDigestRegex.MatchString(m.SeedImage) {
+		return fmt.Errorf("seedImage must be digest-pinned with a full sha256 digest (e.g. repo@sha256:<64-char lowercase hex>)")
 	}
 	if m.SeedVersion == "" {
 		return fmt.Errorf("seedVersion is required")
@@ -239,8 +246,10 @@ func (m *Manifest) validateRHCOSLiveISO() error {
 	if m.RHCOSLiveISO.URL == "" {
 		return fmt.Errorf("rhcosLiveIso.url is required")
 	}
-	if !strings.HasPrefix(m.RHCOSLiveISO.URL, httpsScheme) {
-		return fmt.Errorf("rhcosLiveIso.url must be an https url")
+	// Parse the URL and require an https scheme and a non-empty host so an unusable
+	// source such as "https://" (no host) fails the build rather than being accepted.
+	if u, err := url.Parse(m.RHCOSLiveISO.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("rhcosLiveIso.url must be an https url with a host")
 	}
 	if m.RHCOSLiveISO.SHA256 == "" {
 		return fmt.Errorf("rhcosLiveIso.sha256 is required")
@@ -284,7 +293,7 @@ func (m *Manifest) validateSelfContained() error {
 	}
 
 	// The self-contained media carries the cluster's configuration on-media.
-	if len(m.ClusterManifests) == 0 {
+	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
 		return fmt.Errorf("clusterManifests is required for mode %q", ModeSelfContained)
 	}
 
