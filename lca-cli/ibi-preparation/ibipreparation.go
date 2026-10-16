@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/image/v5/pkg/sysregistriesv2"
+	"go.podman.io/image/v5/pkg/sysregistriesv2"
 	"github.com/go-logr/logr"
 	"github.com/pelletier/go-toml"
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"

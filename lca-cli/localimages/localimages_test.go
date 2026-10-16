@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	istorage "github.com/containers/image/v5/storage"
-	cstorage "github.com/containers/storage"
-	"github.com/containers/storage/pkg/reexec"
+	istorage "go.podman.io/image/v5/storage"
+	cstorage "go.podman.io/storage"
+	"go.podman.io/storage/pkg/reexec"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
