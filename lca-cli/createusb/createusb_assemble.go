@@ -57,6 +57,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -113,6 +114,22 @@ const (
 	labelIBIStatus     = "ibi-status"
 )
 
+// Supported filesystem types for FormatPartition. Each takes different mkfs options, so the
+// correct formatter + flags are selected per type (mkfsCommand) rather than reusing one flag set.
+const (
+	fsTypeExt4 = "ext4"
+	fsTypeXFS  = "xfs"
+)
+
+const (
+	// partitionNodePollInterval is how often waitForPartitionNode polls for the new partition
+	// device node to appear after refreshing the kernel partition table.
+	partitionNodePollInterval = 100 * time.Millisecond
+	// partitionNodeWaitTimeout bounds how long waitForPartitionNode waits for the partition
+	// device node to appear before giving up.
+	partitionNodeWaitTimeout = 5 * time.Second
+)
+
 // errAssemblyIncomplete is returned by Build after the container + placeholder-p1
 // foundation and the empty p2 partition run: the media is not complete (p3/p4 are not
 // implemented yet), so the scaffold fails loudly rather than claim to have produced usable
@@ -128,6 +145,12 @@ type BuildOptions struct {
 	// WriteDevice is the block device to write to (--write-device). It is deferred: Build
 	// rejects it while the assembly pipeline is incomplete.
 	WriteDevice string
+	// P3Root is the rendered + digest-pinned self-contained config tree (RenderP3Tree ->
+	// buildImageLayout, CNF-27169) the p3 stage populates the cluster-config partition from.
+	// It is consumed read-only. The end-to-end join that renders the tree and threads this
+	// path from the command is CNF-27171; until then only the integration test supplies it,
+	// so an empty P3Root leaves the reserved p3 slot unpopulated (see createP3Partition).
+	P3Root string
 }
 
 // PlannedPartition is one entry in the computed media layout: its GPT partition number,
@@ -161,8 +184,9 @@ type PartitionEntry struct {
 	Name string
 }
 
-// partitionOps is the privileged host-ops seam the media build depends on. The p2/p3/p4
-// stories extend this same interface with format/mount methods.
+// partitionOps is the privileged host-ops seam the media build depends on. The p2 and p3
+// stages (CNF-28668/CNF-28669) share the same create/settle/format primitives; p3 adds
+// mount/unmount on top for its populate step.
 type partitionOps interface {
 	// AttachLoopback attaches imgPath to a loop device (losetup --find --show -P) and
 	// returns the device path (e.g. /dev/loop0).
@@ -174,13 +198,54 @@ type partitionOps interface {
 	// live-ISO region and the p2/p3/p4 offsets. This is the operation that establishes the
 	// base layout.
 	CreateBaseLayout(dev string, plan PartitionPlan) error
-	// AddPartition creates the GPT entry for part at its reserved offset on dev, refreshes
-	// the kernel partition table, waits for the new partition device node to appear, and
-	// formats it as fsType with part.Label as the filesystem label. It is generic so the
-	// p2/p3/p4 stories (CNF-28668/CNF-28669/CNF-28670) share one implementation.
-	AddPartition(dev string, part PlannedPartition, fsType string) error
 	// ReadPartitionTable reads dev's GPT and returns the parsed entries.
 	ReadPartitionTable(dev string) ([]PartitionEntry, error)
+
+	// The create -> settle -> format primitives below are the single shared implementation
+	// every partition stage uses (the createAndFormatPartition helper composes them). p2
+	// (ibi-images) and p3 (cluster-config) both drive them so there is exactly one copy of the
+	// GPT-creation, partition-table-refresh, bounded device-node-resolution, and ext4-format
+	// command sequences.
+
+	// CreatePartition adds a single GPT entry to dev at the number, 1 MiB-aligned offset, and
+	// reserved size the plan carries for part (sgdisk --new/--change-name/--typecode),
+	// mirroring CreateBaseLayout's p1 creation for a sibling partition. It does not format the
+	// partition.
+	CreatePartition(dev string, part PlannedPartition) error
+	// SettlePartition makes the kernel partition node for partition number on dev available
+	// after its GPT entry was added (re-read the table + a bounded wait for the device node)
+	// and returns the partition device path (e.g. /dev/loop0p3).
+	SettlePartition(dev string, number int) (partDev string, err error)
+	// FormatPartition creates a fsType filesystem on partDev and sets its FS label. fsType is
+	// validated (ext4/xfs) before mkfs runs.
+	FormatPartition(partDev, fsType, label string) error
+
+	// MountPartition and UnmountPartition back p3's populate step; p2 creates an empty
+	// partition and never mounts.
+
+	// MountPartition mounts partDev at mountpoint.
+	MountPartition(partDev, mountpoint string) error
+	// UnmountPartition unmounts mountpoint.
+	UnmountPartition(mountpoint string) error
+}
+
+// createAndFormatPartition is the shared create -> settle -> format sequence every partition
+// stage runs: it creates part's GPT entry at its reserved offset on dev, settles its kernel
+// device node (partition-table refresh + a bounded wait), formats it as fsType with part.Label
+// as the FS label, and returns the partition device node. p2 (ibi-images) calls it and is done;
+// p3 (cluster-config) calls it and then mounts the returned node to populate the partition.
+func createAndFormatPartition(p partitionOps, dev string, part PlannedPartition, fsType string) (string, error) {
+	if err := p.CreatePartition(dev, part); err != nil {
+		return "", fmt.Errorf("creating p%d (%s) entry on %s: %w", part.Number, part.Label, dev, err)
+	}
+	partDev, err := p.SettlePartition(dev, part.Number)
+	if err != nil {
+		return "", fmt.Errorf("settling p%d (%s) partition node: %w", part.Number, part.Label, err)
+	}
+	if err := p.FormatPartition(partDev, fsType, part.Label); err != nil {
+		return "", fmt.Errorf("formatting p%d (%s) as %s: %w", part.Number, part.Label, fsType, err)
+	}
+	return partDev, nil
 }
 
 // mediaBuildDeps bundles the injectable seam(s). It has a single field today; the
@@ -327,6 +392,15 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		if success {
 			return
 		}
+		// If p3 could not be unmounted, its filesystem is still mounted over the loop device.
+		// Detaching the loop and removing the backing image would discard the only path to
+		// recover or retry the unmount, so preserve both and surface where things stand.
+		if errors.Is(err, errP3Mounted) {
+			log.Warnf("create-usb: cluster-config (p3) partition is still mounted; preserving loop device %s "+
+				"and media image %s for recovery (unmount it, then detach %s and remove the image)",
+				loopDev, imgPath, loopDev)
+			return
+		}
 		if loopDev != "" {
 			if derr := deps.partition.DetachLoopback(loopDev); derr != nil {
 				log.Warnf("create-usb: detaching loop device %s during rollback: %v", loopDev, derr)
@@ -353,6 +427,16 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		IsImage:    true,
 		partition:  deps.partition,
 	}
+
+	// Self-contained: fill the reserved p3 cluster-config slot (create entry, mkfs.ext4,
+	// label, mount, populate). It runs after the base layout and before success, so a p3
+	// failure triggers the rollback above (p3 unmounts itself first, then the rollback
+	// detaches the loop and removes the partial image). install-only has no p3 entry in the
+	// plan, so the stage is a no-op there.
+	if err = createP3Partition(ctx, log, deps, handle, opts.P3Root); err != nil {
+		return nil, fmt.Errorf("creating cluster-config (p3) partition on %s: %w", loopDev, err)
+	}
+
 	success = true
 	return handle, nil
 }
@@ -519,6 +603,145 @@ func (p *opsPartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, erro
 		return nil, fmt.Errorf("reading partition table on %s: %w", dev, err)
 	}
 	return parseSgdiskTable(out), nil
+}
+
+// CreatePartition adds the single GPT entry part reserves to dev, using the same sector math
+// and sgdisk invocation as CreateBaseLayout's placeholder p1 (--new/--change-name/--typecode).
+// The placeholder type code is kept: the cluster-config partition is located by FS label at
+// post-pivot, not by GPT type.
+func (p *opsPartitionOps) CreatePartition(dev string, part PlannedPartition) error {
+	startSector := part.Offset / sectorSize
+	endSector := (part.Offset+part.Size)/sectorSize - 1
+	if _, err := p.ops.RunInHostNamespace("sgdisk",
+		fmt.Sprintf("--new=%d:%d:%d", part.Number, startSector, endSector),
+		fmt.Sprintf("--change-name=%d:%s", part.Number, part.Label),
+		fmt.Sprintf("--typecode=%d:%s", part.Number, placeholderTypeCode),
+		dev); err != nil {
+		return fmt.Errorf("creating partition %d (%s) on %s: %w", part.Number, part.Label, dev, err)
+	}
+	return nil
+}
+
+// SettlePartition re-reads dev's partition table (partprobe) and waits for the new partition
+// node to be created under /dev, then returns its device path. Without this the <dev>pN node
+// may not exist yet when mkfs runs. The wait is bounded (see waitForPartitionNode) so a slow or
+// stuck udev cannot hang the settle indefinitely.
+func (p *opsPartitionOps) SettlePartition(dev string, number int) (string, error) {
+	if _, err := p.ops.RunInHostNamespace("partprobe", dev); err != nil {
+		return "", fmt.Errorf("re-reading partition table on %s: %w", dev, err)
+	}
+	partDev := partitionDevicePath(dev, number)
+	if err := p.waitForPartitionNode(partDev); err != nil {
+		return "", err
+	}
+	return partDev, nil
+}
+
+// FormatPartition creates a fsType filesystem on partDev with the given FS label. The formatter
+// and its force flag are selected per type by mkfsCommand (ext4 -F, xfs -f), and an unsupported
+// type fails before any mkfs runs. ext4 is the media default because it holds the 14-char
+// cluster-config label (vfat's 11-char limit could not) and post-pivot locates p3 by label with
+// kernel FS auto-detection, imposing no FS-type requirement.
+func (p *opsPartitionOps) FormatPartition(partDev, fsType, label string) error {
+	mkfs, err := mkfsCommand(fsType, label, partDev)
+	if err != nil {
+		return err
+	}
+	if _, err := p.ops.RunInHostNamespace(mkfs[0], mkfs[1:]...); err != nil {
+		return fmt.Errorf("running %s -L %s on %s: %w", mkfs[0], label, partDev, err)
+	}
+	return nil
+}
+
+// waitForPartitionNode waits for node to appear after a partition-table refresh: it asks udev to
+// settle (best effort) and then polls for the node, returning a clear error if the node never
+// materializes.
+//
+// A single deadline bounds the whole wait. udevadm settle is given an explicit timeout derived
+// from that deadline so a slow or stuck settle cannot push the overall wait past
+// partitionNodeWaitTimeout -- without it, the timer below would only start once settle returned,
+// so the method could block far longer than its reported limit.
+func (p *opsPartitionOps) waitForPartitionNode(node string) error {
+	deadline := time.Now().Add(partitionNodeWaitTimeout)
+
+	// Bound settle by the remaining time to the shared deadline (rounded up to whole seconds,
+	// the granularity udevadm --timeout accepts). settle is best effort: a failure is non-fatal
+	// because the existence poll below is the real guard.
+	settleTimeout := int(time.Until(deadline).Seconds()) + 1
+	if _, err := p.ops.RunInHostNamespace("udevadm", "settle", fmt.Sprintf("--timeout=%d", settleTimeout)); err != nil {
+		p.log.Warnf("create-usb: udevadm settle before waiting for partition node %s failed: %v", node, err)
+	}
+
+	for {
+		_, err := os.Stat(node)
+		if err == nil {
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("checking for partition node %s: %w", node, err)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("partition node %s did not appear within %s after refreshing the partition table",
+				node, partitionNodeWaitTimeout)
+		}
+		time.Sleep(partitionNodePollInterval)
+	}
+}
+
+// mkfsCommand returns the argv that makes fsType on node with the given filesystem label.
+// mkfs.ext4 and mkfs.xfs take different options (ext4 force is -F, xfs force is -f), so the
+// formatter + flags are selected per type; an unsupported type is a hard error rather than a
+// silently-wrong flag set.
+func mkfsCommand(fsType, label, node string) ([]string, error) {
+	switch fsType {
+	case fsTypeExt4:
+		return []string{"mkfs.ext4", "-F", "-L", label, node}, nil
+	case fsTypeXFS:
+		return []string{"mkfs.xfs", "-f", "-L", label, node}, nil
+	default:
+		return nil, fmt.Errorf("unsupported filesystem type %q for %s", fsType, label)
+	}
+}
+
+// plannedPartition returns the planned partition with the given label, and whether the plan has
+// such an entry. Callers that require the partition (p2, always present) turn a false into an
+// error; callers for which it is optional (p3 cluster-config, absent in install-only) skip.
+func plannedPartition(plan PartitionPlan, label string) (PlannedPartition, bool) {
+	for _, part := range plan.Partitions {
+		if part.Label == label {
+			return part, true
+		}
+	}
+	return PlannedPartition{}, false
+}
+
+// MountPartition mounts partDev at mountpoint (which must already exist).
+func (p *opsPartitionOps) MountPartition(partDev, mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("mount", partDev, mountpoint); err != nil {
+		return fmt.Errorf("mounting %s at %s: %w", partDev, mountpoint, err)
+	}
+	return nil
+}
+
+// UnmountPartition unmounts mountpoint. It must run before the loop device is detached
+// (MediaHandle.Close detaches but does not unmount).
+func (p *opsPartitionOps) UnmountPartition(mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("umount", mountpoint); err != nil {
+		return fmt.Errorf("unmounting %s: %w", mountpoint, err)
+	}
+	return nil
+}
+
+// partitionDevicePath returns the kernel device node for partition number on dev. Devices
+// whose name ends in a digit (loop0, nvme0n1, mmcblk0) use a "p" separator (loop0p3); others
+// (sda) append the number directly (sda3). create-usb always drives a loopback device, so the
+// "p" form is the one used in practice.
+func partitionDevicePath(dev string, number int) string {
+	sep := ""
+	if n := len(dev); n > 0 && dev[n-1] >= '0' && dev[n-1] <= '9' {
+		sep = "p"
+	}
+	return fmt.Sprintf("%s%s%d", dev, sep, number)
 }
 
 // parseSgdiskTable parses the partition rows of `sgdisk -p` output into structured

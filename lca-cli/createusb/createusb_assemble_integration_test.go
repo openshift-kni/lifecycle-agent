@@ -40,12 +40,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
@@ -131,6 +133,77 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 }
 
+// requireP3Tools skips unless the real p3 media path's tools are available, in addition to the
+// root-gating and loopback/sgdisk tools requireLoopAndSgdisk checks.
+func requireP3Tools(t *testing.T) {
+	t.Helper()
+	requireLoopAndSgdisk(t)
+	for _, bin := range []string{"mkfs.ext4", "partprobe", "udevadm", "mount", "umount", "blkid"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available: %v", bin, err)
+		}
+	}
+}
+
+// TestAssembleMediaRealP3 exercises the production p3 cluster-config media stage end-to-end on
+// a real loopback-attached image: assembleMedia creates the reserved p3 entry, formats it
+// ext4, labels it cluster-config, mounts it, and populates it from a temp p3Root. The on-disk
+// GPT entry, FS label, and populated tree are inspected on the live handle before Close (the
+// full public Build still returns errAssemblyIncomplete until CNF-27171 adds p4 + finalize).
+func TestAssembleMediaRealP3(t *testing.T) {
+	requireP3Tools(t)
+
+	realOps, deps := newRealMediaDeps()
+	img := filepath.Join(t.TempDir(), "media.img")
+
+	// A representative rendered p3 tree: manifest.json + a cluster manifest + an extra manifest.
+	p3Root := writeTree(t, t.TempDir(), map[string]string{
+		filepath.Join(common.ClusterConfigDir, common.SeedReconfigurationFileName): `{"apiVersion":1}`,
+		filepath.Join(common.ClusterConfigDir, common.ManifestsDir, "a.yaml"):      "kind: A\n",
+		filepath.Join(common.ExtraManifestsDir, "extra.yaml"):                      "kind: Extra\n",
+	})
+
+	handle, err := assembleMedia(context.Background(), testLogger(), validSelfContained(),
+		BuildOptions{OutputPath: img, P3Root: p3Root}, deps)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	// Guard against a leaked loop device / image if an assertion below fails.
+	defer func() { _ = handle.Close() }()
+
+	p3, ok := plannedPartition(handle.Plan, labelClusterConfig)
+	require.True(t, ok, "a self-contained plan must reserve the cluster-config (p3) slot")
+
+	// The on-disk GPT now carries the cluster-config entry at its planned 1 MiB-aligned offset.
+	entries, err := realOps.ReadPartitionTable(handle.LoopDevice)
+	require.NoError(t, err)
+	var found *PartitionEntry
+	for i := range entries {
+		if entries[i].Number == p3.Number {
+			found = &entries[i]
+		}
+	}
+	require.NotNil(t, found, "the cluster-config (p3) entry must be present on disk")
+	assert.Equal(t, labelClusterConfig, found.Name)
+	assert.Equal(t, p3.Offset/sectorSize, found.Start, "p3 starts at the planned 1 MiB-aligned offset")
+
+	// A clean sgdisk --verify confirms the table is still valid after appending p3.
+	verifyOut, verr := realOps.ops.RunInHostNamespace("sgdisk", "--verify", handle.LoopDevice)
+	require.NoError(t, verr, verifyOut)
+
+	// The partition carries an ext4 filesystem whose FS label is cluster-config.
+	partDev := partitionDevicePath(handle.LoopDevice, p3.Number)
+	labelOut, err := exec.Command("blkid", "-s", "LABEL", "-o", "value", partDev).Output() //nolint:gosec // fixed partition device path
+	require.NoError(t, err)
+	assert.Equal(t, labelClusterConfig, strings.TrimSpace(string(labelOut)))
+
+	// Re-mount the (now unmounted) partition and confirm the populated tree matches the source
+	// byte-for-byte with identical relative layout.
+	mnt := t.TempDir()
+	require.NoError(t, exec.Command("mount", partDev, mnt).Run()) //nolint:gosec // fixed partition device path + temp mountpoint
+	defer func() { _ = exec.Command("umount", mnt).Run() }()      //nolint:gosec // fixed temp mountpoint
+	assert.Equal(t, snapshotTree(p3Root), snapshotTree(mnt))
+}
+
 // failCreateOps wraps the real seam but injects a CreateBaseLayout failure, so the
 // rollback can be exercised against real losetup resources.
 type failCreateOps struct {
@@ -197,8 +270,8 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 2, "the base p1 plus the new p2 must be present")
 
-	wantP2, err := partitionByLabel(plan, labelIBIImages)
-	require.NoError(t, err)
+	wantP2, ok := plannedPartition(plan, labelIBIImages)
+	require.True(t, ok)
 	var p2 *PartitionEntry
 	for i := range entries {
 		if entries[i].Number == wantP2.Number {
@@ -216,7 +289,7 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	require.NoError(t, verr, verifyOut)
 
 	// The formatted p2 reports the expected ext4 filesystem and ibi-images label.
-	node := partitionDevice(loopDev, wantP2.Number)
+	node := partitionDevicePath(loopDev, wantP2.Number)
 	blkidOut, berr := realOps.ops.RunInHostNamespace("blkid", "-o", "export", node)
 	require.NoError(t, berr, blkidOut)
 	assert.Contains(t, blkidOut, "LABEL="+labelIBIImages)
@@ -255,38 +328,39 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 }
 
-// failAddOps wraps the real seam but injects an AddPartition failure, so the p2 cleanup path
-// can be exercised against real losetup/sgdisk resources (the base p1 is created for real;
-// only the p2 add fails).
-type failAddOps struct {
+// failP2CreateOps wraps the real seam but injects a CreatePartition failure, so the p2 cleanup
+// path can be exercised against real losetup/sgdisk resources (the base p1 is created for real;
+// the injected failure in the shared create step aborts p2 before it formats, so the test needs
+// no partprobe/udev/mkfs tooling).
+type failP2CreateOps struct {
 	partitionOps
 	attachedDev string
 }
 
-func (f *failAddOps) AttachLoopback(imgPath string) (string, error) {
+func (f *failP2CreateOps) AttachLoopback(imgPath string) (string, error) {
 	dev, err := f.partitionOps.AttachLoopback(imgPath)
 	f.attachedDev = dev
 	return dev, err
 }
 
-func (f *failAddOps) AddPartition(string, PlannedPartition, string) error {
-	return fmt.Errorf("injected add-partition failure")
+func (f *failP2CreateOps) CreatePartition(string, PlannedPartition) error {
+	return fmt.Errorf("injected create-partition failure")
 }
 
 // TestBuildP2RealRollback verifies that a p2 failure on the real path tears the handle down:
 // the loop device is detached and the partial image removed (the base p1 was created for
-// real; the injected AddPartition failure triggers build's cleanup).
+// real; the injected CreatePartition failure triggers build's cleanup).
 func TestBuildP2RealRollback(t *testing.T) {
 	requireLoopAndSgdisk(t)
 
 	realOps, _ := newRealMediaDeps()
-	wrapped := &failAddOps{partitionOps: realOps}
+	wrapped := &failP2CreateOps{partitionOps: realOps}
 	img := filepath.Join(t.TempDir(), "media.img")
 
 	err := build(context.Background(), testLogger(), validInstallOnly(),
 		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: wrapped})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "injected add-partition failure")
+	assert.Contains(t, err.Error(), "injected create-partition failure")
 
 	require.NotEmpty(t, wrapped.attachedDev, "the loop device must have been attached before the injected failure")
 	assert.False(t, loopAttached(wrapped.attachedDev), "a p2 failure must detach the loop device")

@@ -43,34 +43,38 @@ func TestCreateP2Partition(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			fp := &fakePartitionOps{}
 			h := p2Handle(mode, fp)
-			wantP2, err := partitionByLabel(h.Plan, labelIBIImages)
-			require.NoError(t, err)
+			wantP2, ok := plannedPartition(h.Plan, labelIBIImages)
+			require.True(t, ok)
 
 			require.NoError(t, createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp}))
 
-			// Exactly one AddPartition call, driven with the planned ibi-images entry on the
-			// handle's loop device and the ibi-images filesystem type.
-			assert.Equal(t, []string{"add"}, fp.calls)
-			require.Len(t, fp.added, 1)
-			got := fp.added[0]
-			assert.Equal(t, "/dev/loop8", got.dev)
-			assert.Equal(t, wantP2, got.part)
-			assert.Equal(t, 2, got.part.Number, "ibi-images is the fixed p2 entry")
-			assert.Equal(t, labelIBIImages, got.part.Label)
-			assert.Equal(t, ibiImagesFSType, got.fsType)
+			// p2 runs the shared create -> settle -> format sequence and stops (no mount): it
+			// ships an empty filesystem.
+			assert.Equal(t, []string{"createPart", "settle", "format"}, fp.calls)
+
+			// The planned ibi-images entry (fixed number 2) was the entry created, and it was
+			// formatted on the settled node as ext4 labeled ibi-images.
+			require.Len(t, fp.createdParts, 1)
+			assert.Equal(t, wantP2, fp.createdParts[0])
+			assert.Equal(t, 2, fp.createdParts[0].Number, "ibi-images is the fixed p2 entry")
+			assert.Equal(t, labelIBIImages, fp.createdParts[0].Label)
+			assert.Equal(t, "/dev/loop8p2", fp.formattedDev)
+			assert.Equal(t, ibiImagesFSType, fp.formatFSType)
+			assert.Equal(t, labelIBIImages, fp.formatLabel)
 		})
 	}
 }
 
-// TestCreateP2PartitionAddError covers the error path: an AddPartition failure is surfaced
-// (wrapped) by createP2Partition so build can tear the handle down.
-func TestCreateP2PartitionAddError(t *testing.T) {
-	fp := &fakePartitionOps{addErr: fmt.Errorf("sgdisk boom")}
+// TestCreateP2PartitionError covers the error path: a failure in the shared create/format
+// sequence is surfaced (wrapped, naming the ibi-images partition) by createP2Partition so build
+// can tear the handle down.
+func TestCreateP2PartitionError(t *testing.T) {
+	fp := &fakePartitionOps{formatErr: fmt.Errorf("mkfs boom")}
 	h := p2Handle(ModeInstallOnly, fp)
 
 	err := createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "sgdisk boom")
+	assert.ErrorContains(t, err, "mkfs boom")
 	assert.ErrorContains(t, err, labelIBIImages)
 }
 
@@ -84,52 +88,6 @@ func TestCreateP2PartitionMissingEntry(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, labelIBIImages)
 	assert.Empty(t, fp.calls, "the seam must not be driven when the partition is absent")
-}
-
-func TestPartitionByLabel(t *testing.T) {
-	t.Run("returns the ibi-images entry for both modes", func(t *testing.T) {
-		for _, mode := range []Mode{ModeInstallOnly, ModeSelfContained} {
-			plan := partitionPlan(mode, defaultP1ReservationBytes)
-			p2, err := partitionByLabel(plan, labelIBIImages)
-			require.NoError(t, err, "mode %s", mode)
-			assert.Equal(t, 2, p2.Number)
-			assert.Equal(t, labelIBIImages, p2.Label)
-			assert.Equal(t, p2ReservationBytes, p2.Size)
-		}
-	})
-
-	t.Run("errors when the label is absent", func(t *testing.T) {
-		// install-only omits cluster-config (p3), so it is not in the plan.
-		_, err := partitionByLabel(partitionPlan(ModeInstallOnly, defaultP1ReservationBytes), labelClusterConfig)
-		require.Error(t, err)
-		assert.ErrorContains(t, err, labelClusterConfig)
-	})
-}
-
-func TestPartitionDevice(t *testing.T) {
-	assert.Equal(t, "/dev/loop0p2", partitionDevice("/dev/loop0", 2))
-	assert.Equal(t, "/dev/loop12p4", partitionDevice("/dev/loop12", 4))
-}
-
-// TestMkfsCommand covers the per-filesystem formatter selection: ext4 and xfs use their own
-// force flags (no cross-type reuse) and an unsupported type is a hard error.
-func TestMkfsCommand(t *testing.T) {
-	t.Run("ext4 uses -F", func(t *testing.T) {
-		args, err := mkfsCommand(fsTypeExt4, labelIBIImages, "/dev/loop0p2")
-		require.NoError(t, err)
-		assert.Equal(t, []string{"mkfs.ext4", "-F", "-L", labelIBIImages, "/dev/loop0p2"}, args)
-	})
-	t.Run("xfs uses -f", func(t *testing.T) {
-		args, err := mkfsCommand(fsTypeXFS, labelIBIImages, "/dev/loop0p2")
-		require.NoError(t, err)
-		assert.Equal(t, []string{"mkfs.xfs", "-f", "-L", labelIBIImages, "/dev/loop0p2"}, args)
-	})
-	t.Run("unknown type is a hard error", func(t *testing.T) {
-		args, err := mkfsCommand("btrfs", labelIBIImages, "/dev/loop0p2")
-		require.Error(t, err)
-		assert.Nil(t, args)
-		assert.ErrorContains(t, err, "unsupported filesystem type")
-	})
 }
 
 // TestIBIImagesFSType documents the settled default (ext4) so a change is a deliberate edit.

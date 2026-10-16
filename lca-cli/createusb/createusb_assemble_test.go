@@ -39,30 +39,46 @@ func testLogger() *logrus.Logger {
 
 // fakePartitionOps is a partitionOps fake that records the ordered privileged-op calls and
 // lets each op's result be injected, so the pure assembly logic (allocation, ordering,
-// rollback) is unit-testable without root.
+// rollback) and the p3 media stage (create/settle/format/mount/populate/umount) are
+// unit-testable without root.
 type fakePartitionOps struct {
 	attachDev string
 	attachErr error
 	createErr error
-	addErr    error
 	detachErr error
 	readOut   []PartitionEntry
 	readErr   error
+
+	// Shared create/settle/format + p3 mount/unmount seam injection.
+	createPartErr error
+	settleErr     error
+	settleDev     string
+	formatErr     error
+	mountErr      error
+	umountErr     error
+	// onMount, if set, runs after a successful MountPartition with the mountpoint path, so a
+	// test can perturb the mountpoint (e.g. force a populate failure) deterministically.
+	onMount func(mountpoint string)
 
 	calls     []string
 	attached  []string
 	detached  []string
 	createdOn []string
-	added     []addPartitionCall
 	lastPlan  PartitionPlan
-}
 
-// addPartitionCall records the arguments of one AddPartition call so tests can assert the
-// p2 (ibi-images) partition is driven with the planned entry and filesystem type.
-type addPartitionCall struct {
-	dev    string
-	part   PlannedPartition
-	fsType string
+	// Shared create/settle/format + p3 mount recording. createdParts records every partition
+	// created through the shared CreatePartition primitive (p2 and p3 alike), so a combined test
+	// can assert both stages drive the one implementation.
+	createdParts []PlannedPartition
+	formattedDev string
+	formatFSType string
+	formatLabel  string
+	mountedDev   string
+	mountpoint   string
+	// mountSnapshot is the rel-path->content tree captured from the mountpoint at
+	// UnmountPartition, so a test can assert what was populated before the (simulated) unmount
+	// made the files no longer visible at the mountpoint.
+	mountSnapshot map[string]string
 }
 
 func (f *fakePartitionOps) AttachLoopback(imgPath string) (string, error) {
@@ -91,15 +107,58 @@ func (f *fakePartitionOps) CreateBaseLayout(dev string, plan PartitionPlan) erro
 	return f.createErr
 }
 
-func (f *fakePartitionOps) AddPartition(dev string, part PlannedPartition, fsType string) error {
-	f.calls = append(f.calls, "add")
-	f.added = append(f.added, addPartitionCall{dev: dev, part: part, fsType: fsType})
-	return f.addErr
-}
-
 func (f *fakePartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, error) {
 	f.calls = append(f.calls, "read")
 	return f.readOut, f.readErr
+}
+
+func (f *fakePartitionOps) CreatePartition(dev string, part PlannedPartition) error {
+	f.calls = append(f.calls, "createPart")
+	f.createdParts = append(f.createdParts, part)
+	return f.createPartErr
+}
+
+func (f *fakePartitionOps) SettlePartition(dev string, number int) (string, error) {
+	f.calls = append(f.calls, "settle")
+	if f.settleErr != nil {
+		return "", f.settleErr
+	}
+	dev2 := f.settleDev
+	if dev2 == "" {
+		dev2 = fmt.Sprintf("%sp%d", dev, number)
+	}
+	return dev2, nil
+}
+
+func (f *fakePartitionOps) FormatPartition(partDev, fsType, label string) error {
+	f.calls = append(f.calls, "format")
+	f.formattedDev = partDev
+	f.formatFSType = fsType
+	f.formatLabel = label
+	return f.formatErr
+}
+
+func (f *fakePartitionOps) MountPartition(partDev, mountpoint string) error {
+	f.calls = append(f.calls, "mount")
+	f.mountedDev = partDev
+	f.mountpoint = mountpoint
+	if f.mountErr != nil {
+		return f.mountErr
+	}
+	if f.onMount != nil {
+		f.onMount(mountpoint)
+	}
+	return nil
+}
+
+func (f *fakePartitionOps) UnmountPartition(mountpoint string) error {
+	f.calls = append(f.calls, "umount")
+	// Simulate a real unmount: snapshot what was populated, then clear the mountpoint so the
+	// (now-empty) directory can be removed -- on a host the files live on the unmounted
+	// filesystem and are no longer visible at the mountpoint.
+	f.mountSnapshot = snapshotTree(mountpoint)
+	clearDir(mountpoint)
+	return f.umountErr
 }
 
 func TestPartitionPlanPerMode(t *testing.T) {
@@ -240,6 +299,30 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 	})
 }
 
+// TestAssembleMediaPreservesImageWhenP3Unmountfails covers the P1 recovery guard: when the p3
+// stage cannot unmount its filesystem, that filesystem is still mounted over the loop device, so
+// the rollback must NOT detach the loop or remove the backing image -- doing so would discard the
+// only path to recover or retry the unmount. The loop stays attached and the image stays on disk.
+func TestAssembleMediaPreservesImageWhenP3Unmountfails(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	p3Root := writeTree(t, t.TempDir(), map[string]string{
+		filepath.Join("cluster-configuration", "manifest.json"): `{"apiVersion":1}`,
+	})
+	fp := &fakePartitionOps{attachDev: "/dev/loop8", umountErr: fmt.Errorf("umount boom")}
+
+	handle, err := assembleMedia(context.Background(), testLogger(), validSelfContained(),
+		BuildOptions{OutputPath: img, P3Root: p3Root}, mediaBuildDeps{partition: fp})
+	require.Error(t, err)
+	assert.Nil(t, handle)
+	assert.Contains(t, err.Error(), "umount boom")
+
+	// The loop was attached and the partition was mounted, but the unmount failed: the rollback
+	// must leave the loop attached (no detach) and keep the backing image for recovery.
+	assert.NotContains(t, fp.calls, "detach", "a still-mounted partition must not have its loop detached")
+	assert.Empty(t, fp.detached)
+	assert.FileExists(t, img, "a still-mounted partition's backing image must be preserved for recovery")
+}
+
 // TestAssembleMediaRefusesToOverwriteExistingOutput covers the destructive-overwrite guard:
 // when the --output path already exists, assembleMedia must fail without truncating or
 // removing the existing file and without reaching any privileged op. A build never
@@ -291,12 +374,13 @@ func TestCloseDetachFailurePreservesAndRetries(t *testing.T) {
 	assert.Equal(t, []string{"detach", "detach"}, fp.calls, "detach is attempted again on retry")
 }
 
-// TestBuildP2FailureTearsDown covers the p2 cleanup path: when createP2Partition fails (an
-// AddPartition error), build must tear the handle down (detach the loop, remove the partial
-// .img) and surface the p2 error -- not swallow it behind the incomplete-assembly error.
+// TestBuildP2FailureTearsDown covers the p2 cleanup path: when createP2Partition fails (here a
+// format error from the shared create -> settle -> format sequence), build must tear the handle
+// down (detach the loop, remove the partial .img) and surface the p2 error -- not swallow it
+// behind the incomplete-assembly error.
 func TestBuildP2FailureTearsDown(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
-	fp := &fakePartitionOps{attachDev: "/dev/loop4", addErr: fmt.Errorf("mkfs boom")}
+	fp := &fakePartitionOps{attachDev: "/dev/loop4", formatErr: fmt.Errorf("mkfs boom")}
 
 	err := build(context.Background(), testLogger(), validInstallOnly(),
 		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
@@ -305,8 +389,9 @@ func TestBuildP2FailureTearsDown(t *testing.T) {
 	assert.Contains(t, err.Error(), "mkfs boom", "the p2 failure must be surfaced")
 	assert.NotErrorIs(t, err, errAssemblyIncomplete, "a p2 failure returns the p2 error, not the incomplete-assembly error")
 
-	// The seam was driven attach -> create (p1) -> add (p2) and then torn down.
-	assert.Equal(t, []string{"attach", "create", "add", "detach"}, fp.calls)
+	// The seam was driven attach -> create (p1) -> p2 create/settle/format (the shared sequence)
+	// and then torn down.
+	assert.Equal(t, []string{"attach", "create", "createPart", "settle", "format", "detach"}, fp.calls)
 	assert.Equal(t, []string{"/dev/loop4"}, fp.detached, "the loop device must be detached on a p2 failure")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed on a p2 failure")
@@ -337,4 +422,149 @@ Number  Start (sector)    End (sector)  Size       Code  Name
 	assert.Equal(t, (int64(4196351)-int64(2048)+1)*sectorSize, e.Size)
 	assert.Equal(t, "8300", e.Type)
 	assert.Equal(t, "live-iso", e.Name)
+}
+
+// TestPlannedPartition covers the shared plan lookup both p2 and p3 use: the ibi-images entry is
+// present in every mode, while cluster-config (p3) is reported absent in install-only.
+func TestPlannedPartition(t *testing.T) {
+	t.Run("returns the ibi-images entry for both modes", func(t *testing.T) {
+		for _, mode := range []Mode{ModeInstallOnly, ModeSelfContained} {
+			plan := partitionPlan(mode, defaultP1ReservationBytes)
+			p2, ok := plannedPartition(plan, labelIBIImages)
+			require.True(t, ok, "mode %s", mode)
+			assert.Equal(t, 2, p2.Number)
+			assert.Equal(t, labelIBIImages, p2.Label)
+			assert.Equal(t, p2ReservationBytes, p2.Size)
+		}
+	})
+
+	t.Run("reports absent for a label omitted from the plan", func(t *testing.T) {
+		// install-only omits cluster-config (p3), so it is not in the plan.
+		_, ok := plannedPartition(partitionPlan(ModeInstallOnly, defaultP1ReservationBytes), labelClusterConfig)
+		assert.False(t, ok)
+	})
+}
+
+// TestPartitionDevicePath covers the shared device-node naming: a device whose name ends in a
+// digit (loop0) uses a "p" separator, while one ending in a letter (sda) appends the number
+// directly. create-usb always drives a loopback device, so the "p" form is the one used.
+func TestPartitionDevicePath(t *testing.T) {
+	assert.Equal(t, "/dev/loop0p2", partitionDevicePath("/dev/loop0", 2))
+	assert.Equal(t, "/dev/loop12p4", partitionDevicePath("/dev/loop12", 4))
+	assert.Equal(t, "/dev/sda3", partitionDevicePath("/dev/sda", 3))
+}
+
+// TestMkfsCommand covers the per-filesystem formatter selection the shared FormatPartition uses:
+// ext4 and xfs use their own force flags (no cross-type reuse) and an unsupported type is a hard
+// error.
+func TestMkfsCommand(t *testing.T) {
+	t.Run("ext4 uses -F", func(t *testing.T) {
+		args, err := mkfsCommand(fsTypeExt4, labelIBIImages, "/dev/loop0p2")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"mkfs.ext4", "-F", "-L", labelIBIImages, "/dev/loop0p2"}, args)
+	})
+	t.Run("xfs uses -f", func(t *testing.T) {
+		args, err := mkfsCommand(fsTypeXFS, labelIBIImages, "/dev/loop0p2")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"mkfs.xfs", "-f", "-L", labelIBIImages, "/dev/loop0p2"}, args)
+	})
+	t.Run("unknown type is a hard error", func(t *testing.T) {
+		args, err := mkfsCommand("btrfs", labelIBIImages, "/dev/loop0p2")
+		require.Error(t, err)
+		assert.Nil(t, args)
+		assert.ErrorContains(t, err, "unsupported filesystem type")
+	})
+}
+
+// TestCreateAndFormatPartition covers the shared create -> settle -> format helper directly: the
+// happy path drives the three primitives in order and returns the settled device node, and a
+// failure injected at each step is surfaced with the preceding steps having run.
+func TestCreateAndFormatPartition(t *testing.T) {
+	part := PlannedPartition{Number: 2, Label: labelIBIImages, Offset: 1 << 20, Size: p2ReservationBytes}
+
+	t.Run("drives create -> settle -> format and returns the settled device", func(t *testing.T) {
+		fp := &fakePartitionOps{settleDev: "/dev/loop3p2"}
+		partDev, err := createAndFormatPartition(fp, "/dev/loop3", part, fsTypeExt4)
+		require.NoError(t, err)
+		assert.Equal(t, "/dev/loop3p2", partDev)
+		assert.Equal(t, []string{"createPart", "settle", "format"}, fp.calls)
+		require.Len(t, fp.createdParts, 1)
+		assert.Equal(t, part, fp.createdParts[0])
+		assert.Equal(t, "/dev/loop3p2", fp.formattedDev)
+		assert.Equal(t, fsTypeExt4, fp.formatFSType)
+		assert.Equal(t, labelIBIImages, fp.formatLabel)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		fp    *fakePartitionOps
+		want  string
+		calls []string
+	}{
+		{"create", &fakePartitionOps{createPartErr: fmt.Errorf("sgdisk boom")}, "sgdisk boom", []string{"createPart"}},
+		{"settle", &fakePartitionOps{settleErr: fmt.Errorf("partprobe boom")}, "partprobe boom", []string{"createPart", "settle"}},
+		{"format", &fakePartitionOps{formatErr: fmt.Errorf("mkfs boom")}, "mkfs boom", []string{"createPart", "settle", "format"}},
+	} {
+		t.Run(tc.name+" failure is surfaced", func(t *testing.T) {
+			_, err := createAndFormatPartition(tc.fp, "/dev/loop3", part, fsTypeExt4)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want)
+			assert.Equal(t, tc.calls, tc.fp.calls)
+		})
+	}
+}
+
+// TestCreateUsbCombinedP2AndP3 exercises the combined p2+p3 behavior on one media handle: a
+// self-contained plan reserves both ibi-images (p2) and cluster-config (p3), and both stages
+// drive the single shared create -> settle -> format sequence. p2 ships an empty filesystem and
+// stops; p3 additionally mounts and populates. The second sub-case injects an unmount failure to
+// confirm it is surfaced (tagged errP3Mounted) with the partition still unmounted, after p2 had
+// already succeeded.
+func TestCreateUsbCombinedP2AndP3(t *testing.T) {
+	p3Root := writeTree(t, t.TempDir(), map[string]string{
+		filepath.Join("cluster-configuration", "manifest.json"): `{"apiVersion":1}`,
+	})
+
+	t.Run("p2 then p3 both use the shared create/settle/format sequence", func(t *testing.T) {
+		fp := &fakePartitionOps{}
+		h := selfContainedHandle(fp)
+
+		require.NoError(t, createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp}))
+		require.NoError(t, createP3Partition(context.Background(), testLogger(), mediaBuildDeps{partition: fp}, h, p3Root))
+
+		// p2: create/settle/format (empty, no mount). p3: create/settle/format then mount/umount.
+		assert.Equal(t, []string{
+			"createPart", "settle", "format", // p2
+			"createPart", "settle", "format", "mount", "umount", // p3
+		}, fp.calls)
+
+		// Both partitions were created through the shared CreatePartition primitive, each with its
+		// fixed plan number.
+		require.Len(t, fp.createdParts, 2)
+		wantP2, ok := plannedPartition(h.Plan, labelIBIImages)
+		require.True(t, ok)
+		wantP3, ok := plannedPartition(h.Plan, labelClusterConfig)
+		require.True(t, ok)
+		assert.Equal(t, wantP2, fp.createdParts[0])
+		assert.Equal(t, wantP3, fp.createdParts[1])
+
+		// p3's populate landed the source tree byte-for-byte.
+		assert.Equal(t, snapshotTree(p3Root), fp.mountSnapshot)
+	})
+
+	t.Run("p3 unmount failure after p2 succeeds is surfaced and still unmounts", func(t *testing.T) {
+		fp := &fakePartitionOps{umountErr: fmt.Errorf("umount boom")}
+		h := selfContainedHandle(fp)
+
+		require.NoError(t, createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp}))
+
+		err := createP3Partition(context.Background(), testLogger(), mediaBuildDeps{partition: fp}, h, p3Root)
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "umount boom")
+		assert.ErrorIs(t, err, errP3Mounted, "an unmount failure must carry errP3Mounted so the rollback preserves the image")
+		assert.Equal(t, []string{
+			"createPart", "settle", "format", // p2
+			"createPart", "settle", "format", "mount", "umount", // p3
+		}, fp.calls)
+	})
 }
