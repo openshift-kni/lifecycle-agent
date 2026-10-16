@@ -64,6 +64,21 @@ package createusb
 // beside-output copy (<output>.digests.json) is an audit-only, best-effort artifact that
 // never participates in the commit (it may sit on a different filesystem).
 //
+// The guarantee holds across power loss, not merely process termination: the completed
+// layout (its files and directories) is fsynced to stable storage before the commit, and
+// the manifest rename is made durable by fsyncing the manifest file and the p2 root
+// directory. Only after the commit is durable are superseded/orphaned layouts collected,
+// so a power loss can never persist the manifest rename ahead of the layout data it
+// references.
+//
+// # Concurrent builds
+//
+// Builds against the same p2 root are serialized by an advisory file lock, so two builds
+// can never interleave their mirror/commit/GC steps and GC a layout the other build just
+// made live. As defense in depth, GC re-reads the committed manifest to learn which layout
+// is live rather than trusting the caller's just-written name, and deletes nothing if no
+// committed manifest can be read.
+//
 // # Wiring
 //
 // Build remains a documented not-implemented stub; the end-to-end media assembly
@@ -80,6 +95,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"go.podman.io/image/v5/copy"
 	"go.podman.io/image/v5/docker"
@@ -238,6 +254,16 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		return nil, fmt.Errorf("creating p2 root %q: %w", p2Root, err)
 	}
 
+	// Serialize builds against this p2 root so two concurrent builds cannot interleave
+	// their mirror/commit/GC steps -- without this, one build could commit and pause while
+	// another commits, and the first build's GC would then delete the second build's
+	// now-live layout.
+	unlock, err := lockP2Root(p2Root)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	// Mirror into a fresh, build-unique layout directory directly under p2Root. It is
 	// never the directory the live manifest references, so the build cannot corrupt the
 	// currently-committed layout. Until the manifest commit below succeeds this new
@@ -286,13 +312,23 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 	}
 	logSizeReport(log, size)
 
+	// Make the completed layout durable before committing. The commit rename below only
+	// switches the live layout if the layout's data has already reached stable storage;
+	// otherwise a power loss could persist the manifest rename while the new layout's
+	// blobs did not, leaving the committed manifest pointing at incomplete data.
+	if err = syncTree(newLayout); err != nil {
+		return nil, err
+	}
+
 	// Commit: atomically replace the on-media digest manifest. This single rename is the
 	// commit point -- before it the committed manifest points at the previous layout,
 	// after it the committed manifest points at the fully-written new layout. publishFile
 	// writes to a temp file and renames, so a failed commit never leaves a corrupt or
 	// partially-written manifest and the previous committed manifest/layout stay intact.
+	// durable=true fsyncs the manifest file and the p2 root directory so the commit itself
+	// survives a power loss, not merely a process exit.
 	p2Path := filepath.Join(p2Root, digestManifestFileName)
-	if err = publishFile(p2Path, manifestData); err != nil {
+	if err = publishFile(p2Path, manifestData, true); err != nil {
 		return nil, err
 	}
 	committed = true
@@ -301,13 +337,15 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 	// must not fail the build: a failure here cannot leave a mismatched medium.
 
 	// Garbage-collect superseded and crash-orphaned layout directories, now that the
-	// committed manifest points at the new one. The committed layout is never removed.
-	gcSupersededLayouts(log, p2Root, layoutName)
+	// committed manifest points at the new one. gcSupersededLayouts re-reads the committed
+	// manifest to decide which layout is live, so the committed layout is never removed.
+	gcSupersededLayouts(log, p2Root)
 
 	// Publish the audit-only beside-output copy. It sits beside --output (possibly on a
-	// different filesystem) and is never part of the commit; a failure is logged, not fatal.
+	// different filesystem) and is never part of the commit; it is best-effort (durable=false)
+	// and a failure is logged, not fatal.
 	besideOutput := outputPath + digestManifestSuffix
-	if wErr := publishFile(besideOutput, manifestData); wErr != nil && log != nil {
+	if wErr := publishFile(besideOutput, manifestData, false); wErr != nil && log != nil {
 		log.WithError(wErr).WithField("path", besideOutput).Warn("failed to write audit-only beside-output digest manifest copy")
 	}
 
@@ -468,8 +506,11 @@ func validateDigestManifestBytes(data []byte, scratchDir string) error {
 
 // publishFile atomically writes data to path by writing to a temp file in the same
 // directory and renaming it into place, so a reader never observes a half-written
-// file and a failed write never corrupts an existing one.
-func publishFile(path string, data []byte) (err error) {
+// file and a failed write never corrupts an existing one. When durable is set, the temp
+// file is fsynced before the rename and the parent directory is fsynced after it, so the
+// published file survives a power loss (not merely a process exit); the on-media manifest
+// commit uses durable=true, while the best-effort audit copy uses durable=false.
+func publishFile(path string, data []byte, durable bool) (err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".digests-publish-")
 	if err != nil {
@@ -485,6 +526,12 @@ func publishFile(path string, data []byte) (err error) {
 		_ = tmp.Close()
 		return fmt.Errorf("writing %q: %w", path, err)
 	}
+	if durable {
+		if err = tmp.Sync(); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("syncing temp file for %q: %w", path, err)
+		}
+	}
 	if err = tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp file for %q: %w", path, err)
 	}
@@ -494,17 +541,113 @@ func publishFile(path string, data []byte) (err error) {
 	if err = os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("publishing %q: %w", path, err)
 	}
+	if durable {
+		// fsync the parent directory so the rename (the commit) itself is durable.
+		if err = fsyncPath(dir); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
+// fsyncPath opens path and fsyncs it, flushing a file's contents or a directory's
+// entries to stable storage. It underpins the power-loss guarantee: it is used to make
+// the completed layout and the manifest commit (file + parent directory) durable.
+func fsyncPath(path string) error {
+	f, err := os.Open(path) //nolint:gosec // path is a build-time staging file/dir the tool created
+	if err != nil {
+		return fmt.Errorf("opening %q to sync: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing %q: %w", path, err)
+	}
+	return nil
+}
+
+// syncTree fsyncs every regular file and directory under root (and root itself) so the
+// completed OCI layout is durable on stable storage before the manifest commit. Files are
+// synced first, then directories deepest-first, so a directory entry is only flushed once
+// the data it references is itself durable. This is what extends the crash-safety
+// guarantee from process termination to power loss.
+func syncTree(root string) error {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+			return nil
+		}
+		if d.Type().IsRegular() {
+			return fsyncPath(path)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("syncing layout tree %q: %w", root, err)
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := fsyncPath(dirs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// buildLockFileName is the advisory lock file created under the p2 root to serialize
+// concurrent create-usb builds against the same media root.
+const buildLockFileName = ".create-usb-build.lock"
+
+// lockP2Root takes an exclusive advisory lock (flock) on a lock file under p2Root so that
+// concurrent builds against the same media root are serialized end-to-end (mirror, commit,
+// and GC). Without it, build A could commit and pause, build B commit a new layout, and
+// build A's GC then delete build B's now-live layout. The returned function releases the
+// lock and closes the lock file; call it (deferred) when the build finishes.
+func lockP2Root(p2Root string) (func(), error) {
+	lockPath := filepath.Join(p2Root, buildLockFileName)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // lockPath is under the build-time p2 root the tool created
+	if err != nil {
+		return nil, fmt.Errorf("opening build lock %q: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("acquiring build lock %q: %w", lockPath, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
 // gcSupersededLayouts removes every build-unique OCI layout directory under p2Root
-// except keepName (the one the just-committed manifest references). It reclaims the
-// previous build's layout and any directories orphaned by an earlier crash between the
-// layout write and the manifest commit. It must be called only after the manifest
-// commit has succeeded, so the only intact layout (the committed one) is never removed.
-// Removal failures are best-effort: they waste space but cannot leave a mismatched
-// medium, so they are logged rather than returned.
-func gcSupersededLayouts(log *logrus.Logger, p2Root, keepName string) {
+// except the one the committed manifest references. It reclaims the previous build's
+// layout and any directories orphaned by an earlier crash between the layout write and
+// the manifest commit. It must be called only after the manifest commit has succeeded.
+//
+// The layout to keep is read from the committed manifest on disk (not passed in by the
+// caller) so that, even if build serialization were ever bypassed, GC can only ever
+// delete layouts that no committed manifest points at: if the committed manifest cannot
+// be read, GC deletes nothing. Removal failures are best-effort: they waste space but
+// cannot leave a mismatched medium, so they are logged rather than returned.
+func gcSupersededLayouts(log *logrus.Logger, p2Root string) {
+	manifestPath := filepath.Join(p2Root, digestManifestFileName)
+	m, err := localimages.ParseDigestManifest(manifestPath)
+	if err != nil {
+		if log != nil {
+			log.WithError(err).WithField("path", manifestPath).Warn("failed to read committed manifest for GC; keeping all layout directories")
+		}
+		return
+	}
+	keepName := m.OCILayoutPath
+	if keepName == "" {
+		if log != nil {
+			log.WithField("path", manifestPath).Warn("committed manifest has no OCI layout path; keeping all layout directories")
+		}
+		return
+	}
+
 	ents, err := os.ReadDir(p2Root)
 	if err != nil {
 		if log != nil {
