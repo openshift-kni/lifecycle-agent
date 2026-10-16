@@ -399,7 +399,8 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		}
 		if loopDev != "" {
 			if derr := deps.partition.DetachLoopback(loopDev); derr != nil {
-				log.Warnf("create-usb: detaching loop device %s during rollback: %v", loopDev, derr)
+				err = errors.Join(err, fmt.Errorf("detaching loop device %s during rollback: %w; preserving media image %s for recovery", loopDev, derr, imgPath))
+				return
 			}
 		}
 		if rerr := os.Remove(imgPath); rerr != nil && !os.IsNotExist(rerr) {
