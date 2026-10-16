@@ -119,6 +119,14 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	}
 
 	backupDir := filepath.Join(hostPath, LocalBackupPath)
+	// Clear any stale contents from a previous backup attempt before recreating
+	// the directory. PrePivot can re-enter and re-run the backup after a partial
+	// failure; if the resource set shrank between attempts, orphaned YAML files
+	// would otherwise survive while checksums.sha256 is rewritten without them,
+	// causing the post-pivot restore to hard-fail on the unlisted files.
+	if err := os.RemoveAll(backupDir); err != nil {
+		return bt, fmt.Errorf("failed to clear stale backup directory %s: %w", backupDir, err)
+	}
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return bt, fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
 	}
