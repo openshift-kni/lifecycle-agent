@@ -286,9 +286,10 @@ func (h *MediaHandle) Finalize() error {
 	if err != nil {
 		return fmt.Errorf("opening media image %s for sync: %w", h.ImagePath, err)
 	}
-	defer f.Close()
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing media image %s: %w", h.ImagePath, err)
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if err := errors.Join(syncErr, closeErr); err != nil {
+		return fmt.Errorf("syncing and closing media image %s: %w", h.ImagePath, err)
 	}
 	return nil
 }
