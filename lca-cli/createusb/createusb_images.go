@@ -107,6 +107,7 @@ import (
 	"github.com/containers/image/v5/oci/layout"
 	"github.com/containers/image/v5/signature"
 	"github.com/containers/image/v5/types"
+	"github.com/distribution/reference"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 
@@ -948,7 +949,26 @@ func copyIntoLayout(ctx context.Context, srcRef types.ImageReference, destLayout
 		return "", fmt.Errorf("copying image into OCI layout under tag %q: %w", ociTag, err)
 	}
 
-	return layoutDigestForTag(destLayoutDir, ociTag)
+	copiedDigest, err := layoutDigestForTag(destLayoutDir, ociTag)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyPinnedSourceDigest(srcRef, copiedDigest); err != nil {
+		return "", err
+	}
+	return copiedDigest, nil
+}
+
+// verifyPinnedSourceDigest prevents media-type conversion from changing the identity
+// of a digest-pinned registry image. OCI layouts only accept OCI media types, so
+// PreserveDigests would reject Docker-format sources rather than copy them.
+func verifyPinnedSourceDigest(srcRef types.ImageReference, copiedDigest string) error {
+	canonical, ok := srcRef.DockerReference().(reference.Canonical)
+	if ok && canonical.Digest().String() != copiedDigest {
+		return fmt.Errorf("copied digest %s differs from pinned source digest %s for %s",
+			copiedDigest, canonical.Digest(), srcRef.StringWithinTransport())
+	}
+	return nil
 }
 
 // newAcceptAnythingPolicyContext builds a signature policy context that accepts any

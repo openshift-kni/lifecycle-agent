@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containers/image/v5/docker"
 	"github.com/containers/image/v5/oci/layout"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -736,6 +737,19 @@ func TestMirrorToOCILayoutSuccess(t *testing.T) {
 	assert.NotEqual(t, entries[0].OCITag, entries[1].OCITag)
 	assert.Equal(t, []string{refs[0]}, entries[0].Sources)
 	assert.Equal(t, []string{refs[1]}, entries[1].Sources)
+}
+
+func TestVerifyPinnedSourceDigest(t *testing.T) {
+	pinned := "//quay.io/example/image@sha256:" + validSHA256
+	srcRef, err := docker.ParseReference(pinned)
+	require.NoError(t, err)
+
+	assert.NoError(t, verifyPinnedSourceDigest(srcRef, "sha256:"+validSHA256))
+	assert.ErrorContains(t, verifyPinnedSourceDigest(srcRef, fakeDigest("converted")), "differs from pinned source digest")
+
+	taggedRef, err := docker.ParseReference("//quay.io/example/image:latest")
+	require.NoError(t, err)
+	assert.NoError(t, verifyPinnedSourceDigest(taggedRef, fakeDigest("converted")))
 }
 
 func TestMirrorFailsOnUnpinnableReference(t *testing.T) {
