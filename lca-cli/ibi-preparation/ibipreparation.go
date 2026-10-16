@@ -571,36 +571,47 @@ func readSeedRequiredImages(imageListFile string) ([]string, error) {
 	return images, nil
 }
 
-// verifyManifestCoversSeed fails if any image the seed requires (containers.list)
-// is absent from the imported closure (the digest manifest). A digest-pinned
-// reference is matched by its digest (content-addressed and therefore stable
-// across any registry rewrite); a tag-only reference is matched by its canonical
-// repository name. Without this check a seed requirement missing from the manifest
-// would pass precache -- which now verifies only the manifest -- while leaving the
-// node short an image it needs.
+// verifyManifestCoversSeed fails unless every image the seed requires
+// (containers.list) maps unambiguously to an entry in the imported closure (the
+// digest manifest). Only a digest-pinned reference can be mapped: it is matched
+// by its digest, which is content-addressed and therefore stable across any
+// registry rewrite. A tag-only reference is rejected -- the manifest records each
+// entry's OCI layout ref name (OCITag), not the registry tag the seed asked for,
+// so matching on repository name alone would accept a different tag's digest.
+// Disconnected release content is digest-pinned in practice, so failing closed on
+// any non-digest reference enforces the unambiguous mapping without silently
+// accepting the wrong image. Without this check a seed requirement missing from
+// the manifest would pass precache -- which now verifies only the manifest --
+// while leaving the node short an image it needs.
 func verifyManifestCoversSeed(required []string, manifest *localimages.DigestManifest) error {
 	manifestDigests := make(map[string]struct{}, len(manifest.Images))
-	manifestNames := make(map[string]struct{}, len(manifest.Images))
 	for _, e := range manifest.Images {
 		manifestDigests[e.Digest] = struct{}{}
-		manifestNames[e.Name] = struct{}{}
 	}
 
-	var unresolved []string
+	var unpinned, uncovered []string
 	for _, ref := range required {
-		if digest := refDigest(ref); digest != "" {
-			if _, ok := manifestDigests[digest]; !ok {
-				unresolved = append(unresolved, ref)
-			}
+		digest := refDigest(ref)
+		if digest == "" {
+			unpinned = append(unpinned, ref)
 			continue
 		}
-		if _, ok := manifestNames[refName(ref)]; !ok {
-			unresolved = append(unresolved, ref)
+		if _, ok := manifestDigests[digest]; !ok {
+			uncovered = append(uncovered, ref)
 		}
 	}
-	if len(unresolved) > 0 {
-		return fmt.Errorf("digest manifest does not cover %d image(s) required by the seed: %s",
-			len(unresolved), strings.Join(unresolved, ", "))
+
+	var problems []string
+	if len(unpinned) > 0 {
+		problems = append(problems, fmt.Sprintf("%d seed image(s) are not digest-pinned and cannot be mapped unambiguously to the imported closure: %s",
+			len(unpinned), strings.Join(unpinned, ", ")))
+	}
+	if len(uncovered) > 0 {
+		problems = append(problems, fmt.Sprintf("digest manifest does not cover %d image(s) required by the seed: %s",
+			len(uncovered), strings.Join(uncovered, ", ")))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
 }
@@ -612,21 +623,6 @@ func refDigest(ref string) string {
 		return ref[at+1:]
 	}
 	return ""
-}
-
-// refName returns the repository portion of an image reference, stripping any
-// digest and tag, so a tag-only seed reference can be matched against the
-// manifest's canonical names. A ':' is only treated as a tag separator when it
-// appears in the final path segment (an earlier ':' is a registry port).
-func refName(ref string) string {
-	if at := strings.LastIndex(ref, "@"); at >= 0 {
-		ref = ref[:at]
-	}
-	lastSegment := strings.LastIndex(ref, "/") + 1
-	if colon := strings.LastIndex(ref[lastSegment:], ":"); colon >= 0 {
-		ref = ref[:lastSegment+colon]
-	}
-	return ref
 }
 
 func (i *IBIPrepare) shutdownNode() error {

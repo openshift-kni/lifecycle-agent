@@ -1097,10 +1097,11 @@ func writeContainersList(t *testing.T, refs ...string) string {
 // checks the references that were imported.
 func TestDisconnectedPrecacheListUsesManifest(t *testing.T) {
 	manifest := testManifest()
-	// containers.list carries a tag for the seed and a registry-rewritten digest for
-	// the workload image; neither matches what was imported, yet both are covered.
+	// containers.list carries the seed digest and a registry-rewritten digest for the
+	// workload image; the registry differs from what was imported, yet both are
+	// covered because matching is by digest.
 	listFile := writeContainersList(t,
-		testSeedName+":latest",
+		testSeedImageRef(),
 		"mirror.example.com/openshift-release-dev/ocp-v4.0-art-dev@"+manifest.Images[1].Digest,
 	)
 	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
@@ -1142,8 +1143,8 @@ func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
 	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
 }
 
-// TestVerifyManifestCoversSeed exercises the digest- and name-based coverage
-// matching directly.
+// TestVerifyManifestCoversSeed exercises digest-based coverage matching and the
+// rejection of non-digest (tag-only) references directly.
 func TestVerifyManifestCoversSeed(t *testing.T) {
 	manifest := testManifest()
 	workload := manifest.Images[1]
@@ -1161,11 +1162,12 @@ func TestVerifyManifestCoversSeed(t *testing.T) {
 			},
 		},
 		{
-			name: "tag-only ref matched by canonical name",
-			refs: []string{testSeedName + ":4.15.0"},
+			name:    "tag-only ref is rejected as unmappable even when the name matches",
+			refs:    []string{testSeedName + ":4.15.0"},
+			wantErr: true,
 		},
 		{
-			name:    "tag-only ref with unknown name is unresolved",
+			name:    "tag-only ref with unknown name is rejected",
 			refs:    []string{"quay.io/openshift-release-dev/unknown:4.15.0"},
 			wantErr: true,
 		},
