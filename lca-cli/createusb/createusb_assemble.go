@@ -40,18 +40,11 @@ package createusb
 // xfs, grows root) and is a reference pattern only -- this seam owns its own GPT/offset
 // logic.
 //
-// # Honesty
+// # Placeholder output
 //
-// All four partition slots (p1 live-iso, p2 ibi-images, p3 cluster-config, p4 ibi-status) are
-// now laid out and formatted, but the media is still not bootable, usable media: the live
-// command path populates no partition yet (the real live ISO is CNF-27168, the ibi-images
-// content CNF-27170, the cluster-config tree CNF-27171), and the assembly mechanics stay
-// provisional until the CNF-27158 bootability gate passes. So public Build never claims to have
-// produced complete media: it runs the container + placeholder-p1 foundation plus the empty
-// p2/p4 partitions (and the reserved-but-unpopulated p3 slot), tears it back down (detach loop
-// device, remove the partial .img), and returns an explicit incomplete-assembly error. The
-// internal assembleMedia core returns a live *MediaHandle for the sibling stories to thread
-// through; a half-built handle can never escape the public surface.
+// Build keeps the sparse .img with a GPT and all planned partition slots. p1 reserves
+// space for the live ISO; p2/p4 and, in self-contained mode, p3 are empty ext4
+// filesystems. The image is not bootable until ISO and payload population are wired in.
 
 import (
 	"context"
@@ -133,17 +126,6 @@ const (
 	partitionNodeWaitTimeout = 5 * time.Second
 )
 
-// errAssemblyIncomplete is returned by Build after the container + placeholder-p1 foundation
-// and the p2/p3/p4 partitions run: all four partition slots now exist, but the media is not yet
-// bootable, usable media -- the live command path populates no partition content (live ISO
-// CNF-27168, ibi-images CNF-27170, cluster-config tree CNF-27171) and the assembly mechanics
-// stay provisional until the CNF-27158 bootability gate passes. The scaffold fails loudly
-// rather than claim to have produced usable media.
-var errAssemblyIncomplete = errors.New(
-	"media assembly incomplete: all partition slots are laid out, but no partition content is " +
-		"populated yet (live ISO CNF-27168, ibi-images CNF-27170, cluster-config CNF-27171) and " +
-		"the bootability gate (CNF-27158) has not passed")
-
 // BuildOptions carries the resolved output target for a create-usb media build. Exactly
 // one of OutputPath / WriteDevice is set (enforced by the command's validateOutputTarget).
 type BuildOptions struct {
@@ -152,11 +134,8 @@ type BuildOptions struct {
 	// WriteDevice is the block device to write to (--write-device). It is deferred: Build
 	// rejects it while the assembly pipeline is incomplete.
 	WriteDevice string
-	// P3Root is the rendered + digest-pinned self-contained config tree (RenderP3Tree ->
-	// buildImageLayout, CNF-27169) the p3 stage populates the cluster-config partition from.
-	// It is consumed read-only. The end-to-end join that renders the tree and threads this
-	// path from the command is CNF-27171; until then only the integration test supplies it,
-	// so an empty P3Root leaves the reserved p3 slot unpopulated (see createP3Partition).
+	// P3Root is the rendered + digest-pinned self-contained config tree consumed read-only
+	// by the lower-level p3 stage. The public Build does not yet run that stage.
 	P3Root string
 }
 
@@ -287,24 +266,15 @@ type MediaHandle struct {
 	partition partitionOps
 }
 
-// Close tears the media handle down: it detaches the loop device and removes the image
-// file. It is the discard path for a run that produced no completed media (this story
-// always discards, because p2/p3/p4 are not implemented yet). It is safe to call once and
-// clears the fields it releases so a second call is a no-op. Keeping completed media is a
-// sibling-story concern that will introduce a finalize path.
+// Close discards a partial media image after detaching its loop device.
 //
 // If the detach fails, Close returns the error and leaves LoopDevice set and the backing
 // image in place: the loop device may still be attached to the image, so removing the
 // image would orphan an attachment and lose the only handle a caller has to retry the
 // detach. The caller can call Close again to retry once the underlying cause is cleared.
 func (h *MediaHandle) Close() error {
-	if h.LoopDevice != "" {
-		if err := h.partition.DetachLoopback(h.LoopDevice); err != nil {
-			// Keep LoopDevice set (so a later Close can retry the detach) and do not remove
-			// the backing image while a loop device may still be attached to it.
-			return fmt.Errorf("detaching loop device %s: %w", h.LoopDevice, err)
-		}
-		h.LoopDevice = ""
+	if err := h.detach(); err != nil {
+		return err
 	}
 	if h.IsImage && h.ImagePath != "" {
 		if err := os.Remove(h.ImagePath); err != nil && !os.IsNotExist(err) {
@@ -315,21 +285,36 @@ func (h *MediaHandle) Close() error {
 	return nil
 }
 
-// Build assembles the USB media from a validated manifest.
-//
-// This story implements the container + placeholder-p1 foundation of the media-assembly
-// pipeline: for --output it creates a sparse .img, establishes the base GPT, and adds a
-// placeholder p1 partition reserving the live-ISO region (CNF-27168 writes the real ISO).
-// --write-device is deferred (destructive) and is rejected before any write while the
-// pipeline is incomplete.
-//
-// Build returns an error only -- never a handle -- so a half-built media handle can never
-// escape a failed call. All four partition slots (p1/p2/p3/p4) are now created and formatted,
-// but no partition content is populated by the live command path yet and the bootability gate
-// (CNF-27158) has not passed, so Build runs the foundation plus the empty p2/p4 partitions
-// (and the reserved-but-unpopulated p3 slot), tears it back down (detach loop, remove the
-// partial .img), and returns an explicit incomplete-assembly error so the scaffold never claims
-// to have produced complete, bootable media.
+// Finalize releases the loop device and keeps the placeholder image for the caller.
+// A detach failure leaves both the loop and image available for recovery.
+func (h *MediaHandle) Finalize() error {
+	if err := h.detach(); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(h.ImagePath, os.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("opening media image %s for sync: %w", h.ImagePath, err)
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing media image %s: %w", h.ImagePath, err)
+	}
+	return nil
+}
+
+func (h *MediaHandle) detach() error {
+	if h.LoopDevice == "" {
+		return nil
+	}
+	if err := h.partition.DetachLoopback(h.LoopDevice); err != nil {
+		return fmt.Errorf("detaching loop device %s: %w", h.LoopDevice, err)
+	}
+	h.LoopDevice = ""
+	return nil
+}
+
+// Build creates a placeholder .img with GPT and formatted partition slots. The image is
+// not bootable until ISO writing and content population are wired in.
 func Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions) error {
 	return build(ctx, log, m, opts, defaultMediaBuildDeps(log))
 }
@@ -341,7 +326,7 @@ func build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptio
 	// Reject the destructive device path before any attach/write while assembly is
 	// incomplete, so a real block device is never overwritten with incomplete media.
 	if opts.WriteDevice != "" {
-		return fmt.Errorf("media assembly incomplete: --write-device is not yet supported until media assembly is complete (CNF-28668/CNF-28669/CNF-28670)")
+		return fmt.Errorf("--write-device is not yet supported for placeholder media (CNF-27158)")
 	}
 
 	handle, err := assembleMedia(ctx, log, m, opts, deps)
@@ -370,14 +355,11 @@ func build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptio
 		return perr
 	}
 
-	// All partition slots now exist, but the media is not yet usable: no partition content is
-	// populated by the live command path and the bootability gate (CNF-27158) has not passed. So
-	// the foundation produced no usable media: discard the handle (detach loop + remove the
-	// partial .img) and fail loudly.
-	if cerr := handle.Close(); cerr != nil {
-		return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", errAssemblyIncomplete, cerr)
+	if err := handle.Finalize(); err != nil {
+		return fmt.Errorf("finalizing placeholder media %s: %w", handle.ImagePath, err)
 	}
-	return errAssemblyIncomplete
+	log.Warnf("create-usb: created placeholder image %s; it has no live ISO or image payload and is not bootable", handle.ImagePath)
+	return nil
 }
 
 // assembleMedia is the DI core that creates the media container, attaches the loopback,
@@ -532,10 +514,8 @@ func alignUp(v, align int64) int64 {
 // into it.
 //
 // It creates the file exclusively (O_EXCL): if the output path already exists it fails
-// without touching the existing file, rather than truncating it. A build never completes
-// in this story (it always returns the incomplete-assembly error and discards its own
-// freshly created image), so clobbering a path the operator reused -- e.g. a previous
-// real image -- would destroy that file for a command that then reports failure.
+// without touching the existing file, rather than truncating it. This prevents a
+// placeholder build from destroying an existing image at a reused output path.
 func allocateSparseImage(path string, size int64) error {
 	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // output path is supplied by the operator at build time
 	if err != nil {

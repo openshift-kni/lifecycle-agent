@@ -86,7 +86,7 @@ package createusb
 //
 // # Wiring
 //
-// Build remains a documented not-implemented stub; the end-to-end media assembly
+// Build currently produces only the placeholder partition image; the end-to-end assembly
 // that wires BuildImageLayout into the live-ISO/partitioning flow lands in
 // CNF-27171. The functions here are self-contained, unit-tested building blocks.
 

@@ -23,10 +23,8 @@ limitations under the License.
 // The media-assembly pipeline is split across sibling stories: the media container, base
 // GPT, and placeholder p1 foundation (plus the shared privileged-ops seam) land in
 // createusb_assemble.go; OCI image layout and the on-media digest manifest land in
-// createusb_images.go; and the real live-ISO write, p2/p3/p4 population, and final
-// output/device write land in CNF-27168 and the p2/p3/p4 stories. Build runs the
-// foundation and returns an explicit incomplete-assembly error until the pipeline is
-// complete, so the scaffold never silently claims to have produced media.
+// createusb_images.go. Build produces a sparse placeholder image with the planned
+// GPT partitions; ISO writing and payload population are not wired in yet.
 package createusb
 
 import (

@@ -40,8 +40,8 @@ package createusb
 //
 // # Source-tree handoff
 //
-// p3Root is consumed read-only. Self-contained media requires it; a missing or empty
-// rendered tree fails before the partition is created.
+// p3Root is consumed read-only. When it is empty, self-contained placeholder media
+// gets a formatted but unpopulated p3 slot; a supplied invalid tree fails the build.
 
 import (
 	"context"
@@ -76,8 +76,8 @@ var errP3Mounted = errors.New("cluster-config (p3) partition is still mounted")
 // labels it cluster-config, mounts it, and populates it content-verbatim from p3Root.
 //
 // It is a no-op when the plan carries no p3 entry (install-only). When the plan has a p3 entry
-// but p3Root is empty, missing, not a directory, oversized for the reserved region, or
-// contains a non-regular file, it fails loudly.
+// and p3Root is empty, it creates an empty ext4 placeholder. A supplied root that is
+// missing, not a directory, oversized, or contains a non-regular file fails loudly.
 func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, p3Root string) (err error) {
 	if cerr := ctx.Err(); cerr != nil {
 		return fmt.Errorf("p3 partition creation canceled: %w", cerr)
@@ -90,14 +90,11 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 		return nil
 	}
 
-	if p3Root == "" {
-		return fmt.Errorf("self-contained media requires a rendered cluster-config (p3) tree")
-	}
-
-	// Validate the source tree and enforce the file policy + 256 MiB budget before touching the
-	// disk, so a bad tree fails before the partition is created/formatted.
-	if err := validateP3Source(p3Root, p3.Size); err != nil {
-		return err
+	if p3Root != "" {
+		// Reject an invalid supplied payload before touching the partition.
+		if err := validateP3Source(p3Root, p3.Size); err != nil {
+			return err
+		}
 	}
 
 	// Create, settle, and format the partition through the shared create -> settle -> format
@@ -106,6 +103,10 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 	partDev, err := createAndFormatPartition(deps.partition, media.LoopDevice, p3, clusterConfigFSType)
 	if err != nil {
 		return fmt.Errorf("creating cluster-config (p3) partition: %w", err)
+	}
+	if p3Root == "" {
+		log.Infof("create-usb: created empty cluster-config (p3) placeholder")
+		return nil
 	}
 
 	mountpoint, err := os.MkdirTemp("", "create-usb-p3-")

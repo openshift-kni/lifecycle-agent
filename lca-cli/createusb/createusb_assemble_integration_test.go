@@ -162,9 +162,7 @@ func requireP4Tools(t *testing.T) {
 // TestAssembleMediaRealP3 exercises the production p3 cluster-config media stage end-to-end on
 // a real loopback-attached image: assembleMedia creates the reserved p3 entry, formats it
 // ext4, labels it cluster-config, mounts it, and populates it from a temp p3Root. The on-disk
-// GPT entry, FS label, and populated tree are inspected on the live handle before Close (the
-// full public Build still returns errAssemblyIncomplete: no partition content is populated by the
-// live command path and the CNF-27158 bootability gate has not passed).
+// GPT entry, FS label, and populated tree are inspected on the live handle before Close.
 func TestAssembleMediaRealP3(t *testing.T) {
 	requireP3Tools(t)
 
