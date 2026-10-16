@@ -481,10 +481,7 @@ func TestBuildRejectsWriteDevice(t *testing.T) {
 // dangling resources (loop detached, partial .img removed). It replaces
 // TestBuildStubReturnsNotImplemented.
 //
-// It asserts both modes, and that the live command path populates no partition content: p2 and p4
-// are the only partitions created/formatted, and in self-contained mode the reserved p3
-// (cluster-config) slot is left unpopulated (no mount) because the end-to-end config-tree handoff
-// (CNF-27171) threads no P3Root yet.
+// It asserts the install-only layout; self-contained mode requires a p3 tree before assembly.
 func TestBuildIncompleteAndNoDangle(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -493,7 +490,6 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 		loopDev  string
 	}{
 		{"install-only is p1/p2/p4", validInstallOnly, ModeInstallOnly, "/dev/loop3"},
-		{"self-contained leaves p3 reserved-but-unpopulated in the live path", validSelfContained, ModeSelfContained, "/dev/loop4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			img := filepath.Join(t.TempDir(), "out.img")
@@ -508,15 +504,14 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 
 			// The seam was driven attach -> create (p1) -> p2 create/settle/format -> p4
 			// create/settle/format (the shared sequence, twice) before the handle was discarded.
-			// The live command path threads no p3 config tree yet, so the reserved p3 slot is left
-			// unpopulated: no mount/umount runs and only p2 and p4 are created.
+			// Install-only has no p3, so only p2 and p4 are created.
 			assert.Equal(t, []string{
 				"attach", "create",
 				"createPart", "settle", "format", // p2
 				"createPart", "settle", "format", // p4
 				"detach",
 			}, fp.calls)
-			assert.NotContains(t, fp.calls, "mount", "the live command path threads no p3 tree yet, so p3 is left unpopulated")
+			assert.NotContains(t, fp.calls, "mount", "install-only has no p3")
 
 			require.Len(t, fp.createdParts, 2, "only the empty p2 and p4 partitions are created in the live path")
 			plan := partitionPlan(tc.mode, defaultP1ReservationBytes)
@@ -536,6 +531,18 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 			assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed")
 		})
 	}
+}
+
+func TestBuildSelfContainedRequiresP3TreeBeforePartitions(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	fp := &fakePartitionOps{attachDev: "/dev/loop4"}
+	err := build(context.Background(), testLogger(), validSelfContained(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+	require.ErrorContains(t, err, "requires a rendered cluster-config (p3) tree")
+	assert.Equal(t, []string{"attach", "create", "detach"}, fp.calls)
+	assert.Empty(t, fp.createdParts)
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr))
 }
 
 // ----- image-build stage (createusb_images.go) -----

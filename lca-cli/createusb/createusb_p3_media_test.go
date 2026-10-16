@@ -145,17 +145,15 @@ func TestCreateP3Partition_InstallOnlySkipped(t *testing.T) {
 	assert.Empty(t, fp.calls, "install-only must not touch the partition seam")
 }
 
-// TestCreateP3Partition_NoTreeSkipped verifies the transitional behavior: a self-contained
-// plan reserves the p3 slot, but when no config tree is threaded in (empty p3Root) the stage
-// skips loudly rather than creating an empty partition. The end-to-end tree handoff is
-// CNF-27171.
-func TestCreateP3Partition_NoTreeSkipped(t *testing.T) {
+// TestCreateP3Partition_NoTreeRejected verifies that self-contained media cannot silently
+// omit its required cluster-config partition.
+func TestCreateP3Partition_NoTreeRejected(t *testing.T) {
 	fp := &fakePartitionOps{}
 	handle := selfContainedHandle(fp)
 
 	err := createP3Partition(context.Background(), testLogger(), mediaBuildDeps{partition: fp}, handle, "")
-	require.NoError(t, err)
-	assert.Empty(t, fp.calls, "an unwired (empty) p3Root must not create or format a partition")
+	require.ErrorContains(t, err, "requires a rendered cluster-config (p3) tree")
+	assert.Empty(t, fp.calls, "a missing p3Root must fail before creating a partition")
 }
 
 // TestCreateP3Partition_PopulateFilePolicy covers the source-tree validation: a regular-file

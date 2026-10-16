@@ -40,10 +40,8 @@ package createusb
 //
 // # Source-tree handoff
 //
-// p3Root is consumed read-only. Threading the rendered tree from the command into the assemble
-// flow is the end-to-end join CNF-27171 wires; until then only the integration test supplies a
-// p3Root, so an empty p3Root leaves the reserved slot unpopulated (logged, not an error). A
-// p3Root that IS supplied but missing/empty fails loudly.
+// p3Root is consumed read-only. Self-contained media requires it; a missing or empty
+// rendered tree fails before the partition is created.
 
 import (
 	"context"
@@ -78,10 +76,8 @@ var errP3Mounted = errors.New("cluster-config (p3) partition is still mounted")
 // labels it cluster-config, mounts it, and populates it content-verbatim from p3Root.
 //
 // It is a no-op when the plan carries no p3 entry (install-only). When the plan has a p3 entry
-// but p3Root is empty, it skips with a warning: the end-to-end render/thread join is CNF-27171
-// and nothing supplies the tree in the live command path yet. A p3Root that IS supplied but
-// missing, not a directory, empty, oversized for the reserved region, or containing a
-// non-regular file fails loudly.
+// but p3Root is empty, missing, not a directory, oversized for the reserved region, or
+// contains a non-regular file, it fails loudly.
 func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, p3Root string) (err error) {
 	if cerr := ctx.Err(); cerr != nil {
 		return fmt.Errorf("p3 partition creation canceled: %w", cerr)
@@ -95,11 +91,7 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 	}
 
 	if p3Root == "" {
-		// Self-contained, but no config tree was threaded in. The render + handoff is CNF-27171;
-		// skip loudly so the reserved slot is simply left unfilled rather than silently ignored.
-		log.Warnf("create-usb: cluster-config (p3) slot is reserved but no config tree was provided; " +
-			"leaving p3 unpopulated (end-to-end tree handoff is CNF-27171)")
-		return nil
+		return fmt.Errorf("self-contained media requires a rendered cluster-config (p3) tree")
 	}
 
 	// Validate the source tree and enforce the file policy + 256 MiB budget before touching the
