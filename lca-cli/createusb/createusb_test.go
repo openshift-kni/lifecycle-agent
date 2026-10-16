@@ -734,6 +734,8 @@ func TestMirrorToOCILayoutSuccess(t *testing.T) {
 	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release", entries[0].Name)
 	assert.Equal(t, fakeDigest(refs[0]), entries[0].Digest)
 	assert.NotEqual(t, entries[0].OCITag, entries[1].OCITag)
+	assert.Equal(t, []string{refs[0]}, entries[0].Sources)
+	assert.Equal(t, []string{refs[1]}, entries[1].Sources)
 }
 
 func TestMirrorFailsOnUnpinnableReference(t *testing.T) {
@@ -755,8 +757,8 @@ func TestMirrorToOCILayoutEmptySetFails(t *testing.T) {
 
 func TestEmitDigestManifestSchema(t *testing.T) {
 	entries := []localimages.ImageEntry{
-		{Name: "quay.io/openshift-release-dev/ocp-release", Digest: fakeDigest("a"), OCITag: "ocp-release-0"},
-		{Name: "quay.io/edge-infrastructure/recert", Digest: fakeDigest("b"), OCITag: "recert-1"},
+		{Name: "quay.io/openshift-release-dev/ocp-release", Digest: fakeDigest("a"), OCITag: "ocp-release-0", Sources: []string{"quay.io/openshift-release-dev/ocp-release:latest"}},
+		{Name: "quay.io/edge-infrastructure/recert", Digest: fakeDigest("b"), OCITag: "recert-1", Sources: []string{"quay.io/edge-infrastructure/recert:latest"}},
 	}
 	p2Root := t.TempDir()
 
@@ -771,13 +773,14 @@ func TestEmitDigestManifestSchema(t *testing.T) {
 	// guaranteeing producer/consumer schema parity.
 	parsed, err := localimages.ParseDigestManifest(manifestPath)
 	require.NoError(t, err)
-	assert.Equal(t, 1, parsed.Version)
+	assert.Equal(t, localimages.SourcesManifestVersion, parsed.Version)
 	assert.NotEmpty(t, parsed.OCILayoutPath)
 	require.Len(t, parsed.Images, len(entries))
 	for i, e := range entries {
 		assert.Equal(t, e.Name, parsed.Images[i].Name)
 		assert.Equal(t, e.Digest, parsed.Images[i].Digest)
 		assert.Equal(t, e.OCITag, parsed.Images[i].OCITag)
+		assert.Equal(t, e.Sources, parsed.Images[i].Sources)
 	}
 }
 

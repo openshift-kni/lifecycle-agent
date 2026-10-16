@@ -135,9 +135,8 @@ const (
 	// build-side copy (<output>.digests.json).
 	digestManifestSuffix = ".digests.json"
 
-	// digestManifestVersion is the schema version emitted; it must match the only
-	// version localimages understands.
-	digestManifestVersion = 1
+	// digestManifestVersion includes the source references required by disconnected prepare.
+	digestManifestVersion = localimages.SourcesManifestVersion
 )
 
 // ociTagInvalidChars matches every run of characters that is not allowed in the
@@ -525,9 +524,10 @@ func mirrorToOCILayout(ctx context.Context, refs []string, stagingLayoutDir, aut
 			return nil, fmt.Errorf("failed to mirror and digest-pin image %q: %w", ref, err)
 		}
 		entries = append(entries, localimages.ImageEntry{
-			Name:   nameForRef(ref),
-			Digest: dgst,
-			OCITag: tag,
+			Name:    nameForRef(ref),
+			Digest:  dgst,
+			OCITag:  tag,
+			Sources: []string{ref},
 		})
 	}
 	return entries, nil
