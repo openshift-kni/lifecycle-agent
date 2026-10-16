@@ -254,3 +254,50 @@ siteConfig:
   hostname: node0
   pullSecret: "@/path/to/pull-secret.json"
 ```
+
+### Digest manifest (`digests.json`)
+
+The media build resolves the profile's image set to digests, mirrors it into an OCI image
+layout on the media (the `oci` directory), and emits a digest manifest that records which
+layout images to import. The manifest is the single source of truth shared by the build,
+the prepare precache step, and the on-media self-check: all three use the exact same set
+(same count, same digests).
+
+The manifest is emitted in two places, byte-identical:
+
+- `<output>.digests.json`, beside the `--output` image, for build-side auditing.
+- `digests.json` at the media (p2) root, the read-only on-media reference.
+
+Schema:
+
+```json
+{
+  "version": 1,
+  "ociLayoutPath": "oci",
+  "images": [
+    {
+      "name": "quay.io/openshift-release-dev/ocp-release",
+      "digest": "sha256:9a1f…c3",
+      "ociTag": "ocp-release-0"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `version` | int | Schema version. Only `1` is supported. |
+| `ociLayoutPath` | string | OCI image layout directory, relative to the media root (`oci`). |
+| `images[].name` | string | Canonical repository name the image is stored under. |
+| `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
+| `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
+
+Publication is atomic: the layout and both manifest copies are staged and then published
+together, so a failed build never leaves a stale or partial `digests.json` looking current.
+The build also emits a resulting-size estimate (the OCI-layout subtotal and the full staged
+size) for the USB-size budget; the estimate excludes the final filesystem/ISO overhead.
+
+> **Trust caveat:** mirroring uses an accept-anything signature policy. Pinning each
+> reference to a digest guarantees the content is immutable and content-addressed, but it
+> verifies **neither publisher identity nor image trust** (no signature verification is
+> performed).

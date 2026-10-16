@@ -17,12 +17,21 @@ limitations under the License.
 package createusb
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"go.podman.io/image/v5/oci/layout"
+	"github.com/opencontainers/go-digest"
+	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 )
 
 const (
@@ -456,4 +465,357 @@ func TestBuildStubReturnsNotImplemented(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not yet implemented")
 	assert.Contains(t, err.Error(), "CNF-27167")
+}
+
+// ----- image-build stage (createusb_images.go) -----
+
+const (
+	testRecertImage = "quay.io/edge-infrastructure/recert@sha256:" + validSHA256
+	testLCAImage    = "quay.io/openshift-kni/lifecycle-agent@sha256:" + validSHA256
+)
+
+// fakeDigest returns a deterministic, well-formed sha256 digest for s.
+func fakeDigest(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// fakeSeedReader is a seedClosureReader stub returning a fixed containers.list.
+type fakeSeedReader struct {
+	list []string
+	err  error
+}
+
+func (f fakeSeedReader) ReadContainersList(_, _ string) ([]string, error) { return f.list, f.err }
+
+// fakeMirrorer is an imageMirrorer stub. It fails on any reference in failOn and,
+// for a successful mirror, appends a matching descriptor to the destination
+// layout's index.json so verifyLayoutEntries and the digest capture behave as the
+// real layout would.
+type fakeMirrorer struct {
+	failOn map[string]bool
+}
+
+func (f fakeMirrorer) MirrorToLayout(_ context.Context, imageRef, destLayoutDir, ociTag, _ string) (string, error) {
+	if f.failOn[imageRef] {
+		return "", assert.AnError
+	}
+	dgst := fakeDigest(imageRef)
+	appendFakeLayoutEntry(destLayoutDir, ociTag, dgst)
+	return dgst, nil
+}
+
+// appendFakeLayoutEntry records a descriptor (digest + ref.name annotation) into
+// the layout index.json at destLayoutDir, creating the layout if needed.
+func appendFakeLayoutEntry(destLayoutDir, ociTag, dgst string) {
+	_ = os.MkdirAll(destLayoutDir, 0o755)
+	indexPath := filepath.Join(destLayoutDir, "index.json")
+	var index imgspecv1.Index
+	if data, err := os.ReadFile(indexPath); err == nil {
+		_ = json.Unmarshal(data, &index)
+	}
+	index.SchemaVersion = 2
+	index.Manifests = append(index.Manifests, imgspecv1.Descriptor{
+		Digest:      digest.Digest(dgst),
+		Annotations: map[string]string{imgspecv1.AnnotationRefName: ociTag},
+	})
+	data, _ := json.Marshal(index)
+	_ = os.WriteFile(indexPath, data, 0o644)
+	_ = os.WriteFile(filepath.Join(destLayoutDir, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644)
+}
+
+func TestResolveImageSetInstallOnly(t *testing.T) {
+	seedA := "quay.io/seed/a@sha256:" + validSHA256
+	seedB := "quay.io/seed/b@sha256:" + validSHA256
+	extra := "quay.io/example/extra@sha256:" + validSHA256
+
+	m := validInstallOnly()
+	// The seed closure deliberately omits recert and lca-cli (they must be added from
+	// the authoritative inputs), and includes a duplicate of an extra image to prove
+	// deduplication.
+	m.ExtraPrecacheImages = &[]string{extra, seedA}
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{list: []string{seedA, seedB, seedA}},
+		p3Scanner:  notImplementedP3Scanner{},
+	}
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
+
+	refs, err := resolveImageSet(m, opts, deps)
+	require.NoError(t, err)
+
+	// recert and lca-cli are guaranteed present (the checked invariant).
+	assert.Contains(t, refs, testRecertImage)
+	assert.Contains(t, refs, testLCAImage)
+	assert.Contains(t, refs, extra)
+	// Deduplicated union: seedA, seedB, recert, lca, extra (no duplicates).
+	assert.ElementsMatch(t, []string{seedA, seedB, testRecertImage, testLCAImage, extra}, refs)
+	assert.Len(t, refs, 5)
+}
+
+func TestResolveImageSetDedupesRecertFromSeedList(t *testing.T) {
+	// When the seed containers.list already carries recert, it must not be duplicated.
+	m := validInstallOnly()
+	m.ExtraPrecacheImages = nil
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{list: []string{testRecertImage}},
+		p3Scanner:  notImplementedP3Scanner{},
+	}
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
+
+	refs, err := resolveImageSet(m, opts, deps)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{testRecertImage, testLCAImage}, refs)
+}
+
+func TestResolveImageSetSelfContainedNotImplemented(t *testing.T) {
+	m := validSelfContained()
+	deps := imageBuildDeps{seedReader: fakeSeedReader{}, p3Scanner: notImplementedP3Scanner{}}
+
+	_, err := resolveImageSet(m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not implemented")
+	assert.Contains(t, err.Error(), "CNF-27169")
+}
+
+func TestResolveImageSetMissingRequiredImageFails(t *testing.T) {
+	deps := imageBuildDeps{seedReader: fakeSeedReader{list: []string{"quay.io/seed/a@sha256:" + validSHA256}}, p3Scanner: notImplementedP3Scanner{}}
+
+	t.Run("empty recert fails", func(t *testing.T) {
+		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: "", LCAImage: testLCAImage}, deps)
+		assert.ErrorContains(t, err, "recert image is required")
+	})
+	t.Run("empty lca fails", func(t *testing.T) {
+		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: "  "}, deps)
+		assert.ErrorContains(t, err, "lca-cli image is required")
+	})
+}
+
+func TestResolveImageSetSeedReaderErrorFails(t *testing.T) {
+	deps := imageBuildDeps{seedReader: fakeSeedReader{err: assert.AnError}, p3Scanner: notImplementedP3Scanner{}}
+	_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
+	assert.ErrorContains(t, err, "reading seed image closure")
+}
+
+func TestMirrorToOCILayoutSuccess(t *testing.T) {
+	refs := []string{
+		"quay.io/openshift-release-dev/ocp-release@sha256:" + validSHA256,
+		"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:" + validSHA256,
+	}
+	deps := imageBuildDeps{mirrorer: fakeMirrorer{}}
+	layoutDir := filepath.Join(t.TempDir(), "oci")
+
+	entries, err := mirrorToOCILayout(context.Background(), refs, layoutDir, "", deps)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	// Canonical names (digest stripped), pinned digests, and unique valid ociTags.
+	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release", entries[0].Name)
+	assert.Equal(t, fakeDigest(refs[0]), entries[0].Digest)
+	assert.NotEqual(t, entries[0].OCITag, entries[1].OCITag)
+}
+
+func TestMirrorFailsOnUnpinnableReference(t *testing.T) {
+	bad := "quay.io/example/unpinnable@sha256:" + validSHA256
+	refs := []string{"quay.io/example/ok@sha256:" + validSHA256, bad}
+	deps := imageBuildDeps{mirrorer: fakeMirrorer{failOn: map[string]bool{bad: true}}}
+
+	entries, err := mirrorToOCILayout(context.Background(), refs, filepath.Join(t.TempDir(), "oci"), "", deps)
+	require.Error(t, err)
+	assert.Nil(t, entries, "no partial manifest is produced when a reference cannot be pinned")
+	assert.Contains(t, err.Error(), bad, "the error must name the offending image")
+	assert.Contains(t, err.Error(), "digest-pin")
+}
+
+func TestMirrorToOCILayoutEmptySetFails(t *testing.T) {
+	_, err := mirrorToOCILayout(context.Background(), nil, filepath.Join(t.TempDir(), "oci"), "", imageBuildDeps{mirrorer: fakeMirrorer{}})
+	assert.ErrorContains(t, err, "no images to mirror")
+}
+
+func TestEmitDigestManifestSchema(t *testing.T) {
+	entries := []localimages.ImageEntry{
+		{Name: "quay.io/openshift-release-dev/ocp-release", Digest: fakeDigest("a"), OCITag: "ocp-release-0"},
+		{Name: "quay.io/edge-infrastructure/recert", Digest: fakeDigest("b"), OCITag: "recert-1"},
+	}
+	p2Root := t.TempDir()
+
+	data, err := marshalDigestManifest(entries)
+	require.NoError(t, err)
+	require.NoError(t, validateDigestManifestBytes(data, p2Root))
+	manifestPath := filepath.Join(p2Root, "digests.json")
+	require.NoError(t, publishFile(manifestPath, data))
+
+	// Cross-check: the emitted file parses and validates under the consumer's parser,
+	// guaranteeing producer/consumer schema parity.
+	parsed, err := localimages.ParseDigestManifest(manifestPath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, parsed.Version)
+	assert.NotEmpty(t, parsed.OCILayoutPath)
+	require.Len(t, parsed.Images, len(entries))
+	for i, e := range entries {
+		assert.Equal(t, e.Name, parsed.Images[i].Name)
+		assert.Equal(t, e.Digest, parsed.Images[i].Digest)
+		assert.Equal(t, e.OCITag, parsed.Images[i].OCITag)
+	}
+}
+
+func TestDigestManifestWrittenToBothPaths(t *testing.T) {
+	entries := []localimages.ImageEntry{{Name: "quay.io/x/y", Digest: fakeDigest("x"), OCITag: "y-0"}}
+	dir := t.TempDir()
+	p2Root := filepath.Join(dir, "p2")
+	require.NoError(t, os.MkdirAll(p2Root, 0o755))
+	outputPath := filepath.Join(dir, "usb.img")
+
+	data, err := marshalDigestManifest(entries)
+	require.NoError(t, err)
+	besidePath := outputPath + ".digests.json"
+	p2Path := filepath.Join(p2Root, "digests.json")
+	require.NoError(t, publishFile(besidePath, data))
+	require.NoError(t, publishFile(p2Path, data))
+
+	beside, err := os.ReadFile(besidePath)
+	require.NoError(t, err)
+	onMedia, err := os.ReadFile(p2Path)
+	require.NoError(t, err)
+	assert.Equal(t, beside, onMedia, "the build-side and on-media digest manifests must be byte-identical")
+}
+
+func TestComputeSizeReportEstimate(t *testing.T) {
+	stagingRoot := t.TempDir()
+	ociLayoutDir := filepath.Join(stagingRoot, "oci")
+	require.NoError(t, os.MkdirAll(filepath.Join(ociLayoutDir, "blobs"), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(ociLayoutDir, "index.json"), make([]byte, 100), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ociLayoutDir, "blobs", "layer"), make([]byte, 400), 0o644))
+	// A staged-but-not-in-the-layout file (e.g. a future config-tree artifact).
+	require.NoError(t, os.WriteFile(filepath.Join(stagingRoot, "other.bin"), make([]byte, 25), 0o644))
+
+	report, err := computeSizeReport(stagingRoot, ociLayoutDir)
+	require.NoError(t, err)
+	assert.Equal(t, int64(500), report.OCILayoutBytes, "OCI-layout subtotal")
+	assert.Equal(t, int64(525), report.StagedBytes, "full staged-p2 total")
+}
+
+func TestOCITagIsValidAndUnique(t *testing.T) {
+	refs := []string{
+		"quay.io/openshift-release-dev/ocp-release@sha256:" + validSHA256,
+		"quay.io/openshift-release-dev/ocp-release:4.20", // same base name, different ref
+		"registry.example.com:5000/team/app:latest",
+		"@sha256:" + validSHA256, // degenerate
+	}
+	used := make(map[string]struct{})
+	layoutDir := t.TempDir()
+	seen := make(map[string]bool)
+	for i, ref := range refs {
+		tag := uniqueOCITag(ref, i, used)
+		assert.False(t, seen[tag], "ociTag %q must be unique", tag)
+		seen[tag] = true
+		// A valid org.opencontainers.image.ref.name is accepted by the OCI layout.
+		_, err := layout.NewReference(layoutDir, tag)
+		assert.NoError(t, err, "ociTag %q must be a valid org.opencontainers.image.ref.name", tag)
+	}
+}
+
+func TestBuildImageLayoutAtomicAndSuccess(t *testing.T) {
+	seedImg := "quay.io/seed/a@sha256:" + validSHA256
+	m := validInstallOnly()
+	m.ExtraPrecacheImages = nil
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
+
+	t.Run("failure leaves no stale manifest and cleans staging", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		require.NoError(t, os.MkdirAll(p2Root, 0o755))
+		outputPath := filepath.Join(dir, "usb.img")
+
+		// Pre-seed stale manifests at both targets.
+		stalePath := filepath.Join(p2Root, "digests.json")
+		besidePath := outputPath + ".digests.json"
+		require.NoError(t, os.WriteFile(stalePath, []byte("STALE"), 0o600))
+		require.NoError(t, os.WriteFile(besidePath, []byte("STALE"), 0o600))
+
+		deps := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg}},
+			mirrorer:   fakeMirrorer{failOn: map[string]bool{testLCAImage: true}},
+			p3Scanner:  notImplementedP3Scanner{},
+		}
+
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		require.Error(t, err)
+
+		// Stale manifests are untouched (not overwritten with a partial build).
+		for _, p := range []string{stalePath, besidePath} {
+			data, readErr := os.ReadFile(p)
+			require.NoError(t, readErr)
+			assert.Equal(t, "STALE", string(data), "pre-existing manifest %q must not be modified on failure", p)
+		}
+
+		// Staging directory was cleaned up.
+		leftover, err := filepath.Glob(filepath.Join(p2Root, ".oci-staging-*"))
+		require.NoError(t, err)
+		assert.Empty(t, leftover, "staging directory must be removed on failure")
+	})
+
+	t.Run("success publishes layout and both manifests", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outputPath := filepath.Join(dir, "usb.img")
+
+		deps := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg}},
+			mirrorer:   fakeMirrorer{},
+			p3Scanner:  notImplementedP3Scanner{},
+		}
+
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// seed + recert + lca.
+		assert.Len(t, result.Images, 3)
+
+		// Published layout and both identical manifests.
+		assert.DirExists(t, filepath.Join(p2Root, "oci"))
+		parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
+		require.NoError(t, err)
+		assert.Len(t, parsed.Images, 3)
+		beside, err := os.ReadFile(outputPath + ".digests.json")
+		require.NoError(t, err)
+		onMedia, err := os.ReadFile(filepath.Join(p2Root, "digests.json"))
+		require.NoError(t, err)
+		assert.Equal(t, beside, onMedia)
+
+		// No staging directory left behind.
+		leftover, _ := filepath.Glob(filepath.Join(p2Root, ".oci-staging-*"))
+		assert.Empty(t, leftover)
+	})
+
+	t.Run("rebuild over existing output replaces it cleanly", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outputPath := filepath.Join(dir, "usb.img")
+		deps := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg}},
+			mirrorer:   fakeMirrorer{},
+			p3Scanner:  notImplementedP3Scanner{},
+		}
+
+		// First build publishes the layout and manifests.
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		require.NoError(t, err)
+
+		// A second build over the same p2 root must swap in the new layout without
+		// leaving a backup or staging directory behind.
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.DirExists(t, filepath.Join(p2Root, "oci"))
+
+		parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
+		require.NoError(t, err)
+		assert.Len(t, parsed.Images, 3)
+
+		for _, pattern := range []string{".oci-staging-*", "oci.previous"} {
+			leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
+			assert.Empty(t, leftover, "no %s artifact must remain after a clean rebuild", pattern)
+		}
+	})
 }

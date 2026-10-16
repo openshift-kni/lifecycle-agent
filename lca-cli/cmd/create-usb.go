@@ -18,9 +18,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 )
 
@@ -40,6 +42,8 @@ func newCreateUsbCmd() *cobra.Command {
 		writeDevice  string
 		rhcosLiveISO string
 		rhcosLiveSHA string
+		recertImage  string
+		lcaImage     string
 	)
 
 	cmd := &cobra.Command{
@@ -72,10 +76,31 @@ not-implemented error.`,
 	cmd.Flags().StringVar(&writeDevice, "write-device", "", "Block device to write the media to (mutually exclusive with --output).")
 	cmd.Flags().StringVar(&rhcosLiveISO, "rhcos-live-iso", "", "Override the manifest rhcosLiveIso.url (must be set together with --rhcos-live-iso-sha256).")
 	cmd.Flags().StringVar(&rhcosLiveSHA, "rhcos-live-iso-sha256", "", "Override the manifest rhcosLiveIso.sha256 (must be set together with --rhcos-live-iso).")
+	// --recert-image and --lca-image are the authoritative sources for the recert and
+	// lca-cli images added to the install-only image set. They are guaranteed in the
+	// resolved set independently of the seed's containers.list contents. The recert
+	// default follows the same precedence the controllers use (flag > RELATED_IMAGE_RECERT_IMAGE
+	// env > built-in default); lca-cli has no build-workstation default because the
+	// runtime resolver reads the running operator pod, so an explicit value is required.
+	// They are consumed by the media-build pipeline (image resolution/mirroring landing
+	// in CNF-27171); the flags are defined here so the command contract is stable.
+	cmd.Flags().StringVar(&recertImage, "recert-image", defaultRecertImage(), "Recert image pull-spec added to the install-only image set (defaults to $RELATED_IMAGE_RECERT_IMAGE or the built-in default).")
+	cmd.Flags().StringVar(&lcaImage, "lca-image", "", "lca-cli image pull-spec added to the install-only image set (required for media assembly).")
 
 	_ = cmd.MarkFlagRequired("manifest")
 
 	return cmd
+}
+
+// defaultRecertImage resolves the default recert image for the --recert-image flag,
+// following the controllers' precedence: the RELATED_IMAGE_RECERT_IMAGE environment
+// variable if set, otherwise the built-in default. An explicit --recert-image flag
+// still overrides this default.
+func defaultRecertImage() string {
+	if v := os.Getenv(common.RecertImageEnvKey); v != "" {
+		return v
+	}
+	return common.DefaultRecertImage
 }
 
 // createUsbOptions carries the resolved create-usb flag values.
