@@ -645,9 +645,9 @@ func TestResolveImageSetInstallOnly(t *testing.T) {
 	assert.Contains(t, refs, testRecertImage)
 	assert.Contains(t, refs, testLCAImage)
 	assert.Contains(t, refs, extra)
-	// Deduplicated union: seedA, seedB, recert, lca, extra (no duplicates).
-	assert.ElementsMatch(t, []string{seedA, seedB, testRecertImage, testLCAImage, extra}, refs)
-	assert.Len(t, refs, 5)
+	// The seed image itself is required even when containers.list omits it.
+	assert.ElementsMatch(t, []string{m.SeedImage, seedA, seedB, testRecertImage, testLCAImage, extra}, refs)
+	assert.Len(t, refs, 6)
 }
 
 func TestResolveImageSetDedupesRecertFromSeedList(t *testing.T) {
@@ -661,7 +661,7 @@ func TestResolveImageSetDedupesRecertFromSeedList(t *testing.T) {
 
 	refs, err := resolveImageSet(m, opts, nil, deps)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{testRecertImage, testLCAImage}, refs)
+	assert.ElementsMatch(t, []string{m.SeedImage, testRecertImage, testLCAImage}, refs)
 }
 
 func TestResolveImageSetSelfContainedUnionsBaseAndScan(t *testing.T) {
@@ -684,7 +684,7 @@ func TestResolveImageSetSelfContainedUnionsBaseAndScan(t *testing.T) {
 
 	refs, err := resolveImageSet(m, opts, []string{manifestPath}, deps)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{seedA, testRecertImage, testLCAImage, p3Only}, refs)
+	assert.ElementsMatch(t, []string{m.SeedImage, seedA, testRecertImage, testLCAImage, p3Only}, refs)
 }
 
 func TestResolveImageSetSelfContainedScanErrorFails(t *testing.T) {
@@ -905,8 +905,8 @@ func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		// seed + recert + lca.
-		assert.Len(t, result.Images, 3)
+		// Seed image + its listed image + recert + lca.
+		assert.Len(t, result.Images, 4)
 
 		// The committed manifest points at a build-unique layout that matches every entry,
 		// and that layout is the only one present.
@@ -915,7 +915,7 @@ func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 
 		parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
 		require.NoError(t, err)
-		assert.Len(t, parsed.Images, 3)
+		assert.Len(t, parsed.Images, 4)
 
 		// The audit-only beside-output copy is byte-identical to the committed manifest.
 		beside, err := os.ReadFile(outputPath + ".digests.json")

@@ -478,7 +478,9 @@ func resolveInstallOnlyImageSet(m *Manifest, opts ImageSetOptions, deps imageBui
 		return nil, fmt.Errorf("reading seed image closure: %w", err)
 	}
 
-	var refs []string
+	// containers.list describes images used by the seed, but does not necessarily
+	// include the seed image itself. The offline installer needs both.
+	refs := []string{m.SeedImage}
 	for _, img := range seedList {
 		if img = strings.TrimSpace(img); img != "" {
 			refs = utils.AppendToListIfNotExists(refs, img)
