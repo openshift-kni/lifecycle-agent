@@ -474,35 +474,68 @@ func TestBuildRejectsWriteDevice(t *testing.T) {
 	assert.Contains(t, err.Error(), "CNF-28668")
 }
 
-// TestBuildIncompleteAndNoDangle covers the public --output behavior through the injected
-// build core with a fake seam: the foundation plus the empty p2 partition run, then Build
-// fails loudly with the incomplete-assembly error (now naming only p3/p4) and leaves no
+// TestBuildIncompleteAndNoDangle covers the public --output behavior through the injected build
+// core with a fake seam: the foundation plus the empty p2 and p4 partitions run, then Build fails
+// loudly with the incomplete-assembly error (all partition slots exist, but no partition content is
+// populated by the live command path and the bootability gate has not passed) and leaves no
 // dangling resources (loop detached, partial .img removed). It replaces
 // TestBuildStubReturnsNotImplemented.
+//
+// It asserts both modes, and that the live command path populates no partition content: p2 and p4
+// are the only partitions created/formatted, and in self-contained mode the reserved p3
+// (cluster-config) slot is left unpopulated (no mount) because the end-to-end config-tree handoff
+// (CNF-27171) threads no P3Root yet.
 func TestBuildIncompleteAndNoDangle(t *testing.T) {
-	img := filepath.Join(t.TempDir(), "out.img")
-	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
+	for _, tc := range []struct {
+		name     string
+		manifest func() *Manifest
+		mode     Mode
+		loopDev  string
+	}{
+		{"install-only is p1/p2/p4", validInstallOnly, ModeInstallOnly, "/dev/loop3"},
+		{"self-contained leaves p3 reserved-but-unpopulated in the live path", validSelfContained, ModeSelfContained, "/dev/loop4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			img := filepath.Join(t.TempDir(), "out.img")
+			fp := &fakePartitionOps{attachDev: tc.loopDev}
 
-	err := build(context.Background(), testLogger(), validInstallOnly(),
-		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			err := build(context.Background(), testLogger(), tc.manifest(),
+				BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
 
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errAssemblyIncomplete)
-	assert.Contains(t, err.Error(), "p3/p4 not yet implemented")
-	assert.Contains(t, err.Error(), "CNF-28669")
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errAssemblyIncomplete)
+			assert.Contains(t, err.Error(), "CNF-27158", "the incomplete error names the pending bootability gate")
 
-	// The seam was driven attach -> create (p1) -> p2 create/settle/format (the shared sequence)
-	// before the handle was discarded.
-	assert.Equal(t, []string{"attach", "create", "createPart", "settle", "format", "detach"}, fp.calls)
-	require.Len(t, fp.createdParts, 1, "the empty p2 partition must be created once")
-	assert.Equal(t, labelIBIImages, fp.createdParts[0].Label, "p2 must be the ibi-images partition")
-	assert.Equal(t, ibiImagesFSType, fp.formatFSType, "p2 must be formatted as the ibi-images filesystem type")
-	assert.Equal(t, labelIBIImages, fp.formatLabel, "p2's FS label must be ibi-images")
+			// The seam was driven attach -> create (p1) -> p2 create/settle/format -> p4
+			// create/settle/format (the shared sequence, twice) before the handle was discarded.
+			// The live command path threads no p3 config tree yet, so the reserved p3 slot is left
+			// unpopulated: no mount/umount runs and only p2 and p4 are created.
+			assert.Equal(t, []string{
+				"attach", "create",
+				"createPart", "settle", "format", // p2
+				"createPart", "settle", "format", // p4
+				"detach",
+			}, fp.calls)
+			assert.NotContains(t, fp.calls, "mount", "the live command path threads no p3 tree yet, so p3 is left unpopulated")
 
-	// No dangling resources: the loop device was detached and the partial image removed.
-	assert.Equal(t, []string{"/dev/loop3"}, fp.detached, "the attached loop device must be detached")
-	_, statErr := os.Stat(img)
-	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed")
+			require.Len(t, fp.createdParts, 2, "only the empty p2 and p4 partitions are created in the live path")
+			plan := partitionPlan(tc.mode, defaultP1ReservationBytes)
+			wantP2, ok := plannedPartition(plan, labelIBIImages)
+			require.True(t, ok)
+			wantP4, ok := plannedPartition(plan, labelIBIStatus)
+			require.True(t, ok)
+			assert.Equal(t, wantP2, fp.createdParts[0], "p2 (ibi-images) is created first")
+			assert.Equal(t, wantP4, fp.createdParts[1], "p4 (ibi-status) is created second")
+			// The last partition formatted was p4 (ibi-status), ext4-labeled ibi-status.
+			assert.Equal(t, ibiStatusFSType, fp.formatFSType, "p4 is formatted as the ibi-status filesystem type")
+			assert.Equal(t, labelIBIStatus, fp.formatLabel, "p4's FS label must be ibi-status")
+
+			// No dangling resources: the loop device was detached and the partial image removed.
+			assert.Equal(t, []string{tc.loopDev}, fp.detached, "the attached loop device must be detached")
+			_, statErr := os.Stat(img)
+			assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed")
+		})
+	}
 }
 
 // ----- image-build stage (createusb_images.go) -----

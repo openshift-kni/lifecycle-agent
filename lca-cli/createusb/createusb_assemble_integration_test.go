@@ -40,6 +40,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -145,11 +146,25 @@ func requireP3Tools(t *testing.T) {
 	}
 }
 
+// requireP4Tools skips unless the real p4 media path's tools are available: p4 drives the same
+// create -> settle (partprobe + udevadm) -> format (mkfs.ext4) sequence as p2/p3, and the p4
+// assertions below also need blkid and mount/umount.
+func requireP4Tools(t *testing.T) {
+	t.Helper()
+	requireLoopAndSgdisk(t)
+	for _, bin := range []string{"partprobe", "udevadm", "mkfs.ext4", "blkid", "mount", "umount"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available: %v", bin, err)
+		}
+	}
+}
+
 // TestAssembleMediaRealP3 exercises the production p3 cluster-config media stage end-to-end on
 // a real loopback-attached image: assembleMedia creates the reserved p3 entry, formats it
 // ext4, labels it cluster-config, mounts it, and populates it from a temp p3Root. The on-disk
 // GPT entry, FS label, and populated tree are inspected on the live handle before Close (the
-// full public Build still returns errAssemblyIncomplete until CNF-27171 adds p4 + finalize).
+// full public Build still returns errAssemblyIncomplete: no partition content is populated by the
+// live command path and the CNF-27158 bootability gate has not passed).
 func TestAssembleMediaRealP3(t *testing.T) {
 	requireP3Tools(t)
 
@@ -366,4 +381,171 @@ func TestBuildP2RealRollback(t *testing.T) {
 	assert.False(t, loopAttached(wrapped.attachedDev), "a p2 failure must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "a p2 failure must remove the partial image")
+}
+
+// TestCreateP4PartitionRealLoopback exercises the combined media layout end-to-end on a real
+// loopback-attached image for both modes: assembleMedia lays down the base GPT + placeholder p1
+// (and, for self-contained with a supplied tree, the populated p3), then createP2Partition and
+// createP4Partition add the empty p2 and p4 partitions through the shared create -> settle -> format
+// sequence. It asserts the on-disk table carries the full per-mode partition set at the planned
+// offsets (install-only p1/p2/p4; self-contained p1/p2/p3/p4), that sgdisk --verify is clean, and
+// that p4 is an empty, writable, unmounted ext4 filesystem labeled ibi-status: blkid reports
+// TYPE=ext4/LABEL=ibi-status, the finished image ships p4 unmounted, it contains no
+// application-created files (only ext4's own lost+found), and a read-write mount round-trips a
+// write/fsync/readback.
+func TestCreateP4PartitionRealLoopback(t *testing.T) {
+	requireP4Tools(t)
+
+	for _, tc := range []struct {
+		name       string
+		manifest   func() *Manifest
+		mode       Mode
+		selfConfig bool
+		wantLabels []string
+	}{
+		{"install-only", validInstallOnly, ModeInstallOnly, false, []string{labelLiveISO, labelIBIImages, labelIBIStatus}},
+		{"self-contained", validSelfContained, ModeSelfContained, true, []string{labelLiveISO, labelIBIImages, labelClusterConfig, labelIBIStatus}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			realOps, deps := newRealMediaDeps()
+			plan := partitionPlan(tc.mode, defaultP1ReservationBytes)
+			img := filepath.Join(t.TempDir(), "media.img")
+
+			opts := BuildOptions{OutputPath: img}
+			if tc.selfConfig {
+				// Supply a rendered p3 tree so the self-contained path materializes the full
+				// p1/p2/p3/p4 layout on disk (the live command path does not thread this yet; that is
+				// CNF-27171).
+				opts.P3Root = writeTree(t, t.TempDir(), map[string]string{
+					filepath.Join(common.ClusterConfigDir, common.SeedReconfigurationFileName): `{"apiVersion":1}`,
+				})
+			}
+
+			handle, err := assembleMedia(context.Background(), testLogger(), tc.manifest(), opts, deps)
+			require.NoError(t, err)
+			require.NotNil(t, handle)
+			// Guard against a leaked loop device / image if an assertion below fails.
+			defer func() { _ = handle.Close() }()
+
+			loopDev := handle.LoopDevice
+			require.NotEmpty(t, loopDev)
+
+			require.NoError(t, createP2Partition(testLogger(), handle, deps))
+			require.NoError(t, createP4Partition(testLogger(), handle, deps))
+
+			// The on-disk GPT parses back with the full per-mode partition set at the planned offsets.
+			entries, err := realOps.ReadPartitionTable(loopDev)
+			require.NoError(t, err)
+			require.Len(t, entries, len(tc.wantLabels), "the full per-mode partition set must be on disk")
+			byNumber := map[int]PartitionEntry{}
+			for _, e := range entries {
+				byNumber[e.Number] = e
+			}
+			for _, want := range plan.Partitions {
+				got, ok := byNumber[want.Number]
+				require.True(t, ok, "partition %d (%s) must be on disk", want.Number, want.Label)
+				assert.Equal(t, want.Label, got.Name, "partition %d GPT name", want.Number)
+				assert.Equal(t, want.Offset/sectorSize, got.Start, "partition %d starts at the planned offset", want.Number)
+				assert.Zero(t, got.Start%(alignmentBytes/sectorSize), "partition %d start must be 1 MiB-aligned", want.Number)
+			}
+
+			// A clean sgdisk --verify confirms the table is still valid after appending p2 and p4.
+			verifyOut, verr := realOps.ops.RunInHostNamespace("sgdisk", "--verify", loopDev)
+			require.NoError(t, verr, verifyOut)
+
+			// p4: the finished image ships it unmounted and it reports ext4 / ibi-status.
+			p4Plan, ok := plannedPartition(plan, labelIBIStatus)
+			require.True(t, ok)
+			partDev := partitionDevicePath(loopDev, p4Plan.Number)
+			assert.False(t, isMounted(t, partDev), "p4 must ship unmounted")
+
+			blk, berr := exec.Command("blkid", "-o", "export", partDev).CombinedOutput() //nolint:gosec // fixed loopback node
+			require.NoError(t, berr, string(blk))
+			fields := parseBlkidExport(string(blk))
+			assert.Equal(t, "ext4", fields["TYPE"], "p4 must be formatted ext4")
+			assert.Equal(t, labelIBIStatus, fields["LABEL"], "p4 filesystem label must be ibi-status")
+
+			// The filesystem mounts read-write: it contains only ext4's own lost+found (no
+			// application-created files), and a write/fsync/readback round-trips.
+			mnt := t.TempDir()
+			out, merr := exec.Command("mount", partDev, mnt).CombinedOutput() //nolint:gosec // fixed loopback node + temp mountpoint
+			require.NoError(t, merr, string(out))
+			unmounted := false
+			defer func() {
+				if !unmounted {
+					_ = exec.Command("umount", mnt).Run() //nolint:gosec // fixed temp mountpoint
+				}
+			}()
+
+			appFiles := []string{}
+			for _, name := range dirEntryNames(t, mnt) {
+				if name != "lost+found" {
+					appFiles = append(appFiles, name)
+				}
+			}
+			assert.Empty(t, appFiles, "a freshly formatted p4 must contain no application-created files")
+
+			const payload = "ibi-status writable check"
+			probe := filepath.Join(mnt, "write-probe")
+			f, ferr := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // test-only path under a temp mount
+			require.NoError(t, ferr, "p4 must be writable (no read-only attribute)")
+			_, werr := f.WriteString(payload)
+			require.NoError(t, werr)
+			require.NoError(t, f.Sync())
+			require.NoError(t, f.Close())
+
+			got, rerr := os.ReadFile(probe) //nolint:gosec // test-only path under a temp mount
+			require.NoError(t, rerr)
+			assert.Equal(t, payload, string(got), "a written file must read back")
+
+			// Unmount before teardown: the finished image ships the filesystem unmounted.
+			require.NoError(t, exec.Command("umount", mnt).Run()) //nolint:gosec // fixed temp mountpoint
+			unmounted = true
+
+			// Success teardown: Close detaches the loop device and removes the discarded image.
+			require.NoError(t, handle.Close())
+			assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
+			_, statErr := os.Stat(img)
+			assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
+		})
+	}
+}
+
+// isMounted reports whether dev currently appears as a mount source in /proc/mounts.
+func isMounted(t *testing.T, dev string) bool {
+	t.Helper()
+	data, err := os.ReadFile("/proc/mounts")
+	require.NoError(t, err)
+	for _, line := range strings.Split(string(data), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == dev {
+			return true
+		}
+	}
+	return false
+}
+
+// parseBlkidExport parses `blkid -o export` output (KEY=VALUE lines) into a map.
+func parseBlkidExport(out string) map[string]string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		fields[k] = v
+	}
+	return fields
+}
+
+// dirEntryNames returns the sorted names of the entries directly under dir.
+func dirEntryNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
 }
