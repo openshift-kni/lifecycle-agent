@@ -688,7 +688,8 @@ func TestEmitDigestManifestSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, validateDigestManifestBytes(data, p2Root))
 	manifestPath := filepath.Join(p2Root, "digests.json")
-	require.NoError(t, publishFile(manifestPath, data, true))
+	_, err = publishFile(manifestPath, data, true)
+	require.NoError(t, err)
 
 	// Cross-check: the emitted file parses and validates under the consumer's parser,
 	// guaranteeing producer/consumer schema parity.
@@ -715,8 +716,10 @@ func TestDigestManifestWrittenToBothPaths(t *testing.T) {
 	require.NoError(t, err)
 	besidePath := outputPath + ".digests.json"
 	p2Path := filepath.Join(p2Root, "digests.json")
-	require.NoError(t, publishFile(besidePath, data, false))
-	require.NoError(t, publishFile(p2Path, data, true))
+	_, err = publishFile(besidePath, data, false)
+	require.NoError(t, err)
+	_, err = publishFile(p2Path, data, true)
+	require.NoError(t, err)
 
 	beside, err := os.ReadFile(besidePath)
 	require.NoError(t, err)
@@ -1045,6 +1048,47 @@ func TestSyncTreeFsyncsLayoutTree(t *testing.T) {
 	require.NoError(t, syncTree(root), "syncing a completed layout tree must succeed")
 }
 
+// Regression for the review's P1 "a failed sync after rename deletes the layout named by
+// the live manifest": once publishFile has renamed the target into place it must report
+// renamed=true, so buildImageLayout marks the build committed and never deletes the new
+// layout even if the subsequent durability fsync reports an error. A rename that never
+// happens must report renamed=false and leave no temp artifact behind.
+func TestPublishFileReportsRenamed(t *testing.T) {
+	p2Root := t.TempDir()
+
+	// A successful durable publish renames the target into place and reports renamed=true.
+	path := filepath.Join(p2Root, "digests.json")
+	renamed, err := publishFile(path, []byte("payload"), true)
+	require.NoError(t, err)
+	assert.True(t, renamed, "a successful durable publish must report renamed=true")
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("payload"), got)
+
+	// A rename that cannot happen (the destination is a non-empty directory) must report
+	// renamed=false -- so the caller does not treat the target as committed -- and must not
+	// leave its temp file behind.
+	blocked := filepath.Join(p2Root, "blocked.json")
+	require.NoError(t, os.MkdirAll(filepath.Join(blocked, "keep"), 0o750))
+	renamed, err = publishFile(blocked, []byte("x"), true)
+	require.Error(t, err)
+	assert.False(t, renamed, "a failed rename must report renamed=false")
+	assertNoPublishTempArtifacts(t, p2Root)
+}
+
+// Regression for the review's P1 "persist the new layout's parent entry before renaming the
+// manifest": buildImageLayout fsyncs the p2 root directory (via fsyncPath) after syncing the
+// new layout and before committing the manifest, so the directory entry naming the new layout
+// is durable before the committed manifest can reference it. This asserts fsyncPath succeeds on
+// the p2 root directory the build calls it on (it cannot assert on-disk durability from a unit
+// test, but it exercises the directory open+fsync that backs the parent-entry guarantee).
+func TestFsyncPathSyncsDirectory(t *testing.T) {
+	p2Root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(p2Root, ociLayoutDirPrefix+"abc"), 0o750))
+
+	require.NoError(t, fsyncPath(p2Root), "fsyncing the p2 root directory must succeed")
+}
+
 // Regression for the review's concurrency P1: builds against the same p2 root must
 // serialize. A second lockP2Root must block while the first lock is held and succeed only
 // once it is released.
@@ -1094,7 +1138,8 @@ func TestGCSupersededLayoutsKeepsManifestReferencedLayout(t *testing.T) {
 
 	data, err := marshalDigestManifest([]localimages.ImageEntry{{Name: "quay.io/x/y", Digest: fakeDigest("x"), OCITag: "y-0"}}, live)
 	require.NoError(t, err)
-	require.NoError(t, publishFile(filepath.Join(p2Root, "digests.json"), data, true))
+	_, err = publishFile(filepath.Join(p2Root, "digests.json"), data, true)
+	require.NoError(t, err)
 
 	gcSupersededLayouts(nil, p2Root)
 
