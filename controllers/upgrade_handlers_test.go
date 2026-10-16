@@ -140,7 +140,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockBackuprestore.EXPECT().StartRestore(gomock.Any()).Return(tt.tracker()).Times(1)
+			mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any()).Return(tt.tracker()).Times(1)
 
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
@@ -152,7 +152,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 				Log:             logr.Logger{},
 				BackupRestore:   mockBackuprestore,
 			}
-			got, err := uph.HandleRestore(context.Background())
+			got, err := uph.HandleRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}})
 			if !tt.wantErr(t, err, fmt.Sprintf("handleRestore")) {
 				return
 			}
@@ -762,7 +762,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.CmManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
 			if tt.startRestoreReturn != nil {
-				mockBackuprestore.EXPECT().StartRestore(gomock.Any()).Return(tt.startRestoreReturn()).Times(1)
+				mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any()).Return(tt.startRestoreReturn()).Times(1)
 			}
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)

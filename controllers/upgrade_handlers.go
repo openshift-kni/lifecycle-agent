@@ -45,7 +45,7 @@ import (
 type (
 	UpgradeHandler interface {
 		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, targetDir string) (ctrl.Result, error)
-		HandleRestore(ctx context.Context) (ctrl.Result, error)
+		HandleRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (ctrl.Result, error)
 		PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 	}
@@ -394,7 +394,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	result, err := u.HandleRestore(ctx)
+	result, err := u.HandleRestore(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			u.Log.Error(err, "Failed to handle restore")
@@ -457,10 +457,10 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 }
 
 // HandleRestore manages restore flow using local restore
-func (u *UpgHandler) HandleRestore(ctx context.Context) (ctrl.Result, error) {
+func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (ctrl.Result, error) {
 	u.Log.Info("Handling local restore")
 
-	restoreTracker, err := u.BackupRestore.StartRestore(ctx)
+	restoreTracker, err := u.BackupRestore.StartRestore(ctx, content)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while running restore: %w", err))
 	}
