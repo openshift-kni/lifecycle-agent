@@ -1,7 +1,8 @@
 # LCA CLI
 
-This application will assist users to easily create an OCI seed image for the Image-Based Upgrade (IBU) workflow, using
-a simple CLI.
+`lca-cli` creates OCI seed images for image-based upgrades and provides commands for
+image-based install, post-pivot configuration, and IP configuration. Its `create-usb`
+command currently creates a partitioned placeholder image for USB-based installation.
 
 ## Motivation
 
@@ -20,9 +21,8 @@ upgrading and reconfiguration times.
 
 ### What does this tool do?
 
-The purpose of the `lca-cli` tool is to assist in the creation of IBU seed images, which are used later on by
-other components (e.g., [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent)) during an image-based
-upgrade procedure.
+The `create` command produces IBU seed images that other lifecycle-agent components
+consume during image-based upgrades.
 
 In that direction, the tool does the following at a high level:
 
@@ -34,51 +34,21 @@ In that direction, the tool does the following at a high level:
 
 ### Building
 
-Building the binary locally.
+Build the binary from the repository root with the Go version required by `go.mod`:
 
-```shell
--> make cli-build
-go mod tidy
-Running go fmt
-go fmt ./...
-Running go vet
-go vet ./...
-go build -o bin/lca-cli main/lca-cli/main.go
+```bash
+make cli-build
 ```
 
-> **Note:** The binary can be found in `./bin/lca-cli`.
+The binary is written to `./bin/lca-cli`.
 
 ### Running the tool's help
 
-To see the tool's help on your local host, run the following command:
+Use the CLI help for the current command list and flags:
 
-```shell
--> ./bin/lca-cli -h
-lca-cli assists LCA in Image Based Install (IBI), Image Based Upgrade (IBU) and IP Configuration (IPC) workflows.
-
-  Find more information at: https://github.com/openshift-kni/lifecycle-agent/blob/main/lca-cli/README.md
-
-Usage:
-  lca-cli [command]
-
-Available Commands:
-  completion          Generate the autocompletion script for the specified shell
-  create              Create OCI image and push it to a container registry.
-  help                Help about any command
-  ibi                 prepare ibi
-  ibuPrecacheWorkload Start precache during IBU
-  ibuStaterootSetup   Setup a new stateroot during IBU
-  init-monitor        LCA Init Monitor
-  ip-config           IP configuration commands
-  post-pivot          post pivot configuration
-  restore             Restore seed cluster configurations
-
-Flags:
-  -h, --help       help for lca-cli
-  -c, --no-color   Control colored output
-  -v, --verbose    Display verbose logs
-
-Use "lca-cli [command] --help" for more information about a command.
+```bash
+./bin/lca-cli --help
+./bin/lca-cli create-usb --help
 ```
 
 ### Running as a container
@@ -127,20 +97,23 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 
 ## Creating USB media
 
-> **Note:** This section documents the `create-usb` manifest schema and flags. It is the first
-> part of the USB-based Image-Based Install (IBI) documentation; the full end-to-end usage guide
-> is completed in a follow-up story. With `--output`, the command creates a sparse `.img`
-> containing the planned GPT partition slots: p1 is reserved for the live ISO, and p2/p4
-> (plus p3 for self-contained mode) are formatted as empty ext4 filesystems. The image has
-> no live ISO or image payload and is not bootable. `--write-device` remains deferred.
+With `--output`, `create-usb` creates a sparse `.img` containing the planned GPT
+partition slots. p1 reserves space for the live ISO; p2 and p4 are empty ext4
+filesystems, and self-contained mode also gets an empty ext4 p3. The command does
+not download the ISO, populate images or site configuration, or verify bootability.
+**The output is not bootable installation media.** `--write-device` remains deferred.
 
-The `create-usb` subcommand builds self-installing USB media for the USB-based IBI workflow from a
-single YAML (or JSON) manifest. It runs on a workstation and validates every build-time invariant
-before producing media, so a malformed or inconsistent manifest fails the build rather than
-producing unusable media.
+The command reads a single YAML or JSON manifest and validates its schema and fields
+before creating the placeholder image. The image mirroring and p3 rendering stages
+described below are implemented as separate building blocks but are not yet called
+by `create-usb`.
 
-```shell
--> ./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
+Creating the partition table requires a Linux host with loop-device access and
+`losetup`, `sgdisk`, `partprobe`, `udevadm`, and `mkfs.ext4` available. Run with
+sufficient privileges to create and format loopback partitions.
+
+```bash
+./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
 ```
 
 ### Flags
@@ -152,7 +125,7 @@ producing unusable media.
 | `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use currently fails. |
 | `--lca-image` | Reserved for the lca-cli image in the on-media image set. Explicit use currently fails. |
 | `--output` | Path of the `.img` file to write. The path must not already exist — the command refuses to overwrite an existing file. Mutually exclusive with `--write-device`; exactly one is required. |
-| `--write-device` | Block device to write the media to. Mutually exclusive with `--output`; exactly one is required. |
+| `--write-device` | Reserved block-device target. The command rejects it while media assembly is incomplete. Mutually exclusive with `--output`; exactly one target is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
 | `--rhcos-live-iso-sha256` | Override the manifest `rhcosLiveIso.sha256`. Must be set together with `--rhcos-live-iso`. |
 
@@ -217,10 +190,14 @@ siteConfig:
   pullSecret: "@/path/to/pull-secret.json"
 ```
 
-The referenced file's contents replace the value during the build; the `@` prefix never appears in
-the rendered output. The build fails if the file is missing or its contents are not valid JSON.
+The command reads the referenced file during validation and fails if it is missing or
+does not contain valid JSON. A future media-population stage will use the resolved
+value; the current placeholder image contains no pull secret.
 
 ### Example: install-only
+
+The image names, URLs, paths, and SHA-256 values in these examples illustrate the
+manifest format; replace them with values for your environment.
 
 ```yaml
 mode: install-only
@@ -259,15 +236,16 @@ siteConfig:
   pullSecret: "@/path/to/pull-secret.json"
 ```
 
-### Digest manifest (`digests.json`)
+### Planned image payload (`digests.json`)
 
-The media build resolves the profile's image set to digests, mirrors it into a build-unique
-OCI image layout directory on the media (named `oci-<unique>`), and emits a digest manifest
-that records which layout images to import. The manifest is the single source of truth shared
-by the build, the prepare precache step, and the on-media self-check: all three use the exact
-same set (same count, same digests).
+`create-usb --output` does **not** currently create `digests.json` or an OCI image
+layout. The separately implemented `BuildImageLayout` stage resolves the profile's
+image set to digests, mirrors it into a build-unique OCI layout directory (named
+`oci-<unique>`), and emits a digest manifest. Wiring that stage into the placeholder
+image is follow-up work. The format and publication behavior below describe that
+standalone stage, not the current `create-usb` output.
 
-The manifest is emitted in two places, byte-identical:
+When `BuildImageLayout` runs, it emits the manifest in two places, byte-identical:
 
 - `digests.json` at the media (p2) root — the committed, read-only on-media reference.
 - `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.

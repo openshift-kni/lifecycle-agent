@@ -21,6 +21,8 @@ backup-restore preserves application and platform state across the upgrade.
 - **IP configuration management** during upgrades
 - **Automatic rollback** on upgrade failure or timeout
 - **Container image pre-caching** to reduce upgrade downtime
+- **USB image scaffolding** through `lca-cli create-usb`, which currently creates a
+  nonbootable partitioned `.img` for the image-based install workflow
 
 ## Custom Resource Definitions
 
@@ -47,7 +49,7 @@ The `ImageBasedUpgrade` controller implements a stage-based state machine:
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26.3 or newer (see `go.mod`)
 - Access to an OpenShift SNO cluster
 - `oc` or `kubectl` configured with cluster-admin privileges
 
@@ -81,6 +83,7 @@ make ci-job      # Full CI pipeline (generate, fmt, vet, lint, test)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Examples](docs/examples.md)
 - [Must-Gather](docs/must-gather.md)
+- [USB Image Scaffolding and Manifest](lca-cli/README.md#creating-usb-media)
 
 ## Contributing
 
