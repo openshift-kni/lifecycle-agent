@@ -306,6 +306,15 @@ layout directory. Superseded and crash-orphaned layout directories are garbage-c
 participates in it (it may sit on a different filesystem), and a failure to write it does not fail
 the build.
 
+The guarantee holds across power loss, not merely process termination: the completed layout (its
+files and directories) is fsynced before the commit, and the commit rename is made durable by
+fsyncing the manifest file and the media-root directory, so a power loss can never persist the
+manifest rename ahead of the layout data it references. Garbage collection runs only after the
+commit is durable, and it re-reads the committed manifest to learn which layout is live rather than
+trusting the just-written name. Builds against the same media root are serialized by an advisory
+file lock, so concurrent builds cannot interleave their commit/GC steps and collect a layout the
+other build just made live.
+
 The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
 subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
 excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
