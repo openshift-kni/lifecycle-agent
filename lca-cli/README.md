@@ -257,23 +257,23 @@ siteConfig:
 
 ### Digest manifest (`digests.json`)
 
-The media build resolves the profile's image set to digests, mirrors it into an OCI image
-layout on the media (the `oci` directory), and emits a digest manifest that records which
-layout images to import. The manifest is the single source of truth shared by the build,
-the prepare precache step, and the on-media self-check: all three use the exact same set
-(same count, same digests).
+The media build resolves the profile's image set to digests, mirrors it into a build-unique
+OCI image layout directory on the media (named `oci-<unique>`), and emits a digest manifest
+that records which layout images to import. The manifest is the single source of truth shared
+by the build, the prepare precache step, and the on-media self-check: all three use the exact
+same set (same count, same digests).
 
 The manifest is emitted in two places, byte-identical:
 
-- `<output>.digests.json`, beside the `--output` image, for build-side auditing.
-- `digests.json` at the media (p2) root, the read-only on-media reference.
+- `digests.json` at the media (p2) root — the committed, read-only on-media reference.
+- `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.
 
 Schema:
 
 ```json
 {
   "version": 1,
-  "ociLayoutPath": "oci",
+  "ociLayoutPath": "oci-1234567890",
   "images": [
     {
       "name": "quay.io/openshift-release-dev/ocp-release",
@@ -287,16 +287,25 @@ Schema:
 | Field | Type | Description |
 | --- | --- | --- |
 | `version` | int | Schema version. Only `1` is supported. |
-| `ociLayoutPath` | string | OCI image layout directory, relative to the media root (`oci`). |
+| `ociLayoutPath` | string | OCI image layout directory, relative to the media root. Each build mirrors into a fresh, build-unique directory (`oci-<unique>`); the consumer locates the layout through this field. |
 | `images[].name` | string | Canonical repository name the image is stored under. |
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
 
-Publication is a recoverable transaction: the layout and both manifest copies are staged,
-then each existing target is moved aside to a backup before the new content is put in place,
-and the backups are discarded only once all three targets are published. If any write fails,
-every target is rolled back to the previous consistent build, so the media never ends up with
-a stale or partial `digests.json`, nor a new layout beside a previous manifest.
+**Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
+mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
+and records that directory in `ociLayoutPath`. Because the consumer locates the layout *through*
+the manifest, atomically replacing `digests.json` with a single rename is what switches the media
+from the previous layout to the new one: before the rename the committed manifest still points at
+the intact previous layout, after it the committed manifest points at the fully-written new layout.
+A crash or power loss at any point therefore leaves the media consistent — the committed manifest
+always points at a complete, matching layout, never a mismatch — and at worst leaves an orphaned
+layout directory. Superseded and crash-orphaned layout directories are garbage-collected only
+*after* the manifest commit succeeds, so the only intact layout is never deleted. The
+`<output>.digests.json` copy is audit-only and best-effort: it is written after the commit, never
+participates in it (it may sit on a different filesystem), and a failure to write it does not fail
+the build.
+
 The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
 subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
 excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
