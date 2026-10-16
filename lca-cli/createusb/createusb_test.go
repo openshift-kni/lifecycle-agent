@@ -23,11 +23,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.podman.io/image/v5/oci/layout"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -680,7 +682,7 @@ func TestEmitDigestManifestSchema(t *testing.T) {
 	}
 	p2Root := t.TempDir()
 
-	data, err := marshalDigestManifest(entries)
+	data, err := marshalDigestManifest(entries, "oci-test")
 	require.NoError(t, err)
 	require.NoError(t, validateDigestManifestBytes(data, p2Root))
 	manifestPath := filepath.Join(p2Root, "digests.json")
@@ -707,7 +709,7 @@ func TestDigestManifestWrittenToBothPaths(t *testing.T) {
 	require.NoError(t, os.MkdirAll(p2Root, 0o755))
 	outputPath := filepath.Join(dir, "usb.img")
 
-	data, err := marshalDigestManifest(entries)
+	data, err := marshalDigestManifest(entries, "oci-test")
 	require.NoError(t, err)
 	besidePath := outputPath + ".digests.json"
 	p2Path := filepath.Join(p2Root, "digests.json")
@@ -759,176 +761,270 @@ func TestOCITagIsValidAndUnique(t *testing.T) {
 	}
 }
 
-func TestBuildImageLayoutAtomicAndSuccess(t *testing.T) {
+// committedLayoutName returns the OCILayoutPath recorded in the committed on-media
+// manifest and asserts the referenced layout directory exists, is build-unique
+// (prefixed), and matches the manifest entries exactly the way the consumer selects.
+func committedLayoutName(t *testing.T, p2Root string) string {
+	t.Helper()
+	parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(parsed.OCILayoutPath, ociLayoutDirPrefix),
+		"OCILayoutPath %q must be a build-unique layout directory", parsed.OCILayoutPath)
+	layoutDir := filepath.Join(p2Root, parsed.OCILayoutPath)
+	assert.DirExists(t, layoutDir)
+	// The committed manifest must point at a complete, matching layout.
+	require.NoError(t, verifyLayoutEntries(layoutDir, parsed.Images),
+		"the committed manifest must point at a layout that matches every entry")
+	return parsed.OCILayoutPath
+}
+
+// layoutDirsUnder returns the names of the build-unique OCI layout directories present
+// under p2Root.
+func layoutDirsUnder(t *testing.T, p2Root string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(p2Root)
+	require.NoError(t, err)
+	var dirs []string
+	for _, e := range ents {
+		if e.IsDir() && strings.HasPrefix(e.Name(), ociLayoutDirPrefix) {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	return dirs
+}
+
+// assertNoPublishTempArtifacts asserts that no temp files from validation/publication
+// were left behind in p2Root.
+func assertNoPublishTempArtifacts(t *testing.T, p2Root string) {
+	t.Helper()
+	for _, pattern := range []string{".digests-publish-*", ".digests-validate-*"} {
+		leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
+		assert.Empty(t, leftover, "no %s temp artifact must remain", pattern)
+	}
+}
+
+func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 	seedImg := "quay.io/seed/a@sha256:" + validSHA256
 	m := validInstallOnly()
 	m.ExtraPrecacheImages = nil
 	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
 
-	t.Run("failure leaves no stale manifest and cleans staging", func(t *testing.T) {
-		dir := t.TempDir()
-		p2Root := filepath.Join(dir, "p2")
-		require.NoError(t, os.MkdirAll(p2Root, 0o755))
-		outputPath := filepath.Join(dir, "usb.img")
-
-		// Pre-seed stale manifests at both targets.
-		stalePath := filepath.Join(p2Root, "digests.json")
-		besidePath := outputPath + ".digests.json"
-		require.NoError(t, os.WriteFile(stalePath, []byte("STALE"), 0o600))
-		require.NoError(t, os.WriteFile(besidePath, []byte("STALE"), 0o600))
-
-		deps := imageBuildDeps{
-			seedReader: fakeSeedReader{list: []string{seedImg}},
-			mirrorer:   fakeMirrorer{failOn: map[string]bool{testLCAImage: true}},
-			p3Scanner:  notImplementedP3Scanner{},
-		}
-
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
-		require.Error(t, err)
-
-		// Stale manifests are untouched (not overwritten with a partial build).
-		for _, p := range []string{stalePath, besidePath} {
-			data, readErr := os.ReadFile(p)
-			require.NoError(t, readErr)
-			assert.Equal(t, "STALE", string(data), "pre-existing manifest %q must not be modified on failure", p)
-		}
-
-		// Staging directory was cleaned up.
-		leftover, err := filepath.Glob(filepath.Join(p2Root, ".oci-staging-*"))
-		require.NoError(t, err)
-		assert.Empty(t, leftover, "staging directory must be removed on failure")
-	})
-
-	t.Run("success publishes layout and both manifests", func(t *testing.T) {
-		dir := t.TempDir()
-		p2Root := filepath.Join(dir, "p2")
-		outputPath := filepath.Join(dir, "usb.img")
-
-		deps := imageBuildDeps{
+	cleanDeps := func() imageBuildDeps {
+		return imageBuildDeps{
 			seedReader: fakeSeedReader{list: []string{seedImg}},
 			mirrorer:   fakeMirrorer{},
 			p3Scanner:  notImplementedP3Scanner{},
 		}
+	}
 
-		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+	t.Run("success commits the manifest, layout, and audit copy", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outputPath := filepath.Join(dir, "usb.img")
+
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		// seed + recert + lca.
 		assert.Len(t, result.Images, 3)
 
-		// Published layout and both identical manifests.
-		assert.DirExists(t, filepath.Join(p2Root, "oci"))
+		// The committed manifest points at a build-unique layout that matches every entry,
+		// and that layout is the only one present.
+		layoutName := committedLayoutName(t, p2Root)
+		assert.Equal(t, []string{layoutName}, layoutDirsUnder(t, p2Root))
+
 		parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
 		require.NoError(t, err)
 		assert.Len(t, parsed.Images, 3)
+
+		// The audit-only beside-output copy is byte-identical to the committed manifest.
 		beside, err := os.ReadFile(outputPath + ".digests.json")
 		require.NoError(t, err)
 		onMedia, err := os.ReadFile(filepath.Join(p2Root, "digests.json"))
 		require.NoError(t, err)
-		assert.Equal(t, beside, onMedia)
+		assert.Equal(t, onMedia, beside, "the audit-only copy must match the committed on-media manifest")
 
-		// No staging directory left behind.
-		leftover, _ := filepath.Glob(filepath.Join(p2Root, ".oci-staging-*"))
-		assert.Empty(t, leftover)
+		assertNoPublishTempArtifacts(t, p2Root)
 	})
 
-	t.Run("rebuild over existing output replaces it cleanly", func(t *testing.T) {
+	// Regression for the review's crash-safety P1: a rebuild commits a new build-unique
+	// layout and garbage-collects the superseded one, so exactly one layout (the one the
+	// committed manifest references) remains -- no fixed-name swap, no ".previous" backup.
+	t.Run("rebuild commits a new layout and GCs the superseded one", func(t *testing.T) {
 		dir := t.TempDir()
 		p2Root := filepath.Join(dir, "p2")
 		outputPath := filepath.Join(dir, "usb.img")
-		deps := imageBuildDeps{
-			seedReader: fakeSeedReader{list: []string{seedImg}},
-			mirrorer:   fakeMirrorer{},
-			p3Scanner:  notImplementedP3Scanner{},
-		}
 
-		// First build publishes the layout and manifests.
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
 		require.NoError(t, err)
+		firstLayout := committedLayoutName(t, p2Root)
 
-		// A second build over the same p2 root must swap in the new layout without
-		// leaving a backup or staging directory behind.
-		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps)
+		// A second build over the same p2 root commits a new layout under a new unique name.
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.DirExists(t, filepath.Join(p2Root, "oci"))
 
-		parsed, err := localimages.ParseDigestManifest(filepath.Join(p2Root, "digests.json"))
-		require.NoError(t, err)
-		assert.Len(t, parsed.Images, 3)
+		secondLayout := committedLayoutName(t, p2Root)
+		assert.NotEqual(t, firstLayout, secondLayout, "each build must mirror into a fresh, unique layout directory")
+		assert.NoDirExists(t, filepath.Join(p2Root, firstLayout), "the superseded layout must be garbage-collected")
+		assert.Equal(t, []string{secondLayout}, layoutDirsUnder(t, p2Root), "only the committed layout must remain")
 
-		for _, pattern := range []string{".oci-staging-*", "oci.previous"} {
+		// No legacy fixed-name or backup artifacts.
+		for _, pattern := range []string{"oci", "oci.previous", "digests.json.previous"} {
 			leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
-			assert.Empty(t, leftover, "no %s artifact must remain after a clean rebuild", pattern)
+			assert.Empty(t, leftover, "no %s artifact must remain after a rebuild", pattern)
 		}
+		assertNoPublishTempArtifacts(t, p2Root)
 	})
+}
 
-	// Regression for the review's P1: a failure while publishing the second manifest
-	// copy must roll the layout and the first manifest back to the previous consistent
-	// build, never leaving a new layout beside the previous manifest.
-	t.Run("failure on the second manifest write rolls layout and manifest back", func(t *testing.T) {
-		seedImg2 := "quay.io/seed/b@sha256:" + validSHA256
-		dir := t.TempDir()
-		p2Root := filepath.Join(dir, "p2")
-		outDir := filepath.Join(dir, "out")
-		require.NoError(t, os.MkdirAll(outDir, 0o755))
-		outputPath := filepath.Join(outDir, "usb.img")
-		besidePath := outputPath + ".digests.json"
-		p2Path := filepath.Join(p2Root, "digests.json")
+func TestBuildImageLayoutCrashRecovery(t *testing.T) {
+	seedImg := "quay.io/seed/a@sha256:" + validSHA256
+	m := validInstallOnly()
+	m.ExtraPrecacheImages = nil
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
 
-		// First build publishes a consistent 3-image layout + both manifests.
-		deps1 := imageBuildDeps{
+	cleanDeps := func() imageBuildDeps {
+		return imageBuildDeps{
 			seedReader: fakeSeedReader{list: []string{seedImg}},
 			mirrorer:   fakeMirrorer{},
 			p3Scanner:  notImplementedP3Scanner{},
 		}
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps1)
-		require.NoError(t, err)
+	}
 
+	// A crash between the layout write and the manifest commit leaves an orphaned layout
+	// directory beside the previous committed manifest. The committed manifest still
+	// points at its intact previous layout (no mismatch), and the next build commits a
+	// new layout and garbage-collects both the superseded layout and the crash orphan.
+	t.Run("orphan layout never breaks the committed state and is GCed by the next build", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outputPath := filepath.Join(dir, "usb.img")
+
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		require.NoError(t, err)
+		firstLayout := committedLayoutName(t, p2Root) // asserts the committed state is consistent
+
+		// Simulate a crash that wrote a new layout but never committed its manifest.
+		orphan := filepath.Join(p2Root, ociLayoutDirPrefix+"crashorphan")
+		require.NoError(t, os.MkdirAll(orphan, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(orphan, "index.json"), []byte(`{"schemaVersion":2}`), 0o600))
+
+		// The committed manifest is unaffected by the orphan: it still points at the intact
+		// previous layout.
+		assert.Equal(t, firstLayout, committedLayoutName(t, p2Root))
+		assert.DirExists(t, orphan)
+
+		// The next build commits a new layout and GCs both the superseded layout and the orphan.
+		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		require.NoError(t, err)
+		secondLayout := committedLayoutName(t, p2Root)
+		assert.NoDirExists(t, orphan, "the crash-orphaned layout must be garbage-collected")
+		assert.NoDirExists(t, filepath.Join(p2Root, firstLayout), "the superseded layout must be garbage-collected")
+		assert.Equal(t, []string{secondLayout}, layoutDirsUnder(t, p2Root))
+	})
+
+	// A failure before the commit (here, a mirror failure) must leave the previous
+	// committed manifest and its layout untouched and must not leave the new, half-built
+	// layout directory behind.
+	t.Run("pre-commit failure leaves prior committed state intact and cleans the new layout", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outputPath := filepath.Join(dir, "usb.img")
+		p2Path := filepath.Join(p2Root, "digests.json")
+		besidePath := outputPath + ".digests.json"
+
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		require.NoError(t, err)
+		firstLayout := committedLayoutName(t, p2Root)
 		firstManifest, err := os.ReadFile(p2Path)
 		require.NoError(t, err)
 		firstBeside, err := os.ReadFile(besidePath)
 		require.NoError(t, err)
-		firstIndex, err := os.ReadFile(filepath.Join(p2Root, "oci", "index.json"))
-		require.NoError(t, err)
 
-		// Make the beside-output directory unwritable so publishing the SECOND manifest
-		// copy (<output>.digests.json) fails after the layout and the p2-root manifest
-		// have already been swapped in. The second build would otherwise produce a
-		// different, 4-image layout + manifest.
-		require.NoError(t, os.Chmod(outDir, 0o500))
-		t.Cleanup(func() { _ = os.Chmod(outDir, 0o700) })
-
-		deps2 := imageBuildDeps{
-			seedReader: fakeSeedReader{list: []string{seedImg, seedImg2}},
-			mirrorer:   fakeMirrorer{},
+		// A second build whose mirror fails must not touch the committed state.
+		failDeps := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg, "quay.io/seed/b@sha256:" + validSHA256}},
+			mirrorer:   fakeMirrorer{failOn: map[string]bool{testLCAImage: true}},
 			p3Scanner:  notImplementedP3Scanner{},
 		}
-		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps2)
+		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, failDeps)
 		require.Error(t, err)
 
-		// The on-media layout and its manifest must be rolled back to the previous
-		// consistent build -- never a new 4-image layout beside the old 3-image manifest.
-		gotIndex, err := os.ReadFile(filepath.Join(p2Root, "oci", "index.json"))
-		require.NoError(t, err)
-		assert.Equal(t, firstIndex, gotIndex, "the OCI layout must be rolled back to the last consistent build")
-
+		// Committed manifest, its layout, and the audit copy are all untouched.
+		assert.Equal(t, firstLayout, committedLayoutName(t, p2Root))
 		gotManifest, err := os.ReadFile(p2Path)
 		require.NoError(t, err)
-		assert.Equal(t, firstManifest, gotManifest, "the p2 digest manifest must be rolled back to match the layout")
-
-		rolled, err := localimages.ParseDigestManifest(p2Path)
-		require.NoError(t, err)
-		assert.Len(t, rolled.Images, 3, "the rolled-back manifest must still describe the previous 3-image layout")
-
+		assert.Equal(t, firstManifest, gotManifest, "the committed manifest must be untouched by a failed build")
 		gotBeside, err := os.ReadFile(besidePath)
 		require.NoError(t, err)
-		assert.Equal(t, firstBeside, gotBeside, "the untouched beside-output manifest must still match the on-media copy")
+		assert.Equal(t, firstBeside, gotBeside, "the audit copy must be untouched by a failed build")
 
-		// No backup or staging artifacts remain in the p2 root.
-		for _, pattern := range []string{".oci-staging-*", "oci.previous", "digests.json.previous"} {
-			leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
-			assert.Empty(t, leftover, "no %s artifact must remain after a rolled-back rebuild", pattern)
-		}
+		// The half-built new layout directory is cleaned up; only the committed one remains.
+		assert.Equal(t, []string{firstLayout}, layoutDirsUnder(t, p2Root), "the failed build's layout directory must be removed")
+		assertNoPublishTempArtifacts(t, p2Root)
 	})
+
+	// A failure at the commit itself (the on-media digests.json rename) must leave no
+	// partial manifest and must clean up the new layout directory.
+	t.Run("commit failure leaves no partial manifest and cleans the new layout", func(t *testing.T) {
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		require.NoError(t, os.MkdirAll(p2Root, 0o755))
+		outputPath := filepath.Join(dir, "usb.img")
+
+		// Pre-create digests.json as a non-empty directory so the commit rename fails. On a
+		// fresh media there is no valid prior manifest to protect; the point is that the
+		// commit failure leaves nothing partial.
+		manifestDir := filepath.Join(p2Root, "digests.json")
+		require.NoError(t, os.MkdirAll(filepath.Join(manifestDir, "keep"), 0o755))
+
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		require.Error(t, err)
+
+		// The pre-existing path is untouched (still a directory -- no partial file over it),
+		// the new layout directory is cleaned up, and no publish temp files remain.
+		info, statErr := os.Stat(manifestDir)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir(), "a failed commit must not replace the path with a partial file")
+		assert.Empty(t, layoutDirsUnder(t, p2Root), "the uncommitted layout directory must be removed on commit failure")
+		assertNoPublishTempArtifacts(t, p2Root)
+	})
+}
+
+// The beside-output copy is audit-only: a failure writing it must not fail the build,
+// because the on-media manifest has already committed and the medium is consistent.
+func TestBuildImageLayoutBesideOutputIsBestEffort(t *testing.T) {
+	seedImg := "quay.io/seed/a@sha256:" + validSHA256
+	m := validInstallOnly()
+	m.ExtraPrecacheImages = nil
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
+
+	if os.Geteuid() == 0 {
+		t.Skip("the unwritable-directory guard does not apply to root")
+	}
+
+	dir := t.TempDir()
+	p2Root := filepath.Join(dir, "p2")
+	outDir := filepath.Join(dir, "out")
+	require.NoError(t, os.MkdirAll(outDir, 0o755))
+	outputPath := filepath.Join(outDir, "usb.img")
+
+	// Make the beside-output directory unwritable so writing <output>.digests.json fails.
+	require.NoError(t, os.Chmod(outDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(outDir, 0o700) })
+
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{list: []string{seedImg}},
+		mirrorer:   fakeMirrorer{},
+		p3Scanner:  notImplementedP3Scanner{},
+	}
+
+	result, err := buildImageLayout(context.Background(), logrus.New(), m, opts, outputPath, p2Root, deps)
+	require.NoError(t, err, "a beside-output (audit-only) write failure must not fail the build")
+	require.NotNil(t, result)
+
+	// The on-media manifest committed and points at a consistent layout.
+	committedLayoutName(t, p2Root)
+	assert.NoFileExists(t, outputPath+".digests.json", "the beside-output copy failed to write (expected)")
 }
