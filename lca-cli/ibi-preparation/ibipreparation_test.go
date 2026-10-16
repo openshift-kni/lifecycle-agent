@@ -397,14 +397,20 @@ func expectPodmanInfo(mockOps *ops.MockOps) {
 
 func testManifest() *localimages.DigestManifest {
 	return &localimages.DigestManifest{
-		Version:       1,
+		Version:       localimages.SourcesManifestVersion,
 		OCILayoutPath: "oci",
 		Images: []localimages.ImageEntry{
-			{Name: testSeedName, Digest: testSeedDigest, OCITag: testSeedOCITag},
 			{
-				Name:   "quay.io/openshift-release-dev/ocp-v4.0-art-dev",
-				Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-				OCITag: "workload",
+				Name:    testSeedName,
+				Digest:  testSeedDigest,
+				OCITag:  testSeedOCITag,
+				Sources: []string{testSeedImageRef(), testSeedName + ":4.15.0"},
+			},
+			{
+				Name:    "quay.io/openshift-release-dev/ocp-v4.0-art-dev",
+				Digest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+				OCITag:  "workload",
+				Sources: []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"},
 			},
 		},
 	}
@@ -619,9 +625,21 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			name: "seed not present in manifest",
 			parse: func(string) (*localimages.DigestManifest, error) {
 				return &localimages.DigestManifest{
-					Version:       1,
+					Version:       localimages.SourcesManifestVersion,
 					OCILayoutPath: "oci",
 					Images:        []localimages.ImageEntry{{Name: "other", Digest: "sha256:dead", OCITag: "t"}},
+				}, nil
+			},
+		},
+		{
+			// A v1 manifest cannot carry the source references the disconnected
+			// contract requires, so preflight must reject it before any disk write.
+			name: "v1 manifest rejected (sources contract requires v2)",
+			parse: func(string) (*localimages.DigestManifest, error) {
+				return &localimages.DigestManifest{
+					Version:       1,
+					OCILayoutPath: "oci",
+					Images:        []localimages.ImageEntry{{Name: testSeedName, Digest: testSeedDigest, OCITag: testSeedOCITag}},
 				}, nil
 			},
 		},
@@ -1091,29 +1109,26 @@ func writeContainersList(t *testing.T, refs ...string) string {
 	return p
 }
 
-// TestDisconnectedPrecacheListUsesManifest proves the disconnected precache set is
-// built from the manifest's canonical name@digest entries (what ImportAll actually
-// stored), not from the raw containers.list references -- so `podman image exists`
-// checks the references that were imported.
-func TestDisconnectedPrecacheListUsesManifest(t *testing.T) {
+// TestDisconnectedPrecacheListVerifiesSeedReferences proves the disconnected
+// precache set is the seed's own containers.list references verbatim (the
+// references that resolve locally via the registered tag aliases), not the
+// manifest's digests -- so `podman image exists` checks the exact references the
+// seed uses. Each reference is covered by an exact source match in the manifest.
+func TestDisconnectedPrecacheListVerifiesSeedReferences(t *testing.T) {
 	manifest := testManifest()
-	// containers.list carries the seed digest and a registry-rewritten digest for the
-	// workload image; the registry differs from what was imported, yet both are
-	// covered because matching is by digest.
-	listFile := writeContainersList(t,
+	// containers.list carries the seed by digest and the workload by tag; both are
+	// listed as sources on their manifest entries, so both are covered.
+	refs := []string{
 		testSeedImageRef(),
-		"mirror.example.com/openshift-release-dev/ocp-v4.0-art-dev@"+manifest.Images[1].Digest,
-	)
+		"quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0",
+	}
+	listFile := writeContainersList(t, refs...)
 	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
 
 	got, err := ibi.disconnectedPrecacheList(listFile, manifest)
 	assert.NoError(t, err)
-	// The verification set is exactly the manifest's canonical references.
-	want := []string{
-		manifest.Images[0].Name + "@" + manifest.Images[0].Digest,
-		manifest.Images[1].Name + "@" + manifest.Images[1].Digest,
-	}
-	assert.Equal(t, want, got)
+	// The verification set is exactly the seed's requested references.
+	assert.Equal(t, refs, got)
 }
 
 // TestDisconnectedPrecacheListNilManifest proves a disconnected precache without a
@@ -1143,23 +1158,35 @@ func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
 	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
 }
 
-// TestVerifyManifestCoversSeed exercises both mapping paths: digest-pinned
-// references matched by digest (stable across registry rewrite), and tag-only
-// references matched by canonical repository name -- covered when exactly one
-// manifest entry carries the name, uncovered when none does, and rejected as
-// ambiguous when more than one does. Tag-only references are the common case
-// because seed creation prefers repoTags over repoDigests.
+// TestVerifyManifestCoversSeed exercises exact source-reference matching: a seed
+// reference is covered only when it equals a source listed on exactly one manifest
+// entry (whose digest the fail-fast closure import necessarily imported). A
+// name-only or wrong-tag match does not cover, and a source shared by two entries
+// is ambiguous. The wrong-tag/covered-tag pair (same repository, two tags, one
+// whose digest is absent) is called out explicitly below.
 func TestVerifyManifestCoversSeed(t *testing.T) {
+	const workloadTag = "quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"
 	workload := testManifest().Images[1]
 
-	// ambiguousManifest carries two entries under the same repository name, so a
-	// tag-only reference to that name cannot be bound to a single digest.
+	// ambiguousManifest lists the same source on two entries, so the reference
+	// cannot be bound to a single imported digest.
 	ambiguousManifest := &localimages.DigestManifest{
-		Version:       1,
+		Version:       localimages.SourcesManifestVersion,
 		OCILayoutPath: "oci",
 		Images: []localimages.ImageEntry{
-			{Name: testSeedName, Digest: testSeedDigest, OCITag: "a"},
-			{Name: testSeedName, Digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333", OCITag: "b"},
+			{Name: testSeedName, Digest: testSeedDigest, OCITag: "a", Sources: []string{testSeedName + ":4.15.0"}},
+			{Name: testSeedName, Digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333", OCITag: "b", Sources: []string{testSeedName + ":4.15.0"}},
+		},
+	}
+
+	// twoTagManifest covers exactly repo:4.15.0 (imported as testSeedDigest). A
+	// request for repo:4.16.0 -- a different tag of the same repository whose digest
+	// is not in the manifest -- must fail rather than bind to the covered digest.
+	twoTagManifest := &localimages.DigestManifest{
+		Version:       localimages.SourcesManifestVersion,
+		OCILayoutPath: "oci",
+		Images: []localimages.ImageEntry{
+			{Name: testSeedName, Digest: testSeedDigest, OCITag: "ocp-release", Sources: []string{testSeedName + ":4.15.0"}},
 		},
 	}
 
@@ -1170,33 +1197,38 @@ func TestVerifyManifestCoversSeed(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name: "digest-pinned refs covered regardless of registry rewrite",
-			refs: []string{
-				testSeedImageRef(),
-				"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev@" + workload.Digest,
-			},
+			name: "digest-pinned and tag sources covered by exact match",
+			refs: []string{testSeedImageRef(), workloadTag},
 		},
 		{
-			name: "tag-only ref covered when exactly one manifest entry has the name",
+			name: "covered tag (requested tag is an exact source)",
 			refs: []string{testSeedName + ":4.15.0"},
+			// Only the seed is referenced here; the workload is not required.
+			manifest: twoTagManifest,
 		},
 		{
-			name: "bare ref (no tag, no digest) covered by name",
-			refs: []string{testSeedName},
+			name:     "wrong tag of the same repository is uncovered (digest absent)",
+			refs:     []string{testSeedName + ":4.16.0"},
+			manifest: twoTagManifest,
+			wantErr:  "does not cover",
 		},
 		{
-			name: "registry-port tag ref is not mistaken for a digest and maps by name",
-			refs: []string{"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"},
-			// Name differs from any manifest entry (rewritten registry host), so uncovered.
+			name:    "bare name is not covered by a tagged source",
+			refs:    []string{testSeedName},
 			wantErr: "does not cover",
 		},
 		{
-			name:    "tag-only ref with unknown name is uncovered",
+			name:    "tag ref with unknown name is uncovered",
 			refs:    []string{"quay.io/openshift-release-dev/unknown:4.15.0"},
 			wantErr: "does not cover",
 		},
 		{
-			name:     "tag-only ref is rejected as ambiguous when the name maps to multiple entries",
+			name:    "registry-rewritten source is uncovered (not an exact source)",
+			refs:    []string{"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev@" + workload.Digest},
+			wantErr: "does not cover",
+		},
+		{
+			name:     "reference listed on multiple entries is ambiguous",
 			refs:     []string{testSeedName + ":4.15.0"},
 			manifest: ambiguousManifest,
 			wantErr:  "ambiguously",

@@ -22,13 +22,14 @@
 // Selection is driven by an on-media digest manifest:
 //
 //	{
-//	  "version": 1,
+//	  "version": 2,
 //	  "ociLayoutPath": "oci",
 //	  "images": [
 //	    {
 //	      "name": "quay.io/openshift-release-dev/ocp-release",
 //	      "digest": "sha256:9a1f...c3",
-//	      "ociTag": "ocp-release"
+//	      "ociTag": "ocp-release",
+//	      "sources": ["quay.io/openshift-release-dev/ocp-release:4.15.0"]
 //	    }
 //	  ]
 //	}
@@ -37,6 +38,14 @@
 // resolved so it always stays inside the media root (symlinks included). Each
 // image is located by its ociTag (the required org.opencontainers.image.ref.name
 // annotation in the layout index) and bound to its digest.
+//
+// sources (version 2) records the source references -- including tags -- that the
+// seed requests for this image (as they appear in the seed's containers.list). It
+// is the producer/consumer contract that lets a disconnected prepare verify the
+// manifest covers every seed requirement by exact source reference, and register
+// each tagged source as a local alias of the imported digest so a consumer that
+// asks for name:tag (not name@digest) resolves the image locally. Version 1
+// manifests carry no sources.
 //
 // # What entry.Digest represents
 //
@@ -75,6 +84,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/containers/image/v5/copy"
 	"github.com/containers/image/v5/oci/layout"
@@ -92,9 +102,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// supportedManifestVersion is the only digest-manifest schema version this
-// package understands.
-const supportedManifestVersion = 1
+const (
+	// minSupportedManifestVersion is the oldest digest-manifest schema version this
+	// package understands. Version 1 carries no per-image sources.
+	minSupportedManifestVersion = 1
+	// SourcesManifestVersion is the first schema version that records each image's
+	// source references (ImageEntry.Sources). It is also the newest version this
+	// package understands.
+	SourcesManifestVersion = 2
+	// maxSupportedManifestVersion is the newest digest-manifest schema version this
+	// package understands.
+	maxSupportedManifestVersion = SourcesManifestVersion
+)
 
 // ociLayoutIndexFile is the index file at the root of an OCI image layout.
 const ociLayoutIndexFile = "index.json"
@@ -114,7 +133,8 @@ var (
 // DigestManifest is the parsed on-media digest manifest that selects which
 // layout images to import.
 type DigestManifest struct {
-	// Version is the schema version; only version 1 is supported.
+	// Version is the schema version; versions 1 and 2 are supported. Version 2
+	// adds the per-image Sources mapping.
 	Version int `json:"version"`
 	// OCILayoutPath is the OCI layout directory, relative to the media root.
 	OCILayoutPath string `json:"ociLayoutPath"`
@@ -135,6 +155,15 @@ type ImageEntry struct {
 	// OCITag is the layout reference name (org.opencontainers.image.ref.name)
 	// for the descriptor.
 	OCITag string `json:"ociTag"`
+	// Sources are the source references -- registry name[:tag] or name@digest --
+	// that the seed requests for this image (as they appear in the seed's
+	// containers.list). The media builder populates them in version 2 manifests.
+	// They let a disconnected prepare (a) verify the manifest covers every image
+	// the seed requires by exact source-reference match and (b) register each
+	// tagged source as a local alias of the imported digest, so a consumer that
+	// asks for name:tag (not name@digest) resolves the image locally. Empty in
+	// version 1 manifests.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // ParseDigestManifest reads and validates the on-media digest manifest at path.
@@ -159,8 +188,8 @@ func ParseDigestManifest(path string) (*DigestManifest, error) {
 
 // validate checks that the manifest is structurally complete.
 func (m *DigestManifest) validate() error {
-	if m.Version != supportedManifestVersion {
-		return fmt.Errorf("unsupported version %d (want %d)", m.Version, supportedManifestVersion)
+	if m.Version < minSupportedManifestVersion || m.Version > maxSupportedManifestVersion {
+		return fmt.Errorf("unsupported version %d (want %d..%d)", m.Version, minSupportedManifestVersion, maxSupportedManifestVersion)
 	}
 	if m.OCILayoutPath == "" {
 		return errors.New("ociLayoutPath is required")
@@ -365,10 +394,50 @@ func (im *Importer) ImportImage(ctx context.Context, mediaRoot string, m *Digest
 
 	// Post-condition: the image is resolvable in the target store under its
 	// canonical digest.
-	if _, _, err := istorage.ResolveReference(destRef); err != nil {
+	_, storedImage, err := istorage.ResolveReference(destRef)
+	if err != nil {
 		return fmt.Errorf("verifying stored image %s@%s: %w", e.Name, e.Digest, err)
 	}
 
+	// Register the seed's requested tagged references as local aliases of the
+	// imported digest, so a consumer that asks for name:tag (not name@digest)
+	// resolves the image locally. The media builder records them in e.Sources.
+	if err := im.registerSourceAliases(storedImage, e); err != nil {
+		return fmt.Errorf("registering source aliases for %s@%s: %w", e.Name, e.Digest, err)
+	}
+
+	return nil
+}
+
+// registerSourceAliases adds each tagged source reference in e.Sources as an
+// additional name on the stored image, so the reference the seed actually
+// requests (e.g. name:tag) resolves locally to the imported digest. Digest-pinned
+// sources are skipped: the image is already stored under its canonical
+// name@digest, so name@digest resolves without an alias. Adding a name the image
+// already carries is a harmless no-op (the store dedupes names).
+func (im *Importer) registerSourceAliases(storedImage *cstorage.Image, e ImageEntry) error {
+	if storedImage == nil {
+		return fmt.Errorf("stored image %s@%s resolved to nil", e.Name, e.Digest)
+	}
+
+	aliases := make([]string, 0, len(e.Sources))
+	for _, src := range e.Sources {
+		// A digest-pinned source (repo@sha256:...) already resolves to the stored
+		// image by its canonical reference, so it needs no alias.
+		if strings.Contains(src, "@") {
+			continue
+		}
+		aliases = append(aliases, src)
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+
+	if err := im.store.AddNames(storedImage.ID, aliases); err != nil {
+		return fmt.Errorf("adding aliases %v to image %s: %w", aliases, storedImage.ID, err)
+	}
+	im.log.WithFields(logrus.Fields{"image": e.Name + "@" + e.Digest, "aliases": aliases}).
+		Info("registered local image aliases")
 	return nil
 }
 

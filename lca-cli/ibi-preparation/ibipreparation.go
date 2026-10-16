@@ -284,6 +284,18 @@ func (i *IBIPrepare) preflightValidateManifest() (*localimages.DigestManifest, l
 		return nil, localimages.ImageEntry{}, fmt.Errorf("failed to parse digest manifest %q: %w", i.config.ExpectedDigestsPath, err)
 	}
 
+	// Disconnected prepare requires a v2 manifest: only v2 records each image's
+	// source references (ImageEntry.Sources), which the coverage check matches
+	// against the seed's containers.list by exact source reference and the closure
+	// import registers as local tag aliases. A v1 manifest cannot satisfy that
+	// contract, so fail now -- before any disk write -- rather than after importing
+	// the closure. The media builder must emit a v2 manifest.
+	if manifest.Version < localimages.SourcesManifestVersion {
+		return nil, localimages.ImageEntry{}, fmt.Errorf(
+			"disconnected prepare requires a v%d digest manifest with source references, but %q is v%d",
+			localimages.SourcesManifestVersion, i.config.ExpectedDigestsPath, manifest.Version)
+	}
+
 	for _, e := range manifest.Images {
 		if e.Name+"@"+e.Digest == i.config.SeedImage {
 			return manifest, e, nil
@@ -485,13 +497,11 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 // registry override applied so the images resolve to the registry they will be
 // pulled from.
 //
-// Disconnected: the canonical name@digest closure that was actually imported from
-// the media (the digest manifest), with registry replacement bypassed. The closure
-// import stores every image strictly under name@digest (no registries.conf
-// rewriting), so checking the raw containers.list references -- which may be
-// tag-based or registry-rewritten -- with `podman image exists` would spuriously
-// fail even after a complete import. Before trusting the manifest as the
-// verification set, it is confirmed to cover every image the seed requires.
+// Disconnected: the seed's own containers.list references, verbatim (registry
+// replacement bypassed), after confirming the v2 digest manifest covers every one
+// of them by exact source reference. The closure import stores each image under
+// name@digest and registers its tagged sources as local aliases, so the references
+// the seed requests resolve locally with `podman image exists`.
 func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) ([]string, error) {
 	if i.config.Disconnected {
 		return i.disconnectedPrecacheList(imageListFile, manifest)
@@ -525,12 +535,15 @@ func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesCo
 	return imageList, nil
 }
 
-// disconnectedPrecacheList returns the canonical name@digest references imported
-// from the media (the digest manifest) as the disconnected precache presence set,
-// after confirming the manifest covers every image the seed requires
-// (containers.list). The manifest is authoritative because it records exactly what
-// was imported and under which reference; a missing manifest or a seed requirement
-// the closure does not cover is a hard failure rather than a silently incomplete
+// disconnectedPrecacheList returns the references the seed actually requests
+// (its containers.list, verbatim) as the disconnected precache presence set, after
+// confirming the digest manifest covers every one of them by exact source
+// reference. Verifying the seed's own references -- not the manifest's digests --
+// is deliberate: the closure import registered each tagged source as a local alias
+// of its imported digest, so `podman image exists <ref>` resolves the exact
+// reference the seed uses. Digest-only verification would pass without proving the
+// seed's requested tag resolves locally. A missing manifest, or a seed requirement
+// the closure does not cover, is a hard failure rather than a silently incomplete
 // precache.
 func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *localimages.DigestManifest) ([]string, error) {
 	if manifest == nil {
@@ -546,12 +559,8 @@ func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *lo
 		return nil, err
 	}
 
-	imageList := make([]string, 0, len(manifest.Images))
-	for _, e := range manifest.Images {
-		imageList = append(imageList, e.Name+"@"+e.Digest)
-	}
-	i.log.Infof("Disconnected precache will verify %d imported image(s) from the digest manifest", len(imageList))
-	return imageList, nil
+	i.log.Infof("Disconnected precache will verify %d image reference(s) required by the seed", len(required))
+	return required, nil
 }
 
 // readSeedRequiredImages reads the seed's containers.list verbatim (no registry
@@ -572,49 +581,36 @@ func readSeedRequiredImages(imageListFile string) ([]string, error) {
 }
 
 // verifyManifestCoversSeed fails unless every image the seed requires
-// (containers.list) maps unambiguously to an entry in the imported closure (the
-// digest manifest). A reference is mapped one of two ways:
+// (containers.list) maps, by exact source reference, to exactly one entry in the
+// imported closure (the v2 digest manifest). Each manifest entry records the
+// source references it satisfies (ImageEntry.Sources, populated by the media
+// builder); a seed reference is covered when it equals one of those sources on
+// exactly one entry -- and because the closure import is fail-fast over every
+// manifest entry, that entry's digest is necessarily imported.
 //
-//   - Digest-pinned (repo@sha256:...): matched by digest, which is
-//     content-addressed and therefore stable across any registry rewrite.
-//   - Tag-only or bare (repo:tag / repo): matched by canonical repository name
-//     against the manifest entry's Name. Seed creation prefers repoTags over
-//     repoDigests (seedcreator.createContainerList), so a normal seed's
-//     containers.list legitimately carries tag references; rejecting them would
-//     fail a disconnected prepare on an otherwise-complete closure. The manifest
-//     does not record the registry tag the seed asked for (only the OCI layout
-//     ref name, OCITag), so a tag reference can only be mapped by repository
-//     name -- and only when exactly one manifest entry carries that name. If two
-//     or more entries share the name (different tags/digests of the same
-//     repository) the mapping is ambiguous and prepare fails closed rather than
-//     binding the reference to an arbitrary digest.
-//
-// A reference that maps to no entry (uncovered) or to more than one entry
-// (ambiguous) is a hard failure: precache now verifies only the manifest, so an
-// unmapped seed requirement would otherwise pass precache while leaving the node
-// short an image it needs.
+// Matching is by exact source reference, never by repository name. A name-only
+// match (repo covers repo:anytag) cannot establish that the manifest entry holds
+// the image the seed asked for under that specific tag, so it could bind a tag to
+// the wrong digest and report a successful disconnected prepare with the wrong
+// image. A reference that matches no source (uncovered) or sources on more than
+// one entry (ambiguous) is a hard failure: an unmapped or mis-mapped seed
+// requirement would otherwise pass precache while leaving the node short -- or
+// serving the wrong digest for -- an image it needs.
 func verifyManifestCoversSeed(required []string, manifest *localimages.DigestManifest) error {
-	manifestDigests := make(map[string]struct{}, len(manifest.Images))
-	manifestNameCount := make(map[string]int, len(manifest.Images))
+	sourceEntryCount := make(map[string]int)
 	for _, e := range manifest.Images {
-		manifestDigests[e.Digest] = struct{}{}
-		manifestNameCount[e.Name]++
+		for _, src := range e.Sources {
+			sourceEntryCount[src]++
+		}
 	}
 
 	var uncovered, ambiguous []string
 	for _, ref := range required {
-		if digest := refDigest(ref); digest != "" {
-			if _, ok := manifestDigests[digest]; !ok {
-				uncovered = append(uncovered, ref)
-			}
-			continue
-		}
-		// Tag-only or bare reference: map by canonical repository name.
-		switch manifestNameCount[refName(ref)] {
+		switch sourceEntryCount[ref] {
 		case 0:
 			uncovered = append(uncovered, ref)
 		case 1:
-			// Exactly one manifest entry carries this name: unambiguous match.
+			// Exactly one manifest entry lists this source: unambiguous match.
 		default:
 			ambiguous = append(ambiguous, ref)
 		}
@@ -626,35 +622,13 @@ func verifyManifestCoversSeed(required []string, manifest *localimages.DigestMan
 			len(uncovered), strings.Join(uncovered, ", ")))
 	}
 	if len(ambiguous) > 0 {
-		problems = append(problems, fmt.Sprintf("%d tag-only seed image(s) map ambiguously to multiple manifest entries by name: %s",
+		problems = append(problems, fmt.Sprintf("%d seed image(s) map ambiguously to multiple manifest entries: %s",
 			len(ambiguous), strings.Join(ambiguous, ", ")))
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
-}
-
-// refDigest returns the digest of a digest-pinned image reference
-// (repo@sha256:...), or "" when the reference carries no digest.
-func refDigest(ref string) string {
-	if at := strings.LastIndex(ref, "@"); at >= 0 {
-		return ref[at+1:]
-	}
-	return ""
-}
-
-// refName returns the repository name of a tag-based or bare image reference
-// (registry[:port]/repo[:tag]) with any tag stripped. The tag separator is the
-// ':' that follows the final '/', so a registry port (host:5000/repo) is not
-// mistaken for a tag. refName is only meaningful for references refDigest reports
-// as unpinned; a digest-pinned reference is matched by digest instead.
-func refName(ref string) string {
-	lastSlash := strings.LastIndex(ref, "/")
-	if colon := strings.LastIndex(ref, ":"); colon > lastSlash {
-		return ref[:colon]
-	}
-	return ref
 }
 
 func (i *IBIPrepare) shutdownNode() error {
