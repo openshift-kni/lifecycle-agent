@@ -269,6 +269,16 @@ spec:
 	}, images)
 }
 
+func TestScanImageReferences_RejectsInvalidImageField(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "invalid.yaml", `kind: Pod
+spec:
+  containers:
+  - image: "not a valid image!"
+`)
+	_, err := ScanImageReferences([]string{path})
+	require.ErrorContains(t, err, `invalid image reference "not a valid image!"`)
+}
+
 // ----- RewriteImageReferences -----
 
 func TestRewriteImageReferences(t *testing.T) {
@@ -296,6 +306,16 @@ spec:
 	assert.Equal(t, "docker.io/library/busybox@sha256:"+validSHA256, containers[0].(map[string]interface{})["image"])
 	assert.Equal(t, "quay.io/test/pinned@sha256:"+validSHA256, containers[1].(map[string]interface{})["image"])
 	assert.Equal(t, "not-an-image", rewritten["metadata"].(map[string]interface{})["name"])
+}
+
+func TestRewriteImageReferences_RejectsInvalidImageField(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "invalid.yaml", `kind: Pod
+spec:
+  containers:
+  - image: "not a valid image!"
+`)
+	err := RewriteImageReferences([]string{path}, map[string]string{})
+	require.ErrorContains(t, err, `invalid image reference "not a valid image!"`)
 }
 
 // TestRewriteImageReferences_UnpinnableFails doubles as the digest-presence check: a
