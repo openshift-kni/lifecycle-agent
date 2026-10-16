@@ -21,8 +21,8 @@ limitations under the License.
 // workstation at build time.
 //
 // The media-assembly pipeline is split across sibling stories: the media container, base
-// GPT, and placeholder p1 foundation (plus the shared privileged-ops seam) land in
-// createusb_assemble.go; OCI image layout and the on-media digest manifest land in
+// GPT and placeholder p1 construction are coordinated by createusb_assemble.go and
+// implemented in createusb_p1.go; OCI image layout and the on-media digest manifest land in
 // createusb_images.go. Build produces a sparse placeholder image with the planned
 // GPT partitions; ISO writing and payload population are not wired in yet.
 package createusb
