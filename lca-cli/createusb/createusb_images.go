@@ -65,11 +65,16 @@ package createusb
 // never participates in the commit (it may sit on a different filesystem).
 //
 // The guarantee holds across power loss, not merely process termination: the completed
-// layout (its files and directories) is fsynced to stable storage before the commit, and
-// the manifest rename is made durable by fsyncing the manifest file and the p2 root
-// directory. Only after the commit is durable are superseded/orphaned layouts collected,
-// so a power loss can never persist the manifest rename ahead of the layout data it
-// references.
+// layout (its files and directories) is fsynced to stable storage before the commit, the
+// p2 root directory entry that names the new layout is fsynced before the manifest can
+// reference it, and the manifest rename is itself made durable by fsyncing the manifest
+// file and the p2 root directory. Only after the commit is durable are superseded/orphaned
+// layouts collected, so a power loss can never persist the manifest rename ahead of the
+// layout data (or the layout's own directory entry) it references. If the commit rename
+// succeeds but its durability fsync then fails, the medium is treated as committed (the
+// manifest already points at the complete new layout, so the layout is kept, never
+// deleted) and the fsync error is surfaced so the caller knows durability was not
+// confirmed.
 //
 // # Concurrent builds
 //
@@ -320,6 +325,15 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		return nil, err
 	}
 
+	// syncTree flushes the new layout and its contents, but not the p2 root directory entry
+	// that names the new layout directory (created by MkdirTemp above). Persist that entry
+	// before the manifest can reference it: otherwise a power loss could persist the manifest
+	// rename while the p2 root's directory entry for the new layout had not reached stable
+	// storage, leaving the committed manifest naming a layout directory that does not exist.
+	if err = fsyncPath(p2Root); err != nil {
+		return nil, err
+	}
+
 	// Commit: atomically replace the on-media digest manifest. This single rename is the
 	// commit point -- before it the committed manifest points at the previous layout,
 	// after it the committed manifest points at the fully-written new layout. publishFile
@@ -327,11 +341,21 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 	// partially-written manifest and the previous committed manifest/layout stay intact.
 	// durable=true fsyncs the manifest file and the p2 root directory so the commit itself
 	// survives a power loss, not merely a process exit.
+	//
+	// Once the rename has succeeded (renamed), the on-media manifest already points at the
+	// new layout, so the medium is committed and the new layout must not be deleted -- even
+	// if the durability fsync inside publishFile then reports an error. Mark the build
+	// committed on renamed, not on a nil error, so the deferred cleanup never removes the
+	// layout the live manifest now references; the fsync error is still returned so the
+	// caller learns durability was not confirmed.
 	p2Path := filepath.Join(p2Root, digestManifestFileName)
-	if err = publishFile(p2Path, manifestData, true); err != nil {
-		return nil, err
+	renamed, pubErr := publishFile(p2Path, manifestData, true)
+	if renamed {
+		committed = true
 	}
-	committed = true
+	if pubErr != nil {
+		return nil, pubErr
+	}
 
 	// The media is now consistent. Everything below is best-effort cleanup/auditing and
 	// must not fail the build: a failure here cannot leave a mismatched medium.
@@ -345,7 +369,7 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 	// different filesystem) and is never part of the commit; it is best-effort (durable=false)
 	// and a failure is logged, not fatal.
 	besideOutput := outputPath + digestManifestSuffix
-	if wErr := publishFile(besideOutput, manifestData, false); wErr != nil && log != nil {
+	if _, wErr := publishFile(besideOutput, manifestData, false); wErr != nil && log != nil {
 		log.WithError(wErr).WithField("path", besideOutput).Warn("failed to write audit-only beside-output digest manifest copy")
 	}
 
@@ -510,44 +534,56 @@ func validateDigestManifestBytes(data []byte, scratchDir string) error {
 // file is fsynced before the rename and the parent directory is fsynced after it, so the
 // published file survives a power loss (not merely a process exit); the on-media manifest
 // commit uses durable=true, while the best-effort audit copy uses durable=false.
-func publishFile(path string, data []byte, durable bool) (err error) {
+//
+// The returned renamed flag reports whether the rename actually replaced path. It is true
+// once the rename has succeeded -- including when the subsequent durability fsync fails --
+// because at that point the target is already published and the caller must treat it as
+// live (the committed manifest already points at the new layout) and must not delete it;
+// the fsync error is still returned so the caller learns durability was not confirmed.
+func publishFile(path string, data []byte, durable bool) (renamed bool, err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".digests-publish-")
 	if err != nil {
-		return fmt.Errorf("creating temp file for %q: %w", path, err)
+		return false, fmt.Errorf("creating temp file for %q: %w", path, err)
 	}
 	tmpPath := tmp.Name()
 	defer func() {
-		if err != nil {
+		// Only the pre-rename temp file is ours to remove; once the rename succeeds the
+		// temp name no longer exists and the published file must be left in place.
+		if !renamed {
 			_ = os.Remove(tmpPath)
 		}
 	}()
 	if _, err = tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("writing %q: %w", path, err)
+		return false, fmt.Errorf("writing %q: %w", path, err)
 	}
 	if durable {
 		if err = tmp.Sync(); err != nil {
 			_ = tmp.Close()
-			return fmt.Errorf("syncing temp file for %q: %w", path, err)
+			return false, fmt.Errorf("syncing temp file for %q: %w", path, err)
 		}
 	}
 	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp file for %q: %w", path, err)
+		return false, fmt.Errorf("closing temp file for %q: %w", path, err)
 	}
 	if err = os.Chmod(tmpPath, 0o600); err != nil {
-		return fmt.Errorf("setting permissions on %q: %w", path, err)
+		return false, fmt.Errorf("setting permissions on %q: %w", path, err)
 	}
 	if err = os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("publishing %q: %w", path, err)
+		return false, fmt.Errorf("publishing %q: %w", path, err)
 	}
+	renamed = true
 	if durable {
-		// fsync the parent directory so the rename (the commit) itself is durable.
+		// fsync the parent directory so the rename (the commit) itself is durable. The
+		// rename has already succeeded, so a failure here leaves renamed=true: the target is
+		// published and must not be deleted, but the error is surfaced so the caller knows
+		// durability was not confirmed.
 		if err = fsyncPath(dir); err != nil {
-			return err
+			return true, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // fsyncPath opens path and fsyncs it, flushing a file's contents or a directory's
