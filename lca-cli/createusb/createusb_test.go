@@ -577,6 +577,48 @@ func TestResolveImageSetSelfContainedNotImplemented(t *testing.T) {
 	assert.Contains(t, err.Error(), "CNF-27169")
 }
 
+// fakeP3Scanner is a p3ImageScanner stub returning a fixed image set (or error).
+type fakeP3Scanner struct {
+	images []string
+	err    error
+}
+
+func (f fakeP3Scanner) ScanP3Images(_ *Manifest) ([]string, error) { return f.images, f.err }
+
+func TestResolveImageSetSelfContainedUnionsBaseAndScan(t *testing.T) {
+	// Regression for the review's P1: self-contained is a superset of install-only, not
+	// a replacement. Once the p3 scanner is supplied, the resolved set must still carry
+	// the seed closure, recert and lca-cli, with the scan images unioned on top and
+	// deduplicated.
+	seedA := "quay.io/seed/a@sha256:" + validSHA256
+	p3Only := "quay.io/p3/only@sha256:" + validSHA256
+
+	m := validSelfContained()
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{list: []string{seedA}},
+		// The scan returns a p3-only image plus a duplicate of recert, proving the scan
+		// result is unioned and deduplicated against the base set rather than appended blindly.
+		p3Scanner: fakeP3Scanner{images: []string{p3Only, testRecertImage}},
+	}
+	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
+
+	refs, err := resolveImageSet(m, opts, deps)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{seedA, testRecertImage, testLCAImage, p3Only}, refs)
+}
+
+func TestResolveImageSetSelfContainedScannerErrorFails(t *testing.T) {
+	// A scanner failure must fail the build (and short-circuit before the expensive
+	// seed-image read), not silently drop the p3 images.
+	m := validSelfContained()
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{err: assert.AnError}, // must not be reached
+		p3Scanner:  fakeP3Scanner{err: assert.AnError},
+	}
+	_, err := resolveImageSet(m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
+	assert.ErrorContains(t, err, "resolving self-contained image set")
+}
+
 func TestResolveImageSetMissingRequiredImageFails(t *testing.T) {
 	deps := imageBuildDeps{seedReader: fakeSeedReader{list: []string{"quay.io/seed/a@sha256:" + validSHA256}}, p3Scanner: notImplementedP3Scanner{}}
 
@@ -680,19 +722,21 @@ func TestDigestManifestWrittenToBothPaths(t *testing.T) {
 }
 
 func TestComputeSizeReportEstimate(t *testing.T) {
-	stagingRoot := t.TempDir()
-	ociLayoutDir := filepath.Join(stagingRoot, "oci")
+	ociLayoutDir := filepath.Join(t.TempDir(), "oci")
 	require.NoError(t, os.MkdirAll(filepath.Join(ociLayoutDir, "blobs"), 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(ociLayoutDir, "index.json"), make([]byte, 100), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(ociLayoutDir, "blobs", "layer"), make([]byte, 400), 0o644))
-	// A staged-but-not-in-the-layout file (e.g. a future config-tree artifact).
-	require.NoError(t, os.WriteFile(filepath.Join(stagingRoot, "other.bin"), make([]byte, 25), 0o644))
 
-	report, err := computeSizeReport(stagingRoot, ociLayoutDir)
+	// StagedBytes is the image-stage subtotal: the OCI layout plus the on-media digest
+	// manifest (digests.json). It is derived from the layout size and the known
+	// manifest length, not a raw walk of the staging root, so a transient staging or
+	// backup file sitting beside the layout never inflates it.
+	const manifestBytes = 25
+	report, err := computeSizeReport(ociLayoutDir, manifestBytes)
 	require.NoError(t, err)
 	assert.Equal(t, int64(500), report.OCILayoutBytes, "OCI-layout subtotal")
-	assert.Equal(t, int64(525), report.StagedBytes, "full staged-p2 total")
+	assert.Equal(t, int64(525), report.StagedBytes, "OCI layout plus the on-media digest manifest")
 }
 
 func TestOCITagIsValidAndUnique(t *testing.T) {
@@ -816,6 +860,75 @@ func TestBuildImageLayoutAtomicAndSuccess(t *testing.T) {
 		for _, pattern := range []string{".oci-staging-*", "oci.previous"} {
 			leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
 			assert.Empty(t, leftover, "no %s artifact must remain after a clean rebuild", pattern)
+		}
+	})
+
+	// Regression for the review's P1: a failure while publishing the second manifest
+	// copy must roll the layout and the first manifest back to the previous consistent
+	// build, never leaving a new layout beside the previous manifest.
+	t.Run("failure on the second manifest write rolls layout and manifest back", func(t *testing.T) {
+		seedImg2 := "quay.io/seed/b@sha256:" + validSHA256
+		dir := t.TempDir()
+		p2Root := filepath.Join(dir, "p2")
+		outDir := filepath.Join(dir, "out")
+		require.NoError(t, os.MkdirAll(outDir, 0o755))
+		outputPath := filepath.Join(outDir, "usb.img")
+		besidePath := outputPath + ".digests.json"
+		p2Path := filepath.Join(p2Root, "digests.json")
+
+		// First build publishes a consistent 3-image layout + both manifests.
+		deps1 := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg}},
+			mirrorer:   fakeMirrorer{},
+			p3Scanner:  notImplementedP3Scanner{},
+		}
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps1)
+		require.NoError(t, err)
+
+		firstManifest, err := os.ReadFile(p2Path)
+		require.NoError(t, err)
+		firstBeside, err := os.ReadFile(besidePath)
+		require.NoError(t, err)
+		firstIndex, err := os.ReadFile(filepath.Join(p2Root, "oci", "index.json"))
+		require.NoError(t, err)
+
+		// Make the beside-output directory unwritable so publishing the SECOND manifest
+		// copy (<output>.digests.json) fails after the layout and the p2-root manifest
+		// have already been swapped in. The second build would otherwise produce a
+		// different, 4-image layout + manifest.
+		require.NoError(t, os.Chmod(outDir, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(outDir, 0o700) })
+
+		deps2 := imageBuildDeps{
+			seedReader: fakeSeedReader{list: []string{seedImg, seedImg2}},
+			mirrorer:   fakeMirrorer{},
+			p3Scanner:  notImplementedP3Scanner{},
+		}
+		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, deps2)
+		require.Error(t, err)
+
+		// The on-media layout and its manifest must be rolled back to the previous
+		// consistent build -- never a new 4-image layout beside the old 3-image manifest.
+		gotIndex, err := os.ReadFile(filepath.Join(p2Root, "oci", "index.json"))
+		require.NoError(t, err)
+		assert.Equal(t, firstIndex, gotIndex, "the OCI layout must be rolled back to the last consistent build")
+
+		gotManifest, err := os.ReadFile(p2Path)
+		require.NoError(t, err)
+		assert.Equal(t, firstManifest, gotManifest, "the p2 digest manifest must be rolled back to match the layout")
+
+		rolled, err := localimages.ParseDigestManifest(p2Path)
+		require.NoError(t, err)
+		assert.Len(t, rolled.Images, 3, "the rolled-back manifest must still describe the previous 3-image layout")
+
+		gotBeside, err := os.ReadFile(besidePath)
+		require.NoError(t, err)
+		assert.Equal(t, firstBeside, gotBeside, "the untouched beside-output manifest must still match the on-media copy")
+
+		// No backup or staging artifacts remain in the p2 root.
+		for _, pattern := range []string{".oci-staging-*", "oci.previous", "digests.json.previous"} {
+			leftover, _ := filepath.Glob(filepath.Join(p2Root, pattern))
+			assert.Empty(t, leftover, "no %s artifact must remain after a rolled-back rebuild", pattern)
 		}
 	})
 }

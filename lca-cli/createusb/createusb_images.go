@@ -128,7 +128,10 @@ type ImageSetOptions struct {
 type SizeReport struct {
 	// OCILayoutBytes is the byte subtotal of the staged OCI image layout.
 	OCILayoutBytes int64
-	// StagedBytes is the full staged-p2 byte total (all staged bytes).
+	// StagedBytes is the total this stage writes to the p2 media root: the OCI image
+	// layout plus the on-media digest manifest (digests.json). It is the image-stage
+	// subtotal of the p2 content; it does not include content staged by the later
+	// media-assembly stage (CNF-27171) or the final filesystem/ISO overhead.
 	StagedBytes int64
 }
 
@@ -238,11 +241,6 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		return nil, err
 	}
 
-	size, err := computeSizeReport(stagingDir, stagingLayout)
-	if err != nil {
-		return nil, err
-	}
-
 	// Marshal and validate the manifest bytes before anything is published, so a bad
 	// manifest fails the build while the final paths still hold their previous
 	// (untouched) content.
@@ -254,22 +252,31 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		return nil, err
 	}
 
-	logSizeReport(log, size)
-
-	// Publish from the pre-validated content. The layout is swapped in without
-	// destroying the previous one first (it is moved aside and only removed once the
-	// new layout is in place), and each manifest copy is written with an atomic
-	// temp-file-then-rename. Every published byte was validated above, so a failure
-	// here never leaves a corrupt or partially-written file.
-	finalLayout := filepath.Join(p2Root, ociLayoutDirName)
-	if err := publishLayout(stagingLayout, finalLayout); err != nil {
+	size, err := computeSizeReport(stagingLayout, len(manifestData))
+	if err != nil {
 		return nil, err
 	}
+	logSizeReport(log, size)
 
+	// Publish the layout and both manifest copies as a single recoverable
+	// transaction: every target that already exists is moved aside to a backup, the
+	// new content is put in place, and the backups are discarded only once all three
+	// targets are published. If any write fails the transaction rolls every target
+	// back, so the media is never left with a new layout beside a previous manifest
+	// (or two manifest copies that disagree). Every published byte was validated
+	// above, so a failure never leaves a corrupt or partially-written file.
+	finalLayout := filepath.Join(p2Root, ociLayoutDirName)
 	p2Path := filepath.Join(p2Root, digestManifestFileName)
 	besideOutput := outputPath + digestManifestSuffix
+
+	txn := &publishTxn{}
+	defer txn.finish(&err)
+
+	if err = txn.swapDir(stagingLayout, finalLayout); err != nil {
+		return nil, err
+	}
 	for _, path := range []string{p2Path, besideOutput} {
-		if err := publishFile(path, manifestData); err != nil {
+		if err = txn.writeFile(path, manifestData); err != nil {
 			return nil, err
 		}
 	}
@@ -284,19 +291,34 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 //     recert and lca-cli from the authoritative inputs, unioned with
 //     extraPrecacheImages and deduplicated. recert and lca-cli are guaranteed present
 //     as a checked invariant, independent of the incidental containers.list contents.
-//   - self-contained: the p3-scan union point is wired through the p3ImageScanner seam;
+//   - self-contained: the install-only base set (the node still boots the seed image
+//     and runs recert/lca-cli) unioned with the images referenced by the rendered p3
+//     config tree. The p3-scan union point is wired through the p3ImageScanner seam;
 //     until CNF-27169 supplies the scanner it returns an explicit not-implemented
 //     error so self-contained builds fail loudly rather than shipping media missing
 //     its p3 images.
 func resolveImageSet(m *Manifest, opts ImageSetOptions, deps imageBuildDeps) ([]string, error) {
 	switch m.Mode {
 	case ModeSelfContained:
-		// Wire the p3 union point here; the scanner currently fails loudly.
-		images, err := deps.p3Scanner.ScanP3Images(m)
+		// Scan the p3 config tree first so an unavailable scanner fails the build before
+		// the expensive seed-image pull/mount in the base-set resolution below.
+		scanned, err := deps.p3Scanner.ScanP3Images(m)
 		if err != nil {
 			return nil, fmt.Errorf("resolving self-contained image set: %w", err)
 		}
-		return images, nil
+		// Self-contained is a superset of install-only: the base set (seed closure +
+		// recert + lca-cli + extra precache) is still required, and the p3-scan images
+		// are unioned on top of it and deduplicated.
+		refs, err := resolveInstallOnlyImageSet(m, opts, deps)
+		if err != nil {
+			return nil, err
+		}
+		for _, img := range scanned {
+			if img = strings.TrimSpace(img); img != "" {
+				refs = utils.AppendToListIfNotExists(refs, img)
+			}
+		}
+		return refs, nil
 	case ModeInstallOnly:
 		return resolveInstallOnlyImageSet(m, opts, deps)
 	default:
@@ -445,38 +467,100 @@ func publishFile(path string, data []byte) (err error) {
 	return nil
 }
 
-// publishLayout moves the staged layout into place at final without destroying the
-// previous layout first: an existing final layout is moved aside and only removed
-// once the new one is in place, and is restored if the swap fails. staging is a
-// sibling of final (same filesystem), so the rename is atomic.
-func publishLayout(staging, final string) error {
-	var backup string
-	if _, err := os.Stat(final); err == nil {
-		backup = final + ".previous"
-		if err := os.RemoveAll(backup); err != nil {
-			return fmt.Errorf("clearing previous-layout backup %q: %w", backup, err)
-		}
-		if err := os.Rename(final, backup); err != nil {
-			return fmt.Errorf("moving previous OCI layout aside: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("checking for existing OCI layout %q: %w", final, err)
-	}
+// publishTxn makes the final publication of the OCI layout and the two digest-manifest
+// copies recoverable. Each target's previous content is moved aside to a sibling
+// backup before the new content is put in place and recorded in done; finish() then
+// either discards every backup (on success) or restores every published target from
+// its backup (on failure). Keeping the backups until all targets are published is
+// what guarantees the media never ends up with a new layout beside a previous manifest.
+type publishTxn struct {
+	done []publishedTarget
+}
 
+// publishedTarget records a single published target and the backup of the content it
+// replaced ("" when the target did not previously exist).
+type publishedTarget struct {
+	path   string
+	backup string
+}
+
+// swapDir publishes the staged layout at final (staging is a sibling of final, so the
+// rename is atomic), moving any existing layout aside to a recoverable backup.
+func (t *publishTxn) swapDir(staging, final string) error {
+	backup, err := moveAside(final)
+	if err != nil {
+		return err
+	}
 	if err := os.Rename(staging, final); err != nil {
 		if backup != "" {
-			// Best-effort restore of the previous layout.
-			_ = os.Rename(backup, final)
+			_ = os.Rename(backup, final) // best-effort restore of the previous layout
 		}
 		return fmt.Errorf("publishing OCI layout to %q: %w", final, err)
 	}
+	t.done = append(t.done, publishedTarget{path: final, backup: backup})
+	return nil
+}
 
-	if backup != "" {
-		if err := os.RemoveAll(backup); err != nil {
-			return fmt.Errorf("removing previous-layout backup %q: %w", backup, err)
+// writeFile publishes data at path with an atomic temp-file-then-rename, moving any
+// existing file aside to a recoverable backup first.
+func (t *publishTxn) writeFile(path string, data []byte) error {
+	backup, err := moveAside(path)
+	if err != nil {
+		return err
+	}
+	if err := publishFile(path, data); err != nil {
+		if backup != "" {
+			_ = os.Rename(backup, path) // best-effort restore of the previous file
+		}
+		return err
+	}
+	t.done = append(t.done, publishedTarget{path: path, backup: backup})
+	return nil
+}
+
+// finish completes the transaction. On success (*errp == nil) it discards every
+// backup; on failure it rolls every published target back to its backup, in reverse
+// order, so the previous layout and manifests remain mutually consistent.
+func (t *publishTxn) finish(errp *error) {
+	if *errp != nil {
+		for i := len(t.done) - 1; i >= 0; i-- {
+			d := t.done[i]
+			_ = os.RemoveAll(d.path)
+			if d.backup != "" {
+				_ = os.Rename(d.backup, d.path)
+			}
+		}
+		return
+	}
+	for _, d := range t.done {
+		if d.backup == "" {
+			continue
+		}
+		if rmErr := os.RemoveAll(d.backup); rmErr != nil {
+			*errp = fmt.Errorf("removing backup %q: %w", d.backup, rmErr)
+			return
 		}
 	}
-	return nil
+}
+
+// moveAside renames an existing path to a sibling ".previous" backup so it can be
+// restored on rollback, returning "" if the path does not exist. The backup is a
+// sibling (same directory, same filesystem), so the rename is atomic.
+func moveAside(path string) (string, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("checking for existing %q: %w", path, err)
+	}
+	backup := path + ".previous"
+	if err := os.RemoveAll(backup); err != nil {
+		return "", fmt.Errorf("clearing previous backup %q: %w", backup, err)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("moving %q aside: %w", path, err)
+	}
+	return backup, nil
 }
 
 // verifyLayoutEntries confirms that each entry resolves to exactly one descriptor
@@ -503,17 +587,17 @@ func verifyLayoutEntries(layoutDir string, entries []localimages.ImageEntry) err
 	return nil
 }
 
-// computeSizeReport returns the OCI-layout subtotal and the full staged-p2 total.
-func computeSizeReport(stagingRoot, ociLayoutDir string) (SizeReport, error) {
+// computeSizeReport returns the OCI-layout subtotal and this stage's p2 image-stage
+// subtotal: the layout plus the on-media digest manifest (manifestBytes is the length
+// of the digests.json written at the p2 root). Measuring the layout plus the known
+// manifest size is exact and avoids counting transient staging/backup artifacts; the
+// full-media total including later-staged content is CNF-27171's responsibility.
+func computeSizeReport(ociLayoutDir string, manifestBytes int) (SizeReport, error) {
 	ociBytes, err := dirSize(ociLayoutDir)
 	if err != nil {
 		return SizeReport{}, fmt.Errorf("sizing OCI layout: %w", err)
 	}
-	stagedBytes, err := dirSize(stagingRoot)
-	if err != nil {
-		return SizeReport{}, fmt.Errorf("sizing staged media: %w", err)
-	}
-	return SizeReport{OCILayoutBytes: ociBytes, StagedBytes: stagedBytes}, nil
+	return SizeReport{OCILayoutBytes: ociBytes, StagedBytes: ociBytes + int64(manifestBytes)}, nil
 }
 
 // logSizeReport logs the resulting-size estimate for the USB-size budget.

@@ -292,10 +292,14 @@ Schema:
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
 
-Publication is atomic: the layout and both manifest copies are staged and then published
-together, so a failed build never leaves a stale or partial `digests.json` looking current.
-The build also emits a resulting-size estimate (the OCI-layout subtotal and the full staged
-size) for the USB-size budget; the estimate excludes the final filesystem/ISO overhead.
+Publication is a recoverable transaction: the layout and both manifest copies are staged,
+then each existing target is moved aside to a backup before the new content is put in place,
+and the backups are discarded only once all three targets are published. If any write fails,
+every target is rolled back to the previous consistent build, so the media never ends up with
+a stale or partial `digests.json`, nor a new layout beside a previous manifest.
+The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
+subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
+excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
 
 > **Trust caveat:** mirroring uses an accept-anything signature policy. Pinning each
 > reference to a digest guarantees the content is immutable and content-addressed, but it
