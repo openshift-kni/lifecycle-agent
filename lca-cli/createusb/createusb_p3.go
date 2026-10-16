@@ -249,7 +249,9 @@ func ScanImageReferences(manifestPaths []string) ([]string, error) {
 			return nil, err
 		}
 		for _, doc := range docs {
-			collectImages(doc, false, &images)
+			if err := collectImages(doc, false, &images); err != nil {
+				return nil, fmt.Errorf("scanning image references in %q: %w", path, err)
+			}
 		}
 	}
 	return images, nil
@@ -271,26 +273,43 @@ func isImageFieldKey(key string) bool {
 // isImageFieldKey): such a value is accepted even as a bare or short name, while elsewhere
 // parseImageRef applies the stricter custom-resource rule (see parseImageRef). Map keys are
 // visited in sorted order so the result is deterministic.
-func collectImages(node interface{}, underImageKey bool, out *[]string) {
+func collectImages(node interface{}, underImageKey bool, out *[]string) error {
 	switch v := node.(type) {
 	case map[string]interface{}:
+		if underImageKey {
+			return fmt.Errorf("image field must contain a valid image reference, got a mapping")
+		}
 		keys := make([]string, 0, len(v))
 		for k := range v {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			collectImages(v[k], isImageFieldKey(k), out)
+			if err := collectImages(v[k], isImageFieldKey(k), out); err != nil {
+				return fmt.Errorf("field %q: %w", k, err)
+			}
 		}
 	case []interface{}:
+		if underImageKey {
+			return fmt.Errorf("image field must contain a valid image reference, got a sequence")
+		}
 		for _, item := range v {
-			collectImages(item, false, out)
+			if err := collectImages(item, false, out); err != nil {
+				return err
+			}
 		}
 	case string:
 		if ref, ok := parseImageRef(v, underImageKey); ok {
 			*out = utils.AppendToListIfNotExists(*out, reference.TagNameOnly(ref).String())
+		} else if underImageKey {
+			return fmt.Errorf("invalid image reference %q", v)
+		}
+	default:
+		if underImageKey {
+			return fmt.Errorf("image field must contain a valid image reference, got %T", node)
 		}
 	}
+	return nil
 }
 
 // parseImageRef parses s as an image reference. underImageKey selects the acceptance rule
@@ -447,6 +466,9 @@ func rewriteNode(node *yaml.Node, underImageKey bool, refToDigest map[string]str
 func rewriteScalar(node *yaml.Node, underImageKey bool, refToDigest map[string]string, path string) (bool, error) {
 	ref, ok := parseImageRef(node.Value, underImageKey)
 	if !ok {
+		if underImageKey {
+			return false, fmt.Errorf("invalid image reference %q in %q", node.Value, path)
+		}
 		return false, nil
 	}
 	if _, digested := ref.(reference.Digested); digested {
