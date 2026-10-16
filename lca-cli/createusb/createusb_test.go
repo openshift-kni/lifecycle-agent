@@ -464,11 +464,36 @@ func TestResolvePullSecretAtFile(t *testing.T) {
 	})
 }
 
-func TestBuildStubReturnsNotImplemented(t *testing.T) {
-	err := Build(validInstallOnly())
+// TestBuildRejectsWriteDevice covers public Build's behavior for --write-device: it is
+// rejected before any attach/write while assembly is incomplete, so a real block device is
+// never destructively overwritten. This needs no seam (no privileged op is reached).
+func TestBuildRejectsWriteDevice(t *testing.T) {
+	err := Build(context.Background(), testLogger(), validInstallOnly(), BuildOptions{WriteDevice: "/dev/sdx"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet implemented")
-	assert.Contains(t, err.Error(), "CNF-27167")
+	assert.Contains(t, err.Error(), "--write-device is not yet supported")
+	assert.Contains(t, err.Error(), "CNF-28668")
+}
+
+// TestBuildIncompleteAndNoDangle covers the public --output behavior through the injected
+// build core with a fake seam: the foundation runs, then Build fails loudly with the
+// incomplete-assembly error and leaves no dangling resources (loop detached, partial .img
+// removed). It replaces TestBuildStubReturnsNotImplemented.
+func TestBuildIncompleteAndNoDangle(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
+
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errAssemblyIncomplete)
+	assert.Contains(t, err.Error(), "p2/p3/p4 not yet implemented")
+	assert.Contains(t, err.Error(), "CNF-28668")
+
+	// No dangling resources: the loop device was detached and the partial image removed.
+	assert.Equal(t, []string{"/dev/loop3"}, fp.detached, "the attached loop device must be detached")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed")
 }
 
 // ----- image-build stage (createusb_images.go) -----

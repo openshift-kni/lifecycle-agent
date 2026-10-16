@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -52,9 +53,12 @@ func newCreateUsbCmd() *cobra.Command {
 		Long: `create-usb parses a single USB-based IBI manifest, applies CLI overrides, and runs
 every build-time validation rule before assembling the media.
 
-Media assembly is not yet implemented (tracked by CNF-27167/CNF-27168/CNF-27169); this
-command currently parses and validates the manifest and then exits with a
-not-implemented error.`,
+With --output, the command creates the sparse .img container, establishes the base GPT,
+and reserves the live-ISO region with a placeholder p1 partition. The remaining assembly
+stages (the real live ISO and the p2/p3/p4 partitions, tracked by
+CNF-27168/CNF-28668/CNF-28669/CNF-28670) are not implemented yet, so the command still
+exits with an incomplete-assembly error once the foundation has run. --write-device is
+deferred and is rejected until media assembly is complete.`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreateUsb(createUsbOptions{
@@ -141,7 +145,10 @@ func runCreateUsb(opts createUsbOptions) error {
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
-	if err := createusb.Build(manifest); err != nil {
+	if err := createusb.Build(context.Background(), log, manifest, createusb.BuildOptions{
+		OutputPath:  opts.outputPath,
+		WriteDevice: opts.writeDevice,
+	}); err != nil {
 		return fmt.Errorf("create-usb: %w", err)
 	}
 	return nil

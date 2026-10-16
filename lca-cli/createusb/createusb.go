@@ -20,10 +20,13 @@ limitations under the License.
 // self-contained flows depend on, and resolves @file pull-secret references on the
 // workstation at build time.
 //
-// The actual media-assembly pipeline (live ISO handling, OCI image layout, config-tree
-// render, image resolution/digest-pinning, and ISO/device write) is intentionally out
-// of scope here and lands in CNF-27167, CNF-27168, and CNF-27169; Build is a documented
-// stub that returns an explicit not-implemented error.
+// The media-assembly pipeline is split across sibling stories: the media container, base
+// GPT, and placeholder p1 foundation (plus the shared privileged-ops seam) land in
+// createusb_assemble.go; OCI image layout and the on-media digest manifest land in
+// createusb_images.go; and the real live-ISO write, p2/p3/p4 population, and final
+// output/device write land in CNF-27168 and the p2/p3/p4 stories. Build runs the
+// foundation and returns an explicit incomplete-assembly error until the pipeline is
+// complete, so the scaffold never silently claims to have produced media.
 package createusb
 
 import (
@@ -389,14 +392,4 @@ func (m *Manifest) ResolvePullSecret() error {
 //nolint:unparam // enforcement is the build-time rendered-tree scan (ScanMirrorResources)
 func (m *Manifest) validateMirrorResources() error {
 	return nil
-}
-
-// Build assembles the USB media from a validated manifest.
-//
-// The media-build pipeline (live ISO handling, OCI image layout, config-tree render,
-// image resolution/digest-pinning, and ISO/device write) is out of scope for this story
-// and lands in CNF-27167, CNF-27168, and CNF-27169. It returns an explicit
-// not-implemented error so the scaffold never silently claims to have produced media.
-func Build(m *Manifest) error {
-	return fmt.Errorf("media build not yet implemented (CNF-27167/CNF-27168/CNF-27169)")
 }
