@@ -264,9 +264,9 @@ func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("Auto-rollback is enabled for component: %s", component))
-	if err := c.InitiateRollback(msg); err != nil {
-		c.log.Info(fmt.Sprintf("Unable to initiate rollback: %s", err))
-	}
+	// InitiateRollback ends in Reboot, which never returns nil (process either dies or fails).
+	err = c.InitiateRollback(msg)
+	c.log.Info(fmt.Sprintf("Unable to initiate rollback: %s", err))
 }
 
 type IPCRebootClient struct {
@@ -433,9 +433,9 @@ func (c *IPCRebootClient) AutoRollbackIfEnabled(component, msg string) {
 	}
 
 	c.log.Info(fmt.Sprintf("IPConfig auto-rollback is enabled for component: %s", component))
-	if err := c.InitiateRollback(msg); err != nil {
-		c.log.Info(fmt.Sprintf("Unable to initiate IPConfig rollback: %s", err))
-	}
+	// InitiateRollback ends in Reboot, which never returns nil (process either dies or fails).
+	err = c.InitiateRollback(msg)
+	c.log.Info(fmt.Sprintf("Unable to initiate IPConfig rollback: %s", err))
 }
 
 func (c *IPCRebootClient) IsOrigStaterootBooted(identifier string) (bool, error) {
