@@ -60,7 +60,14 @@ p3/p4 partitions, tracked by CNF-27168/CNF-28669/CNF-28670) are not implemented 
 command still exits with an incomplete-assembly error once the foundation has run.
 --write-device is deferred and is rejected until media assembly is complete.`,
 		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// These flags are reserved for the image-mirroring stage. Until that stage
+			// is connected to Build, reject explicit values instead of ignoring them.
+			for _, name := range []string{"auth-file", "recert-image", "lca-image"} {
+				if cmd.Flags().Changed(name) {
+					return fmt.Errorf("--%s is not supported until image mirroring is wired into create-usb", name)
+				}
+			}
 			return runCreateUsb(createUsbOptions{
 				manifestFile: manifestFile,
 				outputPath:   outputPath,

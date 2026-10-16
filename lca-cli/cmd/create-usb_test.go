@@ -150,14 +150,15 @@ func TestCreateUsbISOFlagWins(t *testing.T) {
 	})
 }
 
-func TestCreateUsbAuthFileAccepted(t *testing.T) {
+func TestCreateUsbFutureImageFlagsRejectExplicitValues(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "m.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(validManifestYAML()), 0o600))
-	// --auth-file is accepted (reaches the build), not rejected by flag parsing. --write-device
-	// is rejected by Build before any privileged op, which is the deterministic reach marker.
-	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx",
-		"--auth-file", filepath.Join(t.TempDir(), "creds.json"))
-	assert.ErrorContains(t, err, "--write-device is not yet supported")
+	for _, flag := range []string{"--auth-file", "--recert-image", "--lca-image"} {
+		t.Run(flag, func(t *testing.T) {
+			err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx", flag, "example")
+			assert.ErrorContains(t, err, flag+" is not supported until image mirroring is wired")
+		})
+	}
 }
 
 // TestCreateUsbWriteDeviceDeferred verifies the command wires createusb.Build and surfaces
