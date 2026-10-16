@@ -146,6 +146,24 @@ func TestRenderP3Tree_CollisionFails(t *testing.T) {
 	assert.ErrorContains(t, err, "destination-name collision")
 }
 
+// TestRenderP3Tree_NonemptyDestinationRejected proves a reused, nonempty p3Root is rejected
+// so a manifest left over from a previous build cannot ship unscanned and unpinned (a
+// removed input would otherwise survive on the media and still be applied by post-pivot).
+func TestRenderP3Tree_NonemptyDestinationRejected(t *testing.T) {
+	p3Root := t.TempDir()
+	// A stale artifact from a previous build.
+	writeFile(t, p3Root, "extra-manifests/leftover.yaml", "kind: Leftover\n")
+
+	_, err := RenderP3Tree(validSelfContained(), p3Root)
+	assert.ErrorContains(t, err, "is not empty")
+
+	// An empty (or absent) destination renders normally.
+	fresh := validSelfContained()
+	fresh.ClusterManifests = nil
+	_, err = RenderP3Tree(fresh, t.TempDir())
+	require.NoError(t, err)
+}
+
 // ----- ScanImageReferences -----
 
 func TestScanImageReferences_KnownFields(t *testing.T) {
@@ -227,6 +245,28 @@ spec:
 	images, err := ScanImageReferences([]string{path})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"registry.example.com/op/operand:v2"}, images)
+}
+
+// TestScanImageReferences_ImageSuffixField proves a short, domain-less image reference in a
+// custom field whose key ends in "image" (operandImage: busybox:1.32) is discovered rather
+// than silently skipped by the generic fallback, while an unrelated field with the same
+// short-ref shape is not collected.
+func TestScanImageReferences_ImageSuffixField(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "cr.yaml", `apiVersion: example.com/v1
+kind: MyOperator
+spec:
+  operandImage: busybox:1.32
+  kubeRBACProxyImage: quay.io/test/proxy:2.0
+  schemaVersion: v1:beta
+`)
+
+	images, err := ScanImageReferences([]string{path})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"docker.io/library/busybox:1.32",
+		"quay.io/test/proxy:2.0",
+	}, images)
 }
 
 // ----- RewriteImageReferences -----
@@ -324,6 +364,51 @@ data:
 	assert.Equal(t, "untouched", docs[1]["data"].(map[string]interface{})["value"])
 	// Comments are preserved by the yaml.v3 node round-trip (documented behavior).
 	assert.Contains(t, string(data), "# top comment")
+}
+
+// TestRewriteImageReferences_Alias proves an aliased image reference (image: *img) whose
+// anchor is defined under a non-image field is pinned, not left tag-based: the scanner
+// resolves the alias, so the reference must be rewritten here too. The anchored scalar is
+// pinned in place, so the anchor and the alias both resolve to the digest.
+func TestRewriteImageReferences_Alias(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "alias.yaml", `kind: Pod
+metadata:
+  labels:
+    shared: &img busybox:1.32
+spec:
+  containers:
+  - name: main
+    image: *img
+`)
+
+	require.NoError(t, RewriteImageReferences([]string{path},
+		map[string]string{"docker.io/library/busybox:1.32": "sha256:" + validSHA256}))
+
+	rewritten := decodeSingleDoc(t, path)
+	pinned := "docker.io/library/busybox@sha256:" + validSHA256
+	// Both the aliased image field and the anchored scalar resolve to the pinned digest.
+	containers := rewritten["spec"].(map[string]interface{})["containers"].([]interface{})
+	assert.Equal(t, pinned, containers[0].(map[string]interface{})["image"])
+	assert.Equal(t, pinned, rewritten["metadata"].(map[string]interface{})["labels"].(map[string]interface{})["shared"])
+}
+
+// TestRewriteImageReferences_ImageSuffixField proves a short reference under a custom
+// *Image-suffixed key is pinned (the companion to the scan-side coverage).
+func TestRewriteImageReferences_ImageSuffixField(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "cr.yaml", `apiVersion: example.com/v1
+kind: MyOperator
+spec:
+  operandImage: busybox:1.32
+`)
+
+	require.NoError(t, RewriteImageReferences([]string{path},
+		map[string]string{"docker.io/library/busybox:1.32": "sha256:" + validSHA256}))
+
+	rewritten := decodeSingleDoc(t, path)
+	assert.Equal(t, "docker.io/library/busybox@sha256:"+validSHA256,
+		rewritten["spec"].(map[string]interface{})["operandImage"])
 }
 
 // ----- ScanMirrorResources -----
