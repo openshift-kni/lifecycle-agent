@@ -311,6 +311,30 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 	})
 }
 
+// TestAssembleMediaPreservesImageWhenP3Unmountfails covers the P1 recovery guard: when the p3
+// stage cannot unmount its filesystem, that filesystem is still mounted over the loop device, so
+// the rollback must NOT detach the loop or remove the backing image -- doing so would discard the
+// only path to recover or retry the unmount. The loop stays attached and the image stays on disk.
+func TestAssembleMediaPreservesImageWhenP3Unmountfails(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	p3Root := writeTree(t, t.TempDir(), map[string]string{
+		filepath.Join("cluster-configuration", "manifest.json"): `{"apiVersion":1}`,
+	})
+	fp := &fakePartitionOps{attachDev: "/dev/loop8", umountErr: fmt.Errorf("umount boom")}
+
+	handle, err := assembleMedia(context.Background(), testLogger(), validSelfContained(),
+		BuildOptions{OutputPath: img, P3Root: p3Root}, mediaBuildDeps{partition: fp})
+	require.Error(t, err)
+	assert.Nil(t, handle)
+	assert.Contains(t, err.Error(), "umount boom")
+
+	// The loop was attached and the partition was mounted, but the unmount failed: the rollback
+	// must leave the loop attached (no detach) and keep the backing image for recovery.
+	assert.NotContains(t, fp.calls, "detach", "a still-mounted partition must not have its loop detached")
+	assert.Empty(t, fp.detached)
+	assert.FileExists(t, img, "a still-mounted partition's backing image must be preserved for recovery")
+}
+
 // TestAssembleMediaRefusesToOverwriteExistingOutput covers the destructive-overwrite guard:
 // when the --output path already exists, assembleMedia must fail without truncating or
 // removing the existing file and without reaching any privileged op. A build never
