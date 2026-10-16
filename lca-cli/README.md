@@ -124,3 +124,133 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 
 > **Note:** For a disconnected environment, first mirror the `lca-cli` and `recert` container images to your local
 > registry using [skopeo](https://github.com/containers/skopeo) or a similar tool.
+
+## Creating USB media
+
+> **Note:** This section documents the `create-usb` manifest schema and flags. It is the first
+> part of the USB-based Image-Based Install (IBI) documentation; the full end-to-end usage guide
+> is completed in a follow-up story. Media assembly itself is not yet implemented — the command
+> currently parses and validates the manifest and then exits with a not-implemented error.
+
+The `create-usb` subcommand builds self-installing USB media for the USB-based IBI workflow from a
+single YAML (or JSON) manifest. It runs on a workstation and validates every build-time invariant
+before producing media, so a malformed or inconsistent manifest fails the build rather than
+producing unusable media.
+
+```shell
+-> ./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
+```
+
+### Flags
+
+| Flag | Description |
+| --- | --- |
+| `--manifest`, `-f` | Path to the USB-based IBI YAML/JSON manifest (required). |
+| `--auth-file` | Path to workstation mirror-registry credentials used at build time only. These are never written to the media. |
+| `--output` | Path of the `.img` file to write. Mutually exclusive with `--write-device`; exactly one is required. |
+| `--write-device` | Block device to write the media to. Mutually exclusive with `--output`; exactly one is required. |
+| `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
+| `--rhcos-live-iso-sha256` | Override the manifest `rhcosLiveIso.sha256`. Must be set together with `--rhcos-live-iso`. |
+
+### Manifest schema
+
+The manifest has two profiles, selected by the `mode` field:
+
+- `install-only` — installs the seed and shuts down.
+- `self-contained` — installs and reconfigures the node from an on-media site configuration, with
+  no network access.
+
+Fields common to both profiles (all required):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | string | `install-only` or `self-contained`. |
+| `seedImage` | string | The seed OCI image. Must be digest-pinned with a full digest (`repo@sha256:<64-char lowercase hex>`). |
+| `seedVersion` | string | The seed image version. |
+| `releaseVersion` | string | The OpenShift release version. |
+| `installationDisk` | string | The target installation disk (e.g. `/dev/disk/by-id/ata-xxxx`). |
+| `disconnected` | bool | Must be `true` for both profiles (it is not a knob). |
+| `shutdown` | bool | Must be set explicitly and match the mode: `true` for `install-only`, `false` for `self-contained`. Omitting it fails the build. |
+| `rhcosLiveIso.url` | string | HTTPS URL of the RHCOS live ISO. |
+| `rhcosLiveIso.sha256` | string | SHA-256 digest of the RHCOS live ISO (64-character lowercase hex). |
+
+`install-only` adds the following optional field (rejected under `self-contained`):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `extraPrecacheImages` | list of string | Additional images to precache. |
+
+`self-contained` adds the following fields (rejected under `install-only`):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `clusterManifests` | list of `{path}` | Cluster manifest files to render onto the media (required; each entry's `path` must be non-empty). |
+| `extraManifests` | list of `{path}` | Additional manifest files to render onto the media (each entry's `path` must be non-empty). |
+| `siteConfig` | object | The site configuration (see below). |
+
+`siteConfig` (self-contained only):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `clusterName` | string | Cluster name (required). |
+| `baseDomain` | string | Base domain (required). |
+| `hostname` | string | Node hostname (required). |
+| `nodeIPs` | list of string | Node IP addresses. |
+| `machineNetworks` | list of string | Machine network subnets. |
+| `rawNMStateConfig` | string | NMState configuration YAML, provided as a string. |
+| `sshKey` | string | Public SSH key for node access. |
+| `pullSecret` | string | Pull secret, as literal JSON or an `@file` reference (see below). Required. |
+
+The manifest is parsed strictly: unknown fields and duplicate keys are rejected.
+
+### Pull-secret `@file` references
+
+In a `self-contained` manifest, `siteConfig.pullSecret` accepts either literal JSON or an `@file`
+reference that is resolved on the workstation at build time. For example:
+
+```yaml
+siteConfig:
+  pullSecret: "@/path/to/pull-secret.json"
+```
+
+The referenced file's contents replace the value during the build; the `@` prefix never appears in
+the rendered output. The build fails if the file is missing or its contents are not valid JSON.
+
+### Example: install-only
+
+```yaml
+mode: install-only
+seedImage: quay.io/example/seed@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+seedVersion: 4.20.0
+releaseVersion: 4.20.0
+installationDisk: /dev/disk/by-id/ata-example
+disconnected: true
+shutdown: true
+rhcosLiveIso:
+  url: https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso
+  sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+extraPrecacheImages:
+  - quay.io/example/extra@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+### Example: self-contained
+
+```yaml
+mode: self-contained
+seedImage: quay.io/example/seed@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+seedVersion: 4.20.0
+releaseVersion: 4.20.0
+installationDisk: /dev/disk/by-id/ata-example
+disconnected: true
+shutdown: false
+rhcosLiveIso:
+  url: https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso
+  sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+clusterManifests:
+  - path: manifests/cluster.yaml
+siteConfig:
+  clusterName: example
+  baseDomain: example.com
+  hostname: node0
+  pullSecret: "@/path/to/pull-secret.json"
+```
