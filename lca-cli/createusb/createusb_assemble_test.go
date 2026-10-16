@@ -297,6 +297,20 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		_, statErr := os.Stat(img)
 		assert.True(t, os.IsNotExist(statErr), "the partial image must be removed on failure")
 	})
+
+	t.Run("detach failure preserves the image and reports both failures", func(t *testing.T) {
+		img := filepath.Join(t.TempDir(), "out.img")
+		fp := &fakePartitionOps{attachDev: "/dev/loop5", createErr: fmt.Errorf("sgdisk boom"), detachErr: fmt.Errorf("losetup -d boom")}
+
+		handle, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(),
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+		require.Error(t, err)
+		assert.Nil(t, handle)
+		assert.ErrorContains(t, err, "sgdisk boom")
+		assert.ErrorContains(t, err, "losetup -d boom")
+		assert.Equal(t, []string{"attach", "create", "detach"}, fp.calls)
+		assert.FileExists(t, img)
+	})
 }
 
 // TestAssembleMediaPreservesImageWhenP3Unmountfails covers the P1 recovery guard: when the p3
