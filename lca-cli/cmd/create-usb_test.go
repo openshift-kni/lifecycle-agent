@@ -80,9 +80,12 @@ func TestCreateUsbOutputVsWriteDevice(t *testing.T) {
 		err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img", "--write-device", "/dev/sdx")
 		assert.ErrorContains(t, err, "mutually exclusive")
 	})
-	t.Run("exactly one is accepted (reaches build stub)", func(t *testing.T) {
-		err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img")
-		assert.ErrorContains(t, err, "not yet implemented")
+	t.Run("exactly one is accepted (reaches build)", func(t *testing.T) {
+		// --write-device is exactly one accepted target and is rejected by Build before any
+		// privileged op, so this proves validation passed and reached the build without the
+		// test touching losetup or a real device.
+		err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx")
+		assert.ErrorContains(t, err, "--write-device is not yet supported")
 	})
 }
 
@@ -100,10 +103,12 @@ func TestCreateUsbPartialISOFlags(t *testing.T) {
 			"--rhcos-live-iso-sha256", testSHA256)
 		assert.ErrorContains(t, err, "must be provided together")
 	})
-	t.Run("both together override and reach build stub", func(t *testing.T) {
-		err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img",
+	t.Run("both together override and reach build", func(t *testing.T) {
+		// --write-device reaches Build (rejected early) without a privileged op, proving the
+		// paired override applied and validation passed.
+		err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx",
 			"--rhcos-live-iso", "https://example.com/other.iso", "--rhcos-live-iso-sha256", testSHA256)
-		assert.ErrorContains(t, err, "not yet implemented")
+		assert.ErrorContains(t, err, "--write-device is not yet supported")
 	})
 }
 
@@ -128,10 +133,11 @@ func TestCreateUsbISOFlagWins(t *testing.T) {
 	t.Run("valid flags rescue an invalid manifest ISO (flag applied and wins)", func(t *testing.T) {
 		manifest := filepath.Join(t.TempDir(), "m.yaml")
 		require.NoError(t, os.WriteFile(manifest, []byte(invalidISOManifestYAML()), 0o600))
-		// The manifest ISO is invalid; valid overrides must make Validate pass and reach the stub.
-		err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img",
+		// The manifest ISO is invalid; valid overrides must make Validate pass and reach the
+		// build (--write-device is rejected there without a privileged op).
+		err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx",
 			"--rhcos-live-iso", "https://example.com/override.iso", "--rhcos-live-iso-sha256", testSHA256)
-		assert.ErrorContains(t, err, "not yet implemented")
+		assert.ErrorContains(t, err, "--write-device is not yet supported")
 	})
 	t.Run("invalid flags override a valid manifest ISO (overridden value is validated)", func(t *testing.T) {
 		manifest := filepath.Join(t.TempDir(), "m.yaml")
@@ -147,20 +153,26 @@ func TestCreateUsbISOFlagWins(t *testing.T) {
 func TestCreateUsbAuthFileAccepted(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "m.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(validManifestYAML()), 0o600))
-	// --auth-file is accepted (reaches the build stub), not rejected by flag parsing.
-	err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img",
+	// --auth-file is accepted (reaches the build), not rejected by flag parsing. --write-device
+	// is rejected by Build before any privileged op, which is the deterministic reach marker.
+	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx",
 		"--auth-file", filepath.Join(t.TempDir(), "creds.json"))
-	assert.ErrorContains(t, err, "not yet implemented")
+	assert.ErrorContains(t, err, "--write-device is not yet supported")
 }
 
-func TestCreateUsbBuildStubFails(t *testing.T) {
+// TestCreateUsbWriteDeviceDeferred verifies the command wires createusb.Build and surfaces
+// its --write-device deferral error (the destructive device path is rejected until media
+// assembly is complete). The --output foundation path runs real privileged ops and is
+// covered by the createusb package unit tests (via dependency injection) and the
+// root-gated integration test.
+func TestCreateUsbWriteDeviceDeferred(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "m.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(validManifestYAML()), 0o600))
 
-	err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img")
+	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet implemented")
-	assert.Contains(t, err.Error(), "CNF-27167")
+	assert.Contains(t, err.Error(), "--write-device is not yet supported")
+	assert.Contains(t, err.Error(), "CNF-28668")
 }
 
 func TestCreateUsbInvalidManifestFailsValidation(t *testing.T) {
