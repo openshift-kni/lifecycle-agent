@@ -59,6 +59,9 @@ import (
 const (
 	integrationImageName = "quay.io/openshift-release-dev/ocp-release"
 	integrationOCITag    = "ocp-release-0"
+	// integrationLayoutDir is a standalone OCI layout directory name for the copy/import
+	// round-trip; the production build derives a build-unique name per invocation.
+	integrationLayoutDir = "oci"
 )
 
 func TestMain(m *testing.M) {
@@ -87,7 +90,7 @@ func TestMirrorAndImportRoundTrip(t *testing.T) {
 	// Mirror into a destination layout under the media root, exercising the real
 	// copy.CopyAllImages + digest-capture path.
 	mediaRoot := t.TempDir()
-	destLayout := filepath.Join(mediaRoot, ociLayoutDirName)
+	destLayout := filepath.Join(mediaRoot, integrationLayoutDir)
 	recordedDigest, err := copyIntoLayout(context.Background(), srcRef, destLayout, integrationOCITag, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, recordedDigest)
@@ -112,7 +115,7 @@ func TestMirrorAndImportRoundTrip(t *testing.T) {
 
 	// The emitted digest manifest validates under the consumer's parser.
 	entry := localimages.ImageEntry{Name: integrationImageName, Digest: recordedDigest, OCITag: integrationOCITag}
-	manifest := localimages.DigestManifest{Version: digestManifestVersion, OCILayoutPath: ociLayoutDirName, Images: []localimages.ImageEntry{entry}}
+	manifest := localimages.DigestManifest{Version: digestManifestVersion, OCILayoutPath: integrationLayoutDir, Images: []localimages.ImageEntry{entry}}
 	manifestPath := filepath.Join(mediaRoot, "digests.json")
 	writeJSON(t, manifestPath, manifest)
 	parsed, err := localimages.ParseDigestManifest(manifestPath)
