@@ -17,7 +17,7 @@ mirror resources are rejected. (install-only media is unaffected by everything b
 For self-contained media the build renders the `/opt/openshift` config tree that post-pivot
 consumes on the node:
 
-```
+```console
 <p3 root>/
   cluster-configuration/
     manifest.json          # SeedReconfiguration built from siteConfig
