@@ -100,18 +100,18 @@ func (mr *MockBackuperRestorerMockRecorder) StartBackup(ctx, content, targetDir 
 }
 
 // StartRestore mocks base method.
-func (m *MockBackuperRestorer) StartRestore(ctx context.Context) (*backuprestore.RestoreTracker, error) {
+func (m *MockBackuperRestorer) StartRestore(ctx context.Context, content []v1.ConfigMapRef) (*backuprestore.RestoreTracker, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartRestore", ctx)
+	ret := m.ctrl.Call(m, "StartRestore", ctx, content)
 	ret0, _ := ret[0].(*backuprestore.RestoreTracker)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StartRestore indicates an expected call of StartRestore.
-func (mr *MockBackuperRestorerMockRecorder) StartRestore(ctx any) *gomock.Call {
+func (mr *MockBackuperRestorerMockRecorder) StartRestore(ctx, content any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartRestore", reflect.TypeOf((*MockBackuperRestorer)(nil).StartRestore), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartRestore", reflect.TypeOf((*MockBackuperRestorer)(nil).StartRestore), ctx, content)
 }
 
 // ValidateBackupConfigmaps mocks base method.
