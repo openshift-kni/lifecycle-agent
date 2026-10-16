@@ -12,6 +12,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,6 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -1509,4 +1512,50 @@ func TestRestartChronydService(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenderedManifestSuppliesNMState proves the create-usb rendered manifest.json supplies
+// rawNMStateConfig to post-pivot's nmstate application path. This is the guarantee that lets
+// CNF-27169 leave network-configuration/ unpopulated for the supported (rawNMStateConfig-only)
+// network input: the rendered manifest.json is the single source of network config.
+func TestRenderedManifestSuppliesNMState(t *testing.T) {
+	mockController := gomock.NewController(t)
+	defer mockController.Finish()
+	mockOps := ops.NewMockOps(mockController)
+
+	tmpDir := t.TempDir()
+	rawNMState := "interfaces:\n- name: eth0\n  type: ethernet\n  state: up\n"
+
+	// Render the p3 config tree from a self-contained create-usb manifest carrying
+	// rawNMStateConfig; post-pivot reads manifest.json from <workingDir>/cluster-configuration.
+	m := &createusb.Manifest{
+		Mode: createusb.ModeSelfContained,
+		SiteConfig: &createusb.SiteConfig{
+			ClusterName:      "example",
+			BaseDomain:       "example.com",
+			Hostname:         "node0",
+			PullSecret:       `{"auths":{}}`,
+			RawNMStateConfig: rawNMState,
+		},
+	}
+	_, err := createusb.RenderP3Tree(m, tmpDir)
+	require.NoError(t, err)
+
+	seedReconfig, err := utils.ReadSeedReconfigurationFromFile(
+		filepath.Join(tmpDir, common.ClusterConfigDir, common.SeedReconfigurationFileName))
+	require.NoError(t, err)
+	require.Equal(t, rawNMState, seedReconfig.RawNMStateConfig)
+	require.Equal(t, clusterconfig_api.SeedReconfigurationVersion, seedReconfig.APIVersion)
+
+	log := &logrus.Logger{}
+	nmstateFile := path.Join(tmpDir, "nmstate.yaml")
+	pp := NewPostPivot(nil, log, mockOps, "", tmpDir, "")
+	mockOps.EXPECT().RunInHostNamespace("nmstatectl", "apply", nmstateFile).Return("", nil)
+
+	require.NoError(t, pp.applyNMStateConfiguration(seedReconfig))
+
+	// The rendered rawNMStateConfig was written out verbatim for nmstatectl to apply.
+	applied, err := os.ReadFile(nmstateFile)
+	require.NoError(t, err)
+	assert.Equal(t, rawNMState, string(applied))
 }
