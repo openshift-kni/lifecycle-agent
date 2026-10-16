@@ -149,7 +149,9 @@ producing unusable media.
 | Flag | Description |
 | --- | --- |
 | `--manifest`, `-f` | Path to the USB-based IBI YAML/JSON manifest (required). |
-| `--auth-file` | Path to workstation mirror-registry credentials used at build time only. These are never written to the media. |
+| `--auth-file` | Reserved for workstation mirror-registry credentials. Explicit use fails until image mirroring is wired into the command. |
+| `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use currently fails. |
+| `--lca-image` | Reserved for the lca-cli image in the on-media image set. Explicit use currently fails. |
 | `--output` | Path of the `.img` file to write. The path must not already exist — the command refuses to overwrite an existing file. Mutually exclusive with `--write-device`; exactly one is required. |
 | `--write-device` | Block device to write the media to. Mutually exclusive with `--output`; exactly one is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
