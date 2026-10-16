@@ -387,7 +387,7 @@ func TestBuildP2FailureTearsDown(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mkfs boom", "the p2 failure must be surfaced")
-	assert.NotErrorIs(t, err, errAssemblyIncomplete, "a p2 failure returns the p2 error, not the incomplete-assembly error")
+	assert.ErrorContains(t, err, "mkfs boom")
 
 	// The seam was driven attach -> create (p1) -> p2 create/settle/format (the shared sequence)
 	// and then torn down.
@@ -425,7 +425,7 @@ func TestBuildP4FailureTearsDown(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "injected p4 create failure", "the p4 failure must be surfaced")
-	assert.NotErrorIs(t, err, errAssemblyIncomplete, "a p4 failure returns the p4 error, not the incomplete-assembly error")
+	assert.ErrorContains(t, err, "injected p4 create failure")
 
 	// p2 ran to completion (create/settle/format) before p4's create failed and the handle was torn
 	// down.

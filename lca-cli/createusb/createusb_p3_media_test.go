@@ -145,15 +145,17 @@ func TestCreateP3Partition_InstallOnlySkipped(t *testing.T) {
 	assert.Empty(t, fp.calls, "install-only must not touch the partition seam")
 }
 
-// TestCreateP3Partition_NoTreeRejected verifies that self-contained media cannot silently
-// omit its required cluster-config partition.
-func TestCreateP3Partition_NoTreeRejected(t *testing.T) {
+// TestCreateP3Partition_NoTreeCreatesPlaceholder verifies that self-contained media
+// includes a formatted p3 slot even before its config tree is available.
+func TestCreateP3Partition_NoTreeCreatesPlaceholder(t *testing.T) {
 	fp := &fakePartitionOps{}
 	handle := selfContainedHandle(fp)
 
 	err := createP3Partition(context.Background(), testLogger(), mediaBuildDeps{partition: fp}, handle, "")
-	require.ErrorContains(t, err, "requires a rendered cluster-config (p3) tree")
-	assert.Empty(t, fp.calls, "a missing p3Root must fail before creating a partition")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"createPart", "settle", "format"}, fp.calls)
+	assert.Equal(t, labelClusterConfig, fp.formatLabel)
+	assert.NotContains(t, fp.calls, "mount")
 }
 
 // TestCreateP3Partition_PopulateFilePolicy covers the source-tree validation: a regular-file

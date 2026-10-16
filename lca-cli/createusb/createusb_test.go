@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,18 +472,25 @@ func TestBuildRejectsWriteDevice(t *testing.T) {
 	err := Build(context.Background(), testLogger(), validInstallOnly(), BuildOptions{WriteDevice: "/dev/sdx"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--write-device is not yet supported")
-	assert.Contains(t, err.Error(), "CNF-28668")
+	assert.Contains(t, err.Error(), "CNF-27158")
 }
 
-// TestBuildIncompleteAndNoDangle covers the public --output behavior through the injected build
-// core with a fake seam: the foundation plus the empty p2 and p4 partitions run, then Build fails
-// loudly with the incomplete-assembly error (all partition slots exist, but no partition content is
-// populated by the live command path and the bootability gate has not passed) and leaves no
-// dangling resources (loop detached, partial .img removed). It replaces
-// TestBuildStubReturnsNotImplemented.
-//
-// It asserts the install-only layout; self-contained mode requires a p3 tree before assembly.
-func TestBuildIncompleteAndNoDangle(t *testing.T) {
+func TestBuildPlaceholderPreservesOutput(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	// Public Build needs privileged loopback tooling; the injected build test below
+	// verifies the output lifecycle without requiring root.
+	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+	require.NoError(t, err)
+	info, statErr := os.Stat(img)
+	require.NoError(t, statErr)
+	assert.Equal(t, containerSize(partitionPlan(ModeInstallOnly, defaultP1ReservationBytes)), info.Size())
+	assert.Equal(t, []string{"/dev/loop3"}, fp.detached)
+}
+
+// TestBuildPlaceholderLayout covers both modes through the injected partition seam.
+func TestBuildPlaceholderLayout(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		manifest func() *Manifest
@@ -490,6 +498,7 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 		loopDev  string
 	}{
 		{"install-only is p1/p2/p4", validInstallOnly, ModeInstallOnly, "/dev/loop3"},
+		{"self-contained is p1/p3/p2/p4", validSelfContained, ModeSelfContained, "/dev/loop4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			img := filepath.Join(t.TempDir(), "out.img")
@@ -498,51 +507,63 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 			err := build(context.Background(), testLogger(), tc.manifest(),
 				BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
 
-			require.Error(t, err)
-			assert.ErrorIs(t, err, errAssemblyIncomplete)
-			assert.Contains(t, err.Error(), "CNF-27158", "the incomplete error names the pending bootability gate")
+			require.NoError(t, err)
 
-			// The seam was driven attach -> create (p1) -> p2 create/settle/format -> p4
-			// create/settle/format (the shared sequence, twice) before the handle was discarded.
-			// Install-only has no p3, so only p2 and p4 are created.
-			assert.Equal(t, []string{
-				"attach", "create",
+			// Self-contained creates an empty p3 before p2 and p4; install-only omits p3.
+			wantCalls := []string{"attach", "create"}
+			if tc.mode == ModeSelfContained {
+				wantCalls = append(wantCalls, "createPart", "settle", "format") // p3
+			}
+			wantCalls = append(wantCalls,
 				"createPart", "settle", "format", // p2
 				"createPart", "settle", "format", // p4
-				"detach",
-			}, fp.calls)
-			assert.NotContains(t, fp.calls, "mount", "install-only has no p3")
+				"detach")
+			assert.Equal(t, wantCalls, fp.calls)
+			assert.NotContains(t, fp.calls, "mount", "placeholder partitions are empty")
 
-			require.Len(t, fp.createdParts, 2, "only the empty p2 and p4 partitions are created in the live path")
+			wantCount := 2
+			p2Index := 0
+			if tc.mode == ModeSelfContained {
+				wantCount = 3
+				p2Index = 1
+			}
+			require.Len(t, fp.createdParts, wantCount)
 			plan := partitionPlan(tc.mode, defaultP1ReservationBytes)
 			wantP2, ok := plannedPartition(plan, labelIBIImages)
 			require.True(t, ok)
 			wantP4, ok := plannedPartition(plan, labelIBIStatus)
 			require.True(t, ok)
-			assert.Equal(t, wantP2, fp.createdParts[0], "p2 (ibi-images) is created first")
-			assert.Equal(t, wantP4, fp.createdParts[1], "p4 (ibi-status) is created second")
+			assert.Equal(t, wantP2, fp.createdParts[p2Index], "p2 (ibi-images) is created")
+			assert.Equal(t, wantP4, fp.createdParts[p2Index+1], "p4 (ibi-status) is created")
 			// The last partition formatted was p4 (ibi-status), ext4-labeled ibi-status.
 			assert.Equal(t, ibiStatusFSType, fp.formatFSType, "p4 is formatted as the ibi-status filesystem type")
 			assert.Equal(t, labelIBIStatus, fp.formatLabel, "p4's FS label must be ibi-status")
 
-			// No dangling resources: the loop device was detached and the partial image removed.
+			// The loop is detached and the placeholder image remains on disk.
 			assert.Equal(t, []string{tc.loopDev}, fp.detached, "the attached loop device must be detached")
-			_, statErr := os.Stat(img)
-			assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed")
+			assert.FileExists(t, img)
 		})
 	}
 }
 
-func TestBuildSelfContainedRequiresP3TreeBeforePartitions(t *testing.T) {
+func TestBuildSelfContainedCreatesEmptyP3BeforeP2(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
 	fp := &fakePartitionOps{attachDev: "/dev/loop4"}
 	err := build(context.Background(), testLogger(), validSelfContained(),
 		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
-	require.ErrorContains(t, err, "requires a rendered cluster-config (p3) tree")
-	assert.Equal(t, []string{"attach", "create", "detach"}, fp.calls)
-	assert.Empty(t, fp.createdParts)
-	_, statErr := os.Stat(img)
-	assert.True(t, os.IsNotExist(statErr))
+	require.NoError(t, err)
+	require.Len(t, fp.createdParts, 3)
+	assert.Equal(t, labelClusterConfig, fp.createdParts[0].Label)
+	assert.FileExists(t, img)
+}
+
+func TestBuildFinalizeFailurePreservesImage(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	fp := &fakePartitionOps{attachDev: "/dev/loop5", detachErr: fmt.Errorf("detach boom")}
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+	require.ErrorContains(t, err, "detach boom")
+	assert.FileExists(t, img, "the image must remain available while its loop device is attached")
 }
 
 // ----- image-build stage (createusb_images.go) -----

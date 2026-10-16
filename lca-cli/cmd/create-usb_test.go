@@ -173,7 +173,7 @@ func TestCreateUsbWriteDeviceDeferred(t *testing.T) {
 	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--write-device is not yet supported")
-	assert.Contains(t, err.Error(), "CNF-28668")
+	assert.Contains(t, err.Error(), "CNF-27158")
 }
 
 func TestCreateUsbInvalidManifestFailsValidation(t *testing.T) {

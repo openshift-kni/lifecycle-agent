@@ -129,11 +129,10 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 
 > **Note:** This section documents the `create-usb` manifest schema and flags. It is the first
 > part of the USB-based Image-Based Install (IBI) documentation; the full end-to-end usage guide
-> is completed in a follow-up story. Media assembly is still being built incrementally: with
-> `--output` the command now creates the sparse `.img` container, establishes the base GPT, and
-> reserves the live-ISO region with a placeholder p1 partition, then exits with an
-> incomplete-assembly error because the remaining partitions (p2/p3/p4) and the real live ISO are
-> not implemented yet. `--write-device` is deferred and is rejected until media assembly is complete.
+> is completed in a follow-up story. With `--output`, the command creates a sparse `.img`
+> containing the planned GPT partition slots: p1 is reserved for the live ISO, and p2/p4
+> (plus p3 for self-contained mode) are formatted as empty ext4 filesystems. The image has
+> no live ISO or image payload and is not bootable. `--write-device` remains deferred.
 
 The `create-usb` subcommand builds self-installing USB media for the USB-based IBI workflow from a
 single YAML (or JSON) manifest. It runs on a workstation and validates every build-time invariant

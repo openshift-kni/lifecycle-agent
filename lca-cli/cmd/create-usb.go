@@ -49,16 +49,14 @@ func newCreateUsbCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create-usb",
-		Short: "Create USB installation media from a manifest.",
+		Short: "Create a placeholder USB image from a manifest.",
 		Long: `create-usb parses a single USB-based IBI manifest, applies CLI overrides, and runs
 every build-time validation rule before assembling the media.
 
-With --output, the command creates the sparse .img container, establishes the base GPT,
-reserves the live-ISO region with a placeholder p1 partition, and creates and formats the
-empty p2 (ibi-images) partition. The remaining assembly stages (the real live ISO and the
-p3/p4 partitions, tracked by CNF-27168/CNF-28669/CNF-28670) are not implemented yet, so the
-command still exits with an incomplete-assembly error once the foundation has run.
---write-device is deferred and is rejected until media assembly is complete.`,
+With --output, the command creates a sparse .img with a GPT and formatted placeholder
+partitions. It does not write a live ISO or image payload, so the image is not bootable.
+--write-device is deferred. The reserved image-mirroring flags reject explicit values
+until that stage is wired into the command.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// These flags are reserved for the image-mirroring stage. Until that stage
@@ -125,7 +123,7 @@ type createUsbOptions struct {
 
 // runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse
 // the manifest, apply the --rhcos-live-iso* overrides, validate the manifest, then hand
-// off to the (stubbed) media build.
+// off to the placeholder media build.
 func runCreateUsb(opts createUsbOptions) error {
 	if err := validateOutputTarget(opts.outputPath, opts.writeDevice); err != nil {
 		return err
