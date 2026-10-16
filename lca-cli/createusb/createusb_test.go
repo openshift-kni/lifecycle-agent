@@ -475,9 +475,10 @@ func TestBuildRejectsWriteDevice(t *testing.T) {
 }
 
 // TestBuildIncompleteAndNoDangle covers the public --output behavior through the injected
-// build core with a fake seam: the foundation runs, then Build fails loudly with the
-// incomplete-assembly error and leaves no dangling resources (loop detached, partial .img
-// removed). It replaces TestBuildStubReturnsNotImplemented.
+// build core with a fake seam: the foundation plus the empty p2 partition run, then Build
+// fails loudly with the incomplete-assembly error (now naming only p3/p4) and leaves no
+// dangling resources (loop detached, partial .img removed). It replaces
+// TestBuildStubReturnsNotImplemented.
 func TestBuildIncompleteAndNoDangle(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
 	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
@@ -487,8 +488,14 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errAssemblyIncomplete)
-	assert.Contains(t, err.Error(), "p2/p3/p4 not yet implemented")
-	assert.Contains(t, err.Error(), "CNF-28668")
+	assert.Contains(t, err.Error(), "p3/p4 not yet implemented")
+	assert.Contains(t, err.Error(), "CNF-28669")
+
+	// The seam was driven attach -> create (p1) -> add (p2) before the handle was discarded.
+	assert.Equal(t, []string{"attach", "create", "add", "detach"}, fp.calls)
+	require.Len(t, fp.added, 1, "the empty p2 partition must be added once")
+	assert.Equal(t, labelIBIImages, fp.added[0].part.Label, "p2 must be the ibi-images partition")
+	assert.Equal(t, ibiImagesFSType, fp.added[0].fsType, "p2 must be formatted as the ibi-images filesystem type")
 
 	// No dangling resources: the loop device was detached and the partial image removed.
 	assert.Equal(t, []string{"/dev/loop3"}, fp.detached, "the attached loop device must be detached")

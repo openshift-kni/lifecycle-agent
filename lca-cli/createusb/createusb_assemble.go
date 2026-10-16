@@ -42,12 +42,13 @@ package createusb
 //
 // # Honesty
 //
-// Because p2/p3/p4 are not implemented yet (and the mechanics stay provisional until the
+// Because p3/p4 are not implemented yet (and the mechanics stay provisional until the
 // CNF-27158 bootability gate passes), public Build never claims to have produced complete
-// media: it runs the container + placeholder-p1 foundation, tears it back down (detach
-// loop device, remove the partial .img), and returns an explicit incomplete-assembly
-// error. The internal assembleMedia core returns a live *MediaHandle for the sibling
-// stories to thread through; a half-built handle can never escape the public surface.
+// media: it runs the container + placeholder-p1 foundation plus the empty p2 partition,
+// tears it back down (detach loop device, remove the partial .img), and returns an explicit
+// incomplete-assembly error. The internal assembleMedia core returns a live *MediaHandle for
+// the sibling stories to thread through; a half-built handle can never escape the public
+// surface.
 
 import (
 	"context"
@@ -113,10 +114,11 @@ const (
 )
 
 // errAssemblyIncomplete is returned by Build after the container + placeholder-p1
-// foundation runs: the media is not complete (p2/p3/p4 are not implemented yet), so the
-// scaffold fails loudly rather than claim to have produced usable media.
+// foundation and the empty p2 partition run: the media is not complete (p3/p4 are not
+// implemented yet), so the scaffold fails loudly rather than claim to have produced usable
+// media.
 var errAssemblyIncomplete = errors.New(
-	"media assembly incomplete: partitions p2/p3/p4 not yet implemented (CNF-28668/CNF-28669/CNF-28670)")
+	"media assembly incomplete: partitions p3/p4 not yet implemented (CNF-28669/CNF-28670)")
 
 // BuildOptions carries the resolved output target for a create-usb media build. Exactly
 // one of OutputPath / WriteDevice is set (enforced by the command's validateOutputTarget).
@@ -172,6 +174,11 @@ type partitionOps interface {
 	// live-ISO region and the p2/p3/p4 offsets. This is the operation that establishes the
 	// base layout.
 	CreateBaseLayout(dev string, plan PartitionPlan) error
+	// AddPartition creates the GPT entry for part at its reserved offset on dev, refreshes
+	// the kernel partition table, waits for the new partition device node to appear, and
+	// formats it as fsType with part.Label as the filesystem label. It is generic so the
+	// p2/p3/p4 stories (CNF-28668/CNF-28669/CNF-28670) share one implementation.
+	AddPartition(dev string, part PlannedPartition, fsType string) error
 	// ReadPartitionTable reads dev's GPT and returns the parsed entries.
 	ReadPartitionTable(dev string) ([]PartitionEntry, error)
 }
@@ -243,10 +250,10 @@ func (h *MediaHandle) Close() error {
 // pipeline is incomplete.
 //
 // Build returns an error only -- never a handle -- so a half-built media handle can never
-// escape a failed call. Because p2/p3/p4 (CNF-28668/CNF-28669/CNF-28670) are not
-// implemented yet, Build runs the foundation, tears it back down (detach loop, remove the
-// partial .img), and returns an explicit incomplete-assembly error so the scaffold never
-// claims to have produced complete, bootable media.
+// escape a failed call. Because p3/p4 (CNF-28669/CNF-28670) are not implemented yet, Build
+// runs the foundation plus the empty p2 partition, tears it back down (detach loop, remove
+// the partial .img), and returns an explicit incomplete-assembly error so the scaffold
+// never claims to have produced complete, bootable media.
 func Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions) error {
 	return build(ctx, log, m, opts, defaultMediaBuildDeps(log))
 }
@@ -266,8 +273,19 @@ func build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptio
 		return err
 	}
 
-	// There is no next assembly stage yet, so the foundation produced no usable media:
-	// discard the handle (detach loop + remove the partial .img) and fail loudly.
+	// Add and format the empty p2 (ibi-images) partition into the region the base layout
+	// reserved. On failure, tear the handle down (detach loop + remove the partial .img)
+	// before returning so a failed build never leaks a loop device or partial image.
+	if perr := createP2Partition(log, handle, deps); perr != nil {
+		if cerr := handle.Close(); cerr != nil {
+			return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", perr, cerr)
+		}
+		return perr
+	}
+
+	// There is no next assembly stage yet (p3/p4 are not implemented), so the foundation
+	// produced no usable media: discard the handle (detach loop + remove the partial .img)
+	// and fail loudly.
 	if cerr := handle.Close(); cerr != nil {
 		return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", errAssemblyIncomplete, cerr)
 	}
