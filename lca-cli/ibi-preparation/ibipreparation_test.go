@@ -1143,16 +1143,31 @@ func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
 	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
 }
 
-// TestVerifyManifestCoversSeed exercises digest-based coverage matching and the
-// rejection of non-digest (tag-only) references directly.
+// TestVerifyManifestCoversSeed exercises both mapping paths: digest-pinned
+// references matched by digest (stable across registry rewrite), and tag-only
+// references matched by canonical repository name -- covered when exactly one
+// manifest entry carries the name, uncovered when none does, and rejected as
+// ambiguous when more than one does. Tag-only references are the common case
+// because seed creation prefers repoTags over repoDigests.
 func TestVerifyManifestCoversSeed(t *testing.T) {
-	manifest := testManifest()
-	workload := manifest.Images[1]
+	workload := testManifest().Images[1]
+
+	// ambiguousManifest carries two entries under the same repository name, so a
+	// tag-only reference to that name cannot be bound to a single digest.
+	ambiguousManifest := &localimages.DigestManifest{
+		Version:       1,
+		OCILayoutPath: "oci",
+		Images: []localimages.ImageEntry{
+			{Name: testSeedName, Digest: testSeedDigest, OCITag: "a"},
+			{Name: testSeedName, Digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333", OCITag: "b"},
+		},
+	}
 
 	for _, tc := range []struct {
-		name    string
-		refs    []string
-		wantErr bool
+		name     string
+		refs     []string
+		manifest *localimages.DigestManifest
+		wantErr  string
 	}{
 		{
 			name: "digest-pinned refs covered regardless of registry rewrite",
@@ -1162,25 +1177,44 @@ func TestVerifyManifestCoversSeed(t *testing.T) {
 			},
 		},
 		{
-			name:    "tag-only ref is rejected as unmappable even when the name matches",
-			refs:    []string{testSeedName + ":4.15.0"},
-			wantErr: true,
+			name: "tag-only ref covered when exactly one manifest entry has the name",
+			refs: []string{testSeedName + ":4.15.0"},
 		},
 		{
-			name:    "tag-only ref with unknown name is rejected",
+			name: "bare ref (no tag, no digest) covered by name",
+			refs: []string{testSeedName},
+		},
+		{
+			name: "registry-port tag ref is not mistaken for a digest and maps by name",
+			refs: []string{"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"},
+			// Name differs from any manifest entry (rewritten registry host), so uncovered.
+			wantErr: "does not cover",
+		},
+		{
+			name:    "tag-only ref with unknown name is uncovered",
 			refs:    []string{"quay.io/openshift-release-dev/unknown:4.15.0"},
-			wantErr: true,
+			wantErr: "does not cover",
 		},
 		{
-			name:    "digest-pinned ref with unknown digest is unresolved",
+			name:     "tag-only ref is rejected as ambiguous when the name maps to multiple entries",
+			refs:     []string{testSeedName + ":4.15.0"},
+			manifest: ambiguousManifest,
+			wantErr:  "ambiguously",
+		},
+		{
+			name:    "digest-pinned ref with unknown digest is uncovered",
 			refs:    []string{testSeedName + "@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-			wantErr: true,
+			wantErr: "does not cover",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			manifest := tc.manifest
+			if manifest == nil {
+				manifest = testManifest()
+			}
 			err := verifyManifestCoversSeed(tc.refs, manifest)
-			if tc.wantErr {
-				assert.Error(t, err)
+			if tc.wantErr != "" {
+				assert.ErrorContains(t, err, tc.wantErr)
 			} else {
 				assert.NoError(t, err)
 			}

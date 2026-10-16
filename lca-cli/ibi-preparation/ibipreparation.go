@@ -573,42 +573,61 @@ func readSeedRequiredImages(imageListFile string) ([]string, error) {
 
 // verifyManifestCoversSeed fails unless every image the seed requires
 // (containers.list) maps unambiguously to an entry in the imported closure (the
-// digest manifest). Only a digest-pinned reference can be mapped: it is matched
-// by its digest, which is content-addressed and therefore stable across any
-// registry rewrite. A tag-only reference is rejected -- the manifest records each
-// entry's OCI layout ref name (OCITag), not the registry tag the seed asked for,
-// so matching on repository name alone would accept a different tag's digest.
-// Disconnected release content is digest-pinned in practice, so failing closed on
-// any non-digest reference enforces the unambiguous mapping without silently
-// accepting the wrong image. Without this check a seed requirement missing from
-// the manifest would pass precache -- which now verifies only the manifest --
-// while leaving the node short an image it needs.
+// digest manifest). A reference is mapped one of two ways:
+//
+//   - Digest-pinned (repo@sha256:...): matched by digest, which is
+//     content-addressed and therefore stable across any registry rewrite.
+//   - Tag-only or bare (repo:tag / repo): matched by canonical repository name
+//     against the manifest entry's Name. Seed creation prefers repoTags over
+//     repoDigests (seedcreator.createContainerList), so a normal seed's
+//     containers.list legitimately carries tag references; rejecting them would
+//     fail a disconnected prepare on an otherwise-complete closure. The manifest
+//     does not record the registry tag the seed asked for (only the OCI layout
+//     ref name, OCITag), so a tag reference can only be mapped by repository
+//     name -- and only when exactly one manifest entry carries that name. If two
+//     or more entries share the name (different tags/digests of the same
+//     repository) the mapping is ambiguous and prepare fails closed rather than
+//     binding the reference to an arbitrary digest.
+//
+// A reference that maps to no entry (uncovered) or to more than one entry
+// (ambiguous) is a hard failure: precache now verifies only the manifest, so an
+// unmapped seed requirement would otherwise pass precache while leaving the node
+// short an image it needs.
 func verifyManifestCoversSeed(required []string, manifest *localimages.DigestManifest) error {
 	manifestDigests := make(map[string]struct{}, len(manifest.Images))
+	manifestNameCount := make(map[string]int, len(manifest.Images))
 	for _, e := range manifest.Images {
 		manifestDigests[e.Digest] = struct{}{}
+		manifestNameCount[e.Name]++
 	}
 
-	var unpinned, uncovered []string
+	var uncovered, ambiguous []string
 	for _, ref := range required {
-		digest := refDigest(ref)
-		if digest == "" {
-			unpinned = append(unpinned, ref)
+		if digest := refDigest(ref); digest != "" {
+			if _, ok := manifestDigests[digest]; !ok {
+				uncovered = append(uncovered, ref)
+			}
 			continue
 		}
-		if _, ok := manifestDigests[digest]; !ok {
+		// Tag-only or bare reference: map by canonical repository name.
+		switch manifestNameCount[refName(ref)] {
+		case 0:
 			uncovered = append(uncovered, ref)
+		case 1:
+			// Exactly one manifest entry carries this name: unambiguous match.
+		default:
+			ambiguous = append(ambiguous, ref)
 		}
 	}
 
 	var problems []string
-	if len(unpinned) > 0 {
-		problems = append(problems, fmt.Sprintf("%d seed image(s) are not digest-pinned and cannot be mapped unambiguously to the imported closure: %s",
-			len(unpinned), strings.Join(unpinned, ", ")))
-	}
 	if len(uncovered) > 0 {
 		problems = append(problems, fmt.Sprintf("digest manifest does not cover %d image(s) required by the seed: %s",
 			len(uncovered), strings.Join(uncovered, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		problems = append(problems, fmt.Sprintf("%d tag-only seed image(s) map ambiguously to multiple manifest entries by name: %s",
+			len(ambiguous), strings.Join(ambiguous, ", ")))
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
@@ -623,6 +642,19 @@ func refDigest(ref string) string {
 		return ref[at+1:]
 	}
 	return ""
+}
+
+// refName returns the repository name of a tag-based or bare image reference
+// (registry[:port]/repo[:tag]) with any tag stripped. The tag separator is the
+// ':' that follows the final '/', so a registry port (host:5000/repo) is not
+// mistaken for a tag. refName is only meaningful for references refDigest reports
+// as unpinned; a digest-pinned reference is matched by digest instead.
+func refName(ref string) string {
+	lastSlash := strings.LastIndex(ref, "/")
+	if colon := strings.LastIndex(ref, ":"); colon > lastSlash {
+		return ref[:colon]
+	}
+	return ref
 }
 
 func (i *IBIPrepare) shutdownNode() error {
