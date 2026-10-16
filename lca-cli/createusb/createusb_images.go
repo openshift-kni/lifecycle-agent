@@ -47,6 +47,23 @@ package createusb
 // each reference to a digest guarantees content-addressing/immutability, not
 // publisher identity or provenance.
 //
+// # Crash-safe publication
+//
+// The on-media digest manifest (digests.json at the p2 root) is the single commit
+// point. Each build mirrors into a fresh, build-unique layout directory (never the
+// one the live manifest references) and records that directory's name as the
+// manifest's OCILayoutPath. Because the consumer locates the layout *through* the
+// manifest, atomically replacing digests.json with a single rename is what switches
+// the media from the previous layout to the new one: before the rename the committed
+// manifest still points at the intact previous layout, after it the committed manifest
+// points at the fully-written new layout. A crash (or power loss) at any point therefore
+// leaves the media consistent -- the committed manifest always points at a complete
+// layout -- and at worst leaves an orphaned layout directory, which the next build
+// garbage-collects. Superseded and orphaned layout directories are removed only *after*
+// the manifest commit succeeds, so the only intact layout is never deleted. The
+// beside-output copy (<output>.digests.json) is an audit-only, best-effort artifact that
+// never participates in the commit (it may sit on a different filesystem).
+//
 // # Wiring
 //
 // Build remains a documented not-implemented stub; the end-to-end media assembly
@@ -79,27 +96,27 @@ import (
 )
 
 const (
-	// ociLayoutDirName is both the OCI layout directory name under the p2 media root
-	// and the value recorded as DigestManifest.OCILayoutPath (relative to the media
-	// root). The consumer resolves it with SecureJoin against the media root.
-	ociLayoutDirName = "oci"
+	// ociLayoutDirPrefix prefixes the per-build OCI image layout directory created
+	// directly under the p2 media root. Every build gets a unique directory
+	// (ociLayoutDirPrefix + a random suffix) whose basename is recorded as
+	// DigestManifest.OCILayoutPath, so the build never writes into the layout the live
+	// manifest still references. The consumer resolves OCILayoutPath with SecureJoin
+	// against the media root. Superseded and crash-orphaned layout directories (same
+	// prefix) are garbage-collected, but only after the manifest commit succeeds.
+	ociLayoutDirPrefix = "oci-"
 
 	// digestManifestFileName is the on-media digest-manifest name written at the p2
-	// root; the value later recorded as IBIPrepareConfig.ExpectedDigestsPath.
+	// root; the value later recorded as IBIPrepareConfig.ExpectedDigestsPath. Its atomic
+	// replacement is the single commit point that switches the live layout.
 	digestManifestFileName = "digests.json"
 
-	// digestManifestSuffix is appended to the --output path for the build-side copy
-	// (<output>.digests.json) used for auditing.
+	// digestManifestSuffix is appended to the --output path for the audit-only
+	// build-side copy (<output>.digests.json).
 	digestManifestSuffix = ".digests.json"
 
 	// digestManifestVersion is the schema version emitted; it must match the only
 	// version localimages understands.
 	digestManifestVersion = 1
-
-	// ociStagingPrefix prefixes the temporary staging directory created inside the
-	// p2 root so the completed layout can be published with an atomic same-filesystem
-	// rename, and so a failed build leaves no stale output.
-	ociStagingPrefix = ".oci-staging-"
 )
 
 // ociTagInvalidChars matches every run of characters that is not allowed in the
@@ -195,12 +212,17 @@ func defaultImageBuildDeps(log *logrus.Logger) imageBuildDeps {
 	}
 }
 
-// BuildImageLayout resolves the manifest's image set, mirrors it into the p2 OCI
-// image layout under p2Root, and publishes the digest manifest beside the output
-// (<output>.digests.json) and at the p2 root (digests.json). Publication is atomic:
-// everything is staged in a fresh temporary directory inside p2Root and published
-// with a same-filesystem rename, so a failed build leaves no stale layout or
-// manifest. It is the entry point the media-assembly story (CNF-27171) wires in.
+// BuildImageLayout resolves the manifest's image set, mirrors it into a fresh,
+// build-unique OCI image layout directory under p2Root, and commits the on-media
+// digest manifest (digests.json at the p2 root). The on-media manifest is the single
+// commit point: it is replaced with one atomic rename, and because the consumer
+// locates the layout through the manifest's OCILayoutPath, that rename is what
+// switches the media from the previous layout to the new one. A crash at any point
+// leaves the committed manifest pointing at a complete layout (never a mismatch); the
+// only side effect is a possible orphaned layout directory, which this and later
+// builds garbage-collect after the commit. The beside-output copy
+// (<output>.digests.json) is written audit-only and best-effort after the commit. It
+// is the entry point the media-assembly story (CNF-27171) wires in.
 func BuildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root string) (*LayoutBuildResult, error) {
 	return buildImageLayout(ctx, log, m, opts, outputPath, p2Root, defaultImageBuildDeps(log))
 }
@@ -216,69 +238,77 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		return nil, fmt.Errorf("creating p2 root %q: %w", p2Root, err)
 	}
 
-	// Stage inside p2Root so the completed layout can be published with an atomic
-	// same-filesystem rename. The staging directory is always removed, so a failed
-	// build leaves no partial output alongside the (untouched) final paths.
-	stagingDir, err := os.MkdirTemp(p2Root, ociStagingPrefix)
+	// Mirror into a fresh, build-unique layout directory directly under p2Root. It is
+	// never the directory the live manifest references, so the build cannot corrupt the
+	// currently-committed layout. Until the manifest commit below succeeds this new
+	// directory is an orphan; if the build fails before committing it is removed here,
+	// leaving the previous committed manifest and its layout untouched.
+	newLayout, err := os.MkdirTemp(p2Root, ociLayoutDirPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("creating staging directory under %q: %w", p2Root, err)
+		return nil, fmt.Errorf("creating OCI layout directory under %q: %w", p2Root, err)
 	}
+	committed := false
 	defer func() {
-		if rmErr := os.RemoveAll(stagingDir); rmErr != nil && err == nil {
-			err = fmt.Errorf("cleaning up staging directory %q: %w", stagingDir, rmErr)
+		if !committed {
+			if rmErr := os.RemoveAll(newLayout); rmErr != nil && err == nil {
+				err = fmt.Errorf("cleaning up OCI layout directory %q: %w", newLayout, rmErr)
+			}
 		}
 	}()
 
-	stagingLayout := filepath.Join(stagingDir, ociLayoutDirName)
-	entries, err := mirrorToOCILayout(ctx, refs, stagingLayout, opts.AuthFile, deps)
+	entries, err := mirrorToOCILayout(ctx, refs, newLayout, opts.AuthFile, deps)
 	if err != nil {
 		return nil, err
 	}
 
-	// Validate every entry against the completed staged layout before publishing, so
-	// a producer bug is caught here rather than at prepare time on the node.
-	if err := verifyLayoutEntries(stagingLayout, entries); err != nil {
+	// Validate every entry against the completed layout before committing, so a
+	// producer bug is caught here rather than at prepare time on the node.
+	if err := verifyLayoutEntries(newLayout, entries); err != nil {
 		return nil, err
 	}
 
-	// Marshal and validate the manifest bytes before anything is published, so a bad
-	// manifest fails the build while the final paths still hold their previous
-	// (untouched) content.
-	manifestData, err := marshalDigestManifest(entries)
+	// Record the new layout's basename as OCILayoutPath so the committed manifest points
+	// at it; marshal and validate the manifest bytes before anything is committed, so a
+	// bad manifest fails the build while the committed manifest (if any) still points at
+	// its previous, intact layout.
+	layoutName := filepath.Base(newLayout)
+	manifestData, err := marshalDigestManifest(entries, layoutName)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateDigestManifestBytes(manifestData, stagingDir); err != nil {
+	if err := validateDigestManifestBytes(manifestData, p2Root); err != nil {
 		return nil, err
 	}
 
-	size, err := computeSizeReport(stagingLayout, len(manifestData))
+	size, err := computeSizeReport(newLayout, len(manifestData))
 	if err != nil {
 		return nil, err
 	}
 	logSizeReport(log, size)
 
-	// Publish the layout and both manifest copies as a single recoverable
-	// transaction: every target that already exists is moved aside to a backup, the
-	// new content is put in place, and the backups are discarded only once all three
-	// targets are published. If any write fails the transaction rolls every target
-	// back, so the media is never left with a new layout beside a previous manifest
-	// (or two manifest copies that disagree). Every published byte was validated
-	// above, so a failure never leaves a corrupt or partially-written file.
-	finalLayout := filepath.Join(p2Root, ociLayoutDirName)
+	// Commit: atomically replace the on-media digest manifest. This single rename is the
+	// commit point -- before it the committed manifest points at the previous layout,
+	// after it the committed manifest points at the fully-written new layout. publishFile
+	// writes to a temp file and renames, so a failed commit never leaves a corrupt or
+	// partially-written manifest and the previous committed manifest/layout stay intact.
 	p2Path := filepath.Join(p2Root, digestManifestFileName)
-	besideOutput := outputPath + digestManifestSuffix
-
-	txn := &publishTxn{}
-	defer txn.finish(&err)
-
-	if err = txn.swapDir(stagingLayout, finalLayout); err != nil {
+	if err = publishFile(p2Path, manifestData); err != nil {
 		return nil, err
 	}
-	for _, path := range []string{p2Path, besideOutput} {
-		if err = txn.writeFile(path, manifestData); err != nil {
-			return nil, err
-		}
+	committed = true
+
+	// The media is now consistent. Everything below is best-effort cleanup/auditing and
+	// must not fail the build: a failure here cannot leave a mismatched medium.
+
+	// Garbage-collect superseded and crash-orphaned layout directories, now that the
+	// committed manifest points at the new one. The committed layout is never removed.
+	gcSupersededLayouts(log, p2Root, layoutName)
+
+	// Publish the audit-only beside-output copy. It sits beside --output (possibly on a
+	// different filesystem) and is never part of the commit; a failure is logged, not fatal.
+	besideOutput := outputPath + digestManifestSuffix
+	if wErr := publishFile(besideOutput, manifestData); wErr != nil && log != nil {
+		log.WithError(wErr).WithField("path", besideOutput).Warn("failed to write audit-only beside-output digest manifest copy")
 	}
 
 	return &LayoutBuildResult{Images: entries, Size: size}, nil
@@ -395,15 +425,15 @@ func mirrorToOCILayout(ctx context.Context, refs []string, stagingLayoutDir, aut
 	return entries, nil
 }
 
-// marshalDigestManifest marshals the digest manifest for the given entries.
-// Together with validateDigestManifestBytes and publishFile it produces the two
-// byte-identical on-media copies (<output>.digests.json for build-side auditing and
-// digests.json at the p2 root as the self-check/precache reference) from
-// pre-validated content.
-func marshalDigestManifest(entries []localimages.ImageEntry) ([]byte, error) {
+// marshalDigestManifest marshals the digest manifest for the given entries, recording
+// layoutName as the OCILayoutPath the consumer resolves to locate the layout. Together
+// with validateDigestManifestBytes and publishFile it produces the committed on-media
+// manifest (digests.json at the p2 root) and the byte-identical audit-only copy
+// (<output>.digests.json) from pre-validated content.
+func marshalDigestManifest(entries []localimages.ImageEntry, layoutName string) ([]byte, error) {
 	manifest := localimages.DigestManifest{
 		Version:       digestManifestVersion,
-		OCILayoutPath: ociLayoutDirName,
+		OCILayoutPath: layoutName,
 		Images:        entries,
 	}
 	data, err := json.Marshal(manifest)
@@ -467,100 +497,31 @@ func publishFile(path string, data []byte) (err error) {
 	return nil
 }
 
-// publishTxn makes the final publication of the OCI layout and the two digest-manifest
-// copies recoverable. Each target's previous content is moved aside to a sibling
-// backup before the new content is put in place and recorded in done; finish() then
-// either discards every backup (on success) or restores every published target from
-// its backup (on failure). Keeping the backups until all targets are published is
-// what guarantees the media never ends up with a new layout beside a previous manifest.
-type publishTxn struct {
-	done []publishedTarget
-}
-
-// publishedTarget records a single published target and the backup of the content it
-// replaced ("" when the target did not previously exist).
-type publishedTarget struct {
-	path   string
-	backup string
-}
-
-// swapDir publishes the staged layout at final (staging is a sibling of final, so the
-// rename is atomic), moving any existing layout aside to a recoverable backup.
-func (t *publishTxn) swapDir(staging, final string) error {
-	backup, err := moveAside(final)
+// gcSupersededLayouts removes every build-unique OCI layout directory under p2Root
+// except keepName (the one the just-committed manifest references). It reclaims the
+// previous build's layout and any directories orphaned by an earlier crash between the
+// layout write and the manifest commit. It must be called only after the manifest
+// commit has succeeded, so the only intact layout (the committed one) is never removed.
+// Removal failures are best-effort: they waste space but cannot leave a mismatched
+// medium, so they are logged rather than returned.
+func gcSupersededLayouts(log *logrus.Logger, p2Root, keepName string) {
+	ents, err := os.ReadDir(p2Root)
 	if err != nil {
-		return err
-	}
-	if err := os.Rename(staging, final); err != nil {
-		if backup != "" {
-			_ = os.Rename(backup, final) // best-effort restore of the previous layout
-		}
-		return fmt.Errorf("publishing OCI layout to %q: %w", final, err)
-	}
-	t.done = append(t.done, publishedTarget{path: final, backup: backup})
-	return nil
-}
-
-// writeFile publishes data at path with an atomic temp-file-then-rename, moving any
-// existing file aside to a recoverable backup first.
-func (t *publishTxn) writeFile(path string, data []byte) error {
-	backup, err := moveAside(path)
-	if err != nil {
-		return err
-	}
-	if err := publishFile(path, data); err != nil {
-		if backup != "" {
-			_ = os.Rename(backup, path) // best-effort restore of the previous file
-		}
-		return err
-	}
-	t.done = append(t.done, publishedTarget{path: path, backup: backup})
-	return nil
-}
-
-// finish completes the transaction. On success (*errp == nil) it discards every
-// backup; on failure it rolls every published target back to its backup, in reverse
-// order, so the previous layout and manifests remain mutually consistent.
-func (t *publishTxn) finish(errp *error) {
-	if *errp != nil {
-		for i := len(t.done) - 1; i >= 0; i-- {
-			d := t.done[i]
-			_ = os.RemoveAll(d.path)
-			if d.backup != "" {
-				_ = os.Rename(d.backup, d.path)
-			}
+		if log != nil {
+			log.WithError(err).WithField("p2Root", p2Root).Warn("failed to scan for superseded OCI layout directories")
 		}
 		return
 	}
-	for _, d := range t.done {
-		if d.backup == "" {
+	for _, ent := range ents {
+		name := ent.Name()
+		if name == keepName || !ent.IsDir() || !strings.HasPrefix(name, ociLayoutDirPrefix) {
 			continue
 		}
-		if rmErr := os.RemoveAll(d.backup); rmErr != nil {
-			*errp = fmt.Errorf("removing backup %q: %w", d.backup, rmErr)
-			return
+		path := filepath.Join(p2Root, name)
+		if rmErr := os.RemoveAll(path); rmErr != nil && log != nil {
+			log.WithError(rmErr).WithField("path", path).Warn("failed to remove superseded OCI layout directory")
 		}
 	}
-}
-
-// moveAside renames an existing path to a sibling ".previous" backup so it can be
-// restored on rollback, returning "" if the path does not exist. The backup is a
-// sibling (same directory, same filesystem), so the rename is atomic.
-func moveAside(path string) (string, error) {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("checking for existing %q: %w", path, err)
-	}
-	backup := path + ".previous"
-	if err := os.RemoveAll(backup); err != nil {
-		return "", fmt.Errorf("clearing previous backup %q: %w", backup, err)
-	}
-	if err := os.Rename(path, backup); err != nil {
-		return "", fmt.Errorf("moving %q aside: %w", path, err)
-	}
-	return backup, nil
 }
 
 // verifyLayoutEntries confirms that each entry resolves to exactly one descriptor
