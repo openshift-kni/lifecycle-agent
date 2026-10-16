@@ -227,9 +227,12 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	mountDir := t.TempDir()
 	mountOut, merr := exec.Command("mount", node, mountDir).CombinedOutput() //nolint:gosec // fixed loopback node + test temp dir
 	require.NoError(t, merr, string(mountOut))
+	mounted := true
+	// Safety net: unmount if an assertion below fails before the explicit unmount runs.
 	defer func() {
-		umountOut, uerr := exec.Command("umount", mountDir).CombinedOutput() //nolint:gosec // fixed test temp dir
-		require.NoError(t, uerr, string(umountOut))
+		if mounted {
+			_, _ = exec.Command("umount", mountDir).CombinedOutput() //nolint:gosec // fixed test temp dir
+		}
 	}()
 
 	names, rerr := os.ReadDir(mountDir)
@@ -237,6 +240,13 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	for _, e := range names {
 		assert.Equal(t, "lost+found", e.Name(), "p2 must be empty apart from the filesystem's lost+found")
 	}
+
+	// Unmount p2 before tearing the handle down: a loop device that is still backing a mounted
+	// filesystem is busy, and the kernel can defer its detachment until the unmount completes,
+	// which would make the loopAttached assertion below flaky.
+	umountOut, uerr := exec.Command("umount", mountDir).CombinedOutput() //nolint:gosec // fixed test temp dir
+	require.NoError(t, uerr, string(umountOut))
+	mounted = false
 
 	// Success teardown: Close detaches the loop device and removes the discarded image.
 	require.NoError(t, handle.Close())

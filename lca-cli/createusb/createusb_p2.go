@@ -170,16 +170,25 @@ func (p *opsPartitionOps) AddPartition(dev string, part PlannedPartition, fsType
 }
 
 // waitForPartitionNode waits for node to appear after a partition-table refresh: it asks
-// udev to settle (best effort) and then polls for the node with a bounded backoff, returning
-// a clear error if the node never materializes.
+// udev to settle (best effort) and then polls for the node, returning a clear error if the
+// node never materializes.
+//
+// A single deadline bounds the whole wait. udevadm settle is given an explicit timeout
+// derived from that deadline so a slow or stuck settle cannot push the overall wait past
+// partitionNodeWaitTimeout -- without it, the timer below would only start once settle
+// returned, so the method could block far longer than its reported limit.
 func (p *opsPartitionOps) waitForPartitionNode(node string) error {
-	if _, err := p.ops.RunInHostNamespace("udevadm", "settle"); err != nil {
-		// Non-fatal: settle is best effort; the existence poll below is the real guard.
+	deadline := time.Now().Add(partitionNodeWaitTimeout)
+
+	// Bound settle by the remaining time to the shared deadline (rounded up to whole seconds,
+	// the granularity udevadm --timeout accepts). settle is best effort: a failure is
+	// non-fatal because the existence poll below is the real guard.
+	settleTimeout := int(time.Until(deadline).Seconds()) + 1
+	if _, err := p.ops.RunInHostNamespace("udevadm", "settle", fmt.Sprintf("--timeout=%d", settleTimeout)); err != nil {
 		p.log.Warnf("create-usb: udevadm settle before waiting for partition node %s failed: %v", node, err)
 	}
 
-	attempts := int(partitionNodeWaitTimeout / partitionNodePollInterval)
-	for i := 0; ; i++ {
+	for {
 		_, err := os.Stat(node)
 		if err == nil {
 			return nil
@@ -187,7 +196,7 @@ func (p *opsPartitionOps) waitForPartitionNode(node string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("checking for partition node %s: %w", node, err)
 		}
-		if i >= attempts {
+		if !time.Now().Before(deadline) {
 			return fmt.Errorf("partition node %s did not appear within %s after refreshing the partition table",
 				node, partitionNodeWaitTimeout)
 		}
