@@ -211,21 +211,27 @@ type MediaHandle struct {
 // always discards, because p2/p3/p4 are not implemented yet). It is safe to call once and
 // clears the fields it releases so a second call is a no-op. Keeping completed media is a
 // sibling-story concern that will introduce a finalize path.
+//
+// If the detach fails, Close returns the error and leaves LoopDevice set and the backing
+// image in place: the loop device may still be attached to the image, so removing the
+// image would orphan an attachment and lose the only handle a caller has to retry the
+// detach. The caller can call Close again to retry once the underlying cause is cleared.
 func (h *MediaHandle) Close() error {
-	var errs []error
 	if h.LoopDevice != "" {
 		if err := h.partition.DetachLoopback(h.LoopDevice); err != nil {
-			errs = append(errs, fmt.Errorf("detaching loop device %s: %w", h.LoopDevice, err))
+			// Keep LoopDevice set (so a later Close can retry the detach) and do not remove
+			// the backing image while a loop device may still be attached to it.
+			return fmt.Errorf("detaching loop device %s: %w", h.LoopDevice, err)
 		}
 		h.LoopDevice = ""
 	}
 	if h.IsImage && h.ImagePath != "" {
 		if err := os.Remove(h.ImagePath); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("removing media image %s: %w", h.ImagePath, err))
+			return fmt.Errorf("removing media image %s: %w", h.ImagePath, err)
 		}
 		h.ImagePath = ""
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // Build assembles the USB media from a validated manifest.
@@ -337,31 +343,39 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 // 1 MiB-aligned and offsets derived from the placeholder p1 size: p1+p2+p4 for
 // install-only, p1+p2+p3+p4 for self-contained. The p2/p3/p4 entries are populated by the
 // sibling stories into the offsets reserved here.
+//
+// Each role has a *fixed* GPT partition number so a partition keeps the same number across
+// modes: live-iso=1, ibi-images=2, cluster-config=3, ibi-status=4. In install-only mode
+// cluster-config (p3) is omitted, so ibi-status stays p4 (the layout is p1/p2/p4, not a
+// renumbered p1/p2/p3) -- the number is not derived from the slice position.
 func partitionPlan(mode Mode, p1Size int64) PartitionPlan {
 	specs := []struct {
-		label string
-		size  int64
+		number int
+		label  string
+		size   int64
 	}{
-		{labelLiveISO, p1Size},
-		{labelIBIImages, p2ReservationBytes},
+		{1, labelLiveISO, p1Size},
+		{2, labelIBIImages, p2ReservationBytes},
 	}
 	if mode == ModeSelfContained {
 		specs = append(specs, struct {
-			label string
-			size  int64
-		}{labelClusterConfig, p3ReservationBytes})
+			number int
+			label  string
+			size   int64
+		}{3, labelClusterConfig, p3ReservationBytes})
 	}
 	specs = append(specs, struct {
-		label string
-		size  int64
-	}{labelIBIStatus, p4ReservationBytes})
+		number int
+		label  string
+		size   int64
+	}{4, labelIBIStatus, p4ReservationBytes})
 
 	parts := make([]PlannedPartition, 0, len(specs))
 	offset := gptFrontReservedBytes
-	for i, s := range specs {
+	for _, s := range specs {
 		offset = alignUp(offset, alignmentBytes)
 		parts = append(parts, PlannedPartition{
-			Number: i + 1,
+			Number: s.number,
 			Label:  s.label,
 			Offset: offset,
 			Size:   s.size,
@@ -388,12 +402,21 @@ func alignUp(v, align int64) int64 {
 	return ((v + align - 1) / align) * align
 }
 
-// allocateSparseImage creates (or truncates) a sparse file of exactly size bytes. The
-// backing bytes are not written, so a multi-GiB container costs no real disk until
-// content is written into it.
+// allocateSparseImage creates a new sparse file of exactly size bytes. The backing bytes
+// are not written, so a multi-GiB container costs no real disk until content is written
+// into it.
+//
+// It creates the file exclusively (O_EXCL): if the output path already exists it fails
+// without touching the existing file, rather than truncating it. A build never completes
+// in this story (it always returns the incomplete-assembly error and discards its own
+// freshly created image), so clobbering a path the operator reused -- e.g. a previous
+// real image -- would destroy that file for a command that then reports failure.
 func allocateSparseImage(path string, size int64) error {
-	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // output path is supplied by the operator at build time
+	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // output path is supplied by the operator at build time
 	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("output path %s already exists; refusing to overwrite it (remove it or choose a different --output path): %w", path, err)
+		}
 		return fmt.Errorf("creating image file: %w", err)
 	}
 	if terr := f.Truncate(size); terr != nil {
