@@ -161,6 +161,12 @@ const (
 
 	IBIWorkspace = "var/tmp"
 
+	// LocalImagesFSLabel is the filesystem label of the USB "p2" partition that
+	// carries the on-media OCI image layout for a disconnected IBI prepare. The
+	// prepare phase discovers the partition by this label and mounts it read-only
+	// at the configured LocalImagesPath.
+	LocalImagesFSLabel = "ibi-images"
+
 	ContainerStoragePath = "/var/lib/containers"
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"

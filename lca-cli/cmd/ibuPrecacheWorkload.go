@@ -120,7 +120,9 @@ func ibuPrecacheWorkloadRun() {
 	if err != nil {
 		terminateOnError(err)
 	}
-	if err := workload.Precache(precacheSpec, authFile, bestEffort); err != nil {
+	// The IBU precache job always runs connected (pulls from the registry); the
+	// disconnected local-presence path is IBI-prepare-only.
+	if err := workload.Precache(precacheSpec, authFile, bestEffort, false); err != nil {
 		terminateOnError(err)
 	}
 }

@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 func TestParseDigestManifest(t *testing.T) {
 	const goodDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid v1", func(t *testing.T) {
 		path := writeJSONFile(t, DigestManifest{
 			Version:       1,
 			OCILayoutPath: "oci",
@@ -61,6 +61,23 @@ func TestParseDigestManifest(t *testing.T) {
 		assert.Equal(t, testOCITag, m.Images[0].OCITag)
 	})
 
+	t.Run("valid v2 with sources", func(t *testing.T) {
+		path := writeJSONFile(t, DigestManifest{
+			Version:       SourcesManifestVersion,
+			OCILayoutPath: "oci",
+			Images: []ImageEntry{
+				{Name: testImageName, Digest: goodDigest, OCITag: testOCITag, Sources: []string{testImageName + ":4.15.0"}},
+			},
+		})
+
+		m, err := ParseDigestManifest(path)
+		require.NoError(t, err)
+		require.NotNil(t, m)
+		assert.Equal(t, SourcesManifestVersion, m.Version)
+		require.Len(t, m.Images, 1)
+		assert.Equal(t, []string{testImageName + ":4.15.0"}, m.Images[0].Sources)
+	})
+
 	t.Run("missing file", func(t *testing.T) {
 		_, err := ParseDigestManifest(filepath.Join(t.TempDir(), "does-not-exist.json"))
 		assert.Error(t, err)
@@ -74,7 +91,7 @@ func TestParseDigestManifest(t *testing.T) {
 	})
 
 	invalid := map[string]DigestManifest{
-		"unsupported version": {Version: 2, OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
+		"unsupported version": {Version: 3, OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"missing version":     {OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"missing layout path": {Version: 1, Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"empty images":        {Version: 1, OCILayoutPath: "oci"},
@@ -162,6 +179,41 @@ func TestImportImage_StoresCanonicalByDigest(t *testing.T) {
 
 	img := resolveStored(t, graphRoot, m.Images[0])
 	assertNameAndDigest(t, img, m.Images[0])
+}
+
+// TestImportImage_RegistersSourceAliases proves a v2 entry's tagged sources are
+// registered as local aliases of the imported digest, so a consumer that asks for
+// name:tag (the reference the seed actually requests) resolves the image locally.
+// Digest-pinned sources need no alias (they already resolve by canonical ref).
+func TestImportImage_RegistersSourceAliases(t *testing.T) {
+	requireCopyCapable(t)
+	im, graphRoot := newImporter(t)
+	mediaRoot, m := buildLayout(t, []layoutImage{{tag: testOCITag, name: testImageName, arches: []string{"amd64"}}})
+
+	tagRef := testImageName + ":4.15.0"
+	m.Images[0].Sources = []string{tagRef, testImageName + "@" + m.Images[0].Digest}
+
+	require.NoError(t, im.ImportImage(context.Background(), mediaRoot, m, m.Images[0]))
+
+	// Resolves under its canonical digest, and the tagged source is a stored name.
+	img := resolveStored(t, graphRoot, m.Images[0])
+	assertNameAndDigest(t, img, m.Images[0])
+	assert.Contains(t, img.Names, tagRef, "tagged source must be registered as a local alias")
+
+	// The alias resolves through the storage transport -- the same lookup path
+	// podman uses -- to the imported image.
+	verifier, err := NewImporter(logrus.New(), StoreConfig{
+		GraphDriverName: "vfs",
+		GraphRoot:       graphRoot,
+		RunRoot:         filepath.Join(t.TempDir(), "run-alias"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = verifier.Close() })
+	ref, err := istorage.Transport.ParseStoreReference(verifier.store, tagRef)
+	require.NoError(t, err)
+	_, aliasImg, err := istorage.ResolveReference(ref)
+	require.NoError(t, err, "tagged alias %s must resolve locally", tagRef)
+	assert.Equal(t, img.ID, aliasImg.ID, "the alias must resolve to the imported image")
 }
 
 func TestImportImage_MultiArchIndex(t *testing.T) {

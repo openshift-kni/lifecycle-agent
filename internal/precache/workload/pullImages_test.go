@@ -22,6 +22,121 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 )
 
+// saveImgSeams snapshots the podman pull/exists seams and restores them when the
+// test ends.
+func saveImgSeams(t *testing.T) {
+	t.Helper()
+	origPull, origExists := imgPull, imgExists
+	t.Cleanup(func() {
+		imgPull = origPull
+		imgExists = origExists
+	})
+}
+
+// TestPullImageDisconnected proves the disconnected path never pulls: an image present
+// locally succeeds and a missing one fails, and podman pull is never invoked either way.
+func TestPullImageDisconnected(t *testing.T) {
+	cases := []struct {
+		name    string
+		exists  bool
+		wantErr bool
+	}{
+		{name: "present locally succeeds", exists: true, wantErr: false},
+		{name: "missing locally fails", exists: false, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			saveImgSeams(t)
+			imgExists = func(string) bool { return tc.exists }
+			imgPull = func(string, string) error {
+				t.Fatal("podman pull must not be called in disconnected mode")
+				return nil
+			}
+
+			progress := &precache.Progress{Total: 1}
+			err := pullImage("quay.io/img@sha256:abc", "", true, progress)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error for a missing image in disconnected mode")
+				}
+				if progress.Failed != 1 || progress.Pulled != 0 {
+					t.Fatalf("expected Failed=1 Pulled=0, got Failed=%d Pulled=%d", progress.Failed, progress.Pulled)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if progress.Pulled != 1 || progress.Failed != 0 {
+					t.Fatalf("expected Pulled=1 Failed=0, got Pulled=%d Failed=%d", progress.Pulled, progress.Failed)
+				}
+			}
+		})
+	}
+}
+
+// TestPullImageConnectedStillPulls proves the connected path is unchanged: it pulls via
+// podman and does not consult local presence as a substitute for pulling.
+func TestPullImageConnectedStillPulls(t *testing.T) {
+	saveImgSeams(t)
+	pulled := false
+	imgPull = func(image, _ string) error {
+		pulled = true
+		return nil
+	}
+	imgExists = func(string) bool {
+		t.Fatal("podman image exists must not gate the connected pull path")
+		return false
+	}
+
+	progress := &precache.Progress{Total: 1}
+	if err := pullImage("quay.io/img@sha256:abc", "", false, progress); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !pulled {
+		t.Fatal("expected podman pull to be called in connected mode")
+	}
+	if progress.Pulled != 1 {
+		t.Fatalf("expected Pulled=1, got %d", progress.Pulled)
+	}
+}
+
+// TestValidatePrecacheDisconnectedIgnoresBestEffort proves a missing image is always
+// fatal in disconnected mode, regardless of the best-effort setting, while the
+// connected path still honors best-effort. The failed image uses a digest that is not
+// present locally, so the podman-exists re-check inside ValidatePrecache reports it
+// absent.
+func TestValidatePrecacheDisconnectedIgnoresBestEffort(t *testing.T) {
+	cases := []struct {
+		name         string
+		bestEffort   bool
+		disconnected bool
+		wantErr      bool
+	}{
+		{name: "disconnected best-effort still fatal", bestEffort: true, disconnected: true, wantErr: true},
+		{name: "disconnected non-best-effort fatal", bestEffort: false, disconnected: true, wantErr: true},
+		{name: "connected best-effort skips error", bestEffort: true, disconnected: false, wantErr: false},
+		{name: "connected non-best-effort fatal", bestEffort: false, disconnected: false, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status := &precache.Progress{
+				Total:          1,
+				Failed:         1,
+				FailedPullList: []string{"quay.io/missing@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			}
+			err := ValidatePrecache(status, tc.bestEffort, tc.disconnected)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected an error (bestEffort=%v disconnected=%v)", tc.bestEffort, tc.disconnected)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error (bestEffort=%v disconnected=%v): %v", tc.bestEffort, tc.disconnected, err)
+			}
+		})
+	}
+}
+
 func TestMaxPullThreads(t *testing.T) {
 	tests := []struct {
 		name  string

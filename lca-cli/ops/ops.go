@@ -91,6 +91,7 @@ type Ops interface {
 		preRecertOperations func() error, postRecertOperations func() error, additionalPodmanParams ...string) error
 	ListBlockDevices() ([]BlockDevice, error)
 	Mount(deviceName, mountFolder string) error
+	MountReadOnly(deviceName, mountFolder string) error
 	Umount(deviceName string) error
 	Chroot(chrootPath string) (func() error, error)
 	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
@@ -495,9 +496,16 @@ func (o *ops) RecertFullFlow(recertContainerImage, authFile, configFile string,
 
 // ListBlockDevices runs lsblk command and not using go library cause
 // each library that i was looking into doesn't show label for block device and shows labels only for partitions
+//
+// --list is passed so lsblk emits every disk and partition as a flat top-level
+// entry in "blockdevices" rather than nesting partitions under their parent disk
+// as "children". BlockDevice only carries Name/Label (no Children), so without
+// --list a label that lives on a partition (e.g. the "ibi-images" label on sdb2)
+// would be dropped during unmarshal. Flat output lets callers match labels on both
+// whole devices and partitions without changing the BlockDevice shape.
 func (o *ops) ListBlockDevices() ([]BlockDevice, error) {
 	o.log.Info("Listing block devices")
-	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f",
+	lsblkOutput, err := o.RunInHostNamespace("lsblk", "-f", "--list",
 		"--json", "--output", "NAME,LABEL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to run lsblk, err: %w", err)
@@ -522,6 +530,33 @@ func (o *ops) Mount(deviceName, mountFolder string) error {
 	}
 	if _, err := o.RunInHostNamespace("mount", fmt.Sprintf("/dev/%s", deviceName), mountFolder); err != nil {
 		return fmt.Errorf("failed to mount %s into %s, err: %w", deviceName, mountFolder, err)
+	}
+	return nil
+}
+
+// MountReadOnly mounts the discovered block device read-only at mountFolder. The
+// p2 installer media carries the OCI image layout and must never be written, so a
+// read-only mount is used rather than Mount. It creates the mountpoint, runs
+// "mount -o ro /dev/<deviceName> <mountFolder>", and on a mount failure removes
+// the mountpoint it created so a failed attempt leaves no partial state behind.
+func (o *ops) MountReadOnly(deviceName, mountFolder string) error {
+	o.log.Infof("Mounting %s read-only into %s", deviceName, mountFolder)
+	// Track whether this call creates the mountpoint, so a failed mount only removes a
+	// directory we created and never a pre-existing (e.g. operator-configured) mountpoint.
+	_, statErr := os.Stat(mountFolder)
+	createdMountpoint := os.IsNotExist(statErr)
+	if err := os.MkdirAll(mountFolder, 0o700); err != nil {
+		return fmt.Errorf("failed to create %s, err: %w", mountFolder, err)
+	}
+	if _, err := o.RunInHostNamespace("mount", "-o", "ro", fmt.Sprintf("/dev/%s", deviceName), mountFolder); err != nil {
+		// Clean up only the mountpoint we created; leaving an empty directory behind
+		// after a failed mount would mask the failure from a later re-mount attempt.
+		if createdMountpoint {
+			if rmErr := os.RemoveAll(mountFolder); rmErr != nil {
+				o.log.Warnf("failed to remove mountpoint %s after mount failure: %v", mountFolder, rmErr)
+			}
+		}
+		return fmt.Errorf("failed to mount %s read-only into %s, err: %w", deviceName, mountFolder, err)
 	}
 	return nil
 }

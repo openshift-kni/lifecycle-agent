@@ -91,6 +91,7 @@ func TestValidateDisconnectedAllowsEmptyPullSecret(t *testing.T) {
 	cfg.PullSecret = ""
 	cfg.Disconnected = true
 	cfg.LocalImagesPath = testLocalImagesPath
+	cfg.ExpectedDigestsPath = testDigestsPath
 
 	assert.NoError(t, cfg.Validate())
 }
@@ -100,6 +101,7 @@ func TestValidateDisconnectedWithSyntheticPullSecretIsValid(t *testing.T) {
 	cfg.PullSecret = `{"auths":{}}`
 	cfg.Disconnected = true
 	cfg.LocalImagesPath = testLocalImagesPath
+	cfg.ExpectedDigestsPath = testDigestsPath
 
 	assert.NoError(t, cfg.Validate())
 
@@ -116,6 +118,20 @@ func TestValidateDisconnectedRequiresLocalImagesPath(t *testing.T) {
 
 	err := cfg.Validate()
 	assert.EqualError(t, err, "localImagesPath is required when disconnected is set")
+}
+
+func TestValidateDisconnectedRequiresExpectedDigestsPath(t *testing.T) {
+	// A disconnected prepare always parses the digest manifest at ExpectedDigestsPath,
+	// so validation must reject a disconnected config that leaves it empty rather than
+	// accepting one prepare cannot use.
+	cfg := baseInstallConfig()
+	cfg.PullSecret = ""
+	cfg.Disconnected = true
+	cfg.LocalImagesPath = testLocalImagesPath
+	cfg.ExpectedDigestsPath = ""
+
+	err := cfg.Validate()
+	assert.EqualError(t, err, "expectedDigestsPath is required when disconnected is set")
 }
 
 func TestValidateConnectedIgnoresLocalImageFields(t *testing.T) {

@@ -1,10 +1,13 @@
 package ibi_preparation
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/go-logr/logr"
@@ -18,6 +21,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache/workload"
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
@@ -28,6 +32,33 @@ const (
 	defaultRegistriesConfFile = "/etc/containers/registries.conf"
 	rhcosOstreeIndex          = 1
 	rhcosOstreePath           = "ostree/deploy/rhcos"
+
+	// closureStoreDriver is the containers-storage graph driver used when opening
+	// the installed stateroot's store to import the image closure into. It matches
+	// the driver RHCOS uses for the node's persistent /var/lib/containers store.
+	closureStoreDriver = "overlay"
+)
+
+// imageImporter is the subset of *localimages.Importer that the prepare flow uses.
+// It is an interface so unit tests can substitute a fake importer without opening a
+// real containers-storage store.
+type imageImporter interface {
+	ImportImage(ctx context.Context, mediaRoot string, m *localimages.DigestManifest, e localimages.ImageEntry) error
+	ImportAll(ctx context.Context, mediaRoot string, m *localimages.DigestManifest) error
+	Close() error
+}
+
+// Seams overridable from tests. The real implementations parse the on-media
+// manifest and open a containers-storage store; tests replace them to exercise the
+// disconnected wiring without touching the filesystem or a real store.
+var (
+	parseDigestManifest = localimages.ParseDigestManifest
+	newImageImporter    = func(log *logrus.Logger, cfg localimages.StoreConfig) (imageImporter, error) {
+		return localimages.NewImporter(log, cfg)
+	}
+	// setupStateroot is seamed so Run()'s import ordering can be unit-tested without
+	// performing the real (heavy, filesystem-dependent) stateroot setup.
+	setupStateroot = prep.SetupStateroot
 )
 
 type IBIPrepare struct {
@@ -52,8 +83,46 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 }
 
 func (i *IBIPrepare) Run() error {
+	ctx := context.Background()
+
+	// Disconnected (offline) prepare sources every image from the on-media OCI layout
+	// on the USB "p2" partition instead of the network. The two hard preconditions --
+	// p2 discovery/mount and manifest/seed validation -- run first, before
+	// diskPreparation touches the installation disk, so a missing/ambiguous device or a
+	// missing/malformed/seed-mismatched manifest fails while the disk is still intact
+	// (there is no network fallback). The connected flow is left byte-for-byte unchanged.
+	var (
+		manifest  *localimages.DigestManifest
+		seedEntry localimages.ImageEntry
+		unmountP2 func() error
+	)
+	if i.config.Disconnected {
+		// Preflight precondition 1: discover p2 by label and mount it read-only.
+		unmount, err := i.mountLocalImages()
+		if err != nil {
+			return fmt.Errorf("failed to mount local images partition: %w", err)
+		}
+		unmountP2 = unmount
+		// Keep p2 mounted through the entire import; this deferred unmount covers the
+		// error paths (its result is intentionally discarded -- it is best-effort
+		// cleanup while Run is already failing, and also acts as the retry of a failed
+		// explicit final unmount). On the happy path p2 is unmounted explicitly as the
+		// last p2 action after the final sync (the installed store handoff reads it
+		// after precache), and this deferred call then becomes a no-op (unmount is
+		// idempotent).
+		defer func() { _ = unmountP2() }()
+
+		// Preflight precondition 2: parse the manifest and resolve the seed entry,
+		// before any disk write.
+		m, e, err := i.preflightValidateManifest()
+		if err != nil {
+			return fmt.Errorf("failed to validate local images manifest: %w", err)
+		}
+		manifest, seedEntry = m, e
+	}
+
 	// In a disconnected prepare there is no operator-provided pull secret, but Run() still
-	// passes common.IBIPullSecretFilePath to the seed pull and precache, so a synthetic empty
+	// passes common.IBIPullSecretFilePath to the precache, so a synthetic empty
 	// authfile must exist. Provision it non-destructively and remove it on completion (including
 	// the error path via defer). The connected flow is untouched.
 	var removeAuthFile func()
@@ -69,26 +138,49 @@ func (i *IBIPrepare) Run() error {
 		defer removeAuthFile()
 	}
 
-	// Pull seed image
 	if err := i.diskPreparation(); err != nil {
 		return fmt.Errorf("failed to prepare disk: %w", err)
 	}
 
-	i.log.Info("Pulling seed image")
-	if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPullSecretFilePath, i.config.SeedImage); err != nil {
-		return fmt.Errorf("failed to pull image: %w", err)
+	// Acquire the seed image. Disconnected: import the single seed entry (validated in
+	// preflight) from the p2 layout into the live/default store. Connected: pull it from
+	// the network as before. The seed is a bootstrap input consumed by SetupStateroot
+	// below; the live store is ephemeral and dropped on reboot.
+	if i.config.Disconnected {
+		i.log.Info("Importing seed image from local images layout")
+		if err := i.importSeedToLiveStore(ctx, manifest, seedEntry); err != nil {
+			return fmt.Errorf("failed to import seed image: %w", err)
+		}
+	} else {
+		i.log.Info("Pulling seed image")
+		if _, err := i.ops.RunInHostNamespace("podman", "pull", "--authfile", common.IBIPullSecretFilePath, i.config.SeedImage); err != nil {
+			return fmt.Errorf("failed to pull image: %w", err)
+		}
 	}
 
 	// TODO: change to logrus after refactoring the code in controllers and moving to logrus
 	log := logr.Logger{}
 	common.OstreeDeployPathPrefix = "/mnt/"
 	// Setup state root
-	if err := prep.SetupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
+	if err := setupStateroot(log, i.ops, i.ostreeClient, i.rpmostreeClient,
 		i.config.SeedImage, i.config.SeedVersion, true); err != nil {
 		return fmt.Errorf("failed to setup stateroot: %w", err)
 	}
 
-	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile); err != nil {
+	// Disconnected: import the full release/workload closure into the installed
+	// stateroot's graphroot before precache, so precache finds every image already
+	// present and performs no network pull. This must run after SetupStateroot (the
+	// installed stateroot now exists) and before precacheFlow, and outside the /host
+	// chroot precacheFlow enters -- the p2 layout is only visible in the live-ISO
+	// namespace.
+	if i.config.Disconnected {
+		i.log.Info("Importing image closure into installed stateroot")
+		if err := i.importClosureToStateroot(ctx, manifest); err != nil {
+			return fmt.Errorf("failed to import image closure: %w", err)
+		}
+	}
+
+	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile, manifest); err != nil {
 		return fmt.Errorf("failed to precache: %w", err)
 	}
 
@@ -112,11 +204,225 @@ func (i *IBIPrepare) Run() error {
 		return fmt.Errorf("failed to sync filesystems: %w", err)
 	}
 
+	// Unmount p2 last: only after the final sync and the installed store handoff, so
+	// additionalimagestores never points at a path that has already gone away. This is
+	// idempotent, so the deferred unmount registered above then becomes a no-op on
+	// success. A failed final unmount is a failed lifecycle step: surface it as Run's
+	// result regardless of i.config.Shutdown rather than reporting success (or shutting
+	// down) with p2 still mounted. The deferred unmount above then retries on the way out.
+	if unmountP2 != nil {
+		if err := unmountP2(); err != nil {
+			return fmt.Errorf("failed to unmount local images partition after import: %w", err)
+		}
+	}
+
 	return i.shutdownNode()
 }
 
+// mountLocalImages discovers the p2 installer-media partition by its filesystem
+// label (common.LocalImagesFSLabel) and mounts it read-only at
+// i.config.LocalImagesPath. Discovery is a hard precondition with no network
+// fallback: if zero or more than one device carries the label the function fails,
+// and because Run calls it before diskPreparation the installation disk is still
+// untouched. It returns an idempotent unmount closure so the caller can both defer
+// it (error paths) and invoke it explicitly as the last p2 action on the happy path.
+// The closure returns the umount error so the caller can surface a failed final
+// unmount as Run's result.
+func (i *IBIPrepare) mountLocalImages() (func() error, error) {
+	blockDevices, err := i.ops.ListBlockDevices()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list block devices: %w", err)
+	}
+
+	matches := make([]string, 0, 1)
+	for _, bd := range blockDevices {
+		if bd.Label == common.LocalImagesFSLabel {
+			matches = append(matches, bd.Name)
+		}
+	}
+	if len(matches) != 1 {
+		return nil, fmt.Errorf("expected exactly one block device labelled %q for local images, found %d",
+			common.LocalImagesFSLabel, len(matches))
+	}
+	deviceName := matches[0]
+
+	if err := i.ops.MountReadOnly(deviceName, i.config.LocalImagesPath); err != nil {
+		return nil, fmt.Errorf("failed to mount local images device %s read-only: %w", deviceName, err)
+	}
+
+	var unmounted bool
+	unmount := func() error {
+		if unmounted {
+			return nil
+		}
+		if err := i.ops.Umount(deviceName); err != nil {
+			// Leave unmounted false so a subsequent (deferred) call retries; a second
+			// umount of an already-unmounted device would otherwise error, which is why
+			// the flag is only set once the unmount actually succeeds.
+			i.log.Warnf("failed to unmount local images device %s: %v", deviceName, err)
+			return fmt.Errorf("failed to unmount local images device %s: %w", deviceName, err)
+		}
+		unmounted = true
+		return nil
+	}
+	return unmount, nil
+}
+
+// preflightValidateManifest parses the on-media digest manifest and resolves the
+// seed entry whose canonical Name@Digest equals i.config.SeedImage. It runs in
+// preflight, before diskPreparation, so a missing, malformed, or seed-mismatched
+// manifest fails while the installation disk is still untouched.
+//
+// Resolving the seed here also pins seed addressability: the importer later writes
+// the seed under entry.Name+"@"+entry.Digest, which must be exactly the reference
+// SetupStateroot resolves (i.config.SeedImage, passed on to ops.MountImage). A
+// SeedImage that is not present in the manifest as a canonical name@digest entry is
+// rejected now rather than silently imported as an unaddressable reference.
+func (i *IBIPrepare) preflightValidateManifest() (*localimages.DigestManifest, localimages.ImageEntry, error) {
+	manifest, err := parseDigestManifest(i.config.ExpectedDigestsPath)
+	if err != nil {
+		return nil, localimages.ImageEntry{}, fmt.Errorf("failed to parse digest manifest %q: %w", i.config.ExpectedDigestsPath, err)
+	}
+
+	// Disconnected prepare requires a v2 manifest: only v2 records each image's
+	// source references (ImageEntry.Sources), which the coverage check matches
+	// against the seed's containers.list by exact source reference and the closure
+	// import registers as local tag aliases. A v1 manifest cannot satisfy that
+	// contract, so fail now -- before any disk write -- rather than after importing
+	// the closure. The media builder must emit a v2 manifest.
+	if manifest.Version < localimages.SourcesManifestVersion {
+		return nil, localimages.ImageEntry{}, fmt.Errorf(
+			"disconnected prepare requires a v%d digest manifest with source references, but %q is v%d",
+			localimages.SourcesManifestVersion, i.config.ExpectedDigestsPath, manifest.Version)
+	}
+
+	for _, e := range manifest.Images {
+		if e.Name+"@"+e.Digest == i.config.SeedImage {
+			return manifest, e, nil
+		}
+	}
+
+	return nil, localimages.ImageEntry{}, fmt.Errorf(
+		"seed image %q not found as a canonical name@digest entry in digest manifest %q",
+		i.config.SeedImage, i.config.ExpectedDigestsPath)
+}
+
+// podmanStoreInfo is the subset of `podman info --format json` the prepare flow
+// consumes to resolve the host containers-storage store.
+type podmanStoreInfo struct {
+	Store struct {
+		GraphDriverName string `json:"graphDriverName"`
+		GraphRoot       string `json:"graphRoot"`
+		RunRoot         string `json:"runRoot"`
+	} `json:"store"`
+}
+
+// hostSeedStoreConfig resolves the containers-storage configuration of the exact
+// store that ops.MountImage reads the seed from, so the seed import lands where
+// SetupStateroot later looks for it.
+//
+// A zero-value StoreConfig would open the Go-resolved default store
+// (cstorage.DefaultStoreOptions), which is resolved against this process's own
+// (container) environment and can differ from the store the host-namespace
+// `podman image mount` uses -- leaving the seed imported into a store nothing
+// reads. Instead, ask the host podman itself (`podman info`) for its resolved
+// driver/graphroot/runroot. The paths podman reports are host-root-relative;
+// they are translated into this process's mount namespace with PathOutsideChroot
+// because the importer opens the store directly in-process (as the closure import
+// does for the installed stateroot) rather than through the host namespace.
+func (i *IBIPrepare) hostSeedStoreConfig() (localimages.StoreConfig, error) {
+	out, err := i.ops.RunInHostNamespace("podman", "info", "--format", "json")
+	if err != nil {
+		return localimages.StoreConfig{}, fmt.Errorf("failed to query host podman store configuration: %w", err)
+	}
+
+	var info podmanStoreInfo
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		return localimages.StoreConfig{}, fmt.Errorf("failed to parse host podman store configuration: %w", err)
+	}
+	if info.Store.GraphDriverName == "" || info.Store.GraphRoot == "" || info.Store.RunRoot == "" {
+		return localimages.StoreConfig{}, fmt.Errorf(
+			"host podman reported an incomplete store configuration: driver=%q graphRoot=%q runRoot=%q",
+			info.Store.GraphDriverName, info.Store.GraphRoot, info.Store.RunRoot)
+	}
+
+	return localimages.StoreConfig{
+		GraphDriverName: info.Store.GraphDriverName,
+		GraphRoot:       common.PathOutsideChroot(info.Store.GraphRoot),
+		RunRoot:         common.PathOutsideChroot(info.Store.RunRoot),
+	}, nil
+}
+
+// importSeedToLiveStore imports the single seed entry from the mounted p2 layout
+// into the host containers-storage store that ops.MountImage reads -- resolved
+// from the host podman's own configuration (hostSeedStoreConfig), not assumed
+// defaults. The seed is a bootstrap input consumed by SetupStateroot and then
+// dropped with the ephemeral live store on reboot, so only the seed -- not the
+// full closure -- is imported here.
+func (i *IBIPrepare) importSeedToLiveStore(ctx context.Context, manifest *localimages.DigestManifest, seedEntry localimages.ImageEntry) error {
+	storeCfg, err := i.hostSeedStoreConfig()
+	if err != nil {
+		return fmt.Errorf("failed to resolve host containers-storage configuration: %w", err)
+	}
+
+	importer, err := newImageImporter(i.log, storeCfg)
+	if err != nil {
+		return fmt.Errorf("failed to open live containers-storage: %w", err)
+	}
+	defer func() {
+		if err := importer.Close(); err != nil {
+			i.log.Warnf("failed to close live containers-storage importer: %v", err)
+		}
+	}()
+
+	if err := importer.ImportImage(ctx, i.config.LocalImagesPath, manifest, seedEntry); err != nil {
+		return fmt.Errorf("failed to import seed image %s@%s into live store: %w", seedEntry.Name, seedEntry.Digest, err)
+	}
+	return nil
+}
+
+// importClosureToStateroot imports the full release/workload closure from the
+// mounted p2 layout into the installed stateroot's containers-storage graphroot,
+// addressed by explicit graphroot (the stateroot's /var/lib/containers/storage
+// under the /mnt deploy prefix). A second store open needs a writable runroot, so a
+// temporary one is created and removed afterwards; the importer is closed (via defer)
+// to release its store locks before the later sync/unmount.
+func (i *IBIPrepare) importClosureToStateroot(ctx context.Context, manifest *localimages.DigestManifest) error {
+	osname := common.GetStaterootName(i.config.SeedVersion)
+	graphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
+
+	runRoot, err := os.MkdirTemp("", "ibi-closure-runroot-")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary runroot: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(runRoot); err != nil {
+			i.log.Warnf("failed to remove temporary runroot %s: %v", runRoot, err)
+		}
+	}()
+
+	importer, err := newImageImporter(i.log, localimages.StoreConfig{
+		GraphDriverName: closureStoreDriver,
+		GraphRoot:       graphRoot,
+		RunRoot:         runRoot,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to open installed stateroot containers-storage at %s: %w", graphRoot, err)
+	}
+	defer func() {
+		if err := importer.Close(); err != nil {
+			i.log.Warnf("failed to close installed stateroot importer: %v", err)
+		}
+	}()
+
+	if err := importer.ImportAll(ctx, i.config.LocalImagesPath, manifest); err != nil {
+		return fmt.Errorf("failed to import image closure into installed stateroot store %s: %w", graphRoot, err)
+	}
+	return nil
+}
+
 // setupPrepareAuthFile ensures a synthetic empty authfile exists at path for the
-// disconnected seed pull / precache, without disturbing any operator-provided file.
+// disconnected precache, without disturbing any operator-provided file.
 // It creates the file only if it is absent (atomically, via O_EXCL) and returns a
 // cleanup func that removes the file ONLY if this call created it. A pre-existing file
 // (operator-provided or a leftover from an interrupted run) is left byte-for-byte
@@ -144,36 +450,14 @@ func setupPrepareAuthFile(path string) (func(), error) {
 	return func() { _ = os.Remove(path) }, nil
 }
 
-func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) (retErr error) {
+func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) (retErr error) {
 	if i.config.PrecacheDisabled {
 		i.log.Info("Precache disabled, skipping it")
 		return nil
 	}
 
-	i.log.Info("Checking seed image info")
-	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(seedInfoFile)
+	imageList, err := i.precacheImageList(imageListFile, seedInfoFile, registriesConfFile, manifest)
 	if err != nil {
-		return fmt.Errorf("failed to read seed info: %s, %w", common.PathOutsideChroot(seedInfoFile), err)
-	}
-	i.log.Info("Collected seed info for precache: ", fmt.Sprintf("%+v", seedInfo))
-
-	i.log.Info("Getting mirror registry source registries")
-	mirrorRegistrySources, err := mirrorRegistrySourceRegistries(registriesConfFile)
-	if err != nil {
-		return fmt.Errorf("failed to get mirror registry source registries: %w", err)
-	}
-
-	i.log.Info("Checking whether to override seed registry")
-	shouldOverrideSeedRegistry, err := utils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
-	if err != nil {
-		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry: %w", err)
-	}
-	i.log.Info("Should override seed registry", "shouldOverrideSeedRegistry", shouldOverrideSeedRegistry, "releaseRegistry", i.config.ReleaseRegistry)
-
-	i.log.Info("Precaching images")
-	imageList, err := prep.ReadPrecachingList(imageListFile, i.config.ReleaseRegistry, seedInfo.ReleaseRegistry, shouldOverrideSeedRegistry)
-	if err != nil {
-		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return err
 	}
 
@@ -197,10 +481,153 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort); err != nil {
+	// Disconnected: the image closure was imported into the installed stateroot store
+	// up front, so precache must verify local presence rather than pull from the network.
+	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort, i.config.Disconnected); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
 
+	return nil
+}
+
+// precacheImageList builds the set of image references precache must ensure are
+// present locally.
+//
+// Connected: the seed's containers.list, with the usual registries.conf-driven
+// registry override applied so the images resolve to the registry they will be
+// pulled from.
+//
+// Disconnected: the seed's own containers.list references, verbatim (registry
+// replacement bypassed), after confirming the v2 digest manifest covers every one
+// of them by exact source reference. The closure import stores each image under
+// name@digest and registers its tagged sources as local aliases, so the references
+// the seed requests resolve locally with `podman image exists`.
+func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) ([]string, error) {
+	if i.config.Disconnected {
+		return i.disconnectedPrecacheList(imageListFile, manifest)
+	}
+
+	i.log.Info("Checking seed image info")
+	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(seedInfoFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read seed info: %s, %w", common.PathOutsideChroot(seedInfoFile), err)
+	}
+	i.log.Info("Collected seed info for precache: ", fmt.Sprintf("%+v", seedInfo))
+
+	i.log.Info("Getting mirror registry source registries")
+	mirrorRegistrySources, err := mirrorRegistrySourceRegistries(registriesConfFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mirror registry source registries: %w", err)
+	}
+
+	i.log.Info("Checking whether to override seed registry")
+	shouldOverrideSeedRegistry, err := utils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check ShouldOverrideSeedRegistry: %w", err)
+	}
+	i.log.Info("Should override seed registry", "shouldOverrideSeedRegistry", shouldOverrideSeedRegistry, "releaseRegistry", i.config.ReleaseRegistry)
+
+	i.log.Info("Precaching images")
+	imageList, err := prep.ReadPrecachingList(imageListFile, i.config.ReleaseRegistry, seedInfo.ReleaseRegistry, shouldOverrideSeedRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
+	}
+	return imageList, nil
+}
+
+// disconnectedPrecacheList returns the references the seed actually requests
+// (its containers.list, verbatim) as the disconnected precache presence set, after
+// confirming the digest manifest covers every one of them by exact source
+// reference. Verifying the seed's own references -- not the manifest's digests --
+// is deliberate: the closure import registered each tagged source as a local alias
+// of its imported digest, so `podman image exists <ref>` resolves the exact
+// reference the seed uses. Digest-only verification would pass without proving the
+// seed's requested tag resolves locally. A missing manifest, or a seed requirement
+// the closure does not cover, is a hard failure rather than a silently incomplete
+// precache.
+func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *localimages.DigestManifest) ([]string, error) {
+	if manifest == nil {
+		return nil, errors.New("disconnected precache requires the on-media digest manifest")
+	}
+
+	required, err := readSeedRequiredImages(imageListFile)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyManifestCoversSeed(required, manifest); err != nil {
+		return nil, err
+	}
+
+	i.log.Infof("Disconnected precache will verify %d image reference(s) required by the seed", len(required))
+	return required, nil
+}
+
+// readSeedRequiredImages reads the seed's containers.list verbatim (no registry
+// override): the references are compared against the manifest's canonical entries,
+// so rewriting their registry here would defeat the coverage check.
+func readSeedRequiredImages(imageListFile string) ([]string, error) {
+	content, err := os.ReadFile(common.PathOutsideChroot(imageListFile)) //nolint:gosec // imageListFile is the validated seed containers.list path
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
+	}
+	var images []string
+	for _, line := range strings.Split(string(content), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			images = append(images, line)
+		}
+	}
+	return images, nil
+}
+
+// verifyManifestCoversSeed fails unless every image the seed requires
+// (containers.list) maps, by exact source reference, to exactly one entry in the
+// imported closure (the v2 digest manifest). Each manifest entry records the
+// source references it satisfies (ImageEntry.Sources, populated by the media
+// builder); a seed reference is covered when it equals one of those sources on
+// exactly one entry -- and because the closure import is fail-fast over every
+// manifest entry, that entry's digest is necessarily imported.
+//
+// Matching is by exact source reference, never by repository name. A name-only
+// match (repo covers repo:anytag) cannot establish that the manifest entry holds
+// the image the seed asked for under that specific tag, so it could bind a tag to
+// the wrong digest and report a successful disconnected prepare with the wrong
+// image. A reference that matches no source (uncovered) or sources on more than
+// one entry (ambiguous) is a hard failure: an unmapped or mis-mapped seed
+// requirement would otherwise pass precache while leaving the node short -- or
+// serving the wrong digest for -- an image it needs.
+func verifyManifestCoversSeed(required []string, manifest *localimages.DigestManifest) error {
+	sourceEntryCount := make(map[string]int)
+	for _, e := range manifest.Images {
+		for _, src := range e.Sources {
+			sourceEntryCount[src]++
+		}
+	}
+
+	var uncovered, ambiguous []string
+	for _, ref := range required {
+		switch sourceEntryCount[ref] {
+		case 0:
+			uncovered = append(uncovered, ref)
+		case 1:
+			// Exactly one manifest entry lists this source: unambiguous match.
+		default:
+			ambiguous = append(ambiguous, ref)
+		}
+	}
+
+	var problems []string
+	if len(uncovered) > 0 {
+		problems = append(problems, fmt.Sprintf("digest manifest does not cover %d image(s) required by the seed: %s",
+			len(uncovered), strings.Join(uncovered, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		problems = append(problems, fmt.Sprintf("%d seed image(s) map ambiguously to multiple manifest entries: %s",
+			len(ambiguous), strings.Join(ambiguous, ", ")))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
 	return nil
 }
 

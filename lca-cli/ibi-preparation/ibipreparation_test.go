@@ -1,12 +1,15 @@
 package ibi_preparation
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -15,7 +18,9 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
+	rpmostreeclient "github.com/openshift-kni/lifecycle-agent/lca-cli/ostreeclient"
 )
 
 func TestDiskPreparation(t *testing.T) {
@@ -346,4 +351,905 @@ func TestCleanupRhcosSysroot(t *testing.T) {
 	mockOps.EXPECT().RunBashInHostNamespace("rm", "-rf", filepath.Join(tmpDir, rhcosOstreePath)).Return("", fmt.Errorf("dummy")).Times(1)
 	err = ibi.cleanupRhcosSysroot()
 	assert.NotNil(t, err)
+}
+
+// --- Disconnected offline image-sourcing tests (CNF-27161) ---
+
+const (
+	testSeedName   = "quay.io/openshift-release-dev/ocp-release"
+	testSeedDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	testSeedOCITag = "ocp-release"
+)
+
+func testSeedImageRef() string { return testSeedName + "@" + testSeedDigest }
+
+// Host containers-storage configuration the fake host podman reports. The seed
+// import must target this store (the one ops.MountImage reads) rather than the
+// Go-resolved default store.
+const (
+	testHostGraphDriver = "overlay"
+	testHostGraphRoot   = "/var/lib/containers/storage"
+	testHostRunRoot     = "/run/containers/storage"
+)
+
+func testPodmanInfoJSON() string {
+	return fmt.Sprintf(`{"store":{"graphDriverName":%q,"graphRoot":%q,"runRoot":%q}}`,
+		testHostGraphDriver, testHostGraphRoot, testHostRunRoot)
+}
+
+// wantSeedStoreConfig is the StoreConfig the seed import must build from the host
+// podman info: the reported driver, with graphroot/runroot translated into this
+// process's mount namespace (PathOutsideChroot).
+func wantSeedStoreConfig() localimages.StoreConfig {
+	return localimages.StoreConfig{
+		GraphDriverName: testHostGraphDriver,
+		GraphRoot:       common.PathOutsideChroot(testHostGraphRoot),
+		RunRoot:         common.PathOutsideChroot(testHostRunRoot),
+	}
+}
+
+// expectPodmanInfo registers the host podman store-config query the seed import
+// performs to resolve the store ops.MountImage reads.
+func expectPodmanInfo(mockOps *ops.MockOps) {
+	mockOps.EXPECT().RunInHostNamespace("podman", "info", "--format", "json").
+		Return(testPodmanInfoJSON(), nil).Times(1)
+}
+
+func testManifest() *localimages.DigestManifest {
+	return &localimages.DigestManifest{
+		Version:       localimages.SourcesManifestVersion,
+		OCILayoutPath: "oci",
+		Images: []localimages.ImageEntry{
+			{
+				Name:    testSeedName,
+				Digest:  testSeedDigest,
+				OCITag:  testSeedOCITag,
+				Sources: []string{testSeedImageRef(), testSeedName + ":4.15.0"},
+			},
+			{
+				Name:    "quay.io/openshift-release-dev/ocp-v4.0-art-dev",
+				Digest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+				OCITag:  "workload",
+				Sources: []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"},
+			},
+		},
+	}
+}
+
+// fakeImporter is a test double for imageImporter that records how it was
+// constructed and used, without opening a real containers-storage store.
+type fakeImporter struct {
+	cfg         localimages.StoreConfig
+	events      *[]string
+	importedOne []localimages.ImageEntry
+	importedAll int
+	mediaRoots  []string
+	importErr   error
+	closed      bool
+}
+
+func (f *fakeImporter) ImportImage(_ context.Context, mediaRoot string, _ *localimages.DigestManifest, e localimages.ImageEntry) error {
+	f.mediaRoots = append(f.mediaRoots, mediaRoot)
+	f.importedOne = append(f.importedOne, e)
+	if f.events != nil {
+		*f.events = append(*f.events, "importSeed")
+	}
+	return f.importErr
+}
+
+func (f *fakeImporter) ImportAll(_ context.Context, mediaRoot string, _ *localimages.DigestManifest) error {
+	f.mediaRoots = append(f.mediaRoots, mediaRoot)
+	f.importedAll++
+	if f.events != nil {
+		*f.events = append(*f.events, "importClosure")
+	}
+	return f.importErr
+}
+
+func (f *fakeImporter) Close() error {
+	f.closed = true
+	return nil
+}
+
+// importerFactory routes newImageImporter calls to the seed importer (the host
+// store resolved from podman info) or the closure importer (the installed
+// stateroot graphroot under ostree/deploy). Both stores are now explicit, so the
+// closure is distinguished by its graphroot living under the stateroot deploy path.
+type importerFactory struct {
+	seed      *fakeImporter
+	closure   *fakeImporter
+	events    *[]string
+	importErr error
+}
+
+func (ff *importerFactory) new(_ *logrus.Logger, cfg localimages.StoreConfig) (imageImporter, error) {
+	imp := &fakeImporter{cfg: cfg, events: ff.events, importErr: ff.importErr}
+	if strings.Contains(cfg.GraphRoot, "ostree/deploy") {
+		ff.closure = imp
+	} else {
+		ff.seed = imp
+	}
+	return imp, nil
+}
+
+// saveSeams snapshots the package seams and restores them when the test ends.
+func saveSeams(t *testing.T) {
+	t.Helper()
+	origParse, origNew, origSetup := parseDigestManifest, newImageImporter, setupStateroot
+	t.Cleanup(func() {
+		parseDigestManifest = origParse
+		newImageImporter = origNew
+		setupStateroot = origSetup
+	})
+}
+
+func idxOf(events []string, name string) int {
+	for i, e := range events {
+		if e == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestMountLocalImages exercises the p2 discovery precondition directly: zero or
+// more than one labelled device fails (no MountReadOnly); exactly one proceeds to a
+// read-only mount and returns an idempotent unmount closure.
+func TestMountLocalImages(t *testing.T) {
+	const localImagesPath = "/var/mnt/ibi-images"
+
+	cases := []struct {
+		name       string
+		devices    []ops.BlockDevice
+		wantDevice string // device mountLocalImages should select (empty => expect error)
+		expectErr  bool
+	}{
+		{
+			name:      "zero matches fails before mount",
+			devices:   []ops.BlockDevice{{Name: "sda", Label: "root"}},
+			expectErr: true,
+		},
+		{
+			name: "ambiguous matches fail before mount",
+			devices: []ops.BlockDevice{
+				{Name: "sdb1", Label: common.LocalImagesFSLabel},
+				{Name: "sdc1", Label: common.LocalImagesFSLabel},
+			},
+			expectErr: true,
+		},
+		{
+			name: "label on a partition proceeds to MountReadOnly",
+			devices: []ops.BlockDevice{
+				// With lsblk --list, partitions surface as flat top-level entries.
+				{Name: "sdb", Label: ""},
+				{Name: "sdb1", Label: "boot"},
+				{Name: "sdb2", Label: common.LocalImagesFSLabel},
+			},
+			wantDevice: "sdb2",
+		},
+		{
+			name: "label on a whole device proceeds to MountReadOnly",
+			devices: []ops.BlockDevice{
+				{Name: "sda", Label: "root"},
+				{Name: "sdb", Label: common.LocalImagesFSLabel},
+			},
+			wantDevice: "sdb",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil,
+				&ibiconfig.IBIPrepareConfig{LocalImagesPath: localImagesPath})
+
+			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
+			if tc.wantDevice != "" {
+				mockOps.EXPECT().MountReadOnly(tc.wantDevice, localImagesPath).Return(nil).Times(1)
+			} else {
+				mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
+			}
+
+			unmount, err := ibi.mountLocalImages()
+			if tc.expectErr {
+				assert.Error(t, err)
+				assert.Nil(t, unmount)
+				return
+			}
+			assert.NoError(t, err)
+			if assert.NotNil(t, unmount) {
+				// Idempotent: Umount runs at most once even if the closure is called
+				// twice (explicit happy-path call + deferred error-path call).
+				mockOps.EXPECT().Umount(tc.wantDevice).Return(nil).Times(1)
+				assert.NoError(t, unmount())
+				assert.NoError(t, unmount())
+			}
+		})
+	}
+}
+
+// TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite proves that a failed p2
+// discovery (0 or >1 devices) fails Run() before any disk write: no mount, no disk
+// cleanup, no image write.
+func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
+	cases := []struct {
+		name    string
+		devices []ops.BlockDevice
+	}{
+		{"zero devices", []ops.BlockDevice{{Name: "sda", Label: "root"}}},
+		{"multiple devices", []ops.BlockDevice{
+			{Name: "sdb1", Label: common.LocalImagesFSLabel},
+			{Name: "sdc1", Label: common.LocalImagesFSLabel},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+			cfg := &ibiconfig.IBIPrepareConfig{
+				Disconnected:     true,
+				LocalImagesPath:  "/var/mnt/ibi",
+				SeedImage:        testSeedImageRef(),
+				SeedVersion:      "4.15.0",
+				InstallationDisk: "/dev/sda",
+			}
+			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
+			// Fail-fast before any disk write: no mount, no cleanup of the install disk.
+			mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
+			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+
+			err := ibi.Run()
+			assert.Error(t, err)
+		})
+	}
+}
+
+// TestManifestValidatedBeforeDiskWrite proves that a missing/malformed manifest or a
+// manifest lacking the seed entry fails Run() in preflight -- after the p2 mount but
+// before any disk write -- and that p2 is unmounted on the way out.
+func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
+	cases := []struct {
+		name  string
+		parse func(string) (*localimages.DigestManifest, error)
+	}{
+		{
+			name:  "missing or malformed manifest",
+			parse: func(string) (*localimages.DigestManifest, error) { return nil, fmt.Errorf("boom") },
+		},
+		{
+			name: "seed not present in manifest",
+			parse: func(string) (*localimages.DigestManifest, error) {
+				return &localimages.DigestManifest{
+					Version:       localimages.SourcesManifestVersion,
+					OCILayoutPath: "oci",
+					Images:        []localimages.ImageEntry{{Name: "other", Digest: "sha256:dead", OCITag: "t"}},
+				}, nil
+			},
+		},
+		{
+			// A v1 manifest cannot carry the source references the disconnected
+			// contract requires, so preflight must reject it before any disk write.
+			name: "v1 manifest rejected (sources contract requires v2)",
+			parse: func(string) (*localimages.DigestManifest, error) {
+				return &localimages.DigestManifest{
+					Version:       1,
+					OCILayoutPath: "oci",
+					Images:        []localimages.ImageEntry{{Name: testSeedName, Digest: testSeedDigest, OCITag: testSeedOCITag}},
+				}, nil
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			saveSeams(t)
+			parseDigestManifest = tc.parse
+			newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
+				t.Fatal("importer must not be created before manifest validation")
+				return nil, nil
+			}
+
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+			cfg := &ibiconfig.IBIPrepareConfig{
+				Disconnected:        true,
+				LocalImagesPath:     "/var/mnt/ibi",
+				ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+				SeedImage:           testSeedImageRef(),
+				SeedVersion:         "4.15.0",
+				InstallationDisk:    "/dev/sda",
+			}
+			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+			mockOps.EXPECT().ListBlockDevices().
+				Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+			mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+			// No disk write.
+			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+			// p2 is unmounted on the error path (deferred unmount).
+			mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+
+			err := ibi.Run()
+			assert.Error(t, err)
+		})
+	}
+}
+
+// TestSeedReferenceMatchesSetupStaterootLookup proves the imported seed is
+// addressable as i.config.SeedImage: the reference the importer writes
+// (entry.Name@entry.Digest) equals the reference SetupStateroot later resolves
+// (i.config.SeedImage, passed to ops.MountImage). A non-digest-pinned SeedImage is
+// rejected in preflight.
+func TestSeedReferenceMatchesSetupStaterootLookup(t *testing.T) {
+	t.Run("resolved and imported seed ref equals the SetupStateroot lookup ref", func(t *testing.T) {
+		saveSeams(t)
+		parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+
+		cfg := &ibiconfig.IBIPrepareConfig{
+			Disconnected:        true,
+			LocalImagesPath:     "/var/mnt/ibi",
+			ExpectedDigestsPath: "/m.json",
+			SeedImage:           testSeedImageRef(),
+			SeedVersion:         "4.15.0",
+		}
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		expectPodmanInfo(mockOps)
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+		manifest, seedEntry, err := ibi.preflightValidateManifest()
+		assert.NoError(t, err)
+		assert.Equal(t, cfg.SeedImage, seedEntry.Name+"@"+seedEntry.Digest,
+			"preflight must resolve the entry whose canonical ref equals SeedImage")
+
+		ff := &importerFactory{}
+		newImageImporter = ff.new
+		assert.NoError(t, ibi.importSeedToLiveStore(context.Background(), manifest, seedEntry))
+		if assert.Len(t, ff.seed.importedOne, 1) {
+			imported := ff.seed.importedOne[0]
+			assert.Equal(t, cfg.SeedImage, imported.Name+"@"+imported.Digest,
+				"the imported seed must be addressable as config.SeedImage (the MountImage arg)")
+		}
+	})
+
+	t.Run("non-digest-pinned SeedImage is rejected in preflight", func(t *testing.T) {
+		saveSeams(t)
+		parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+
+		cfg := &ibiconfig.IBIPrepareConfig{
+			Disconnected:        true,
+			LocalImagesPath:     "/var/mnt/ibi",
+			ExpectedDigestsPath: "/m.json",
+			SeedImage:           testSeedName + ":latest", // a tag, not a digest
+			SeedVersion:         "4.15.0",
+		}
+		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil, cfg)
+
+		_, _, err := ibi.preflightValidateManifest()
+		assert.Error(t, err)
+	})
+}
+
+// TestSeedImportedIntoHostStore asserts the seed is imported into the host
+// containers-storage store that ops.MountImage reads -- resolved from the host
+// podman's own configuration (driver + graphroot/runroot translated into this
+// process's mount namespace), not the Go-resolved default store -- and that the
+// importer is closed.
+func TestSeedImportedIntoHostStore(t *testing.T) {
+	saveSeams(t)
+	ff := &importerFactory{}
+	newImageImporter = ff.new
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	expectPodmanInfo(mockOps)
+
+	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedImage: testSeedImageRef()}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	manifest := testManifest()
+	seedEntry := manifest.Images[0]
+	assert.NoError(t, ibi.importSeedToLiveStore(context.Background(), manifest, seedEntry))
+
+	if assert.NotNil(t, ff.seed) {
+		assert.Equal(t, wantSeedStoreConfig(), ff.seed.cfg,
+			"seed must target the host store resolved from podman info, not the default store")
+		assert.Equal(t, []string{cfg.LocalImagesPath}, ff.seed.mediaRoots)
+		if assert.Len(t, ff.seed.importedOne, 1) {
+			assert.Equal(t, seedEntry, ff.seed.importedOne[0])
+		}
+		assert.True(t, ff.seed.closed, "seed importer must be closed")
+	}
+	assert.Nil(t, ff.closure, "the closure store must not be opened for the seed import")
+}
+
+// TestSeedImportFailsOnIncompleteHostStoreConfig proves the seed import fails fast
+// (before opening a store) when the host podman reports an incomplete store
+// configuration, rather than silently falling back to the Go-resolved default store.
+func TestSeedImportFailsOnIncompleteHostStoreConfig(t *testing.T) {
+	saveSeams(t)
+	newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
+		t.Fatal("importer must not be opened when the host store config is incomplete")
+		return nil, nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	// Missing graphRoot/runRoot in the reported store config.
+	mockOps.EXPECT().RunInHostNamespace("podman", "info", "--format", "json").
+		Return(`{"store":{"graphDriverName":"overlay"}}`, nil).Times(1)
+
+	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedImage: testSeedImageRef()}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	manifest := testManifest()
+	assert.Error(t, ibi.importSeedToLiveStore(context.Background(), manifest, manifest.Images[0]))
+}
+
+// TestClosureImportedIntoInstalledGraphroot asserts the closure is imported into the
+// installed stateroot's graphroot via an explicit overlay store with a temporary
+// runroot that is cleaned up afterwards.
+func TestClosureImportedIntoInstalledGraphroot(t *testing.T) {
+	saveSeams(t)
+	ff := &importerFactory{}
+	newImageImporter = ff.new
+	common.OstreeDeployPathPrefix = "/mnt/"
+
+	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedVersion: "4.15.0"}
+	ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil, cfg)
+
+	manifest := testManifest()
+	assert.NoError(t, ibi.importClosureToStateroot(context.Background(), manifest))
+
+	osname := common.GetStaterootName(cfg.SeedVersion)
+	wantGraphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
+
+	if assert.NotNil(t, ff.closure) {
+		assert.Equal(t, "overlay", ff.closure.cfg.GraphDriverName)
+		assert.Equal(t, wantGraphRoot, ff.closure.cfg.GraphRoot,
+			"closure must target the installed stateroot graphroot")
+		assert.NotEmpty(t, ff.closure.cfg.RunRoot, "a writable temp runroot is required for the second store open")
+		assert.Equal(t, 1, ff.closure.importedAll, "the full closure must be imported")
+		assert.Equal(t, []string{cfg.LocalImagesPath}, ff.closure.mediaRoots)
+		assert.True(t, ff.closure.closed, "closure importer must be closed to release store locks")
+
+		_, statErr := os.Stat(ff.closure.cfg.RunRoot)
+		assert.True(t, os.IsNotExist(statErr), "the temporary runroot must be removed after the import")
+	}
+}
+
+// TestClosureImportRunsOutsideChroot proves the closure import performs no chroot --
+// it runs in the live-ISO namespace where the p2 layout is visible, never under the
+// /host chroot that precache enters.
+func TestClosureImportRunsOutsideChroot(t *testing.T) {
+	saveSeams(t)
+	ff := &importerFactory{}
+	newImageImporter = ff.new
+	common.OstreeDeployPathPrefix = "/mnt/"
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	// No chroot during the closure import.
+	mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+
+	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedVersion: "4.15.0"}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	assert.NoError(t, ibi.importClosureToStateroot(context.Background(), testManifest()))
+}
+
+// TestClosureImportRunsBeforePrecache drives Run() with precache enabled but no seed
+// info file, so precacheFlow fails. It proves the closure import has already run
+// (importedAll == 1) before precache does any work, and that precache never reached a
+// chroot before failing (closure import precedes the /host chroot region).
+func TestClosureImportRunsBeforePrecache(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	ff := &importerFactory{}
+	newImageImporter = ff.new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/m.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    false,
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().
+		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	// seed import resolves the host store from podman info.
+	expectPodmanInfo(mockOps)
+	// precache fails reading the seed info file before chrooting or pulling.
+	mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+	// p2 is unmounted on the error path.
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	if assert.NotNil(t, ff.closure) {
+		assert.Equal(t, 1, ff.closure.importedAll, "closure must be imported before precache runs")
+	}
+}
+
+// TestRunDisconnectedOrderingAndUnmountLast drives the full disconnected happy path
+// (precache disabled) and asserts the end-to-end ordering: discovery and manifest
+// validation run before the disk write; the seed imports before SetupStateroot; the
+// closure imports after SetupStateroot and before the final sync; no podman pull
+// happens; and p2 is unmounted last, after sync.
+func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir()) // the synthetic authfile writes to a relative var/tmp path
+
+	var events []string
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) {
+		events = append(events, "parseManifest")
+		return testManifest(), nil
+	}
+	ff := &importerFactory{events: &events}
+	newImageImporter = ff.new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		events = append(events, "setupStateroot")
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().DoAndReturn(func() ([]ops.BlockDevice, error) {
+		events = append(events, "listBlockDevices")
+		return []ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil
+	}).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).DoAndReturn(func(_, _ string) error {
+		events = append(events, "mountReadOnly")
+		return nil
+	}).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).DoAndReturn(func(string) error {
+		events = append(events, "cleanupInstallDevice")
+		return nil
+	}).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).
+		DoAndReturn(func(string, ...string) (string, error) {
+			events = append(events, "coreosInstaller")
+			return "", nil
+		}).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().DoAndReturn(func() error {
+		events = append(events, "setupContainersFolder")
+		return nil
+	}).Times(1)
+	// seed import resolves the host store from podman info before SetupStateroot.
+	expectPodmanInfo(mockOps)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).DoAndReturn(func(int) error {
+		events = append(events, "undeploy")
+		return nil
+	}).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").DoAndReturn(func(string, ...string) (string, error) {
+		events = append(events, "sync")
+		return "", nil
+	}).Times(1)
+	mockOps.EXPECT().Umount("sdb1").DoAndReturn(func(string) error {
+		events = append(events, "umount")
+		return nil
+	}).Times(1)
+
+	err := ibi.Run()
+	assert.NoError(t, err)
+
+	// No podman pull on the disconnected happy path: any such call would be an
+	// unexpected call on the strict mock controller and fail the test. Assert the
+	// relative ordering of the recorded events.
+	for _, name := range []string{
+		"listBlockDevices", "mountReadOnly", "parseManifest", "cleanupInstallDevice",
+		"importSeed", "setupStateroot", "importClosure", "sync", "umount",
+	} {
+		assert.GreaterOrEqual(t, idxOf(events, name), 0, "missing event %q", name)
+	}
+	// Preconditions (discovery + manifest) run before the disk write.
+	assert.Less(t, idxOf(events, "mountReadOnly"), idxOf(events, "cleanupInstallDevice"))
+	assert.Less(t, idxOf(events, "parseManifest"), idxOf(events, "cleanupInstallDevice"))
+	// Seed imports before stateroot; closure imports after stateroot.
+	assert.Less(t, idxOf(events, "importSeed"), idxOf(events, "setupStateroot"))
+	assert.Less(t, idxOf(events, "setupStateroot"), idxOf(events, "importClosure"))
+	// Closure import precedes the final sync; p2 is unmounted last, after sync.
+	assert.Less(t, idxOf(events, "importClosure"), idxOf(events, "sync"))
+	assert.Less(t, idxOf(events, "sync"), idxOf(events, "umount"))
+	assert.Equal(t, "umount", events[len(events)-1], "p2 unmount must be the last action")
+
+	// Closure targeted the installed stateroot graphroot under /mnt.
+	if assert.NotNil(t, ff.closure) {
+		osname := common.GetStaterootName(cfg.SeedVersion)
+		assert.Equal(t, filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage"),
+			ff.closure.cfg.GraphRoot)
+	}
+}
+
+// TestRunReturnsErrorOnFailedFinalUnmount proves that when the final p2 unmount
+// keeps failing, Run surfaces the failure as its result (regardless of Shutdown)
+// rather than reporting success with p2 still mounted, and that the deferred cleanup
+// retries the unmount on the way out.
+func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	newImageImporter = (&importerFactory{}).new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+		Shutdown:            false, // the unmount error must surface regardless of Shutdown
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().
+		Return([]ops.BlockDevice{{Name: "sdb2", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb2", cfg.LocalImagesPath).Return(nil).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	// seed import resolves the host store from podman info.
+	expectPodmanInfo(mockOps)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	// Explicit final unmount fails; the deferred cleanup then retries it (also fails),
+	// so Umount is attempted twice. shutdown must never be invoked.
+	mockOps.EXPECT().Umount("sdb2").Return(fmt.Errorf("device busy")).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unmount local images")
+}
+
+// TestConnectedFlowUnchanged proves the connected flow is untouched: no p2
+// discovery/mount/unmount, no manifest parse, no local import, and the seed is still
+// pulled from the network with podman.
+func TestConnectedFlowUnchanged(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) {
+		t.Fatal("parseDigestManifest must not be called in the connected flow")
+		return nil, nil
+	}
+	newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
+		t.Fatal("importer must not be created in the connected flow")
+		return nil, nil
+	}
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        false,
+		SeedImage:           "quay.io/seed@sha256:abc",
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	// No disconnected-only operations.
+	mockOps.EXPECT().ListBlockDevices().Times(0)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
+	mockOps.EXPECT().Umount(gomock.Any()).Times(0)
+	// Disk preparation + network seed pull, as before.
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("podman", "pull", "--authfile", common.IBIPullSecretFilePath, cfg.SeedImage).
+		Return("", nil).Times(1)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+
+	err := ibi.Run()
+	assert.NoError(t, err)
+}
+
+// --- Disconnected precache verification set (CNF-27161) ---
+
+// writeContainersList writes a seed containers.list with the given references to a
+// temp file and returns its path. PathOutsideChroot is a no-op in unit tests (no
+// /host), so disconnectedPrecacheList reads exactly this file.
+func writeContainersList(t *testing.T, refs ...string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "containers.list")
+	assert.NoError(t, os.WriteFile(p, []byte(strings.Join(refs, "\n")+"\n"), 0o600))
+	return p
+}
+
+// TestDisconnectedPrecacheListVerifiesSeedReferences proves the disconnected
+// precache set is the seed's own containers.list references verbatim (the
+// references that resolve locally via the registered tag aliases), not the
+// manifest's digests -- so `podman image exists` checks the exact references the
+// seed uses. Each reference is covered by an exact source match in the manifest.
+func TestDisconnectedPrecacheListVerifiesSeedReferences(t *testing.T) {
+	manifest := testManifest()
+	// containers.list carries the seed by digest and the workload by tag; both are
+	// listed as sources on their manifest entries, so both are covered.
+	refs := []string{
+		testSeedImageRef(),
+		"quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0",
+	}
+	listFile := writeContainersList(t, refs...)
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+
+	got, err := ibi.disconnectedPrecacheList(listFile, manifest)
+	assert.NoError(t, err)
+	// The verification set is exactly the seed's requested references.
+	assert.Equal(t, refs, got)
+}
+
+// TestDisconnectedPrecacheListNilManifest proves a disconnected precache without a
+// manifest fails fast rather than silently verifying nothing.
+func TestDisconnectedPrecacheListNilManifest(t *testing.T) {
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+	listFile := writeContainersList(t, testSeedImageRef())
+
+	_, err := ibi.disconnectedPrecacheList(listFile, nil)
+	assert.ErrorContains(t, err, "requires the on-media digest manifest")
+}
+
+// TestDisconnectedPrecacheListRejectsUnresolvedSeedImage proves a seed requirement
+// the imported closure does not cover fails prepare instead of precaching only the
+// manifest and leaving the node short an image.
+func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
+	manifest := testManifest()
+	missingDigest := "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	listFile := writeContainersList(t,
+		testSeedImageRef(),
+		"quay.io/openshift-release-dev/extra@"+missingDigest, // not in the manifest
+	)
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+
+	_, err := ibi.disconnectedPrecacheList(listFile, manifest)
+	assert.ErrorContains(t, err, "does not cover")
+	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
+}
+
+// TestVerifyManifestCoversSeed exercises exact source-reference matching: a seed
+// reference is covered only when it equals a source listed on exactly one manifest
+// entry (whose digest the fail-fast closure import necessarily imported). A
+// name-only or wrong-tag match does not cover, and a source shared by two entries
+// is ambiguous. The wrong-tag/covered-tag pair (same repository, two tags, one
+// whose digest is absent) is called out explicitly below.
+func TestVerifyManifestCoversSeed(t *testing.T) {
+	const workloadTag = "quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0"
+	workload := testManifest().Images[1]
+
+	// ambiguousManifest lists the same source on two entries, so the reference
+	// cannot be bound to a single imported digest.
+	ambiguousManifest := &localimages.DigestManifest{
+		Version:       localimages.SourcesManifestVersion,
+		OCILayoutPath: "oci",
+		Images: []localimages.ImageEntry{
+			{Name: testSeedName, Digest: testSeedDigest, OCITag: "a", Sources: []string{testSeedName + ":4.15.0"}},
+			{Name: testSeedName, Digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333", OCITag: "b", Sources: []string{testSeedName + ":4.15.0"}},
+		},
+	}
+
+	// twoTagManifest covers exactly repo:4.15.0 (imported as testSeedDigest). A
+	// request for repo:4.16.0 -- a different tag of the same repository whose digest
+	// is not in the manifest -- must fail rather than bind to the covered digest.
+	twoTagManifest := &localimages.DigestManifest{
+		Version:       localimages.SourcesManifestVersion,
+		OCILayoutPath: "oci",
+		Images: []localimages.ImageEntry{
+			{Name: testSeedName, Digest: testSeedDigest, OCITag: "ocp-release", Sources: []string{testSeedName + ":4.15.0"}},
+		},
+	}
+
+	for _, tc := range []struct {
+		name     string
+		refs     []string
+		manifest *localimages.DigestManifest
+		wantErr  string
+	}{
+		{
+			name: "digest-pinned and tag sources covered by exact match",
+			refs: []string{testSeedImageRef(), workloadTag},
+		},
+		{
+			name: "covered tag (requested tag is an exact source)",
+			refs: []string{testSeedName + ":4.15.0"},
+			// Only the seed is referenced here; the workload is not required.
+			manifest: twoTagManifest,
+		},
+		{
+			name:     "wrong tag of the same repository is uncovered (digest absent)",
+			refs:     []string{testSeedName + ":4.16.0"},
+			manifest: twoTagManifest,
+			wantErr:  "does not cover",
+		},
+		{
+			name:    "bare name is not covered by a tagged source",
+			refs:    []string{testSeedName},
+			wantErr: "does not cover",
+		},
+		{
+			name:    "tag ref with unknown name is uncovered",
+			refs:    []string{"quay.io/openshift-release-dev/unknown:4.15.0"},
+			wantErr: "does not cover",
+		},
+		{
+			name:    "registry-rewritten source is uncovered (not an exact source)",
+			refs:    []string{"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev@" + workload.Digest},
+			wantErr: "does not cover",
+		},
+		{
+			name:     "reference listed on multiple entries is ambiguous",
+			refs:     []string{testSeedName + ":4.15.0"},
+			manifest: ambiguousManifest,
+			wantErr:  "ambiguously",
+		},
+		{
+			name:    "digest-pinned ref with unknown digest is uncovered",
+			refs:    []string{testSeedName + "@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			wantErr: "does not cover",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := tc.manifest
+			if manifest == nil {
+				manifest = testManifest()
+			}
+			err := verifyManifestCoversSeed(tc.refs, manifest)
+			if tc.wantErr != "" {
+				assert.ErrorContains(t, err, tc.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }

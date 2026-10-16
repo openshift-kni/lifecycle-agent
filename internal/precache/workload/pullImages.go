@@ -82,12 +82,38 @@ func podmanImgExists(image string) bool {
 	return err == nil
 }
 
-// pullImage attempts to pull an image via podman CLI
-func pullImage(image, authFile string, progress *precache.Progress) error {
+// Seams overridable from tests so the disconnected/connected pull paths can be
+// exercised without a real podman.
+var (
+	imgPull   = podmanImgPull
+	imgExists = podmanImgExists
+)
+
+// pullImage attempts to pull an image via podman CLI. In disconnected mode the image
+// closure has already been imported into local containers-storage, so the registry
+// must never be contacted: the image's local presence is verified with
+// `podman image exists` and a missing image is a hard failure (no pull is attempted).
+func pullImage(image, authFile string, disconnected bool, progress *precache.Progress) error {
+	if disconnected {
+		// podman's default pull policy is "always", so `podman pull name@sha256:...`
+		// would still issue a registry request even when the digest is already in
+		// local storage. Check presence explicitly and fail fast if the closure import
+		// did not place the image, instead of silently reaching out to the network.
+		var err error
+		if imgExists(image) {
+			log.Infof("Found image in local storage (disconnected mode): %s", image)
+		} else {
+			err = fmt.Errorf("image %s not found in local storage (disconnected mode); image closure import is incomplete", image)
+			log.Error(err)
+		}
+		progress.Update(err == nil, image)
+		progress.Persist(precache.StatusFile)
+		return err
+	}
 
 	var err error
 	for i := 0; i < MaxRetries; i++ {
-		err = podmanImgPull(image, authFile)
+		err = imgPull(image, authFile)
 		if err == nil {
 			log.Infof("Successfully pulled image: %s", image)
 			break
@@ -126,8 +152,10 @@ func GetAuthFile() (string, error) {
 	return authFile, nil
 }
 
-// PullImages pulls a list of images using podman
-func PullImages(precacheSpec []string, authFile string) *precache.Progress {
+// PullImages pulls a list of images using podman. When disconnected is set, images
+// are not pulled: each is verified to already be present in local containers-storage
+// and a missing image is recorded as a failure.
+func PullImages(precacheSpec []string, authFile string, disconnected bool) *precache.Progress {
 
 	// Initialize progress tracking
 	progress := &precache.Progress{
@@ -153,7 +181,7 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 				<-threads
 				wg.Done()
 			}()
-			err := pullImage(image, authFile, progress)
+			err := pullImage(image, authFile, disconnected, progress)
 
 			if err != nil {
 				log.Errorf("Failed to pull image: %s, error: %v", image, err)
@@ -175,7 +203,7 @@ func PullImages(precacheSpec []string, authFile string) *precache.Progress {
 	return progress
 }
 
-func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
+func ValidatePrecache(status *precache.Progress, bestEffort, disconnected bool) error {
 	// Check pre-caching execution status
 	if status.Failed != 0 {
 		var imagesFound []string
@@ -192,7 +220,11 @@ func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 		if len(imagesFound) == status.Failed {
 			return nil
 		}
-		if bestEffort {
+		// best-effort is deliberately ignored in disconnected mode: every image must
+		// already be present locally (imported from the offline media), so a still-missing
+		// image means the closure import was incomplete and prepare must fail rather than
+		// silently report success with an image absent.
+		if bestEffort && !disconnected {
 			log.Info("Failed to precache, running in best-effort mode, skip error")
 			return nil
 		}
@@ -201,12 +233,16 @@ func ValidatePrecache(status *precache.Progress, bestEffort bool) error {
 	return nil
 }
 
-func Precache(precacheSpec []string, authFile string, bestEffort bool) error {
+// Precache ensures every image in precacheSpec is available locally. In the normal
+// (connected) mode images are pulled from the registry; when disconnected is set the
+// images are expected to already be present in local containers-storage (imported from
+// the offline media) and are verified rather than pulled.
+func Precache(precacheSpec []string, authFile string, bestEffort, disconnected bool) error {
 	// Pre-cache images
-	status := PullImages(precacheSpec, authFile)
+	status := PullImages(precacheSpec, authFile, disconnected)
 	log.Info("Completed executing pre-caching")
 
-	if err := ValidatePrecache(status, bestEffort); err != nil {
+	if err := ValidatePrecache(status, bestEffort, disconnected); err != nil {
 		return fmt.Errorf("failed to pre-cache one or more images")
 	}
 

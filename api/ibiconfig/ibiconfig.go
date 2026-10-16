@@ -260,13 +260,21 @@ func (c *IBIPrepareConfig) Validate() error {
 		return fmt.Errorf("installationDisk is required")
 	}
 
-	// A disconnected prepare has no network to source images from, so the on-media
-	// local OCI layout is mandatory. ExpectedDigestsPath enforcement is profile-dependent
-	// (mandatory for self-contained, optional-with-extras for install-only) and is deferred
-	// to CNF-27162; its enforcement point is co-located here. When Disconnected is false the
+	// A disconnected prepare has no network to source images from, so both the on-media
+	// local OCI layout and the digest manifest are mandatory: disconnected Run always
+	// parses the manifest at ExpectedDigestsPath (preflightValidateManifest), so a config
+	// that leaves it empty is one prepare cannot use and must be rejected here rather than
+	// failing later. Per-profile scoping of the manifest contents (seed closure plus
+	// optional extras for install-only, full site closure for self-contained) is refined in
+	// CNF-27162; requiring the path at all is enforced now. When Disconnected is false the
 	// local-image fields are ignored (harmless) and are not enforced.
-	if c.Disconnected && c.LocalImagesPath == "" {
-		return fmt.Errorf("localImagesPath is required when disconnected is set")
+	if c.Disconnected {
+		if c.LocalImagesPath == "" {
+			return fmt.Errorf("localImagesPath is required when disconnected is set")
+		}
+		if c.ExpectedDigestsPath == "" {
+			return fmt.Errorf("expectedDigestsPath is required when disconnected is set")
+		}
 	}
 
 	return nil
