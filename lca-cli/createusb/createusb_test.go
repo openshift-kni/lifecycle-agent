@@ -24,7 +24,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/containers/image/v5/oci/layout"
 	"github.com/opencontainers/go-digest"
@@ -686,7 +688,7 @@ func TestEmitDigestManifestSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, validateDigestManifestBytes(data, p2Root))
 	manifestPath := filepath.Join(p2Root, "digests.json")
-	require.NoError(t, publishFile(manifestPath, data))
+	require.NoError(t, publishFile(manifestPath, data, true))
 
 	// Cross-check: the emitted file parses and validates under the consumer's parser,
 	// guaranteeing producer/consumer schema parity.
@@ -713,8 +715,8 @@ func TestDigestManifestWrittenToBothPaths(t *testing.T) {
 	require.NoError(t, err)
 	besidePath := outputPath + ".digests.json"
 	p2Path := filepath.Join(p2Root, "digests.json")
-	require.NoError(t, publishFile(besidePath, data))
-	require.NoError(t, publishFile(p2Path, data))
+	require.NoError(t, publishFile(besidePath, data, false))
+	require.NoError(t, publishFile(p2Path, data, true))
 
 	beside, err := os.ReadFile(besidePath)
 	require.NoError(t, err)
@@ -1027,4 +1029,92 @@ func TestBuildImageLayoutBesideOutputIsBestEffort(t *testing.T) {
 	// The on-media manifest committed and points at a consistent layout.
 	committedLayoutName(t, p2Root)
 	assert.NoFileExists(t, outputPath+".digests.json", "the beside-output copy failed to write (expected)")
+}
+
+// Regression for the review's durability P1: the completed layout is fsynced before the
+// commit, so syncTree must flush an entire nested layout tree without error. (It cannot
+// assert on-disk durability from a unit test, but it exercises the file+directory walk and
+// the fsync of every regular file and directory that backs the power-loss guarantee.)
+func TestSyncTreeFsyncsLayoutTree(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "blobs", "sha256"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "index.json"), []byte(`{"schemaVersion":2}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "blobs", "sha256", "abc"), make([]byte, 128), 0o600))
+
+	require.NoError(t, syncTree(root), "syncing a completed layout tree must succeed")
+}
+
+// Regression for the review's concurrency P1: builds against the same p2 root must
+// serialize. A second lockP2Root must block while the first lock is held and succeed only
+// once it is released.
+func TestLockP2RootSerializesBuilds(t *testing.T) {
+	p2Root := t.TempDir()
+
+	unlock, err := lockP2Root(p2Root)
+	require.NoError(t, err)
+
+	acquired := make(chan struct{})
+	var once sync.Once
+	go func() {
+		u2, err := lockP2Root(p2Root)
+		if err != nil {
+			return
+		}
+		once.Do(func() { close(acquired) })
+		u2()
+	}()
+
+	// While the first lock is held, the second acquisition must block.
+	select {
+	case <-acquired:
+		t.Fatal("second build acquired the p2-root lock while the first was still held")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Once released, the blocked acquisition must succeed.
+	unlock()
+	select {
+	case <-acquired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second build never acquired the p2-root lock after the first was released")
+	}
+}
+
+// Regression for the review's concurrency P1: GC must decide which layout is live by
+// re-reading the committed manifest, not by trusting a caller-supplied name. It keeps the
+// layout the committed manifest references and removes the rest.
+func TestGCSupersededLayoutsKeepsManifestReferencedLayout(t *testing.T) {
+	p2Root := t.TempDir()
+
+	live := ociLayoutDirPrefix + "live"
+	require.NoError(t, os.MkdirAll(filepath.Join(p2Root, live), 0o750))
+	stale := ociLayoutDirPrefix + "stale"
+	require.NoError(t, os.MkdirAll(filepath.Join(p2Root, stale), 0o750))
+
+	data, err := marshalDigestManifest([]localimages.ImageEntry{{Name: "quay.io/x/y", Digest: fakeDigest("x"), OCITag: "y-0"}}, live)
+	require.NoError(t, err)
+	require.NoError(t, publishFile(filepath.Join(p2Root, "digests.json"), data, true))
+
+	gcSupersededLayouts(nil, p2Root)
+
+	assert.DirExists(t, filepath.Join(p2Root, live), "the layout the committed manifest references must be kept")
+	assert.NoDirExists(t, filepath.Join(p2Root, stale), "a layout no committed manifest references must be collected")
+}
+
+// Regression for the review's concurrency P1: if no committed manifest can be read, GC
+// must delete nothing (it cannot know which layout is live), so a crash that left layouts
+// but no manifest never loses the only intact copy.
+func TestGCSupersededLayoutsNoManifestKeepsAll(t *testing.T) {
+	p2Root := t.TempDir()
+
+	a := filepath.Join(p2Root, ociLayoutDirPrefix+"a")
+	b := filepath.Join(p2Root, ociLayoutDirPrefix+"b")
+	require.NoError(t, os.MkdirAll(a, 0o750))
+	require.NoError(t, os.MkdirAll(b, 0o750))
+
+	gcSupersededLayouts(nil, p2Root)
+
+	assert.DirExists(t, a, "GC must not delete layouts when no committed manifest can be read")
+	assert.DirExists(t, b, "GC must not delete layouts when no committed manifest can be read")
 }
