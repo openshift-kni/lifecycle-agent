@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,12 +62,21 @@ var resourceWaveOrder = map[string]int{
 	"Ingress":                  9,
 }
 
-func (h *BRHandler) StartRestore(ctx context.Context) (*RestoreTracker, error) {
+func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error) {
 	rt := &RestoreTracker{}
 
 	backupPath := filepath.Join(hostPath, LocalBackupPath)
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		h.Log.Info("No local backup found, skipping restore")
+		// A missing backup directory is only acceptable when the user did not
+		// configure any backup content. If content was configured but no backup
+		// exists on disk, the backup is gone (e.g. never taken, or wiped) and we
+		// must fail the restore hard rather than silently succeeding, otherwise
+		// the upgrade would complete without the user's application data.
+		if len(content) > 0 {
+			return rt, NewBRFailedError("Restore",
+				fmt.Sprintf("backup content was configured but no local backup found at %s", backupPath))
+		}
+		h.Log.Info("No backup content configured and no local backup found, skipping restore")
 		return rt, nil
 	}
 
