@@ -1,0 +1,143 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package cmd
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
+)
+
+func init() {
+	// Self-register the create-usb command so root.go needs no change.
+	rootCmd.AddCommand(newCreateUsbCmd())
+}
+
+// newCreateUsbCmd builds the `create-usb` subcommand. It is constructed via a factory
+// (rather than package-level vars) so each invocation — including unit tests — gets
+// fresh flag state, mirroring the ip-config command's NewIPConfigCmd pattern.
+func newCreateUsbCmd() *cobra.Command {
+	var (
+		manifestFile string
+		authFile     string
+		outputPath   string
+		writeDevice  string
+		rhcosLiveISO string
+		rhcosLiveSHA string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "create-usb",
+		Short: "Create USB installation media from a manifest.",
+		Long: `create-usb parses a single USB-based IBI manifest, applies CLI overrides, and runs
+every build-time validation rule before assembling the media.
+
+Media assembly is not yet implemented (tracked by CNF-27167/CNF-27168/CNF-27169); this
+command currently parses and validates the manifest and then exits with a
+not-implemented error.`,
+		SilenceUsage: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runCreateUsb(createUsbOptions{
+				manifestFile: manifestFile,
+				outputPath:   outputPath,
+				writeDevice:  writeDevice,
+				rhcosLiveISO: rhcosLiveISO,
+				rhcosLiveSHA: rhcosLiveSHA,
+			})
+		},
+	}
+
+	cmd.Flags().StringVarP(&manifestFile, "manifest", "f", "", "Path to the USB-based IBI YAML manifest (required).")
+	// --auth-file supplies workstation mirror-registry credentials used at build time only
+	// (never written to the media). It is consumed by the media-build pipeline that lands in
+	// CNF-27167/CNF-27168/CNF-27169; the flag is defined here so the command contract is stable.
+	cmd.Flags().StringVar(&authFile, "auth-file", "", "Path to workstation mirror-registry credentials used at build time only (never written to the media).")
+	cmd.Flags().StringVar(&outputPath, "output", "", "Path of the .img file to write (mutually exclusive with --write-device).")
+	cmd.Flags().StringVar(&writeDevice, "write-device", "", "Block device to write the media to (mutually exclusive with --output).")
+	cmd.Flags().StringVar(&rhcosLiveISO, "rhcos-live-iso", "", "Override the manifest rhcosLiveIso.url (must be set together with --rhcos-live-iso-sha256).")
+	cmd.Flags().StringVar(&rhcosLiveSHA, "rhcos-live-iso-sha256", "", "Override the manifest rhcosLiveIso.sha256 (must be set together with --rhcos-live-iso).")
+
+	_ = cmd.MarkFlagRequired("manifest")
+
+	return cmd
+}
+
+// createUsbOptions carries the resolved create-usb flag values.
+type createUsbOptions struct {
+	manifestFile string
+	outputPath   string
+	writeDevice  string
+	rhcosLiveISO string
+	rhcosLiveSHA string
+}
+
+// runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse
+// the manifest, apply the --rhcos-live-iso* overrides, validate the manifest, then hand
+// off to the (stubbed) media build.
+func runCreateUsb(opts createUsbOptions) error {
+	if err := validateOutputTarget(opts.outputPath, opts.writeDevice); err != nil {
+		return err
+	}
+	if err := validateISOOverrideFlags(opts.rhcosLiveISO, opts.rhcosLiveSHA); err != nil {
+		return err
+	}
+
+	manifest, err := createusb.ParseManifest(opts.manifestFile)
+	if err != nil {
+		return fmt.Errorf("create-usb: %w", err)
+	}
+
+	// The --rhcos-live-iso* flags override the manifest value (flag wins) and apply as a
+	// pair; validateISOOverrideFlags has already rejected a partial override.
+	if opts.rhcosLiveISO != "" {
+		manifest.RHCOSLiveISO.URL = opts.rhcosLiveISO
+		manifest.RHCOSLiveISO.SHA256 = opts.rhcosLiveSHA
+	}
+
+	if err := manifest.Validate(); err != nil {
+		return fmt.Errorf("create-usb: manifest validation failed: %w", err)
+	}
+
+	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
+
+	if err := createusb.Build(manifest); err != nil {
+		return fmt.Errorf("create-usb: %w", err)
+	}
+	return nil
+}
+
+// validateOutputTarget enforces that exactly one of --output or --write-device is set.
+func validateOutputTarget(outputPath, writeDevice string) error {
+	switch {
+	case outputPath == "" && writeDevice == "":
+		return fmt.Errorf("exactly one of --output or --write-device is required")
+	case outputPath != "" && writeDevice != "":
+		return fmt.Errorf("--output and --write-device are mutually exclusive")
+	}
+	return nil
+}
+
+// validateISOOverrideFlags enforces that --rhcos-live-iso and --rhcos-live-iso-sha256 are
+// provided together (they override the manifest value as a pair).
+func validateISOOverrideFlags(rhcosLiveISO, rhcosLiveSHA string) error {
+	if (rhcosLiveISO == "") != (rhcosLiveSHA == "") {
+		return fmt.Errorf("--rhcos-live-iso and --rhcos-live-iso-sha256 must be provided together")
+	}
+	return nil
+}
