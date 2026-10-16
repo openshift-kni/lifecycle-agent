@@ -93,6 +93,9 @@ func TestPartitionPlanPerMode(t *testing.T) {
 		plan := partitionPlan(ModeInstallOnly, p1)
 		labels := partitionLabels(plan)
 		assert.Equal(t, []string{labelLiveISO, labelIBIImages, labelIBIStatus}, labels)
+		// ibi-status keeps its fixed number 4 even though cluster-config (p3) is omitted:
+		// the layout is p1/p2/p4, not a renumbered p1/p2/p3.
+		assert.Equal(t, []int{1, 2, 4}, partitionNumbers(plan))
 		assertPlanInvariants(t, plan, p1)
 	})
 
@@ -100,27 +103,32 @@ func TestPartitionPlanPerMode(t *testing.T) {
 		plan := partitionPlan(ModeSelfContained, p1)
 		labels := partitionLabels(plan)
 		assert.Equal(t, []string{labelLiveISO, labelIBIImages, labelClusterConfig, labelIBIStatus}, labels)
+		assert.Equal(t, []int{1, 2, 3, 4}, partitionNumbers(plan))
 		assertPlanInvariants(t, plan, p1)
 	})
 }
 
-// assertPlanInvariants checks the layout contract: sequential partition numbers, the
-// placeholder p1 sized as requested, every start 1 MiB-aligned and non-overlapping in
-// order, the first partition past the front GPT reservation, and a container large enough
-// to hold the last partition plus the tail backup-GPT reservation.
+// assertPlanInvariants checks the layout contract: the placeholder p1 sized as requested,
+// every start 1 MiB-aligned and non-overlapping in order, strictly increasing partition
+// numbers (p1 first), the first partition past the front GPT reservation, and a container
+// large enough to hold the last partition plus the tail backup-GPT reservation. The exact
+// numbers per mode are asserted by TestPartitionPlanPerMode.
 func assertPlanInvariants(t *testing.T, plan PartitionPlan, wantP1 int64) {
 	t.Helper()
 	require.NotEmpty(t, plan.Partitions)
 	assert.Equal(t, wantP1, plan.Partitions[0].Size, "p1 must be the requested placeholder size")
+	assert.Equal(t, 1, plan.Partitions[0].Number, "the first partition must be p1")
 	assert.GreaterOrEqual(t, plan.Partitions[0].Offset, gptFrontReservedBytes, "p1 must start past the front GPT area")
 
 	prevEnd := int64(0)
-	for i, p := range plan.Partitions {
-		assert.Equal(t, i+1, p.Number, "partition numbers are sequential from 1")
+	prevNumber := 0
+	for _, p := range plan.Partitions {
+		assert.Greater(t, p.Number, prevNumber, "partition numbers must strictly increase in layout order")
 		assert.Zero(t, p.Offset%alignmentBytes, "partition %d offset must be 1 MiB-aligned", p.Number)
 		assert.GreaterOrEqual(t, p.Offset, prevEnd, "partition %d must not overlap the previous one", p.Number)
 		assert.Positive(t, p.Size, "partition %d must reserve a positive size", p.Number)
 		prevEnd = p.Offset + p.Size
+		prevNumber = p.Number
 	}
 
 	last := plan.Partitions[len(plan.Partitions)-1]
@@ -136,6 +144,14 @@ func partitionLabels(plan PartitionPlan) []string {
 		labels = append(labels, p.Label)
 	}
 	return labels
+}
+
+func partitionNumbers(plan PartitionPlan) []int {
+	numbers := make([]int, 0, len(plan.Partitions))
+	for _, p := range plan.Partitions {
+		numbers = append(numbers, p.Number)
+	}
+	return numbers
 }
 
 func TestAssembleMediaFoundation(t *testing.T) {
@@ -206,6 +222,57 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		_, statErr := os.Stat(img)
 		assert.True(t, os.IsNotExist(statErr), "the partial image must be removed on failure")
 	})
+}
+
+// TestAssembleMediaRefusesToOverwriteExistingOutput covers the destructive-overwrite guard:
+// when the --output path already exists, assembleMedia must fail without truncating or
+// removing the existing file and without reaching any privileged op. A build never
+// completes in this story, so clobbering a reused path would destroy the operator's file
+// for a command that then reports failure.
+func TestAssembleMediaRefusesToOverwriteExistingOutput(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	const existing = "pre-existing image contents"
+	require.NoError(t, os.WriteFile(img, []byte(existing), 0o600))
+
+	fp := &fakePartitionOps{attachDev: "/dev/loop1"}
+	handle, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+	require.Error(t, err)
+	assert.Nil(t, handle)
+	assert.Contains(t, err.Error(), "already exists")
+
+	// The pre-existing file is left untouched: not truncated, not removed by rollback, and
+	// no privileged op was reached.
+	got, readErr := os.ReadFile(img)
+	require.NoError(t, readErr)
+	assert.Equal(t, existing, string(got), "an existing output file must not be modified or removed")
+	assert.Empty(t, fp.calls, "no privileged op may run when the output path already exists")
+}
+
+// TestCloseDetachFailurePreservesAndRetries covers Close's behavior when the detach fails:
+// it must keep LoopDevice set and leave the backing image in place (the loop may still be
+// attached, so removing it would orphan the attachment and lose the retry handle), and a
+// later Close must be able to detach and remove once the cause clears.
+func TestCloseDetachFailurePreservesAndRetries(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	require.NoError(t, os.WriteFile(img, []byte("backing"), 0o600))
+	fp := &fakePartitionOps{detachErr: fmt.Errorf("losetup -d boom")}
+	h := &MediaHandle{ImagePath: img, LoopDevice: "/dev/loop7", IsImage: true, partition: fp}
+
+	// First Close: detach fails, so the device handle and backing image are preserved.
+	err := h.Close()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "detaching loop device")
+	assert.Equal(t, "/dev/loop7", h.LoopDevice, "LoopDevice must be preserved for a retry when detach fails")
+	assert.FileExists(t, img, "the backing image must not be removed while the loop may still be attached")
+
+	// Clear the failure and retry: the detach now succeeds and the image is removed.
+	fp.detachErr = nil
+	require.NoError(t, h.Close())
+	assert.Empty(t, h.LoopDevice)
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "a successful retry must remove the image")
+	assert.Equal(t, []string{"detach", "detach"}, fp.calls, "detach is attempted again on retry")
 }
 
 func TestParseSgdiskTable(t *testing.T) {
