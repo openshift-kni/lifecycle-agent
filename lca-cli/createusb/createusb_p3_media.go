@@ -61,6 +61,13 @@ const (
 	p3DirMode = 0o750
 )
 
+// errP3Mounted signals that the cluster-config (p3) partition could not be unmounted, so its
+// filesystem is still mounted over the loop device. The caller's rollback must NOT detach the
+// loop or remove the backing image in this case: while the filesystem is mounted, tearing the
+// loop/image down would discard the only path to recover or retry the unmount. assembleMedia's
+// rollback checks for this via errors.Is and preserves the image + loop handle instead.
+var errP3Mounted = errors.New("cluster-config (p3) partition is still mounted")
+
 // createP3Partition fills the reserved self-contained p3 cluster-config slot on the media
 // handle: it creates the GPT entry, settles the kernel node, formats an ext4 filesystem,
 // labels it cluster-config, mounts it, and populates it content-verbatim from p3Root.
@@ -125,10 +132,13 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 		return fmt.Errorf("mounting cluster-config (p3) partition %s at %s: %w", partDev, mountpoint, err)
 	}
 	// Always unmount before the loop device is detached (Close does not unmount). Aggregate a
-	// cleanup failure into the returned error rather than swallowing it.
+	// cleanup failure into the returned error rather than swallowing it, and tag it with
+	// errP3Mounted so the caller's rollback preserves the still-mounted image + loop handle
+	// (detaching/removing them while mounted would discard the recovery path).
 	defer func() {
 		if uerr := deps.partition.UnmountPartition(mountpoint); uerr != nil {
-			err = errors.Join(err, fmt.Errorf("unmounting cluster-config (p3) partition at %s: %w", mountpoint, uerr))
+			err = errors.Join(err, fmt.Errorf("unmounting cluster-config (p3) partition at %s: %w",
+				mountpoint, errors.Join(errP3Mounted, uerr)))
 		}
 	}()
 

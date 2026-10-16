@@ -348,6 +348,15 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		if success {
 			return
 		}
+		// If p3 could not be unmounted, its filesystem is still mounted over the loop device.
+		// Detaching the loop and removing the backing image would discard the only path to
+		// recover or retry the unmount, so preserve both and surface where things stand.
+		if errors.Is(err, errP3Mounted) {
+			log.Warnf("create-usb: cluster-config (p3) partition is still mounted; preserving loop device %s "+
+				"and media image %s for recovery (unmount it, then detach %s and remove the image)",
+				loopDev, imgPath, loopDev)
+			return
+		}
 		if loopDev != "" {
 			if derr := deps.partition.DetachLoopback(loopDev); derr != nil {
 				log.Warnf("create-usb: detaching loop device %s during rollback: %v", loopDev, derr)
