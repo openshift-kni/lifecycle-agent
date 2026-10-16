@@ -307,13 +307,17 @@ participates in it (it may sit on a different filesystem), and a failure to writ
 the build.
 
 The guarantee holds across power loss, not merely process termination: the completed layout (its
-files and directories) is fsynced before the commit, and the commit rename is made durable by
-fsyncing the manifest file and the media-root directory, so a power loss can never persist the
-manifest rename ahead of the layout data it references. Garbage collection runs only after the
-commit is durable, and it re-reads the committed manifest to learn which layout is live rather than
-trusting the just-written name. Builds against the same media root are serialized by an advisory
-file lock, so concurrent builds cannot interleave their commit/GC steps and collect a layout the
-other build just made live.
+files and directories) is fsynced before the commit, the media-root directory entry that names the
+new layout directory is fsynced before the manifest can reference it, and the commit rename is
+itself made durable by fsyncing the manifest file and the media-root directory, so a power loss can
+never persist the manifest rename ahead of the layout data (or the layout's own directory entry) it
+references. If the commit rename succeeds but its durability fsync then fails, the medium is treated
+as committed — the manifest already points at the complete new layout, so the layout is kept, never
+deleted — and the fsync error is surfaced so the caller learns durability was not confirmed. Garbage
+collection runs only after the commit is durable, and it re-reads the committed manifest to learn
+which layout is live rather than trusting the just-written name. Builds against the same media root
+are serialized by an advisory file lock, so concurrent builds cannot interleave their commit/GC
+steps and collect a layout the other build just made live.
 
 The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
 subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
