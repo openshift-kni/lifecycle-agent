@@ -40,12 +40,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
@@ -129,6 +131,77 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 	assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
+}
+
+// requireP3Tools skips unless the real p3 media path's tools are available, in addition to the
+// root-gating and loopback/sgdisk tools requireLoopAndSgdisk checks.
+func requireP3Tools(t *testing.T) {
+	t.Helper()
+	requireLoopAndSgdisk(t)
+	for _, bin := range []string{"mkfs.ext4", "partprobe", "udevadm", "mount", "umount", "blkid"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available: %v", bin, err)
+		}
+	}
+}
+
+// TestAssembleMediaRealP3 exercises the production p3 cluster-config media stage end-to-end on
+// a real loopback-attached image: assembleMedia creates the reserved p3 entry, formats it
+// ext4, labels it cluster-config, mounts it, and populates it from a temp p3Root. The on-disk
+// GPT entry, FS label, and populated tree are inspected on the live handle before Close (the
+// full public Build still returns errAssemblyIncomplete until CNF-27171 adds p4 + finalize).
+func TestAssembleMediaRealP3(t *testing.T) {
+	requireP3Tools(t)
+
+	realOps, deps := newRealMediaDeps()
+	img := filepath.Join(t.TempDir(), "media.img")
+
+	// A representative rendered p3 tree: manifest.json + a cluster manifest + an extra manifest.
+	p3Root := writeTree(t, t.TempDir(), map[string]string{
+		filepath.Join(common.ClusterConfigDir, common.SeedReconfigurationFileName): `{"apiVersion":1}`,
+		filepath.Join(common.ClusterConfigDir, common.ManifestsDir, "a.yaml"):      "kind: A\n",
+		filepath.Join(common.ExtraManifestsDir, "extra.yaml"):                      "kind: Extra\n",
+	})
+
+	handle, err := assembleMedia(context.Background(), testLogger(), validSelfContained(),
+		BuildOptions{OutputPath: img, P3Root: p3Root}, deps)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	// Guard against a leaked loop device / image if an assertion below fails.
+	defer func() { _ = handle.Close() }()
+
+	p3, ok := plannedPartition(handle.Plan, labelClusterConfig)
+	require.True(t, ok, "a self-contained plan must reserve the cluster-config (p3) slot")
+
+	// The on-disk GPT now carries the cluster-config entry at its planned 1 MiB-aligned offset.
+	entries, err := realOps.ReadPartitionTable(handle.LoopDevice)
+	require.NoError(t, err)
+	var found *PartitionEntry
+	for i := range entries {
+		if entries[i].Number == p3.Number {
+			found = &entries[i]
+		}
+	}
+	require.NotNil(t, found, "the cluster-config (p3) entry must be present on disk")
+	assert.Equal(t, labelClusterConfig, found.Name)
+	assert.Equal(t, p3.Offset/sectorSize, found.Start, "p3 starts at the planned 1 MiB-aligned offset")
+
+	// A clean sgdisk --verify confirms the table is still valid after appending p3.
+	verifyOut, verr := realOps.ops.RunInHostNamespace("sgdisk", "--verify", handle.LoopDevice)
+	require.NoError(t, verr, verifyOut)
+
+	// The partition carries an ext4 filesystem whose FS label is cluster-config.
+	partDev := partitionDevicePath(handle.LoopDevice, p3.Number)
+	labelOut, err := exec.Command("blkid", "-s", "LABEL", "-o", "value", partDev).Output() //nolint:gosec // fixed partition device path
+	require.NoError(t, err)
+	assert.Equal(t, labelClusterConfig, strings.TrimSpace(string(labelOut)))
+
+	// Re-mount the (now unmounted) partition and confirm the populated tree matches the source
+	// byte-for-byte with identical relative layout.
+	mnt := t.TempDir()
+	require.NoError(t, exec.Command("mount", partDev, mnt).Run()) //nolint:gosec // fixed partition device path + temp mountpoint
+	defer func() { _ = exec.Command("umount", mnt).Run() }()      //nolint:gosec // fixed temp mountpoint
+	assert.Equal(t, snapshotTree(p3Root), snapshotTree(mnt))
 }
 
 // failCreateOps wraps the real seam but injects a CreateBaseLayout failure, so the
