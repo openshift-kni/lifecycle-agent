@@ -16,13 +16,10 @@ limitations under the License.
 
 package createusb
 
-// This file implements the first slice of the create-usb media-assembly pipeline
-// (USB-based IBI proposal §6.4 step 5, §10 candidate (a)): create the output media
-// container (a sparse .img), establish the base GPT, and add a *placeholder p1
-// partition* that reserves the live-ISO region at the front. CNF-27168 later writes the
-// real bootable RHCOS isohybrid ISO into p1; this story only reserves and lays out the
-// region so the p2/p3/p4 stories (CNF-28668/CNF-28669/CNF-28670) have a stable base to
-// append into.
+// This file coordinates the create-usb media-assembly pipeline: allocate the sparse
+// image, attach a loop device, run the p1/p2/p3/p4 stages, and manage cleanup. The
+// placeholder p1 and base GPT creation live in createusb_p1.go; later work writes
+// the real live ISO into that reserved region.
 //
 // # Privileged-ops seam
 //
@@ -90,9 +87,6 @@ const (
 // are confirmed or changed by the CNF-27158 assembly-approach gate. The container is a
 // sparse .img, so reserving full size costs no real bytes until content is written.
 const (
-	// defaultP1ReservationBytes reserves the live-ISO region at the front. A RHCOS live
-	// ISO is ~1.2-1.5 GiB; 2 GiB leaves headroom. CNF-27168 writes the real ISO here.
-	defaultP1ReservationBytes = int64(2) << 30
 	// p2ReservationBytes reserves the ibi-images OCI layout region (CNF-28668).
 	p2ReservationBytes = int64(8) << 30
 	// p3ReservationBytes reserves the self-contained cluster-config region (CNF-28669).
@@ -101,10 +95,9 @@ const (
 	p4ReservationBytes = int64(64) << 20
 )
 
-// GPT partition names (labels) for the reserved partitions, matching the roles the
-// sibling stories populate.
+// GPT partition names (labels) for the remaining reserved partitions. p1's label is
+// defined with its stage in createusb_p1.go.
 const (
-	labelLiveISO       = "live-iso"
 	labelIBIImages     = "ibi-images"
 	labelClusterConfig = "cluster-config"
 	labelIBIStatus     = "ibi-status"
@@ -181,9 +174,8 @@ type partitionOps interface {
 	// DetachLoopback detaches loopDev (losetup -d). It is idempotent: an already-detached
 	// device is not an error.
 	DetachLoopback(loopDev string) error
-	// CreateBaseLayout creates the GPT and the placeholder p1 entry on dev, reserving the
-	// live-ISO region and the p2/p3/p4 offsets. This is the operation that establishes the
-	// base layout.
+	// CreateBaseLayout initializes the GPT and placeholder p1; the p1 stage in
+	// createusb_p1.go owns this operation.
 	CreateBaseLayout(dev string, plan PartitionPlan) error
 	// ReadPartitionTable reads dev's GPT and returns the parsed entries.
 	ReadPartitionTable(dev string) ([]PartitionEntry, error)
@@ -196,8 +188,7 @@ type partitionOps interface {
 
 	// CreatePartition adds a single GPT entry to dev at the number, 1 MiB-aligned offset, and
 	// reserved size the plan carries for part (sgdisk --new/--change-name/--typecode),
-	// mirroring CreateBaseLayout's p1 creation for a sibling partition. It does not format the
-	// partition.
+	// using the same GPT-entry operation as p1. It does not format the partition.
 	CreatePartition(dev string, part PlannedPartition) error
 	// SettlePartition makes the kernel partition node for partition number on dev available
 	// after its GPT entry was added (re-read the table + a bounded wait for the device node)
@@ -421,8 +412,8 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		return nil, fmt.Errorf("attaching loop device for %s: %w", imgPath, err)
 	}
 
-	if err = deps.partition.CreateBaseLayout(loopDev, plan); err != nil {
-		return nil, fmt.Errorf("creating base GPT + placeholder p1 on %s: %w", loopDev, err)
+	if err = createP1Partition(log, plan, loopDev, deps); err != nil {
+		return nil, err
 	}
 
 	handle = &MediaHandle{
@@ -572,33 +563,6 @@ func (p *opsPartitionOps) DetachLoopback(loopDev string) error {
 	return nil
 }
 
-// CreateBaseLayout zeroes any existing table, creates a fresh GPT at the full container
-// size, and adds the placeholder p1 entry reserving the live-ISO region. Only p1 is
-// created here; the p2/p3/p4 entries are added by the sibling stories into the offsets
-// the plan reserves.
-func (p *opsPartitionOps) CreateBaseLayout(dev string, plan PartitionPlan) error {
-	if len(plan.Partitions) == 0 {
-		return fmt.Errorf("empty partition plan")
-	}
-	p1 := plan.Partitions[0]
-	startSector := p1.Offset / sectorSize
-	endSector := (p1.Offset+p1.Size)/sectorSize - 1
-
-	// Zap any residual table so a fresh, valid GPT is written (and the backup GPT lands at
-	// the true device end, since the loop device spans the full container).
-	if _, err := p.ops.RunInHostNamespace("sgdisk", "--zap-all", dev); err != nil {
-		return fmt.Errorf("zapping partition table on %s: %w", dev, err)
-	}
-	if _, err := p.ops.RunInHostNamespace("sgdisk",
-		fmt.Sprintf("--new=%d:%d:%d", p1.Number, startSector, endSector),
-		fmt.Sprintf("--change-name=%d:%s", p1.Number, p1.Label),
-		fmt.Sprintf("--typecode=%d:%s", p1.Number, placeholderTypeCode),
-		dev); err != nil {
-		return fmt.Errorf("creating placeholder p1 on %s: %w", dev, err)
-	}
-	return nil
-}
-
 // ReadPartitionTable reads dev's GPT (sgdisk -p) and returns the parsed entries.
 func (p *opsPartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, error) {
 	out, err := p.ops.RunInHostNamespace("sgdisk", "-p", dev)
@@ -609,7 +573,7 @@ func (p *opsPartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, erro
 }
 
 // CreatePartition adds the single GPT entry part reserves to dev, using the same sector math
-// and sgdisk invocation as CreateBaseLayout's placeholder p1 (--new/--change-name/--typecode).
+// and sgdisk invocation as the p1 stage (--new/--change-name/--typecode).
 // The placeholder type code is kept: the cluster-config partition is located by FS label at
 // post-pivot, not by GPT type.
 func (p *opsPartitionOps) CreatePartition(dev string, part PlannedPartition) error {
