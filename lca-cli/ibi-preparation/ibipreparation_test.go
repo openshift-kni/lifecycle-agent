@@ -1078,3 +1078,110 @@ func TestConnectedFlowUnchanged(t *testing.T) {
 	err := ibi.Run()
 	assert.NoError(t, err)
 }
+
+// --- Disconnected precache verification set (CNF-27161) ---
+
+// writeContainersList writes a seed containers.list with the given references to a
+// temp file and returns its path. PathOutsideChroot is a no-op in unit tests (no
+// /host), so disconnectedPrecacheList reads exactly this file.
+func writeContainersList(t *testing.T, refs ...string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "containers.list")
+	assert.NoError(t, os.WriteFile(p, []byte(strings.Join(refs, "\n")+"\n"), 0o600))
+	return p
+}
+
+// TestDisconnectedPrecacheListUsesManifest proves the disconnected precache set is
+// built from the manifest's canonical name@digest entries (what ImportAll actually
+// stored), not from the raw containers.list references -- so `podman image exists`
+// checks the references that were imported.
+func TestDisconnectedPrecacheListUsesManifest(t *testing.T) {
+	manifest := testManifest()
+	// containers.list carries a tag for the seed and a registry-rewritten digest for
+	// the workload image; neither matches what was imported, yet both are covered.
+	listFile := writeContainersList(t,
+		testSeedName+":latest",
+		"mirror.example.com/openshift-release-dev/ocp-v4.0-art-dev@"+manifest.Images[1].Digest,
+	)
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+
+	got, err := ibi.disconnectedPrecacheList(listFile, manifest)
+	assert.NoError(t, err)
+	// The verification set is exactly the manifest's canonical references.
+	want := []string{
+		manifest.Images[0].Name + "@" + manifest.Images[0].Digest,
+		manifest.Images[1].Name + "@" + manifest.Images[1].Digest,
+	}
+	assert.Equal(t, want, got)
+}
+
+// TestDisconnectedPrecacheListNilManifest proves a disconnected precache without a
+// manifest fails fast rather than silently verifying nothing.
+func TestDisconnectedPrecacheListNilManifest(t *testing.T) {
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+	listFile := writeContainersList(t, testSeedImageRef())
+
+	_, err := ibi.disconnectedPrecacheList(listFile, nil)
+	assert.ErrorContains(t, err, "requires the on-media digest manifest")
+}
+
+// TestDisconnectedPrecacheListRejectsUnresolvedSeedImage proves a seed requirement
+// the imported closure does not cover fails prepare instead of precaching only the
+// manifest and leaving the node short an image.
+func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
+	manifest := testManifest()
+	missingDigest := "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	listFile := writeContainersList(t,
+		testSeedImageRef(),
+		"quay.io/openshift-release-dev/extra@"+missingDigest, // not in the manifest
+	)
+	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
+
+	_, err := ibi.disconnectedPrecacheList(listFile, manifest)
+	assert.ErrorContains(t, err, "does not cover")
+	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
+}
+
+// TestVerifyManifestCoversSeed exercises the digest- and name-based coverage
+// matching directly.
+func TestVerifyManifestCoversSeed(t *testing.T) {
+	manifest := testManifest()
+	workload := manifest.Images[1]
+
+	for _, tc := range []struct {
+		name    string
+		refs    []string
+		wantErr bool
+	}{
+		{
+			name: "digest-pinned refs covered regardless of registry rewrite",
+			refs: []string{
+				testSeedImageRef(),
+				"mirror.local:5000/openshift-release-dev/ocp-v4.0-art-dev@" + workload.Digest,
+			},
+		},
+		{
+			name: "tag-only ref matched by canonical name",
+			refs: []string{testSeedName + ":4.15.0"},
+		},
+		{
+			name:    "tag-only ref with unknown name is unresolved",
+			refs:    []string{"quay.io/openshift-release-dev/unknown:4.15.0"},
+			wantErr: true,
+		},
+		{
+			name:    "digest-pinned ref with unknown digest is unresolved",
+			refs:    []string{testSeedName + "@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyManifestCoversSeed(tc.refs, manifest)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

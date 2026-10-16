@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/go-logr/logr"
@@ -179,7 +180,7 @@ func (i *IBIPrepare) Run() error {
 		}
 	}
 
-	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile); err != nil {
+	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile, manifest); err != nil {
 		return fmt.Errorf("failed to precache: %w", err)
 	}
 
@@ -437,36 +438,14 @@ func setupPrepareAuthFile(path string) (func(), error) {
 	return func() { _ = os.Remove(path) }, nil
 }
 
-func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string) (retErr error) {
+func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) (retErr error) {
 	if i.config.PrecacheDisabled {
 		i.log.Info("Precache disabled, skipping it")
 		return nil
 	}
 
-	i.log.Info("Checking seed image info")
-	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(seedInfoFile)
+	imageList, err := i.precacheImageList(imageListFile, seedInfoFile, registriesConfFile, manifest)
 	if err != nil {
-		return fmt.Errorf("failed to read seed info: %s, %w", common.PathOutsideChroot(seedInfoFile), err)
-	}
-	i.log.Info("Collected seed info for precache: ", fmt.Sprintf("%+v", seedInfo))
-
-	i.log.Info("Getting mirror registry source registries")
-	mirrorRegistrySources, err := mirrorRegistrySourceRegistries(registriesConfFile)
-	if err != nil {
-		return fmt.Errorf("failed to get mirror registry source registries: %w", err)
-	}
-
-	i.log.Info("Checking whether to override seed registry")
-	shouldOverrideSeedRegistry, err := utils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
-	if err != nil {
-		return fmt.Errorf("failed to check ShouldOverrideSeedRegistry: %w", err)
-	}
-	i.log.Info("Should override seed registry", "shouldOverrideSeedRegistry", shouldOverrideSeedRegistry, "releaseRegistry", i.config.ReleaseRegistry)
-
-	i.log.Info("Precaching images")
-	imageList, err := prep.ReadPrecachingList(imageListFile, i.config.ReleaseRegistry, seedInfo.ReleaseRegistry, shouldOverrideSeedRegistry)
-	if err != nil {
-		err = fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
 		return err
 	}
 
@@ -497,6 +476,157 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 	}
 
 	return nil
+}
+
+// precacheImageList builds the set of image references precache must ensure are
+// present locally.
+//
+// Connected: the seed's containers.list, with the usual registries.conf-driven
+// registry override applied so the images resolve to the registry they will be
+// pulled from.
+//
+// Disconnected: the canonical name@digest closure that was actually imported from
+// the media (the digest manifest), with registry replacement bypassed. The closure
+// import stores every image strictly under name@digest (no registries.conf
+// rewriting), so checking the raw containers.list references -- which may be
+// tag-based or registry-rewritten -- with `podman image exists` would spuriously
+// fail even after a complete import. Before trusting the manifest as the
+// verification set, it is confirmed to cover every image the seed requires.
+func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) ([]string, error) {
+	if i.config.Disconnected {
+		return i.disconnectedPrecacheList(imageListFile, manifest)
+	}
+
+	i.log.Info("Checking seed image info")
+	seedInfo, err := seedclusterinfo.ReadSeedClusterInfoFromFile(seedInfoFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read seed info: %s, %w", common.PathOutsideChroot(seedInfoFile), err)
+	}
+	i.log.Info("Collected seed info for precache: ", fmt.Sprintf("%+v", seedInfo))
+
+	i.log.Info("Getting mirror registry source registries")
+	mirrorRegistrySources, err := mirrorRegistrySourceRegistries(registriesConfFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mirror registry source registries: %w", err)
+	}
+
+	i.log.Info("Checking whether to override seed registry")
+	shouldOverrideSeedRegistry, err := utils.ShouldOverrideSeedRegistry(seedInfo.MirrorRegistryConfigured, seedInfo.ReleaseRegistry, mirrorRegistrySources)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check ShouldOverrideSeedRegistry: %w", err)
+	}
+	i.log.Info("Should override seed registry", "shouldOverrideSeedRegistry", shouldOverrideSeedRegistry, "releaseRegistry", i.config.ReleaseRegistry)
+
+	i.log.Info("Precaching images")
+	imageList, err := prep.ReadPrecachingList(imageListFile, i.config.ReleaseRegistry, seedInfo.ReleaseRegistry, shouldOverrideSeedRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
+	}
+	return imageList, nil
+}
+
+// disconnectedPrecacheList returns the canonical name@digest references imported
+// from the media (the digest manifest) as the disconnected precache presence set,
+// after confirming the manifest covers every image the seed requires
+// (containers.list). The manifest is authoritative because it records exactly what
+// was imported and under which reference; a missing manifest or a seed requirement
+// the closure does not cover is a hard failure rather than a silently incomplete
+// precache.
+func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *localimages.DigestManifest) ([]string, error) {
+	if manifest == nil {
+		return nil, errors.New("disconnected precache requires the on-media digest manifest")
+	}
+
+	required, err := readSeedRequiredImages(imageListFile)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyManifestCoversSeed(required, manifest); err != nil {
+		return nil, err
+	}
+
+	imageList := make([]string, 0, len(manifest.Images))
+	for _, e := range manifest.Images {
+		imageList = append(imageList, e.Name+"@"+e.Digest)
+	}
+	i.log.Infof("Disconnected precache will verify %d imported image(s) from the digest manifest", len(imageList))
+	return imageList, nil
+}
+
+// readSeedRequiredImages reads the seed's containers.list verbatim (no registry
+// override): the references are compared against the manifest's canonical entries,
+// so rewriting their registry here would defeat the coverage check.
+func readSeedRequiredImages(imageListFile string) ([]string, error) {
+	content, err := os.ReadFile(common.PathOutsideChroot(imageListFile)) //nolint:gosec // imageListFile is the validated seed containers.list path
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pre-caching image file: %s, %w", common.PathOutsideChroot(imageListFile), err)
+	}
+	var images []string
+	for _, line := range strings.Split(string(content), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			images = append(images, line)
+		}
+	}
+	return images, nil
+}
+
+// verifyManifestCoversSeed fails if any image the seed requires (containers.list)
+// is absent from the imported closure (the digest manifest). A digest-pinned
+// reference is matched by its digest (content-addressed and therefore stable
+// across any registry rewrite); a tag-only reference is matched by its canonical
+// repository name. Without this check a seed requirement missing from the manifest
+// would pass precache -- which now verifies only the manifest -- while leaving the
+// node short an image it needs.
+func verifyManifestCoversSeed(required []string, manifest *localimages.DigestManifest) error {
+	manifestDigests := make(map[string]struct{}, len(manifest.Images))
+	manifestNames := make(map[string]struct{}, len(manifest.Images))
+	for _, e := range manifest.Images {
+		manifestDigests[e.Digest] = struct{}{}
+		manifestNames[e.Name] = struct{}{}
+	}
+
+	var unresolved []string
+	for _, ref := range required {
+		if digest := refDigest(ref); digest != "" {
+			if _, ok := manifestDigests[digest]; !ok {
+				unresolved = append(unresolved, ref)
+			}
+			continue
+		}
+		if _, ok := manifestNames[refName(ref)]; !ok {
+			unresolved = append(unresolved, ref)
+		}
+	}
+	if len(unresolved) > 0 {
+		return fmt.Errorf("digest manifest does not cover %d image(s) required by the seed: %s",
+			len(unresolved), strings.Join(unresolved, ", "))
+	}
+	return nil
+}
+
+// refDigest returns the digest of a digest-pinned image reference
+// (repo@sha256:...), or "" when the reference carries no digest.
+func refDigest(ref string) string {
+	if at := strings.LastIndex(ref, "@"); at >= 0 {
+		return ref[at+1:]
+	}
+	return ""
+}
+
+// refName returns the repository portion of an image reference, stripping any
+// digest and tag, so a tag-only seed reference can be matched against the
+// manifest's canonical names. A ':' is only treated as a tag separator when it
+// appears in the final path segment (an earlier ':' is a registry port).
+func refName(ref string) string {
+	if at := strings.LastIndex(ref, "@"); at >= 0 {
+		ref = ref[:at]
+	}
+	lastSegment := strings.LastIndex(ref, "/") + 1
+	if colon := strings.LastIndex(ref[lastSegment:], ":"); colon >= 0 {
+		ref = ref[:lastSegment+colon]
+	}
+	return ref
 }
 
 func (i *IBIPrepare) shutdownNode() error {
