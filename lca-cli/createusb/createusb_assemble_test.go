@@ -44,6 +44,7 @@ type fakePartitionOps struct {
 	attachDev string
 	attachErr error
 	createErr error
+	addErr    error
 	detachErr error
 	readOut   []PartitionEntry
 	readErr   error
@@ -52,7 +53,16 @@ type fakePartitionOps struct {
 	attached  []string
 	detached  []string
 	createdOn []string
+	added     []addPartitionCall
 	lastPlan  PartitionPlan
+}
+
+// addPartitionCall records the arguments of one AddPartition call so tests can assert the
+// p2 (ibi-images) partition is driven with the planned entry and filesystem type.
+type addPartitionCall struct {
+	dev    string
+	part   PlannedPartition
+	fsType string
 }
 
 func (f *fakePartitionOps) AttachLoopback(imgPath string) (string, error) {
@@ -79,6 +89,12 @@ func (f *fakePartitionOps) CreateBaseLayout(dev string, plan PartitionPlan) erro
 	f.createdOn = append(f.createdOn, dev)
 	f.lastPlan = plan
 	return f.createErr
+}
+
+func (f *fakePartitionOps) AddPartition(dev string, part PlannedPartition, fsType string) error {
+	f.calls = append(f.calls, "add")
+	f.added = append(f.added, addPartitionCall{dev: dev, part: part, fsType: fsType})
+	return f.addErr
 }
 
 func (f *fakePartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, error) {
@@ -273,6 +289,27 @@ func TestCloseDetachFailurePreservesAndRetries(t *testing.T) {
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "a successful retry must remove the image")
 	assert.Equal(t, []string{"detach", "detach"}, fp.calls, "detach is attempted again on retry")
+}
+
+// TestBuildP2FailureTearsDown covers the p2 cleanup path: when createP2Partition fails (an
+// AddPartition error), build must tear the handle down (detach the loop, remove the partial
+// .img) and surface the p2 error -- not swallow it behind the incomplete-assembly error.
+func TestBuildP2FailureTearsDown(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	fp := &fakePartitionOps{attachDev: "/dev/loop4", addErr: fmt.Errorf("mkfs boom")}
+
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mkfs boom", "the p2 failure must be surfaced")
+	assert.NotErrorIs(t, err, errAssemblyIncomplete, "a p2 failure returns the p2 error, not the incomplete-assembly error")
+
+	// The seam was driven attach -> create (p1) -> add (p2) and then torn down.
+	assert.Equal(t, []string{"attach", "create", "add", "detach"}, fp.calls)
+	assert.Equal(t, []string{"/dev/loop4"}, fp.detached, "the loop device must be detached on a p2 failure")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed on a p2 failure")
 }
 
 func TestParseSgdiskTable(t *testing.T) {

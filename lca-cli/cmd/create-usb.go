@@ -54,11 +54,11 @@ func newCreateUsbCmd() *cobra.Command {
 every build-time validation rule before assembling the media.
 
 With --output, the command creates the sparse .img container, establishes the base GPT,
-and reserves the live-ISO region with a placeholder p1 partition. The remaining assembly
-stages (the real live ISO and the p2/p3/p4 partitions, tracked by
-CNF-27168/CNF-28668/CNF-28669/CNF-28670) are not implemented yet, so the command still
-exits with an incomplete-assembly error once the foundation has run. --write-device is
-deferred and is rejected until media assembly is complete.`,
+reserves the live-ISO region with a placeholder p1 partition, and creates and formats the
+empty p2 (ibi-images) partition. The remaining assembly stages (the real live ISO and the
+p3/p4 partitions, tracked by CNF-27168/CNF-28669/CNF-28670) are not implemented yet, so the
+command still exits with an incomplete-assembly error once the foundation has run.
+--write-device is deferred and is rejected until media assembly is complete.`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreateUsb(createUsbOptions{

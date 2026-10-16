@@ -63,6 +63,18 @@ func requireLoopAndSgdisk(t *testing.T) {
 	}
 }
 
+// requireP2Tools extends requireLoopAndSgdisk with the extra tools the p2 format path needs
+// (partition-table refresh, udev settle, ext4 formatter, and blkid for verification).
+func requireP2Tools(t *testing.T) {
+	t.Helper()
+	requireLoopAndSgdisk(t)
+	for _, bin := range []string{"partprobe", "udevadm", "mkfs.ext4", "blkid"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available: %v", bin, err)
+		}
+	}
+}
+
 // loopAttached reports whether loopDev is currently a live loop device.
 func loopAttached(loopDev string) bool {
 	return exec.Command("losetup", loopDev).Run() == nil //nolint:gosec // fixed device path from losetup
@@ -154,4 +166,130 @@ func TestAssembleMediaRealRollback(t *testing.T) {
 	assert.False(t, loopAttached(wrapped.attachedDev), "rollback must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "rollback must remove the partial image")
+}
+
+// TestCreateP2PartitionRealLoopback exercises the production p2 path end-to-end against a
+// real loopback-attached image: assembleMedia lays down the base GPT + placeholder p1, then
+// createP2Partition adds and formats the empty p2 (ibi-images) partition. It asserts the
+// on-disk table now has p1+p2, that sgdisk --verify is clean, that p2 reports the expected
+// ext4 filesystem and ibi-images label, and that the formatted partition actually mounts.
+func TestCreateP2PartitionRealLoopback(t *testing.T) {
+	requireP2Tools(t)
+
+	realOps, deps := newRealMediaDeps()
+	plan := partitionPlan(ModeInstallOnly, defaultP1ReservationBytes)
+	img := filepath.Join(t.TempDir(), "media.img")
+
+	handle, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, deps)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	// Guard against a leaked loop device / image if an assertion below fails.
+	defer func() { _ = handle.Close() }()
+
+	loopDev := handle.LoopDevice
+	require.NotEmpty(t, loopDev)
+
+	require.NoError(t, createP2Partition(testLogger(), handle, deps))
+
+	// The on-disk GPT now parses back with p1 (placeholder) + p2 (ibi-images).
+	entries, err := realOps.ReadPartitionTable(loopDev)
+	require.NoError(t, err)
+	require.Len(t, entries, 2, "the base p1 plus the new p2 must be present")
+
+	wantP2, err := partitionByLabel(plan, labelIBIImages)
+	require.NoError(t, err)
+	var p2 *PartitionEntry
+	for i := range entries {
+		if entries[i].Number == wantP2.Number {
+			p2 = &entries[i]
+		}
+	}
+	require.NotNil(t, p2, "the p2 entry must exist in the table")
+	assert.Equal(t, labelIBIImages, p2.Name)
+	assert.Equal(t, wantP2.Offset/sectorSize, p2.Start, "p2 starts at the planned 1 MiB-aligned offset")
+	assert.Zero(t, p2.Start%(alignmentBytes/sectorSize), "p2 start must be 1 MiB-aligned")
+	assert.Equal(t, wantP2.Size, p2.Size, "p2 reserves the planned ibi-images region")
+
+	// A clean sgdisk --verify confirms the table is still valid after appending p2.
+	verifyOut, verr := realOps.ops.RunInHostNamespace("sgdisk", "--verify", loopDev)
+	require.NoError(t, verr, verifyOut)
+
+	// The formatted p2 reports the expected ext4 filesystem and ibi-images label.
+	node := partitionDevice(loopDev, wantP2.Number)
+	blkidOut, berr := realOps.ops.RunInHostNamespace("blkid", "-o", "export", node)
+	require.NoError(t, berr, blkidOut)
+	assert.Contains(t, blkidOut, "LABEL="+labelIBIImages)
+	assert.Contains(t, blkidOut, "TYPE="+ibiImagesFSType)
+
+	// The filesystem actually mounts and unmounts cleanly, and p2 is left empty -- this
+	// story copies no content (only the filesystem's own lost+found may be present).
+	mountDir := t.TempDir()
+	mountOut, merr := exec.Command("mount", node, mountDir).CombinedOutput() //nolint:gosec // fixed loopback node + test temp dir
+	require.NoError(t, merr, string(mountOut))
+	mounted := true
+	// Safety net: unmount if an assertion below fails before the explicit unmount runs.
+	defer func() {
+		if mounted {
+			_, _ = exec.Command("umount", mountDir).CombinedOutput() //nolint:gosec // fixed test temp dir
+		}
+	}()
+
+	names, rerr := os.ReadDir(mountDir)
+	require.NoError(t, rerr)
+	for _, e := range names {
+		assert.Equal(t, "lost+found", e.Name(), "p2 must be empty apart from the filesystem's lost+found")
+	}
+
+	// Unmount p2 before tearing the handle down: a loop device that is still backing a mounted
+	// filesystem is busy, and the kernel can defer its detachment until the unmount completes,
+	// which would make the loopAttached assertion below flaky.
+	umountOut, uerr := exec.Command("umount", mountDir).CombinedOutput() //nolint:gosec // fixed test temp dir
+	require.NoError(t, uerr, string(umountOut))
+	mounted = false
+
+	// Success teardown: Close detaches the loop device and removes the discarded image.
+	require.NoError(t, handle.Close())
+	assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
+}
+
+// failAddOps wraps the real seam but injects an AddPartition failure, so the p2 cleanup path
+// can be exercised against real losetup/sgdisk resources (the base p1 is created for real;
+// only the p2 add fails).
+type failAddOps struct {
+	partitionOps
+	attachedDev string
+}
+
+func (f *failAddOps) AttachLoopback(imgPath string) (string, error) {
+	dev, err := f.partitionOps.AttachLoopback(imgPath)
+	f.attachedDev = dev
+	return dev, err
+}
+
+func (f *failAddOps) AddPartition(string, PlannedPartition, string) error {
+	return fmt.Errorf("injected add-partition failure")
+}
+
+// TestBuildP2RealRollback verifies that a p2 failure on the real path tears the handle down:
+// the loop device is detached and the partial image removed (the base p1 was created for
+// real; the injected AddPartition failure triggers build's cleanup).
+func TestBuildP2RealRollback(t *testing.T) {
+	requireLoopAndSgdisk(t)
+
+	realOps, _ := newRealMediaDeps()
+	wrapped := &failAddOps{partitionOps: realOps}
+	img := filepath.Join(t.TempDir(), "media.img")
+
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: wrapped})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "injected add-partition failure")
+
+	require.NotEmpty(t, wrapped.attachedDev, "the loop device must have been attached before the injected failure")
+	assert.False(t, loopAttached(wrapped.attachedDev), "a p2 failure must detach the loop device")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "a p2 failure must remove the partial image")
 }
