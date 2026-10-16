@@ -397,6 +397,49 @@ func TestBuildP2FailureTearsDown(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed on a p2 failure")
 }
 
+// failP4CreateOps wraps the fake seam but fails CreatePartition for p4 (number 4), so the p4
+// cleanup path can be exercised after p2 (number 2) has already succeeded through the shared
+// create -> settle -> format sequence.
+type failP4CreateOps struct {
+	*fakePartitionOps
+}
+
+func (f *failP4CreateOps) CreatePartition(dev string, part PlannedPartition) error {
+	if part.Number == 4 {
+		f.calls = append(f.calls, "createPart")
+		return fmt.Errorf("injected p4 create failure")
+	}
+	return f.fakePartitionOps.CreatePartition(dev, part)
+}
+
+// TestBuildP4FailureTearsDown covers the p4 cleanup path: when createP4Partition fails (here a
+// create-entry failure from the shared sequence) after p2 has already succeeded, build must tear the
+// handle down (detach the loop, remove the partial .img) and surface the p4 error -- not swallow it
+// behind the incomplete-assembly error.
+func TestBuildP4FailureTearsDown(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	fp := &failP4CreateOps{fakePartitionOps: &fakePartitionOps{attachDev: "/dev/loop6"}}
+
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "injected p4 create failure", "the p4 failure must be surfaced")
+	assert.NotErrorIs(t, err, errAssemblyIncomplete, "a p4 failure returns the p4 error, not the incomplete-assembly error")
+
+	// p2 ran to completion (create/settle/format) before p4's create failed and the handle was torn
+	// down.
+	assert.Equal(t, []string{
+		"attach", "create",
+		"createPart", "settle", "format", // p2 succeeds
+		"createPart", // p4 create fails
+		"detach",
+	}, fp.calls)
+	assert.Equal(t, []string{"/dev/loop6"}, fp.detached, "the loop device must be detached on a p4 failure")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "the partial .img must be removed on a p4 failure")
+}
+
 func TestParseSgdiskTable(t *testing.T) {
 	// A representative `sgdisk -p` output with a header, totals, the column header, and one
 	// placeholder p1 row. parseSgdiskTable must pick out only the data row and derive the

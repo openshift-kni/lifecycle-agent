@@ -42,13 +42,16 @@ package createusb
 //
 // # Honesty
 //
-// Because p3/p4 are not implemented yet (and the mechanics stay provisional until the
-// CNF-27158 bootability gate passes), public Build never claims to have produced complete
-// media: it runs the container + placeholder-p1 foundation plus the empty p2 partition,
-// tears it back down (detach loop device, remove the partial .img), and returns an explicit
-// incomplete-assembly error. The internal assembleMedia core returns a live *MediaHandle for
-// the sibling stories to thread through; a half-built handle can never escape the public
-// surface.
+// All four partition slots (p1 live-iso, p2 ibi-images, p3 cluster-config, p4 ibi-status) are
+// now laid out and formatted, but the media is still not bootable, usable media: the live
+// command path populates no partition yet (the real live ISO is CNF-27168, the ibi-images
+// content CNF-27170, the cluster-config tree CNF-27171), and the assembly mechanics stay
+// provisional until the CNF-27158 bootability gate passes. So public Build never claims to have
+// produced complete media: it runs the container + placeholder-p1 foundation plus the empty
+// p2/p4 partitions (and the reserved-but-unpopulated p3 slot), tears it back down (detach loop
+// device, remove the partial .img), and returns an explicit incomplete-assembly error. The
+// internal assembleMedia core returns a live *MediaHandle for the sibling stories to thread
+// through; a half-built handle can never escape the public surface.
 
 import (
 	"context"
@@ -130,12 +133,16 @@ const (
 	partitionNodeWaitTimeout = 5 * time.Second
 )
 
-// errAssemblyIncomplete is returned by Build after the container + placeholder-p1
-// foundation and the empty p2 partition run: the media is not complete (p3/p4 are not
-// implemented yet), so the scaffold fails loudly rather than claim to have produced usable
-// media.
+// errAssemblyIncomplete is returned by Build after the container + placeholder-p1 foundation
+// and the p2/p3/p4 partitions run: all four partition slots now exist, but the media is not yet
+// bootable, usable media -- the live command path populates no partition content (live ISO
+// CNF-27168, ibi-images CNF-27170, cluster-config tree CNF-27171) and the assembly mechanics
+// stay provisional until the CNF-27158 bootability gate passes. The scaffold fails loudly
+// rather than claim to have produced usable media.
 var errAssemblyIncomplete = errors.New(
-	"media assembly incomplete: partitions p3/p4 not yet implemented (CNF-28669/CNF-28670)")
+	"media assembly incomplete: all partition slots are laid out, but no partition content is " +
+		"populated yet (live ISO CNF-27168, ibi-images CNF-27170, cluster-config CNF-27171) and " +
+		"the bootability gate (CNF-27158) has not passed")
 
 // BuildOptions carries the resolved output target for a create-usb media build. Exactly
 // one of OutputPath / WriteDevice is set (enforced by the command's validateOutputTarget).
@@ -184,9 +191,10 @@ type PartitionEntry struct {
 	Name string
 }
 
-// partitionOps is the privileged host-ops seam the media build depends on. The p2 and p3
-// stages (CNF-28668/CNF-28669) share the same create/settle/format primitives; p3 adds
-// mount/unmount on top for its populate step.
+// partitionOps is the privileged host-ops seam the media build depends on. The p2, p3, and p4
+// stages (CNF-28668/CNF-28669/CNF-28670) share the same create/settle/format primitives; p3
+// adds mount/unmount on top for its populate step. p2 and p4 both create an empty, unmounted
+// filesystem and stop after formatting.
 type partitionOps interface {
 	// AttachLoopback attaches imgPath to a loop device (losetup --find --show -P) and
 	// returns the device path (e.g. /dev/loop0).
@@ -203,9 +211,9 @@ type partitionOps interface {
 
 	// The create -> settle -> format primitives below are the single shared implementation
 	// every partition stage uses (the createAndFormatPartition helper composes them). p2
-	// (ibi-images) and p3 (cluster-config) both drive them so there is exactly one copy of the
-	// GPT-creation, partition-table-refresh, bounded device-node-resolution, and ext4-format
-	// command sequences.
+	// (ibi-images), p3 (cluster-config), and p4 (ibi-status) all drive them so there is exactly
+	// one copy of the GPT-creation, partition-table-refresh, bounded device-node-resolution, and
+	// ext4-format command sequences.
 
 	// CreatePartition adds a single GPT entry to dev at the number, 1 MiB-aligned offset, and
 	// reserved size the plan carries for part (sgdisk --new/--change-name/--typecode),
@@ -232,8 +240,9 @@ type partitionOps interface {
 // createAndFormatPartition is the shared create -> settle -> format sequence every partition
 // stage runs: it creates part's GPT entry at its reserved offset on dev, settles its kernel
 // device node (partition-table refresh + a bounded wait), formats it as fsType with part.Label
-// as the FS label, and returns the partition device node. p2 (ibi-images) calls it and is done;
-// p3 (cluster-config) calls it and then mounts the returned node to populate the partition.
+// as the FS label, and returns the partition device node. p2 (ibi-images) and p4 (ibi-status)
+// call it and are done; p3 (cluster-config) calls it and then mounts the returned node to
+// populate the partition.
 func createAndFormatPartition(p partitionOps, dev string, part PlannedPartition, fsType string) (string, error) {
 	if err := p.CreatePartition(dev, part); err != nil {
 		return "", fmt.Errorf("creating p%d (%s) entry on %s: %w", part.Number, part.Label, dev, err)
@@ -315,10 +324,12 @@ func (h *MediaHandle) Close() error {
 // pipeline is incomplete.
 //
 // Build returns an error only -- never a handle -- so a half-built media handle can never
-// escape a failed call. Because p3/p4 (CNF-28669/CNF-28670) are not implemented yet, Build
-// runs the foundation plus the empty p2 partition, tears it back down (detach loop, remove
-// the partial .img), and returns an explicit incomplete-assembly error so the scaffold
-// never claims to have produced complete, bootable media.
+// escape a failed call. All four partition slots (p1/p2/p3/p4) are now created and formatted,
+// but no partition content is populated by the live command path yet and the bootability gate
+// (CNF-27158) has not passed, so Build runs the foundation plus the empty p2/p4 partitions
+// (and the reserved-but-unpopulated p3 slot), tears it back down (detach loop, remove the
+// partial .img), and returns an explicit incomplete-assembly error so the scaffold never claims
+// to have produced complete, bootable media.
 func Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions) error {
 	return build(ctx, log, m, opts, defaultMediaBuildDeps(log))
 }
@@ -348,9 +359,21 @@ func build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptio
 		return perr
 	}
 
-	// There is no next assembly stage yet (p3/p4 are not implemented), so the foundation
-	// produced no usable media: discard the handle (detach loop + remove the partial .img)
-	// and fail loudly.
+	// Add and format the empty p4 (ibi-status) partition into its reserved region (both modes).
+	// It uses the same shared create -> settle -> format sequence as p2 and ships empty and
+	// unmounted; the runtime writer (CNF-27163) populates it later. On failure, tear the handle
+	// down before returning, exactly as for p2.
+	if perr := createP4Partition(log, handle, deps); perr != nil {
+		if cerr := handle.Close(); cerr != nil {
+			return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", perr, cerr)
+		}
+		return perr
+	}
+
+	// All partition slots now exist, but the media is not yet usable: no partition content is
+	// populated by the live command path and the bootability gate (CNF-27158) has not passed. So
+	// the foundation produced no usable media: discard the handle (detach loop + remove the
+	// partial .img) and fail loudly.
 	if cerr := handle.Close(); cerr != nil {
 		return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", errAssemblyIncomplete, cerr)
 	}
