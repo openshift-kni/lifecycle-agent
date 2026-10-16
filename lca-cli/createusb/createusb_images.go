@@ -205,19 +205,10 @@ type imageMirrorer interface {
 	MirrorToLayout(ctx context.Context, imageRef, destLayoutDir, ociTag, authFile string) (string, error)
 }
 
-// p3ImageScanner returns the images referenced by the rendered p3 config-tree
-// (self-contained mode). CNF-27169 supplies the real scanner; until then the
-// default returns an explicit not-implemented error so self-contained builds fail
-// loudly instead of silently shipping media missing its p3 images.
-type p3ImageScanner interface {
-	ScanP3Images(m *Manifest) ([]string, error)
-}
-
 // imageBuildDeps bundles the injectable seams.
 type imageBuildDeps struct {
 	seedReader seedClosureReader
 	mirrorer   imageMirrorer
-	p3Scanner  p3ImageScanner
 }
 
 // defaultImageBuildDeps returns the production seams backed by containers/image and
@@ -228,8 +219,7 @@ func defaultImageBuildDeps(log *logrus.Logger) imageBuildDeps {
 			ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)),
 			log: log,
 		},
-		mirrorer:  &containersImageMirrorer{},
-		p3Scanner: notImplementedP3Scanner{},
+		mirrorer: &containersImageMirrorer{},
 	}
 }
 
@@ -244,13 +234,34 @@ func defaultImageBuildDeps(log *logrus.Logger) imageBuildDeps {
 // builds garbage-collect after the commit. The beside-output copy
 // (<output>.digests.json) is written audit-only and best-effort after the commit. It
 // is the entry point the media-assembly story (CNF-27171) wires in.
-func BuildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root string) (*LayoutBuildResult, error) {
-	return buildImageLayout(ctx, log, m, opts, outputPath, p2Root, defaultImageBuildDeps(log))
+func BuildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root, p3Root string) (*LayoutBuildResult, error) {
+	return buildImageLayout(ctx, log, m, opts, outputPath, p2Root, p3Root, defaultImageBuildDeps(log))
 }
 
 // buildImageLayout is the dependency-injected core of BuildImageLayout.
-func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root string, deps imageBuildDeps) (result *LayoutBuildResult, err error) {
-	refs, err := resolveImageSet(m, opts, deps)
+//
+// For self-contained media it first renders the p3 config tree under p3Root, fails fast on
+// any network-reaching mirror resource in it (ScanMirrorResources), unions the rendered
+// manifests' image references into the resolved set, and -- after mirroring -- pins every
+// tag-form reference in the rendered manifests to the digest actually shipped. install-only
+// renders no p3 tree, so p3Root is unused for that profile.
+func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root, p3Root string, deps imageBuildDeps) (result *LayoutBuildResult, err error) {
+	var p3Result *P3RenderResult
+	if m.Mode == ModeSelfContained {
+		// Render the p3 tree first so the image scan and mirror-resource scan operate on the
+		// exact files the media ships.
+		p3Result, err = RenderP3Tree(m, p3Root)
+		if err != nil {
+			return nil, fmt.Errorf("rendering p3 config tree: %w", err)
+		}
+		// Reject network-reaching mirror resources before the expensive seed pull/mirror so
+		// the build fails fast (proposal §6.3).
+		if err = ScanMirrorResources(p3Result.ManifestPaths); err != nil {
+			return nil, fmt.Errorf("validating p3 mirror resources: %w", err)
+		}
+	}
+
+	refs, err := resolveImageSet(m, opts, p3ManifestPaths(p3Result), deps)
 	if err != nil {
 		return nil, err
 	}
@@ -296,6 +307,16 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 	// producer bug is caught here rather than at prepare time on the node.
 	if err := verifyLayoutEntries(newLayout, entries); err != nil {
 		return nil, err
+	}
+
+	// Self-contained: pin every tag-form image reference in the shipped p3 manifests to the
+	// digest we just mirrored, so nothing has to resolve a tag->digest offline (proposal
+	// §5.2). A reference that was not mirrored cannot be served offline and fails the build.
+	// This runs before the p2 manifest commit, so a failure leaves nothing committed.
+	if p3Result != nil {
+		if err := rewriteP3ImageReferences(p3Result.ManifestPaths, refs, entries); err != nil {
+			return nil, fmt.Errorf("pinning p3 manifest image references: %w", err)
+		}
 	}
 
 	// Record the new layout's basename as OCILayoutPath so the committed manifest points
@@ -385,16 +406,14 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 //     as a checked invariant, independent of the incidental containers.list contents.
 //   - self-contained: the install-only base set (the node still boots the seed image
 //     and runs recert/lca-cli) unioned with the images referenced by the rendered p3
-//     config tree. The p3-scan union point is wired through the p3ImageScanner seam;
-//     until CNF-27169 supplies the scanner it returns an explicit not-implemented
-//     error so self-contained builds fail loudly rather than shipping media missing
-//     its p3 images.
-func resolveImageSet(m *Manifest, opts ImageSetOptions, deps imageBuildDeps) ([]string, error) {
+//     config tree. p3ManifestPaths are the rendered manifest files (from RenderP3Tree);
+//     ScanImageReferences discovers and normalizes their image references.
+func resolveImageSet(m *Manifest, opts ImageSetOptions, p3ManifestPaths []string, deps imageBuildDeps) ([]string, error) {
 	switch m.Mode {
 	case ModeSelfContained:
-		// Scan the p3 config tree first so an unavailable scanner fails the build before
-		// the expensive seed-image pull/mount in the base-set resolution below.
-		scanned, err := deps.p3Scanner.ScanP3Images(m)
+		// Scan the rendered p3 manifests first so a decode error fails the build before the
+		// expensive seed-image pull/mount in the base-set resolution below.
+		scanned, err := ScanImageReferences(p3ManifestPaths)
 		if err != nil {
 			return nil, fmt.Errorf("resolving self-contained image set: %w", err)
 		}
@@ -416,6 +435,31 @@ func resolveImageSet(m *Manifest, opts ImageSetOptions, deps imageBuildDeps) ([]
 	default:
 		return nil, fmt.Errorf("cannot resolve image set for unsupported mode %q", m.Mode)
 	}
+}
+
+// p3ManifestPaths returns the rendered manifest paths of a p3 render result, or nil when
+// there is none (install-only).
+func p3ManifestPaths(r *P3RenderResult) []string {
+	if r == nil {
+		return nil
+	}
+	return r.ManifestPaths
+}
+
+// rewriteP3ImageReferences pins the tag-form image references in the rendered p3 manifests
+// to the digests mirrored for this build. mirrorToOCILayout preserves order, so refs[i] and
+// entries[i] correspond; the normalized references the scan unioned into refs are the keys
+// the rewriter looks up (createusb_p3.go RewriteImageReferences). Because the map is built
+// only from mirrored entries, every digest a reference is pinned to is one the media ships,
+// which is the offline-pull target the proposal requires.
+func rewriteP3ImageReferences(manifestPaths, refs []string, entries []localimages.ImageEntry) error {
+	refToDigest := make(map[string]string, len(refs))
+	for i, ref := range refs {
+		if i < len(entries) {
+			refToDigest[ref] = entries[i].Digest
+		}
+	}
+	return RewriteImageReferences(manifestPaths, refToDigest)
 }
 
 // resolveInstallOnlyImageSet implements the install-only closure.
@@ -985,14 +1029,4 @@ func parseContainersList(data []byte) []string {
 		}
 	}
 	return out
-}
-
-// notImplementedP3Scanner is the default self-contained p3 scanner: it fails loudly
-// until CNF-27169 supplies the real rendered-p3-manifest scan.
-type notImplementedP3Scanner struct{}
-
-// ScanP3Images always returns a not-implemented error so self-contained builds do
-// not ship media missing their p3 images.
-func (notImplementedP3Scanner) ScanP3Images(_ *Manifest) ([]string, error) {
-	return nil, fmt.Errorf("self-contained image scan not implemented (pending CNF-27169)")
 }

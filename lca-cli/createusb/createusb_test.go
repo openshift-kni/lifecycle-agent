@@ -540,11 +540,10 @@ func TestResolveImageSetInstallOnly(t *testing.T) {
 	m.ExtraPrecacheImages = &[]string{extra, seedA}
 	deps := imageBuildDeps{
 		seedReader: fakeSeedReader{list: []string{seedA, seedB, seedA}},
-		p3Scanner:  notImplementedP3Scanner{},
 	}
 	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
 
-	refs, err := resolveImageSet(m, opts, deps)
+	refs, err := resolveImageSet(m, opts, nil, deps)
 	require.NoError(t, err)
 
 	// recert and lca-cli are guaranteed present (the checked invariant).
@@ -562,83 +561,65 @@ func TestResolveImageSetDedupesRecertFromSeedList(t *testing.T) {
 	m.ExtraPrecacheImages = nil
 	deps := imageBuildDeps{
 		seedReader: fakeSeedReader{list: []string{testRecertImage}},
-		p3Scanner:  notImplementedP3Scanner{},
 	}
 	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
 
-	refs, err := resolveImageSet(m, opts, deps)
+	refs, err := resolveImageSet(m, opts, nil, deps)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{testRecertImage, testLCAImage}, refs)
 }
 
-func TestResolveImageSetSelfContainedNotImplemented(t *testing.T) {
-	m := validSelfContained()
-	deps := imageBuildDeps{seedReader: fakeSeedReader{}, p3Scanner: notImplementedP3Scanner{}}
-
-	_, err := resolveImageSet(m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not implemented")
-	assert.Contains(t, err.Error(), "CNF-27169")
-}
-
-// fakeP3Scanner is a p3ImageScanner stub returning a fixed image set (or error).
-type fakeP3Scanner struct {
-	images []string
-	err    error
-}
-
-func (f fakeP3Scanner) ScanP3Images(_ *Manifest) ([]string, error) { return f.images, f.err }
-
 func TestResolveImageSetSelfContainedUnionsBaseAndScan(t *testing.T) {
 	// Regression for the review's P1: self-contained is a superset of install-only, not
-	// a replacement. Once the p3 scanner is supplied, the resolved set must still carry
-	// the seed closure, recert and lca-cli, with the scan images unioned on top and
-	// deduplicated.
+	// a replacement. With the real rendered-manifest scanner the resolved set must still
+	// carry the seed closure, recert and lca-cli, with the scanned p3 images unioned on
+	// top and deduplicated.
 	seedA := "quay.io/seed/a@sha256:" + validSHA256
 	p3Only := "quay.io/p3/only@sha256:" + validSHA256
 
+	// A rendered manifest references a p3-only image and (to prove dedup) recert again.
+	manifestPath := filepath.Join(t.TempDir(), "workload.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(
+		"apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n"+
+			"      - name: a\n        image: "+p3Only+"\n      - name: b\n        image: "+testRecertImage+"\n"), 0o600))
+
 	m := validSelfContained()
-	deps := imageBuildDeps{
-		seedReader: fakeSeedReader{list: []string{seedA}},
-		// The scan returns a p3-only image plus a duplicate of recert, proving the scan
-		// result is unioned and deduplicated against the base set rather than appended blindly.
-		p3Scanner: fakeP3Scanner{images: []string{p3Only, testRecertImage}},
-	}
+	deps := imageBuildDeps{seedReader: fakeSeedReader{list: []string{seedA}}}
 	opts := ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}
 
-	refs, err := resolveImageSet(m, opts, deps)
+	refs, err := resolveImageSet(m, opts, []string{manifestPath}, deps)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{seedA, testRecertImage, testLCAImage, p3Only}, refs)
 }
 
-func TestResolveImageSetSelfContainedScannerErrorFails(t *testing.T) {
-	// A scanner failure must fail the build (and short-circuit before the expensive
+func TestResolveImageSetSelfContainedScanErrorFails(t *testing.T) {
+	// A manifest-scan failure must fail the build (and short-circuit before the expensive
 	// seed-image read), not silently drop the p3 images.
 	m := validSelfContained()
 	deps := imageBuildDeps{
 		seedReader: fakeSeedReader{err: assert.AnError}, // must not be reached
-		p3Scanner:  fakeP3Scanner{err: assert.AnError},
 	}
-	_, err := resolveImageSet(m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
+	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	_, err := resolveImageSet(m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, []string{missing}, deps)
 	assert.ErrorContains(t, err, "resolving self-contained image set")
 }
 
 func TestResolveImageSetMissingRequiredImageFails(t *testing.T) {
-	deps := imageBuildDeps{seedReader: fakeSeedReader{list: []string{"quay.io/seed/a@sha256:" + validSHA256}}, p3Scanner: notImplementedP3Scanner{}}
+	deps := imageBuildDeps{seedReader: fakeSeedReader{list: []string{"quay.io/seed/a@sha256:" + validSHA256}}}
 
 	t.Run("empty recert fails", func(t *testing.T) {
-		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: "", LCAImage: testLCAImage}, deps)
+		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: "", LCAImage: testLCAImage}, nil, deps)
 		assert.ErrorContains(t, err, "recert image is required")
 	})
 	t.Run("empty lca fails", func(t *testing.T) {
-		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: "  "}, deps)
+		_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: "  "}, nil, deps)
 		assert.ErrorContains(t, err, "lca-cli image is required")
 	})
 }
 
 func TestResolveImageSetSeedReaderErrorFails(t *testing.T) {
-	deps := imageBuildDeps{seedReader: fakeSeedReader{err: assert.AnError}, p3Scanner: notImplementedP3Scanner{}}
-	_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, deps)
+	deps := imageBuildDeps{seedReader: fakeSeedReader{err: assert.AnError}}
+	_, err := resolveImageSet(validInstallOnly(), ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage}, nil, deps)
 	assert.ErrorContains(t, err, "reading seed image closure")
 }
 
@@ -818,7 +799,6 @@ func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 		return imageBuildDeps{
 			seedReader: fakeSeedReader{list: []string{seedImg}},
 			mirrorer:   fakeMirrorer{},
-			p3Scanner:  notImplementedP3Scanner{},
 		}
 	}
 
@@ -827,7 +807,7 @@ func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 		p2Root := filepath.Join(dir, "p2")
 		outputPath := filepath.Join(dir, "usb.img")
 
-		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		// seed + recert + lca.
@@ -860,12 +840,12 @@ func TestBuildImageLayoutCommitAndGC(t *testing.T) {
 		p2Root := filepath.Join(dir, "p2")
 		outputPath := filepath.Join(dir, "usb.img")
 
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		firstLayout := committedLayoutName(t, p2Root)
 
 		// A second build over the same p2 root commits a new layout under a new unique name.
-		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		result, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -893,7 +873,6 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		return imageBuildDeps{
 			seedReader: fakeSeedReader{list: []string{seedImg}},
 			mirrorer:   fakeMirrorer{},
-			p3Scanner:  notImplementedP3Scanner{},
 		}
 	}
 
@@ -906,7 +885,7 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		p2Root := filepath.Join(dir, "p2")
 		outputPath := filepath.Join(dir, "usb.img")
 
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		firstLayout := committedLayoutName(t, p2Root) // asserts the committed state is consistent
 
@@ -921,7 +900,7 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		assert.DirExists(t, orphan)
 
 		// The next build commits a new layout and GCs both the superseded layout and the orphan.
-		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		secondLayout := committedLayoutName(t, p2Root)
 		assert.NoDirExists(t, orphan, "the crash-orphaned layout must be garbage-collected")
@@ -939,7 +918,7 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		p2Path := filepath.Join(p2Root, "digests.json")
 		besidePath := outputPath + ".digests.json"
 
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.NoError(t, err)
 		firstLayout := committedLayoutName(t, p2Root)
 		firstManifest, err := os.ReadFile(p2Path)
@@ -951,9 +930,8 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		failDeps := imageBuildDeps{
 			seedReader: fakeSeedReader{list: []string{seedImg, "quay.io/seed/b@sha256:" + validSHA256}},
 			mirrorer:   fakeMirrorer{failOn: map[string]bool{testLCAImage: true}},
-			p3Scanner:  notImplementedP3Scanner{},
 		}
-		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, failDeps)
+		_, err = buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", failDeps)
 		require.Error(t, err)
 
 		// Committed manifest, its layout, and the audit copy are all untouched.
@@ -984,7 +962,7 @@ func TestBuildImageLayoutCrashRecovery(t *testing.T) {
 		manifestDir := filepath.Join(p2Root, "digests.json")
 		require.NoError(t, os.MkdirAll(filepath.Join(manifestDir, "keep"), 0o755))
 
-		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, cleanDeps())
+		_, err := buildImageLayout(context.Background(), nil, m, opts, outputPath, p2Root, "", cleanDeps())
 		require.Error(t, err)
 
 		// The pre-existing path is untouched (still a directory -- no partial file over it),
@@ -1022,10 +1000,9 @@ func TestBuildImageLayoutBesideOutputIsBestEffort(t *testing.T) {
 	deps := imageBuildDeps{
 		seedReader: fakeSeedReader{list: []string{seedImg}},
 		mirrorer:   fakeMirrorer{},
-		p3Scanner:  notImplementedP3Scanner{},
 	}
 
-	result, err := buildImageLayout(context.Background(), logrus.New(), m, opts, outputPath, p2Root, deps)
+	result, err := buildImageLayout(context.Background(), logrus.New(), m, opts, outputPath, p2Root, "", deps)
 	require.NoError(t, err, "a beside-output (audit-only) write failure must not fail the build")
 	require.NotNil(t, result)
 

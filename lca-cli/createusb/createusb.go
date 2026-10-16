@@ -29,6 +29,7 @@ package createusb
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -287,8 +288,7 @@ func (m *Manifest) validateSelfContained() error {
 		return fmt.Errorf("siteConfig.pullSecret is not valid json: %w", err)
 	}
 
-	// Required identity fields the reconfigure path needs. Deeper per-field
-	// SeedReconfiguration validation lands with the p3 render in CNF-27169.
+	// Required identity fields the reconfigure path needs.
 	if m.SiteConfig.ClusterName == "" {
 		return fmt.Errorf("siteConfig.clusterName is required for mode %q", ModeSelfContained)
 	}
@@ -297,6 +297,13 @@ func (m *Manifest) validateSelfContained() error {
 	}
 	if m.SiteConfig.Hostname == "" {
 		return fmt.Errorf("siteConfig.hostname is required for mode %q", ModeSelfContained)
+	}
+
+	// Per-field SeedReconfiguration validation (deferred from the schema story): the optional
+	// nodeIPs/machineNetworks are rendered verbatim into manifest.json and consumed by
+	// post-pivot, so a malformed value must fail the build here rather than on the node.
+	if err := m.validateSiteConfigNetworkFields(); err != nil {
+		return err
 	}
 
 	// The self-contained media carries the cluster's configuration on-media.
@@ -313,6 +320,24 @@ func (m *Manifest) validateSelfContained() error {
 		}
 	}
 
+	return nil
+}
+
+// validateSiteConfigNetworkFields validates the optional network identity fields that are
+// rendered into the SeedReconfiguration manifest.json: every nodeIPs entry must parse as an
+// IP address and every machineNetworks entry as a CIDR. Empty lists are allowed (the fields
+// are optional).
+func (m *Manifest) validateSiteConfigNetworkFields() error {
+	for i, ip := range m.SiteConfig.NodeIPs {
+		if net.ParseIP(strings.TrimSpace(ip)) == nil {
+			return fmt.Errorf("siteConfig.nodeIPs[%d] %q is not a valid IP address", i, ip)
+		}
+	}
+	for i, cidr := range m.SiteConfig.MachineNetworks {
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
+			return fmt.Errorf("siteConfig.machineNetworks[%d] %q is not a valid CIDR: %w", i, cidr, err)
+		}
+	}
 	return nil
 }
 
@@ -350,17 +375,18 @@ func (m *Manifest) ResolvePullSecret() error {
 	return nil
 }
 
-// validateMirrorResources is the hook for the p3 mirror-resource scan that rejects
-// network-reaching mirror configuration (IDMS/ICSP entries whose mirrorSourcePolicy is
-// not NeverContactSource, or that point at external registries).
+// validateMirrorResources is the self-contained enforcement point for the mirror-resource
+// scan that rejects network-reaching mirror configuration (proposal §6.3, CWE-16).
 //
-// It is wired into Validate for self-contained manifests so the enforcement point
-// already exists, but in this story it is a documented no-op: the real scan operates on
-// the rendered p3 manifest tree, which does not exist until the config-tree render
-// pipeline lands in CNF-27169 (STORY-012). This story therefore does NOT enforce the
-// external-mirror rule; CNF-27169 fills in this function.
+// The real scan operates on the rendered p3 manifest tree, which exists only at media-build
+// time: buildImageLayout renders the tree and runs ScanMirrorResources
+// (createusb_p3.go) over it before mirroring, failing the build on any IDMS/ITMS/ICSP that
+// is not strictly local + NeverContactSource. Validate cannot run that scan because the
+// tree is not rendered yet (and Validate intentionally does not read manifest-source
+// contents), so this hook stays a no-op; it is retained so Validate's self-contained
+// enforcement structure remains visible alongside the build-time scan it points at.
 //
-//nolint:unparam // deferred stub: the real scan (and its error returns) lands in CNF-27169
+//nolint:unparam // enforcement is the build-time rendered-tree scan (ScanMirrorResources)
 func (m *Manifest) validateMirrorResources() error {
 	return nil
 }
