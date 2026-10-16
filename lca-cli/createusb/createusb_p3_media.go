@@ -59,6 +59,11 @@ import (
 const (
 	// p3DirMode is the directory mode used for directories created while populating p3.
 	p3DirMode = 0o750
+
+	// clusterConfigFSType is the filesystem created on the p3 (cluster-config) partition. ext4
+	// holds the 14-char cluster-config label (vfat's 11-char limit could not) and post-pivot
+	// locates p3 by label with kernel FS auto-detection, imposing no FS-type requirement.
+	clusterConfigFSType = fsTypeExt4
 )
 
 // errP3Mounted signals that the cluster-config (p3) partition could not be unmounted, so its
@@ -103,17 +108,12 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 		return err
 	}
 
-	if err := deps.partition.CreatePartition(media.LoopDevice, p3); err != nil {
-		return fmt.Errorf("creating cluster-config (p3) partition entry: %w", err)
-	}
-
-	partDev, err := deps.partition.SettlePartition(media.LoopDevice, p3.Number)
+	// Create, settle, and format the partition through the shared create -> settle -> format
+	// sequence p2 and p3 both use (createusb_assemble.go). p3 then mounts the returned device
+	// node and populates it -- the mount/populate/unmount steps below are p3-specific.
+	partDev, err := createAndFormatPartition(deps.partition, media.LoopDevice, p3, clusterConfigFSType)
 	if err != nil {
-		return fmt.Errorf("settling cluster-config (p3) partition node: %w", err)
-	}
-
-	if err := deps.partition.FormatPartition(partDev, labelClusterConfig); err != nil {
-		return fmt.Errorf("formatting cluster-config (p3) partition %s: %w", partDev, err)
+		return fmt.Errorf("creating cluster-config (p3) partition: %w", err)
 	}
 
 	mountpoint, err := os.MkdirTemp("", "create-usb-p3-")
@@ -149,17 +149,6 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 	log.Infof("create-usb: cluster-config (p3) partition created, formatted ext4, labeled %q, and populated from %s",
 		labelClusterConfig, p3Root)
 	return nil
-}
-
-// plannedPartition returns the planned partition with the given label, and whether it exists
-// in the plan. The p3 cluster-config entry is present only for self-contained.
-func plannedPartition(plan PartitionPlan, label string) (PlannedPartition, bool) {
-	for _, part := range plan.Partitions {
-		if part.Label == label {
-			return part, true
-		}
-	}
-	return PlannedPartition{}, false
 }
 
 // validateP3Source checks that p3Root is a non-empty directory whose tree is a legal p3

@@ -491,11 +491,13 @@ func TestBuildIncompleteAndNoDangle(t *testing.T) {
 	assert.Contains(t, err.Error(), "p3/p4 not yet implemented")
 	assert.Contains(t, err.Error(), "CNF-28669")
 
-	// The seam was driven attach -> create (p1) -> add (p2) before the handle was discarded.
-	assert.Equal(t, []string{"attach", "create", "add", "detach"}, fp.calls)
-	require.Len(t, fp.added, 1, "the empty p2 partition must be added once")
-	assert.Equal(t, labelIBIImages, fp.added[0].part.Label, "p2 must be the ibi-images partition")
-	assert.Equal(t, ibiImagesFSType, fp.added[0].fsType, "p2 must be formatted as the ibi-images filesystem type")
+	// The seam was driven attach -> create (p1) -> p2 create/settle/format (the shared sequence)
+	// before the handle was discarded.
+	assert.Equal(t, []string{"attach", "create", "createPart", "settle", "format", "detach"}, fp.calls)
+	require.Len(t, fp.createdParts, 1, "the empty p2 partition must be created once")
+	assert.Equal(t, labelIBIImages, fp.createdParts[0].Label, "p2 must be the ibi-images partition")
+	assert.Equal(t, ibiImagesFSType, fp.formatFSType, "p2 must be formatted as the ibi-images filesystem type")
+	assert.Equal(t, labelIBIImages, fp.formatLabel, "p2's FS label must be ibi-images")
 
 	// No dangling resources: the loop device was detached and the partial image removed.
 	assert.Equal(t, []string{"/dev/loop3"}, fp.detached, "the attached loop device must be detached")
