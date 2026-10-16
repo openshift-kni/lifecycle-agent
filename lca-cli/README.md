@@ -254,3 +254,76 @@ siteConfig:
   hostname: node0
   pullSecret: "@/path/to/pull-secret.json"
 ```
+
+### Digest manifest (`digests.json`)
+
+The media build resolves the profile's image set to digests, mirrors it into a build-unique
+OCI image layout directory on the media (named `oci-<unique>`), and emits a digest manifest
+that records which layout images to import. The manifest is the single source of truth shared
+by the build, the prepare precache step, and the on-media self-check: all three use the exact
+same set (same count, same digests).
+
+The manifest is emitted in two places, byte-identical:
+
+- `digests.json` at the media (p2) root — the committed, read-only on-media reference.
+- `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.
+
+Schema:
+
+```json
+{
+  "version": 1,
+  "ociLayoutPath": "oci-1234567890",
+  "images": [
+    {
+      "name": "quay.io/openshift-release-dev/ocp-release",
+      "digest": "sha256:9a1f…c3",
+      "ociTag": "ocp-release-0"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `version` | int | Schema version. Only `1` is supported. |
+| `ociLayoutPath` | string | OCI image layout directory, relative to the media root. Each build mirrors into a fresh, build-unique directory (`oci-<unique>`); the consumer locates the layout through this field. |
+| `images[].name` | string | Canonical repository name the image is stored under. |
+| `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
+| `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
+
+**Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
+mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
+and records that directory in `ociLayoutPath`. Because the consumer locates the layout *through*
+the manifest, atomically replacing `digests.json` with a single rename is what switches the media
+from the previous layout to the new one: before the rename the committed manifest still points at
+the intact previous layout, after it the committed manifest points at the fully-written new layout.
+A crash or power loss at any point therefore leaves the media consistent — the committed manifest
+always points at a complete, matching layout, never a mismatch — and at worst leaves an orphaned
+layout directory. Superseded and crash-orphaned layout directories are garbage-collected only
+*after* the manifest commit succeeds, so the only intact layout is never deleted. The
+`<output>.digests.json` copy is audit-only and best-effort: it is written after the commit, never
+participates in it (it may sit on a different filesystem), and a failure to write it does not fail
+the build.
+
+The guarantee holds across power loss, not merely process termination: the completed layout (its
+files and directories) is fsynced before the commit, the media-root directory entry that names the
+new layout directory is fsynced before the manifest can reference it, and the commit rename is
+itself made durable by fsyncing the manifest file and the media-root directory, so a power loss can
+never persist the manifest rename ahead of the layout data (or the layout's own directory entry) it
+references. If the commit rename succeeds but its durability fsync then fails, the medium is treated
+as committed — the manifest already points at the complete new layout, so the layout is kept, never
+deleted — and the fsync error is surfaced so the caller learns durability was not confirmed. Garbage
+collection runs only after the commit is durable, and it re-reads the committed manifest to learn
+which layout is live rather than trusting the just-written name. Builds against the same media root
+are serialized by an advisory file lock, so concurrent builds cannot interleave their commit/GC
+steps and collect a layout the other build just made live.
+
+The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
+subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
+excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
+
+> **Trust caveat:** mirroring uses an accept-anything signature policy. Pinning each
+> reference to a digest guarantees the content is immutable and content-addressed, but it
+> verifies **neither publisher identity nor image trust** (no signature verification is
+> performed).
