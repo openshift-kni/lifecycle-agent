@@ -59,11 +59,13 @@ const (
 	// rejected (proposal §6.3: the registry fallback allows only localhost:5000).
 	localRegistryEndpoint = "localhost:5000"
 
-	// imageFieldKey is the manifest field whose scalar value is an image reference
-	// (containers[].image, initContainers[].image, ephemeralContainers[].image,
-	// CatalogSource.spec.image). A scalar under this key is accepted even when it is a
-	// bare name (e.g. busybox); elsewhere a stricter rule applies (see parseImageRef).
-	imageFieldKey = "image"
+	// imageFieldSuffix identifies a mapping key whose scalar value is an image reference.
+	// A key matches when it is exactly "image" (containers[].image, initContainers[].image,
+	// ephemeralContainers[].image, CatalogSource.spec.image) or, case-insensitively, ends in
+	// "image" (operandImage, operatorImage, relatedImages' image, kubeRBACProxyImage, ...).
+	// A scalar under such a key is accepted even when it is a bare name (busybox) or a short,
+	// domain-less tag (busybox:1.32); elsewhere a stricter rule applies (see parseImageRef).
+	imageFieldSuffix = "image"
 )
 
 const (
@@ -103,6 +105,20 @@ func RenderP3Tree(m *Manifest, p3Root string) (*P3RenderResult, error) {
 	}
 	if m.SiteConfig == nil {
 		return nil, fmt.Errorf("siteConfig is required to render the p3 config tree")
+	}
+
+	// Render only into a fresh (absent or empty) destination. RenderP3Tree writes just the
+	// current inputs and the later scan/rewrite/mirror passes operate only on the paths it
+	// returns, so a manifest left over in p3Root from a previous build would never be scanned,
+	// digest-pinned, or mirror-checked -- yet post-pivot would still apply it from the media.
+	// Rejecting a nonempty destination keeps the shipped tree exactly the set this build
+	// renders.
+	if entries, err := os.ReadDir(p3Root); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("checking p3 config tree destination %q: %w", p3Root, err)
+		}
+	} else if len(entries) > 0 {
+		return nil, fmt.Errorf("p3 config tree destination %q is not empty; render into a fresh directory so a stale manifest from a previous build cannot ship unscanned", p3Root)
 	}
 
 	clusterConfigDir := filepath.Join(p3Root, common.ClusterConfigDir)
@@ -239,11 +255,22 @@ func ScanImageReferences(manifestPaths []string) ([]string, error) {
 	return images, nil
 }
 
+// isImageFieldKey reports whether a mapping key names an image-reference field: the exact
+// key "image" or any key that ends in "image" case-insensitively (operandImage,
+// operatorImage, relatedImages' image, ...). A scalar under such a key is treated as an
+// image reference even when it is a short, domain-less form (busybox:1.32), so a
+// custom-resource image field is discovered and pinned instead of being silently skipped by
+// the stricter generic fallback. A non-image value under such a key has no shipped digest
+// and fails the build loudly, which is the intended explicit-failure behavior.
+func isImageFieldKey(key string) bool {
+	return strings.HasSuffix(strings.ToLower(key), imageFieldSuffix)
+}
+
 // collectImages recursively collects normalized image references from a decoded manifest
-// value. underImageKey records whether the value sits directly under an "image" field:
-// such a value is accepted even as a bare name, while elsewhere parseImageRef applies the
-// stricter custom-resource rule (see parseImageRef). Map keys are visited in sorted order
-// so the result is deterministic.
+// value. underImageKey records whether the value sits directly under an image field (see
+// isImageFieldKey): such a value is accepted even as a bare or short name, while elsewhere
+// parseImageRef applies the stricter custom-resource rule (see parseImageRef). Map keys are
+// visited in sorted order so the result is deterministic.
 func collectImages(node interface{}, underImageKey bool, out *[]string) {
 	switch v := node.(type) {
 	case map[string]interface{}:
@@ -253,7 +280,7 @@ func collectImages(node interface{}, underImageKey bool, out *[]string) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			collectImages(v[k], k == imageFieldKey, out)
+			collectImages(v[k], isImageFieldKey(k), out)
 		}
 	case []interface{}:
 		for _, item := range v {
@@ -269,9 +296,9 @@ func collectImages(node interface{}, underImageKey bool, out *[]string) {
 // parseImageRef parses s as an image reference. underImageKey selects the acceptance rule
 // (Codex review point 1):
 //
-//   - true (the value of a known "image" field): any string that parses as a reference is
-//     accepted, including a bare name (busybox) or a short tag (busybox:1.32); it is
-//     normalized to fully-qualified name:tag by the caller.
+//   - true (the value of a known image field, see isImageFieldKey): any string that parses
+//     as a reference is accepted, including a bare name (busybox) or a short tag
+//     (busybox:1.32); it is normalized to fully-qualified name:tag by the caller.
 //   - false (the generic custom-resource walk): accepted only when the string clearly looks
 //     like an image -- an explicit registry domain in the first path component AND an
 //     explicit tag or digest -- so apiVersion values (apps/v1, networking.k8s.io/v1), plain
@@ -380,8 +407,8 @@ func rewriteManifestFile(path string, refToDigest map[string]string) error {
 }
 
 // rewriteNode walks a yaml.v3 node tree, pinning tag-form image scalars. underImageKey
-// mirrors collectImages: a scalar directly under an "image" mapping key is treated as an
-// image even when bare.
+// mirrors collectImages: a scalar directly under an image mapping key (see isImageFieldKey)
+// is treated as an image even when bare.
 func rewriteNode(node *yaml.Node, underImageKey bool, refToDigest map[string]string, path string) (bool, error) {
 	changed := false
 	switch node.Kind {
@@ -396,12 +423,20 @@ func rewriteNode(node *yaml.Node, underImageKey bool, refToDigest map[string]str
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := node.Content[i]
-			isImg := key.Kind == yaml.ScalarNode && key.Value == imageFieldKey
+			isImg := key.Kind == yaml.ScalarNode && isImageFieldKey(key.Value)
 			ch, err := rewriteNode(node.Content[i+1], isImg, refToDigest, path)
 			if err != nil {
 				return false, err
 			}
 			changed = changed || ch
+		}
+	case yaml.AliasNode:
+		// An aliased value (image: *img) resolves to its anchored node. The generic decode the
+		// scanner uses resolves aliases, so the reference is in refToDigest; follow the alias
+		// here with the same key context and pin the anchored scalar in place so it is not left
+		// tag-based. The anchor and every alias to it then render the shared, pinned value.
+		if node.Alias != nil {
+			return rewriteNode(node.Alias, underImageKey, refToDigest, path)
 		}
 	case yaml.ScalarNode:
 		return rewriteScalar(node, underImageKey, refToDigest, path)
