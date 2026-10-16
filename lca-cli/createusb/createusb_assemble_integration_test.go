@@ -270,8 +270,8 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 2, "the base p1 plus the new p2 must be present")
 
-	wantP2, err := partitionByLabel(plan, labelIBIImages)
-	require.NoError(t, err)
+	wantP2, ok := plannedPartition(plan, labelIBIImages)
+	require.True(t, ok)
 	var p2 *PartitionEntry
 	for i := range entries {
 		if entries[i].Number == wantP2.Number {
@@ -289,7 +289,7 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	require.NoError(t, verr, verifyOut)
 
 	// The formatted p2 reports the expected ext4 filesystem and ibi-images label.
-	node := partitionDevice(loopDev, wantP2.Number)
+	node := partitionDevicePath(loopDev, wantP2.Number)
 	blkidOut, berr := realOps.ops.RunInHostNamespace("blkid", "-o", "export", node)
 	require.NoError(t, berr, blkidOut)
 	assert.Contains(t, blkidOut, "LABEL="+labelIBIImages)
@@ -328,38 +328,39 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 }
 
-// failAddOps wraps the real seam but injects an AddPartition failure, so the p2 cleanup path
-// can be exercised against real losetup/sgdisk resources (the base p1 is created for real;
-// only the p2 add fails).
-type failAddOps struct {
+// failP2CreateOps wraps the real seam but injects a CreatePartition failure, so the p2 cleanup
+// path can be exercised against real losetup/sgdisk resources (the base p1 is created for real;
+// the injected failure in the shared create step aborts p2 before it formats, so the test needs
+// no partprobe/udev/mkfs tooling).
+type failP2CreateOps struct {
 	partitionOps
 	attachedDev string
 }
 
-func (f *failAddOps) AttachLoopback(imgPath string) (string, error) {
+func (f *failP2CreateOps) AttachLoopback(imgPath string) (string, error) {
 	dev, err := f.partitionOps.AttachLoopback(imgPath)
 	f.attachedDev = dev
 	return dev, err
 }
 
-func (f *failAddOps) AddPartition(string, PlannedPartition, string) error {
-	return fmt.Errorf("injected add-partition failure")
+func (f *failP2CreateOps) CreatePartition(string, PlannedPartition) error {
+	return fmt.Errorf("injected create-partition failure")
 }
 
 // TestBuildP2RealRollback verifies that a p2 failure on the real path tears the handle down:
 // the loop device is detached and the partial image removed (the base p1 was created for
-// real; the injected AddPartition failure triggers build's cleanup).
+// real; the injected CreatePartition failure triggers build's cleanup).
 func TestBuildP2RealRollback(t *testing.T) {
 	requireLoopAndSgdisk(t)
 
 	realOps, _ := newRealMediaDeps()
-	wrapped := &failAddOps{partitionOps: realOps}
+	wrapped := &failP2CreateOps{partitionOps: realOps}
 	img := filepath.Join(t.TempDir(), "media.img")
 
 	err := build(context.Background(), testLogger(), validInstallOnly(),
 		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: wrapped})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "injected add-partition failure")
+	assert.Contains(t, err.Error(), "injected create-partition failure")
 
 	require.NotEmpty(t, wrapped.attachedDev, "the loop device must have been attached before the injected failure")
 	assert.False(t, loopAttached(wrapped.attachedDev), "a p2 failure must detach the loop device")
