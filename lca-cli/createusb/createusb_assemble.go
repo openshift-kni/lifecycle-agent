@@ -508,7 +508,7 @@ func alignUp(v, align int64) int64 {
 // It creates the file exclusively (O_EXCL): if the output path already exists it fails
 // without touching the existing file, rather than truncating it. This prevents a
 // placeholder build from destroying an existing image at a reused output path.
-func allocateSparseImage(path string, size int64) error {
+func allocateSparseImage(path string, size int64) (err error) {
 	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // output path is supplied by the operator at build time
 	if err != nil {
 		if os.IsExist(err) {
@@ -516,6 +516,13 @@ func allocateSparseImage(path string, size int64) error {
 		}
 		return fmt.Errorf("creating image file: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			if removeErr := os.Remove(path); removeErr != nil {
+				err = errors.Join(err, fmt.Errorf("removing incomplete image file %s: %w", path, removeErr))
+			}
+		}
+	}()
 	if terr := f.Truncate(size); terr != nil {
 		_ = f.Close()
 		return fmt.Errorf("truncating image file to %d bytes: %w", size, terr)

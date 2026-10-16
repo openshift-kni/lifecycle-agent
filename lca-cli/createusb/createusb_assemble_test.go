@@ -313,6 +313,15 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 	})
 }
 
+func TestAllocateSparseImageRemovesFileAfterTruncateFailure(t *testing.T) {
+	img := filepath.Join(t.TempDir(), "out.img")
+	err := allocateSparseImage(img, -1)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "truncating image file")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "a failed allocation must leave the output path available")
+}
+
 // TestAssembleMediaPreservesImageWhenP3Unmountfails covers the P1 recovery guard: when the p3
 // stage cannot unmount its filesystem, that filesystem is still mounted over the loop device, so
 // the rollback must NOT detach the loop or remove the backing image -- doing so would discard the
