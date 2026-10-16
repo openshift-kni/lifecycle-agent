@@ -128,6 +128,12 @@ type BuildOptions struct {
 	// WriteDevice is the block device to write to (--write-device). It is deferred: Build
 	// rejects it while the assembly pipeline is incomplete.
 	WriteDevice string
+	// P3Root is the rendered + digest-pinned self-contained config tree (RenderP3Tree ->
+	// buildImageLayout, CNF-27169) the p3 stage populates the cluster-config partition from.
+	// It is consumed read-only. The end-to-end join that renders the tree and threads this
+	// path from the command is CNF-27171; until then only the integration test supplies it,
+	// so an empty P3Root leaves the reserved p3 slot unpopulated (see createP3Partition).
+	P3Root string
 }
 
 // PlannedPartition is one entry in the computed media layout: its GPT partition number,
@@ -181,6 +187,21 @@ type partitionOps interface {
 	AddPartition(dev string, part PlannedPartition, fsType string) error
 	// ReadPartitionTable reads dev's GPT and returns the parsed entries.
 	ReadPartitionTable(dev string) ([]PartitionEntry, error)
+	// CreatePartition adds a single GPT entry to dev at the number, 1 MiB-aligned offset, and
+	// reserved size the plan carries for part (sgdisk --new/--change-name/--typecode),
+	// mirroring CreateBaseLayout's p1 creation for a sibling partition. It does not format the
+	// partition.
+	CreatePartition(dev string, part PlannedPartition) error
+	// SettlePartition makes the kernel partition node for partition number on dev available
+	// after its GPT entry was added (re-read the table + wait for udev) and returns the
+	// partition device path (e.g. /dev/loop0p3).
+	SettlePartition(dev string, number int) (partDev string, err error)
+	// FormatPartition creates an ext4 filesystem on partDev and sets its FS label.
+	FormatPartition(partDev, label string) error
+	// MountPartition mounts partDev at mountpoint.
+	MountPartition(partDev, mountpoint string) error
+	// UnmountPartition unmounts mountpoint.
+	UnmountPartition(mountpoint string) error
 }
 
 // mediaBuildDeps bundles the injectable seam(s). It has a single field today; the
@@ -353,6 +374,16 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		IsImage:    true,
 		partition:  deps.partition,
 	}
+
+	// Self-contained: fill the reserved p3 cluster-config slot (create entry, mkfs.ext4,
+	// label, mount, populate). It runs after the base layout and before success, so a p3
+	// failure triggers the rollback above (p3 unmounts itself first, then the rollback
+	// detaches the loop and removes the partial image). install-only has no p3 entry in the
+	// plan, so the stage is a no-op there.
+	if err = createP3Partition(ctx, log, deps, handle, opts.P3Root); err != nil {
+		return nil, fmt.Errorf("creating cluster-config (p3) partition on %s: %w", loopDev, err)
+	}
+
 	success = true
 	return handle, nil
 }
@@ -519,6 +550,81 @@ func (p *opsPartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, erro
 		return nil, fmt.Errorf("reading partition table on %s: %w", dev, err)
 	}
 	return parseSgdiskTable(out), nil
+}
+
+// CreatePartition adds the single GPT entry part reserves to dev, using the same sector math
+// and sgdisk invocation as CreateBaseLayout's placeholder p1 (--new/--change-name/--typecode).
+// The placeholder type code is kept: the cluster-config partition is located by FS label at
+// post-pivot, not by GPT type.
+func (p *opsPartitionOps) CreatePartition(dev string, part PlannedPartition) error {
+	startSector := part.Offset / sectorSize
+	endSector := (part.Offset+part.Size)/sectorSize - 1
+	if _, err := p.ops.RunInHostNamespace("sgdisk",
+		fmt.Sprintf("--new=%d:%d:%d", part.Number, startSector, endSector),
+		fmt.Sprintf("--change-name=%d:%s", part.Number, part.Label),
+		fmt.Sprintf("--typecode=%d:%s", part.Number, placeholderTypeCode),
+		dev); err != nil {
+		return fmt.Errorf("creating partition %d (%s) on %s: %w", part.Number, part.Label, dev, err)
+	}
+	return nil
+}
+
+// SettlePartition re-reads dev's partition table (partprobe) and waits for udev so the new
+// partition node is created under /dev, then returns its device path. Without this the
+// <dev>pN node may not exist yet when mkfs runs.
+func (p *opsPartitionOps) SettlePartition(dev string, number int) (string, error) {
+	if _, err := p.ops.RunInHostNamespace("partprobe", dev); err != nil {
+		return "", fmt.Errorf("re-reading partition table on %s: %w", dev, err)
+	}
+	if _, err := p.ops.RunInHostNamespace("udevadm", "settle"); err != nil {
+		return "", fmt.Errorf("waiting for udev to settle after partitioning %s: %w", dev, err)
+	}
+	partDev := partitionDevicePath(dev, number)
+	// Confirm the node exists so a later mkfs/mount fails loudly here with a clear message.
+	if _, err := os.Stat(partDev); err != nil {
+		return "", fmt.Errorf("partition device %s did not appear after settling %s: %w", partDev, dev, err)
+	}
+	return partDev, nil
+}
+
+// FormatPartition creates an ext4 filesystem on partDev with the given FS label. -F forces a
+// non-interactive format on the (freshly created, empty) partition. ext4 is used because it
+// holds the 14-char cluster-config label (vfat's 11-char limit could not) and post-pivot
+// locates p3 by label with kernel FS auto-detection, imposing no FS-type requirement.
+func (p *opsPartitionOps) FormatPartition(partDev, label string) error {
+	if _, err := p.ops.RunInHostNamespace("mkfs.ext4", "-F", "-L", label, partDev); err != nil {
+		return fmt.Errorf("running mkfs.ext4 -L %s on %s: %w", label, partDev, err)
+	}
+	return nil
+}
+
+// MountPartition mounts partDev at mountpoint (which must already exist).
+func (p *opsPartitionOps) MountPartition(partDev, mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("mount", partDev, mountpoint); err != nil {
+		return fmt.Errorf("mounting %s at %s: %w", partDev, mountpoint, err)
+	}
+	return nil
+}
+
+// UnmountPartition unmounts mountpoint. It must run before the loop device is detached
+// (MediaHandle.Close detaches but does not unmount).
+func (p *opsPartitionOps) UnmountPartition(mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("umount", mountpoint); err != nil {
+		return fmt.Errorf("unmounting %s: %w", mountpoint, err)
+	}
+	return nil
+}
+
+// partitionDevicePath returns the kernel device node for partition number on dev. Devices
+// whose name ends in a digit (loop0, nvme0n1, mmcblk0) use a "p" separator (loop0p3); others
+// (sda) append the number directly (sda3). create-usb always drives a loopback device, so the
+// "p" form is the one used in practice.
+func partitionDevicePath(dev string, number int) string {
+	sep := ""
+	if n := len(dev); n > 0 && dev[n-1] >= '0' && dev[n-1] <= '9' {
+		sep = "p"
+	}
+	return fmt.Sprintf("%s%s%d", dev, sep, number)
 }
 
 // parseSgdiskTable parses the partition rows of `sgdisk -p` output into structured

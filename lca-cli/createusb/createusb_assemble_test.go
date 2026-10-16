@@ -39,7 +39,8 @@ func testLogger() *logrus.Logger {
 
 // fakePartitionOps is a partitionOps fake that records the ordered privileged-op calls and
 // lets each op's result be injected, so the pure assembly logic (allocation, ordering,
-// rollback) is unit-testable without root.
+// rollback) and the p3 media stage (create/settle/format/mount/populate/umount) are
+// unit-testable without root.
 type fakePartitionOps struct {
 	attachDev string
 	attachErr error
@@ -49,12 +50,34 @@ type fakePartitionOps struct {
 	readOut   []PartitionEntry
 	readErr   error
 
+	// p3 media-stage seam injection.
+	createPartErr error
+	settleErr     error
+	settleDev     string
+	formatErr     error
+	mountErr      error
+	umountErr     error
+	// onMount, if set, runs after a successful MountPartition with the mountpoint path, so a
+	// test can perturb the mountpoint (e.g. force a populate failure) deterministically.
+	onMount func(mountpoint string)
+
 	calls     []string
 	attached  []string
 	detached  []string
 	createdOn []string
 	added     []addPartitionCall
 	lastPlan  PartitionPlan
+
+	// p3 media-stage recording.
+	createdParts []PlannedPartition
+	formattedDev string
+	formatLabel  string
+	mountedDev   string
+	mountpoint   string
+	// mountSnapshot is the rel-path->content tree captured from the mountpoint at
+	// UnmountPartition, so a test can assert what was populated before the (simulated) unmount
+	// made the files no longer visible at the mountpoint.
+	mountSnapshot map[string]string
 }
 
 // addPartitionCall records the arguments of one AddPartition call so tests can assert the
@@ -100,6 +123,54 @@ func (f *fakePartitionOps) AddPartition(dev string, part PlannedPartition, fsTyp
 func (f *fakePartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, error) {
 	f.calls = append(f.calls, "read")
 	return f.readOut, f.readErr
+}
+
+func (f *fakePartitionOps) CreatePartition(dev string, part PlannedPartition) error {
+	f.calls = append(f.calls, "createPart")
+	f.createdParts = append(f.createdParts, part)
+	return f.createPartErr
+}
+
+func (f *fakePartitionOps) SettlePartition(dev string, number int) (string, error) {
+	f.calls = append(f.calls, "settle")
+	if f.settleErr != nil {
+		return "", f.settleErr
+	}
+	dev2 := f.settleDev
+	if dev2 == "" {
+		dev2 = fmt.Sprintf("%sp%d", dev, number)
+	}
+	return dev2, nil
+}
+
+func (f *fakePartitionOps) FormatPartition(partDev, label string) error {
+	f.calls = append(f.calls, "format")
+	f.formattedDev = partDev
+	f.formatLabel = label
+	return f.formatErr
+}
+
+func (f *fakePartitionOps) MountPartition(partDev, mountpoint string) error {
+	f.calls = append(f.calls, "mount")
+	f.mountedDev = partDev
+	f.mountpoint = mountpoint
+	if f.mountErr != nil {
+		return f.mountErr
+	}
+	if f.onMount != nil {
+		f.onMount(mountpoint)
+	}
+	return nil
+}
+
+func (f *fakePartitionOps) UnmountPartition(mountpoint string) error {
+	f.calls = append(f.calls, "umount")
+	// Simulate a real unmount: snapshot what was populated, then clear the mountpoint so the
+	// (now-empty) directory can be removed -- on a host the files live on the unmounted
+	// filesystem and are no longer visible at the mountpoint.
+	f.mountSnapshot = snapshotTree(mountpoint)
+	clearDir(mountpoint)
+	return f.umountErr
 }
 
 func TestPartitionPlanPerMode(t *testing.T) {
