@@ -9,16 +9,13 @@ import (
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
-	backuprestore "github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	configv1 "github.com/openshift/api/config/v1"
 	mcv1 "github.com/openshift/api/machineconfiguration/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
@@ -40,8 +37,8 @@ const (
 	SriovNetworkNodeStateNotPresentMsg = "no SriovNetworkNodeStates present"
 )
 
-// MandatoryHealthChecks runs the checks required before OADP restore can begin:
-// ClusterOperators, MachineConfigPools, SRIOV, and OADP (DPA + BSL).
+// MandatoryHealthChecks runs the checks required before restore can begin:
+// ClusterOperators, MachineConfigPools, and SRIOV.
 func MandatoryHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	var failures []string
 
@@ -64,16 +61,6 @@ func MandatoryHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) 
 			l.Info("sriovNetworkNodeState health check failure", "error", err.Error())
 			failures = append(failures, err.Error())
 		}
-
-		if ok, err := IsDataProtectionApplicationReconciled(ctx, c, l); err != nil {
-			l.Info("dataProtentionApplication health check failure", "error", err.Error())
-			failures = append(failures, err.Error())
-		} else if ok {
-			if err := AreBackupStorageLocationsAvailable(ctx, c, l); err != nil {
-				l.Info("backupStorageLocation health check failure", "error", err.Error())
-				failures = append(failures, err.Error())
-			}
-		}
 	}
 
 	if len(failures) > 0 {
@@ -86,7 +73,7 @@ func MandatoryHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) 
 	return nil
 }
 
-// DeferredHealthChecks runs checks that are only required after OADP restore completes,
+// DeferredHealthChecks runs checks that are only required after restore completes,
 // before declaring the upgrade finished: Node readiness, CSVs, and CSRs.
 func DeferredHealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 	var failures []string
@@ -123,67 +110,6 @@ func HealthChecks(ctx context.Context, c client.Reader, l logr.Logger) error {
 		return err
 	}
 	return DeferredHealthChecks(ctx, c, l)
-}
-
-func IsDataProtectionApplicationReconciled(ctx context.Context, c client.Reader, l logr.Logger) (bool, error) {
-	dpaCRD := &apiextensionsv1.CustomResourceDefinition{}
-	if err := c.Get(ctx, types.NamespacedName{Name: "dataprotectionapplications.oadp.openshift.io"}, dpaCRD); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check DataProtectionApplication CRD: %w", err)
-	}
-
-	dpaList := &unstructured.UnstructuredList{}
-	dpaList.SetGroupVersionKind(backuprestore.DpaGvkList)
-	opts := []client.ListOption{
-		client.InNamespace(backuprestore.OadpNs),
-	}
-	if err := c.List(ctx, dpaList, opts...); err != nil {
-		return false, fmt.Errorf("failed to list OADP DataProtectionApplication: %w", err)
-	}
-
-	if len(dpaList.Items) == 0 {
-		return false, nil
-	}
-
-	for _, dpa := range dpaList.Items {
-		if backuprestore.IsDPAReconciled(&dpa) { //nolint:gosec
-			l.Info(fmt.Sprintf("DataProtectionApplication %s is reconciled", dpa.GetName()))
-			return true, nil
-		}
-	}
-
-	msg := "dataProtectionApplication not reconciled"
-	l.Info(msg)
-	// nolint: staticcheck
-	return false, fmt.Errorf("dataProtectionApplication not reconciled")
-}
-
-func AreBackupStorageLocationsAvailable(ctx context.Context, c client.Reader, l logr.Logger) error {
-	backupStorageLocationList := &velerov1.BackupStorageLocationList{}
-	err := c.List(ctx, backupStorageLocationList, client.InNamespace(backuprestore.OadpNs))
-	if err != nil {
-		return fmt.Errorf("failed to list BackupStorageLocations: %w", err)
-	}
-	if len(backupStorageLocationList.Items) == 0 {
-		msg := "backupsStorageLocations not yet created"
-		l.Info(msg)
-		// nolint: staticcheck
-		return fmt.Errorf("backupsStorageLocations not yet created")
-	}
-
-	for _, bsl := range backupStorageLocationList.Items {
-		if bsl.Status.Phase != velerov1.BackupStorageLocationPhaseAvailable {
-			msg := fmt.Sprintf("backupStorageLocation %s not available", bsl.Name)
-			l.Info(msg)
-			// nolint: staticcheck
-			return fmt.Errorf("backupStorageLocation %s not available", bsl.Name)
-		}
-	}
-
-	l.Info("All BackupStorageLocations are available")
-	return nil
 }
 
 func AreClusterServiceVersionsReady(ctx context.Context, c client.Reader, l logr.Logger) error {
