@@ -30,7 +30,20 @@ import (
 // initMonitorCmd represents the init-monitor command
 var initMonitorCmd = &cobra.Command{
 	Use:   "init-monitor",
-	Short: "LCA Init Monitor",
+	Short: "Monitor upgrade health and trigger rollback on timeout",
+	Long: `Run the LCA init monitor as a systemd service that watches for successful
+upgrade completion within the configured timeout. If the upgrade does not
+complete in time, the monitor triggers an automatic rollback to the previous
+OSTree stateroot.
+
+Supports two modes: 'ibu' for Image Based Upgrades and 'ipc' for IP
+Configuration changes. The mode can be set via --mode or from the mode
+file at /var/run/lca/init-monitor-mode.`,
+	Example: `  # Launch the init monitor in IBU mode
+  lca-cli init-monitor --monitor --mode ibu
+
+  # Run the ExecStopPost handler for a component
+  lca-cli init-monitor --exec-stop-post post-pivot`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return initMonitor()
 	},
