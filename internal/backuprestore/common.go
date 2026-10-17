@@ -419,7 +419,7 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.
 				errMsg := fmt.Sprintf("Invalid backup %s detected in configmap, error: %s. Please update the invalid Backup in configmap.",
 					backup.GetName(), err.Error())
 				h.Log.Error(err, errMsg)
-				return NewBRFailedValidationError("backup", errMsg)
+				return NewBRFailedValidationError("Backup", errMsg)
 			}
 			if !k8serrors.IsAlreadyExists(err) {
 				return fmt.Errorf("failed to create backup with dry run: %w", err)
@@ -452,7 +452,7 @@ func (h *BRHandler) ValidateOadpConfigmaps(ctx context.Context, content []ibuv1.
 				errMsg := fmt.Sprintf("Invalid Restore %s detected in configmap, error: %s. Please update the invalid Restore in configmap.",
 					restore.GetName(), err.Error())
 				h.Log.Error(err, errMsg)
-				return NewBRFailedValidationError("restore", errMsg)
+				return NewBRFailedValidationError("Restore", errMsg)
 			}
 			if !k8serrors.IsAlreadyExists(err) {
 				return fmt.Errorf("failed to create Restore with dry run: %w", err)
