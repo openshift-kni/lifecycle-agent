@@ -259,8 +259,9 @@ siteConfig:
 `create-usb --output` does **not** currently create `digests.json` or an OCI image
 layout. The separately implemented `BuildImageLayout` stage resolves the profile's
 image set to digests, mirrors it into a build-unique OCI layout directory (named
-`oci-<unique>`), and emits a digest manifest. For self-contained profiles it also
-runs `RenderP3Tree` (render, digest-pin, and offline mirror-resource scan) before
+`oci-<unique>`), and emits a digest manifest. For self-contained profiles it first
+runs `RenderP3Tree` and scans the rendered manifests for image references and offline
+mirror-resource rules. It pins image references to the mirrored digests after
 mirroring; see [docs/create-usb.md](../docs/create-usb.md). Wiring that stage into
 the placeholder image is follow-up work. The format and publication behavior below
 describe that standalone stage, not the current `create-usb` output.
