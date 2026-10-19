@@ -86,20 +86,20 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/image/v5/copy"
-	"github.com/containers/image/v5/oci/layout"
-	"github.com/containers/image/v5/signature"
-	istorage "github.com/containers/image/v5/storage"
-	"github.com/containers/image/v5/types"
-	cstorage "github.com/containers/storage"
+	"go.podman.io/image/v5/copy"
+	"go.podman.io/image/v5/oci/layout"
+	"go.podman.io/image/v5/signature"
+	istorage "go.podman.io/image/v5/storage"
+	"go.podman.io/image/v5/types"
+	cstorage "go.podman.io/storage"
 	// Register the containers-storage graph drivers (overlay, vfs, ...) so the
 	// store can be opened at runtime. btrfs/devmapper are excluded via build
 	// tags to keep the build CGO-light (see the Makefile build tags).
-	_ "github.com/containers/storage/drivers/register"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
+	_ "go.podman.io/storage/drivers/register"
 )
 
 const (

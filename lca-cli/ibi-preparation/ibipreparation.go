@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/go-logr/logr"
 	"github.com/pelletier/go-toml"
 	preinstallUtils "github.com/rh-ecosystem-edge/preinstall-utils/pkg"
 	"github.com/sirupsen/logrus"
+	"go.podman.io/image/v5/pkg/sysregistriesv2"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
