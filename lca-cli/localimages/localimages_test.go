@@ -12,15 +12,15 @@ import (
 	"strings"
 	"testing"
 
-	istorage "go.podman.io/image/v5/storage"
-	cstorage "go.podman.io/storage"
-	"go.podman.io/storage/pkg/reexec"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	istorage "go.podman.io/image/v5/storage"
+	cstorage "go.podman.io/storage"
+	"go.podman.io/storage/pkg/reexec"
 )
 
 const (

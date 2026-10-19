@@ -95,11 +95,11 @@ import (
 	// Register the containers-storage graph drivers (overlay, vfs, ...) so the
 	// store can be opened at runtime. btrfs/devmapper are excluded via build
 	// tags to keep the build CGO-light (see the Makefile build tags).
-	_ "go.podman.io/storage/drivers/register"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
+	_ "go.podman.io/storage/drivers/register"
 )
 
 const (

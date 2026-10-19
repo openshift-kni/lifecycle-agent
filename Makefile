@@ -441,10 +441,15 @@ golangci-lint-download: sync-git-submodules $(LOCALBIN) ## Download golangci-lin
 		DOWNLOAD_INSTALL_DIR=$(LOCALBIN)
 	@echo "Golangci-lint downloaded successfully."
 
+# Pin the Go toolchain so golangci-lint typechecks against a stdlib whose export
+# data it can decode. A newer host Go (e.g. 1.27) otherwise fails with:
+# cannot decode "internal/goarch", export data version N is greater than maximum supported version M
+GO_MOD_VERSION ?= $(shell sed -n 's/^go //p' $(PROJECT_DIR)/go.mod | head -1)
+
 .PHONY: golangci-lint
 golangci-lint: golangci-lint-download $(GOLANGCI_LINT) ## Run golangci-lint against code.
 	@echo "Running golangci-lint on repository go files..."
-	$(GOLANGCI_LINT) run -v
+	GOTOOLCHAIN=go$(GO_MOD_VERSION) $(GOLANGCI_LINT) run -v
 	@echo "Golangci-lint linting completed successfully."
 
 # markdownlint rules, following: https://github.com/openshift/enhancements/blob/master/Makefile
