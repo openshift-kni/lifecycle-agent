@@ -381,7 +381,7 @@ func (m *Manifest) ResolvePullSecret() error {
 //
 // The real scan operates on the rendered p3 manifest tree, which exists only at media-build
 // time: buildImageLayout renders the tree and runs ScanMirrorResources
-// (createusb_p3.go) over it before mirroring, failing the build on any IDMS/ITMS/ICSP that
+// (createusb_p3_content.go) over it before mirroring, failing the build on any IDMS/ITMS/ICSP that
 // is not strictly local + NeverContactSource. Validate cannot run that scan because the
 // tree is not rendered yet (and Validate intentionally does not read manifest-source
 // contents), so this hook stays a no-op; it is retained so Validate's self-contained

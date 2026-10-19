@@ -449,7 +449,7 @@ func p3ManifestPaths(r *P3RenderResult) []string {
 // rewriteP3ImageReferences pins the tag-form image references in the rendered p3 manifests
 // to the digests mirrored for this build. mirrorToOCILayout preserves order, so refs[i] and
 // entries[i] correspond; the normalized references the scan unioned into refs are the keys
-// the rewriter looks up (createusb_p3.go RewriteImageReferences). Because the map is built
+// the rewriter looks up (createusb_p3_content.go RewriteImageReferences). Because the map is built
 // only from mirrored entries, every digest a reference is pinned to is one the media ships,
 // which is the offline-pull target the proposal requires.
 func rewriteP3ImageReferences(manifestPaths, refs []string, entries []localimages.ImageEntry) error {
