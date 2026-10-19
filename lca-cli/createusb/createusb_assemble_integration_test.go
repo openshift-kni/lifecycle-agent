@@ -43,6 +43,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -81,6 +82,13 @@ func requireP2Tools(t *testing.T) {
 // loopAttached reports whether loopDev is currently a live loop device.
 func loopAttached(loopDev string) bool {
 	return exec.Command("losetup", loopDev).Run() == nil //nolint:gosec // fixed device path from losetup
+}
+
+// losetup -d may complete before the kernel releases the loop device. Wait for
+// the actual detach rather than asserting against that short transition.
+func assertLoopDetached(t *testing.T, loopDev, message string) {
+	t.Helper()
+	assert.Eventually(t, func() bool { return !loopAttached(loopDev) }, 5*time.Second, 20*time.Millisecond, message)
 }
 
 func newRealMediaDeps() (*opsPartitionOps, mediaBuildDeps) {
@@ -129,7 +137,7 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 
 	// Success teardown: Close detaches the loop device and removes the discarded image.
 	require.NoError(t, handle.Close())
-	assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
+	assertLoopDetached(t, loopDev, "Close must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 }
@@ -249,7 +257,7 @@ func TestAssembleMediaRealRollback(t *testing.T) {
 	assert.Nil(t, handle)
 
 	require.NotEmpty(t, wrapped.attachedDev, "the loop device must have been attached before the injected failure")
-	assert.False(t, loopAttached(wrapped.attachedDev), "rollback must detach the loop device")
+	assertLoopDetached(t, wrapped.attachedDev, "rollback must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "rollback must remove the partial image")
 }
@@ -336,7 +344,7 @@ func TestCreateP2PartitionRealLoopback(t *testing.T) {
 
 	// Success teardown: Close detaches the loop device and removes the discarded image.
 	require.NoError(t, handle.Close())
-	assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
+	assertLoopDetached(t, loopDev, "Close must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 }
@@ -376,7 +384,7 @@ func TestBuildP2RealRollback(t *testing.T) {
 	assert.Contains(t, err.Error(), "injected create-partition failure")
 
 	require.NotEmpty(t, wrapped.attachedDev, "the loop device must have been attached before the injected failure")
-	assert.False(t, loopAttached(wrapped.attachedDev), "a p2 failure must detach the loop device")
+	assertLoopDetached(t, wrapped.attachedDev, "a p2 failure must detach the loop device")
 	_, statErr := os.Stat(img)
 	assert.True(t, os.IsNotExist(statErr), "a p2 failure must remove the partial image")
 }
@@ -502,7 +510,7 @@ func TestCreateP4PartitionRealLoopback(t *testing.T) {
 
 			// Success teardown: Close detaches the loop device and removes the discarded image.
 			require.NoError(t, handle.Close())
-			assert.False(t, loopAttached(loopDev), "Close must detach the loop device")
+			assertLoopDetached(t, loopDev, "Close must detach the loop device")
 			_, statErr := os.Stat(img)
 			assert.True(t, os.IsNotExist(statErr), "Close must remove the discarded image")
 		})
