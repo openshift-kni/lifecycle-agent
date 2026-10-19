@@ -3,7 +3,6 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.26.3
 
 require (
-	github.com/containers/image/v5 v5.35.0
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.28.0
 	github.com/cyphar/filepath-securejoin v0.7.0
@@ -61,7 +60,6 @@ require (
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/ocicrypt v1.3.2 // indirect
-	github.com/containers/storage v1.58.0 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/diskfs/go-diskfs v1.4.0 // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect

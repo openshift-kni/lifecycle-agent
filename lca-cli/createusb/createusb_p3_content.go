@@ -45,7 +45,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/containers/image/v5/docker/reference"
+	"go.podman.io/image/v5/docker/reference"
 	configv1 "github.com/openshift/api/config/v1"
 	yaml "gopkg.in/yaml.v3"
 
