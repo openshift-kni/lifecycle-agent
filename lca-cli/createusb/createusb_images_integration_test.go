@@ -44,14 +44,14 @@ import (
 	"runtime"
 	"testing"
 
-	"go.podman.io/image/v5/oci/layout"
-	"go.podman.io/storage/pkg/reexec"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/image/v5/oci/layout"
+	"go.podman.io/storage/pkg/reexec"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 )

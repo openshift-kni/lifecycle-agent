@@ -45,8 +45,8 @@ import (
 	"sort"
 	"strings"
 
-	"go.podman.io/image/v5/docker/reference"
 	configv1 "github.com/openshift/api/config/v1"
+	"go.podman.io/image/v5/docker/reference"
 	yaml "gopkg.in/yaml.v3"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
