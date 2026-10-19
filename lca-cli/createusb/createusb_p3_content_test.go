@@ -614,6 +614,24 @@ func TestBuildImageLayoutSelfContainedRejectsExternalMirror(t *testing.T) {
 	_, err := buildImageLayout(context.Background(), nil, m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage},
 		filepath.Join(dir, "usb.img"), filepath.Join(dir, "p2"), filepath.Join(dir, "p3"), deps)
 	assert.ErrorContains(t, err, "validating p3 mirror resources")
+	assert.NoDirExists(t, filepath.Join(dir, "p3"))
+}
+
+func TestBuildImageLayoutSelfContainedCleansP3AfterMirrorFailure(t *testing.T) {
+	m := validSelfContained()
+	dir := t.TempDir()
+	m.ClusterManifests = &[]ManifestSource{{Path: writeFile(t, dir, "cluster.yaml", "kind: ConfigMap\n")}}
+	p3Root := filepath.Join(dir, "p3")
+	deps := imageBuildDeps{
+		seedReader: fakeSeedReader{list: []string{"quay.io/seed/a@sha256:" + validSHA256}},
+		mirrorer: fakeMirrorer{failOn: map[string]bool{
+			"quay.io/seed/a@sha256:" + validSHA256: true,
+		}},
+	}
+	_, err := buildImageLayout(context.Background(), nil, m, ImageSetOptions{RecertImage: testRecertImage, LCAImage: testLCAImage},
+		filepath.Join(dir, "usb.img"), filepath.Join(dir, "p2"), p3Root, deps)
+	assert.ErrorContains(t, err, "failed to mirror")
+	assert.NoDirExists(t, p3Root)
 }
 
 func TestBuildImageLayoutInstallOnlySkipsP3(t *testing.T) {

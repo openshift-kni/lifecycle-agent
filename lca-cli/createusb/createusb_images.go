@@ -254,6 +254,13 @@ func buildImageLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts
 		if err != nil {
 			return nil, fmt.Errorf("rendering p3 config tree: %w", err)
 		}
+		defer func() {
+			if err != nil {
+				if rmErr := os.RemoveAll(p3Root); rmErr != nil {
+					err = errors.Join(err, fmt.Errorf("cleaning up p3 config tree %q: %w", p3Root, rmErr))
+				}
+			}
+		}()
 		// Reject network-reaching mirror resources before the expensive seed pull/mirror so
 		// the build fails fast (proposal §6.3).
 		if err = ScanMirrorResources(p3Result.ManifestPaths); err != nil {
@@ -953,15 +960,20 @@ func copyIntoLayout(ctx context.Context, srcRef types.ImageReference, destLayout
 	if err != nil {
 		return "", err
 	}
+	if canonical, ok := srcRef.DockerReference().(reference.Canonical); ok && canonical.Digest().String() != copiedDigest {
+		if err := preservePinnedDockerManifest(ctx, srcRef, destLayoutDir, ociTag, authFile, canonical.Digest()); err != nil {
+			return "", err
+		}
+		copiedDigest = canonical.Digest().String()
+	}
 	if err := verifyPinnedSourceDigest(srcRef, copiedDigest); err != nil {
 		return "", err
 	}
 	return copiedDigest, nil
 }
 
-// verifyPinnedSourceDigest prevents media-type conversion from changing the identity
-// of a digest-pinned registry image. OCI layouts only accept OCI media types, so
-// PreserveDigests would reject Docker-format sources rather than copy them.
+// verifyPinnedSourceDigest ensures a digest-pinned source remains addressable by
+// its original digest after copying into the layout.
 func verifyPinnedSourceDigest(srcRef types.ImageReference, copiedDigest string) error {
 	canonical, ok := srcRef.DockerReference().(reference.Canonical)
 	if ok && canonical.Digest().String() != copiedDigest {

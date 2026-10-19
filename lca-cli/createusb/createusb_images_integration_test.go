@@ -50,7 +50,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/manifest"
 	"go.podman.io/image/v5/oci/layout"
+	"go.podman.io/image/v5/types"
 	"go.podman.io/storage/pkg/reexec"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
@@ -141,6 +144,122 @@ func TestMirrorAndImportRoundTrip(t *testing.T) {
 	}
 	defer im.Close()
 	require.NoError(t, im.ImportImage(context.Background(), mediaRoot, parsed, parsed.Images[0]))
+}
+
+type pinnedLayoutReference struct {
+	types.ImageReference
+	canonical reference.Canonical
+}
+
+func (r pinnedLayoutReference) DockerReference() reference.Named { return r.canonical }
+
+// The pinned Docker schema 2 bytes must remain addressable after the OCI copy
+// converts media types, including when the source reference is digest-pinned.
+func TestCopyIntoLayoutPreservesPinnedDockerManifest(t *testing.T) {
+	srcDir := buildMultiArchSourceLayout(t, []string{runtime.GOARCH}, "src")
+	srcIndex := readDestIndex(t, srcDir)
+	topData, err := os.ReadFile(filepath.Join(srcDir, "blobs", "sha256", srcIndex.Manifests[0].Digest.Encoded()))
+	require.NoError(t, err)
+	var topIndex imgspecv1.Index
+	require.NoError(t, json.Unmarshal(topData, &topIndex))
+	child := topIndex.Manifests[0]
+	data, err := os.ReadFile(filepath.Join(srcDir, "blobs", "sha256", child.Digest.Encoded()))
+	require.NoError(t, err)
+	var dockerManifest map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &dockerManifest))
+	dockerManifest["mediaType"] = manifest.DockerV2Schema2MediaType
+	dockerManifest["config"].(map[string]interface{})["mediaType"] = "application/vnd.docker.container.image.v1+json"
+	for _, layer := range dockerManifest["layers"].([]interface{}) {
+		layer.(map[string]interface{})["mediaType"] = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+	}
+	data, err = json.Marshal(dockerManifest)
+	require.NoError(t, err)
+	dockerDigest := digest.FromBytes(data)
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blobs", "sha256", dockerDigest.Encoded()), data, 0o600))
+	srcIndex.Manifests[0].Digest = dockerDigest
+	srcIndex.Manifests[0].MediaType = manifest.DockerV2Schema2MediaType
+	srcIndex.Manifests[0].Size = int64(len(data))
+	writeJSON(t, filepath.Join(srcDir, "index.json"), srcIndex)
+
+	layoutRef, err := layout.NewReference(srcDir, "src")
+	require.NoError(t, err)
+	named, err := reference.ParseNormalizedNamed("quay.io/example/docker")
+	require.NoError(t, err)
+	canonical, err := reference.WithDigest(named, dockerDigest)
+	require.NoError(t, err)
+	ref := pinnedLayoutReference{ImageReference: layoutRef, canonical: canonical}
+	destDir := filepath.Join(t.TempDir(), "dest")
+	got, err := copyIntoLayout(context.Background(), ref, destDir, "docker-0", "")
+	require.NoError(t, err)
+	assert.Equal(t, dockerDigest.String(), got)
+	index := readDestIndex(t, destDir)
+	require.Len(t, index.Manifests, 1)
+	assert.Equal(t, dockerDigest, index.Manifests[0].Digest)
+	assert.Equal(t, manifest.DockerV2Schema2MediaType, index.Manifests[0].MediaType)
+	assert.FileExists(t, filepath.Join(destDir, "blobs", "sha256", dockerDigest.Encoded()))
+	// The offline importer reads the layout through the same transport.
+	preservedRef, err := layout.NewReference(destDir, "docker-0")
+	require.NoError(t, err)
+	_, err = copyIntoLayout(context.Background(), preservedRef, filepath.Join(t.TempDir(), "offline-copy"), "imported", "")
+	require.NoError(t, err)
+}
+
+func TestCopyIntoLayoutPreservesPinnedDockerManifestList(t *testing.T) {
+	otherArch := "arm64"
+	if runtime.GOARCH == "arm64" {
+		otherArch = "amd64"
+	}
+	srcDir := buildMultiArchSourceLayout(t, []string{runtime.GOARCH, otherArch}, "src")
+	srcIndex := readDestIndex(t, srcDir)
+	topData, err := os.ReadFile(filepath.Join(srcDir, "blobs", "sha256", srcIndex.Manifests[0].Digest.Encoded()))
+	require.NoError(t, err)
+	var topIndex imgspecv1.Index
+	require.NoError(t, json.Unmarshal(topData, &topIndex))
+	for i, child := range topIndex.Manifests {
+		data, readErr := os.ReadFile(filepath.Join(srcDir, "blobs", "sha256", child.Digest.Encoded()))
+		require.NoError(t, readErr)
+		var image map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &image))
+		image["mediaType"] = manifest.DockerV2Schema2MediaType
+		image["config"].(map[string]interface{})["mediaType"] = "application/vnd.docker.container.image.v1+json"
+		for _, layer := range image["layers"].([]interface{}) {
+			layer.(map[string]interface{})["mediaType"] = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+		}
+		data, err = json.Marshal(image)
+		require.NoError(t, err)
+		dgst := digest.FromBytes(data)
+		require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blobs", "sha256", dgst.Encoded()), data, 0o600))
+		topIndex.Manifests[i].Digest = dgst
+		topIndex.Manifests[i].MediaType = manifest.DockerV2Schema2MediaType
+		topIndex.Manifests[i].Size = int64(len(data))
+	}
+	topIndex.MediaType = manifest.DockerV2ListMediaType
+	data, err := json.Marshal(topIndex)
+	require.NoError(t, err)
+	listDigest := digest.FromBytes(data)
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blobs", "sha256", listDigest.Encoded()), data, 0o600))
+	srcIndex.Manifests[0].Digest = listDigest
+	srcIndex.Manifests[0].MediaType = manifest.DockerV2ListMediaType
+	srcIndex.Manifests[0].Size = int64(len(data))
+	writeJSON(t, filepath.Join(srcDir, "index.json"), srcIndex)
+
+	layoutRef, err := layout.NewReference(srcDir, "src")
+	require.NoError(t, err)
+	named, err := reference.ParseNormalizedNamed("quay.io/example/docker-list")
+	require.NoError(t, err)
+	canonical, err := reference.WithDigest(named, listDigest)
+	require.NoError(t, err)
+	destDir := filepath.Join(t.TempDir(), "dest")
+	got, err := copyIntoLayout(context.Background(), pinnedLayoutReference{ImageReference: layoutRef, canonical: canonical}, destDir, "docker-list-0", "")
+	require.NoError(t, err)
+	assert.Equal(t, listDigest.String(), got)
+	index := readDestIndex(t, destDir)
+	require.Len(t, index.Manifests, 1)
+	assert.Equal(t, listDigest, index.Manifests[0].Digest)
+	assert.Equal(t, manifest.DockerV2ListMediaType, index.Manifests[0].MediaType)
+	for _, child := range topIndex.Manifests {
+		assert.FileExists(t, filepath.Join(destDir, "blobs", "sha256", child.Digest.Encoded()))
+	}
 }
 
 // ----- source-layout synthesis helpers -----
