@@ -84,6 +84,7 @@ make ci-job      # Full CI pipeline (generate, fmt, vet, lint, test)
 - [Examples](docs/examples.md)
 - [Must-Gather](docs/must-gather.md)
 - [USB Image Scaffolding and Manifest](lca-cli/README.md#creating-usb-media)
+- [create-usb p3 config tree](docs/create-usb.md)
 
 ## Contributing
 

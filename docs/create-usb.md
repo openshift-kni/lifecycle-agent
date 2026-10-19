@@ -1,12 +1,18 @@
 # create-usb: self-contained p3 config tree
 
-`lca-cli create-usb` builds USB-based image-based-install (IBI) media from a single
+The create-usb package builds USB-based image-based-install (IBI) media from a single
 manifest. Two profiles are supported:
 
 - **install-only** — media that installs the seed and shuts down. It ships no on-media
   site configuration (no p3 config tree).
 - **self-contained** — media that installs the seed and then reconfigures the node from an
   on-media site configuration, without contacting the network.
+
+Today the CLI `lca-cli create-usb --output` path only scaffolds the GPT placeholder image
+(empty formatted partitions). The p3 render / digest-pin / mirror-scan behavior below is
+implemented by `RenderP3Tree` and run from the separate `BuildImageLayout` stage; it is
+not yet wired into the CLI. See [lca-cli/README.md](../lca-cli/README.md#creating-usb-media)
+for the current CLI behavior and manifest schema.
 
 This document describes the self-contained **p3 config tree**: how it is rendered from the
 manifest, how image references in the shipped manifests are pinned to digests, and which

@@ -104,9 +104,11 @@ not download the ISO, populate images or site configuration, or verify bootabili
 **The output is not bootable installation media.** `--write-device` remains deferred.
 
 The command reads a single YAML or JSON manifest and validates its schema and fields
-before creating the placeholder image. The image mirroring and p3 rendering stages
-described below are implemented as separate building blocks but are not yet called
-by `create-usb`.
+before creating the placeholder image. Image mirroring (`BuildImageLayout`) and p3
+content rendering (`RenderP3Tree`) are implemented as separate building blocks but
+are not yet called by `create-usb`. For the self-contained p3 config tree, digest
+pinning, and offline mirror-resource rules those stages enforce, see
+[docs/create-usb.md](../docs/create-usb.md).
 
 Creating the partition table requires a Linux host with loop-device access and
 `losetup`, `sgdisk`, `partprobe`, `udevadm`, and `mkfs.ext4` available. Run with
@@ -115,6 +117,22 @@ sufficient privileges to create and format loopback partitions.
 ```bash
 ./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
 ```
+
+### Partition layout
+
+Provisional reservation sizes (the sparse `.img` does not consume real bytes until
+content is written). Labels are GPT names and, for p2–p4, also the ext4 filesystem
+labels:
+
+| Partition | Label | Size | Modes | Content today |
+| --- | --- | --- | --- | --- |
+| p1 | `live-iso` | 2 GiB | both | GPT reservation only (no ISO bytes) |
+| p2 | `ibi-images` | 8 GiB | both | Empty ext4 |
+| p3 | `cluster-config` | 256 MiB | self-contained only | Empty ext4 |
+| p4 | `ibi-status` | 64 MiB | both | Empty ext4 |
+
+install-only media is **p1 / p2 / p4**: the status partition keeps fixed number **4**
+even when p3 is omitted (it is not renumbered to p3).
 
 ### Flags
 
@@ -148,7 +166,7 @@ Fields common to both profiles (all required):
 | `installationDisk` | string | The target installation disk (e.g. `/dev/disk/by-id/ata-xxxx`). |
 | `disconnected` | bool | Must be `true` for both profiles (it is not a knob). |
 | `shutdown` | bool | Must be set explicitly and match the mode: `true` for `install-only`, `false` for `self-contained`. Omitting it fails the build. |
-| `rhcosLiveIso.url` | string | HTTPS URL of the RHCOS live ISO. |
+| `rhcosLiveIso.url` | string | HTTPS URL of the RHCOS live ISO (must include a non-empty host). |
 | `rhcosLiveIso.sha256` | string | SHA-256 digest of the RHCOS live ISO (64-character lowercase hex). |
 
 `install-only` adds the following optional field (rejected under `self-contained`):
@@ -161,19 +179,19 @@ Fields common to both profiles (all required):
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `clusterManifests` | list of `{path}` | Cluster manifest files to render onto the media (required; each entry's `path` must be non-empty). |
-| `extraManifests` | list of `{path}` | Additional manifest files to render onto the media (each entry's `path` must be non-empty). |
-| `siteConfig` | object | The site configuration (see below). |
+| `clusterManifests` | list of `{path}` | Cluster manifest files to render onto the media (required, non-empty; each entry's `path` must be non-empty). |
+| `extraManifests` | list of `{path}` | Additional manifest files to render onto the media (optional; when present, each entry's `path` must be non-empty). |
+| `siteConfig` | object | The site configuration (required; see below). |
 
-`siteConfig` (self-contained only):
+`siteConfig` (self-contained only; required):
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `clusterName` | string | Cluster name (required). |
 | `baseDomain` | string | Base domain (required). |
 | `hostname` | string | Node hostname (required). |
-| `nodeIPs` | list of string | Node IP addresses. |
-| `machineNetworks` | list of string | Machine network subnets. |
+| `nodeIPs` | list of string | Node IP addresses (optional; each entry must be a valid IP). |
+| `machineNetworks` | list of string | Machine network CIDRs (optional; each entry must be a valid CIDR). |
 | `rawNMStateConfig` | string | NMState configuration YAML, provided as a string. |
 | `sshKey` | string | Public SSH key for node access. |
 | `pullSecret` | string | Pull secret, as literal JSON or an `@file` reference (see below). Required. |
@@ -241,26 +259,30 @@ siteConfig:
 `create-usb --output` does **not** currently create `digests.json` or an OCI image
 layout. The separately implemented `BuildImageLayout` stage resolves the profile's
 image set to digests, mirrors it into a build-unique OCI layout directory (named
-`oci-<unique>`), and emits a digest manifest. Wiring that stage into the placeholder
-image is follow-up work. The format and publication behavior below describe that
-standalone stage, not the current `create-usb` output.
+`oci-<unique>`), and emits a digest manifest. For self-contained profiles it also
+runs `RenderP3Tree` (render, digest-pin, and offline mirror-resource scan) before
+mirroring; see [docs/create-usb.md](../docs/create-usb.md). Wiring that stage into
+the placeholder image is follow-up work. The format and publication behavior below
+describe that standalone stage, not the current `create-usb` output.
 
 When `BuildImageLayout` runs, it emits the manifest in two places, byte-identical:
 
 - `digests.json` at the media (p2) root — the committed, read-only on-media reference.
 - `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.
 
-Schema:
+Schema (producer emits **version 2**; the on-node consumer still accepts version 1,
+which carries no `sources`):
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "ociLayoutPath": "oci-1234567890",
   "images": [
     {
       "name": "quay.io/openshift-release-dev/ocp-release",
       "digest": "sha256:9a1f…c3",
-      "ociTag": "ocp-release-0"
+      "ociTag": "ocp-release-0",
+      "sources": ["quay.io/openshift-release-dev/ocp-release:4.20.0"]
     }
   ]
 }
@@ -268,11 +290,12 @@ Schema:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `version` | int | Schema version. Only `1` is supported. |
+| `version` | int | Schema version. The image stage emits `2`. Consumers accept `1` and `2`. |
 | `ociLayoutPath` | string | OCI image layout directory, relative to the media root. Each build mirrors into a fresh, build-unique directory (`oci-<unique>`); the consumer locates the layout through this field. |
 | `images[].name` | string | Canonical repository name the image is stored under. |
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
+| `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2 only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
 
 **Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
 mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
