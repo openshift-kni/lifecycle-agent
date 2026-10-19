@@ -40,7 +40,7 @@ func preservePinnedDockerManifest(ctx context.Context, ref types.ImageReference,
 	if err != nil {
 		return fmt.Errorf("opening pinned image source: %w", err)
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
 	mediaType, size, err := preserveSourceManifest(ctx, source, layoutDir, nil, pinned)
 	if err != nil {
@@ -82,10 +82,10 @@ func preservePinnedDockerManifest(ctx context.Context, ref types.ImageReference,
 func preserveSourceManifest(ctx context.Context, source types.ImageSource, layoutDir string, instance *digest.Digest, expected digest.Digest) (string, int64, error) {
 	data, mediaType, err := source.GetManifest(ctx, instance)
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("reading source manifest %s: %w", expected, err)
 	}
 	if err := expected.Validate(); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("validating source manifest digest %s: %w", expected, err)
 	}
 	if got := expected.Algorithm().FromBytes(data); got != expected {
 		return "", 0, fmt.Errorf("source manifest digest %s differs from expected %s", got, expected)
@@ -100,12 +100,12 @@ func preserveSourceManifest(ctx context.Context, source types.ImageSource, layou
 		Layers    []imgspecv1.Descriptor `json:"layers"`
 	}
 	if err := json.Unmarshal(data, &graph); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("parsing source manifest %s: %w", expected, err)
 	}
 	switch mediaType {
 	case manifest.DockerV2ListMediaType, imgspecv1.MediaTypeImageIndex:
 		if len(graph.Manifests) == 0 {
-			return "", 0, fmt.Errorf("Docker manifest list %s has no instances", expected)
+			return "", 0, fmt.Errorf("docker manifest list %s has no instances", expected)
 		}
 		for _, child := range graph.Manifests {
 			if _, _, err := preserveSourceManifest(ctx, source, layoutDir, &child.Digest, child.Digest); err != nil {
@@ -125,10 +125,10 @@ func preserveSourceManifest(ctx context.Context, source types.ImageSource, layou
 		return "", 0, fmt.Errorf("unsupported source manifest media type %q", mediaType)
 	}
 	if err := os.MkdirAll(filepath.Dir(layoutBlobPath(layoutDir, expected)), 0o750); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("creating blob directory for manifest %s: %w", expected, err)
 	}
 	if err := os.WriteFile(layoutBlobPath(layoutDir, expected), data, 0o600); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("writing source manifest %s to layout: %w", expected, err)
 	}
 	return mediaType, int64(len(data)), nil
 }
@@ -139,38 +139,41 @@ func layoutBlobPath(layoutDir string, dgst digest.Digest) string {
 
 func preserveSourceBlob(ctx context.Context, source types.ImageSource, layoutDir string, desc imgspecv1.Descriptor) error {
 	if err := desc.Digest.Validate(); err != nil {
-		return err
+		return fmt.Errorf("validating source blob digest %s: %w", desc.Digest, err)
 	}
 	path := layoutBlobPath(layoutDir, desc.Digest)
 	if _, err := os.Stat(path); err == nil {
 		return nil // copy.Image already verified and wrote this blob.
 	} else if !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("checking layout blob %s: %w", desc.Digest, err)
 	}
 	reader, _, err := source.GetBlob(ctx, types.BlobInfo{Digest: desc.Digest, Size: desc.Size, MediaType: desc.MediaType, URLs: desc.URLs}, nil)
 	if err != nil {
 		return fmt.Errorf("reading source blob %s: %w", desc.Digest, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return err
+		return fmt.Errorf("creating layout blob directory for %s: %w", desc.Digest, err)
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".blob-")
 	if err != nil {
-		return err
+		return fmt.Errorf("creating temporary layout blob %s: %w", desc.Digest, err)
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	digester := desc.Digest.Algorithm().Digester()
 	size, copyErr := io.Copy(io.MultiWriter(file, digester.Hash()), reader)
 	closeErr := file.Close()
 	if copyErr != nil {
-		return copyErr
+		return fmt.Errorf("copying source blob %s: %w", desc.Digest, copyErr)
 	}
 	if closeErr != nil {
-		return closeErr
+		return fmt.Errorf("closing temporary layout blob %s: %w", desc.Digest, closeErr)
 	}
 	if digester.Digest() != desc.Digest || (desc.Size >= 0 && size != desc.Size) {
 		return fmt.Errorf("source blob %s failed digest or size verification", desc.Digest)
 	}
-	return os.Rename(file.Name(), path)
+	if err := os.Rename(file.Name(), path); err != nil {
+		return fmt.Errorf("publishing layout blob %s: %w", desc.Digest, err)
+	}
+	return nil
 }
