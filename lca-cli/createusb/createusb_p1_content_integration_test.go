@@ -31,8 +31,10 @@ package createusb
 // Full end-to-end boot verification -- the embedded oneshot unit actually invoking the exact
 // binary and the install-only path terminating in shutdown -- requires booting the media in a
 // VM and is out of automated scope here; it is covered by the CNF-27158 bootability spike and
-// manual testing. The unit tests (TestRenderEmbeddedIgnition, TestExtractLCABinaryEmbedded)
-// prove the embedded unit is wired to run the exact binary against the manifest-derived config.
+// manual testing. The unit tests (TestRenderEmbeddedIgnition, TestExtractLCABinaryStaged)
+// prove the embedded unit is wired to run the staged p2 binary against the manifest-derived
+// config, and TestEmbeddedIgnitionStaysUnderEmbedArea guards that the binary never re-enters
+// the ISO ignition.
 
 import (
 	"context"
@@ -96,8 +98,8 @@ func TestEmbeddedUnitRunsExactBinary(t *testing.T) {
 	log.SetOutput(os.Stderr)
 
 	// Extract the lca-cli binary from a real image when LCA_TEST_LCA_IMAGE is set (needs
-	// podman), otherwise embed a synthetic fixture. The unit tests prove the extracted binary
-	// is embedded byte-for-byte and that the unit's ExecStart invokes it.
+	// podman), otherwise use a synthetic fixture. The unit tests prove the extracted binary is
+	// staged byte-for-byte for p2 and that the unit's ExecStart invokes it from there.
 	lcaImage := os.Getenv(lcaImageEnv)
 	var extractor lcaBinaryExtractor
 	if lcaImage != "" {
@@ -114,17 +116,22 @@ func TestEmbeddedUnitRunsExactBinary(t *testing.T) {
 	}
 
 	work := t.TempDir()
-	outISO, err := buildLiveISO(context.Background(), log, m,
+	res, err := buildLiveISO(context.Background(), log, m,
 		ISOBuildOptions{LCAImage: lcaImage, AuthFile: os.Getenv(lcaAuthFileEnv), WorkDir: work}, deps)
 	require.NoError(t, err)
 
-	info, err := os.Stat(outISO)
+	info, err := os.Stat(res.ISOPath)
 	require.NoError(t, err)
 	assert.Positive(t, info.Size(), "the customized ISO must be non-empty")
 
-	// The customized ISO differs from the untouched base ISO: the ignition (with the embedded
-	// unit and binary) was embedded.
-	outBytes, err := os.ReadFile(outISO)
+	// The lca-cli binary is staged for p2 placement, not embedded in the ISO. With a real
+	// --lca-image this is the multi-MB shipping binary that would overflow the ISO ignition
+	// embed area if it were embedded -- this path proves it is staged on disk instead.
+	assert.FileExists(t, res.LCABinaryPath, "the extracted lca-cli binary must be staged for p2")
+
+	// The customized ISO differs from the untouched base ISO: the (tiny) ignition with the
+	// config and the oneshot unit was embedded.
+	outBytes, err := os.ReadFile(res.ISOPath)
 	require.NoError(t, err)
 	assert.NotEqual(t, baseBytes, outBytes, "the customized ISO must differ from the base ISO (ignition embedded)")
 }

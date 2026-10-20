@@ -18,14 +18,20 @@ package createusb
 
 // This file owns the p1 live-ISO build block (§6.4 step 3, §8.E, §8.J of the USB-based
 // IBI proposal): fetch the RHCOS live ISO over HTTPS and verify its sha256 before use,
-// embed an ignition config that auto-runs `lca-cli ibi` on boot, embed the exact shipping
-// lca-cli binary, and produce a customized bootable ISO.
+// embed an ignition config that auto-runs `lca-cli ibi` on boot, and produce a customized
+// bootable ISO. The exact shipping lca-cli binary is extracted from the --lca-image and
+// staged for delivery on the p2 (ibi-images) partition -- it is NOT embedded in the ISO
+// ignition, because at ~90 MB uncompressed it far exceeds the fixed RHCOS ISO ignition
+// embed area (~256 KB) and would fail the embed. The embedded ignition carries only the
+// small IBIPrepareConfig and the oneshot unit, whose ExecStart points at the staged binary
+// on p2 (common.LocalImagesLCABinaryPath) and waits for that mount.
 //
 // BuildLiveISO is a standalone building block, mirroring BuildImageLayout in
 // createusb_images.go: it is unit-tested with fakes (no network, no root, no real
 // container image) and wired into the media-assembly pipeline by CNF-27171. The customized
 // ISO it returns is written into the reserved p1 region by writeLiveISOToP1
-// (createusb_p1.go).
+// (createusb_p1.go); the extracted lca-cli binary it returns is placed onto p2 by that same
+// wiring story.
 //
 // # Config contract (self-contained pivot)
 //
@@ -58,9 +64,6 @@ import (
 )
 
 const (
-	// embeddedLCABinaryPath is where the embedded ignition installs the lca-cli binary in
-	// the live-ISO environment; it is the ExecStart path of the oneshot unit.
-	embeddedLCABinaryPath = "/usr/local/bin/lca-cli"
 	// embeddedIBIConfigPath is where the embedded ignition writes the rendered
 	// IBIPrepareConfig that `lca-cli ibi -f` consumes on boot.
 	embeddedIBIConfigPath = "/etc/lca-cli/ibi-config.json"
@@ -70,10 +73,14 @@ const (
 	// lcaBinarySourcePath is the path of the lca-cli binary inside the --lca-image
 	// container, from which the exact shipping binary is extracted (§8.E).
 	lcaBinarySourcePath = "/usr/local/bin/lca-cli"
+	// stagedLCABinaryName is the filename of the extracted lca-cli binary under the build
+	// work directory; it is handed off for placement on p2 (common.LocalImagesLCABinaryPath).
+	stagedLCABinaryName = "lca-cli"
 
-	// embeddedLCABinaryMode and embeddedIBIConfigMode are the ignition file modes for the
-	// embedded binary (executable) and config (read-only data).
-	embeddedLCABinaryMode = 0o755
+	// stagedLCABinaryMode is the executable mode the extracted lca-cli binary is written
+	// with, and embeddedIBIConfigMode is the ignition file mode for the embedded config
+	// (read-only data).
+	stagedLCABinaryMode   = 0o755
 	embeddedIBIConfigMode = common.FileMode0644
 
 	// customizedISOFileName is the name of the ignition-customized ISO produced under the
@@ -87,6 +94,19 @@ const (
 	// must never fall back to plain HTTP.
 	schemeHTTPS = "https"
 )
+
+// ISOBuildResult is what BuildLiveISO produces: the customized bootable live ISO (written
+// into p1) and the extracted shipping lca-cli binary staged under the work directory for the
+// media-assembly wiring (CNF-27171) to place onto p2 at common.LocalImagesLCABinaryPath. The
+// binary is delivered on p2 rather than embedded in the ISO ignition because it far exceeds
+// the fixed ISO ignition embed area.
+type ISOBuildResult struct {
+	// ISOPath is the path of the ignition-customized bootable live ISO under WorkDir.
+	ISOPath string
+	// LCABinaryPath is the path of the extracted shipping lca-cli binary under WorkDir, to be
+	// copied onto p2 by the wiring story so the embedded unit's ExecStart resolves on boot.
+	LCABinaryPath string
+}
 
 // ISOBuildOptions carries the build inputs the p1 live-ISO block needs beyond the manifest.
 type ISOBuildOptions struct {
@@ -148,51 +168,51 @@ func defaultISOBuildDeps(log *logrus.Logger) isoBuildDeps {
 }
 
 // BuildLiveISO fetches and verifies the RHCOS live ISO, embeds an ignition that auto-runs
-// `lca-cli ibi` with the manifest-derived config and the exact shipping lca-cli binary, and
-// returns the path of the customized bootable ISO under opts.WorkDir. It is a standalone
-// building block wired into the media-assembly pipeline by CNF-27171.
-func BuildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions) (string, error) {
+// `lca-cli ibi` with the manifest-derived config, extracts the exact shipping lca-cli binary
+// from --lca-image, and returns the customized bootable ISO plus the staged binary (to be
+// placed on p2). It is a standalone building block wired into the media-assembly pipeline by
+// CNF-27171.
+func BuildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions) (ISOBuildResult, error) {
 	return buildLiveISO(ctx, log, m, opts, defaultISOBuildDeps(log))
 }
 
 // buildLiveISO is the dependency-injected core of BuildLiveISO (mirroring BuildImageLayout →
 // buildImageLayout), so tests exercise the full build with fakes while production injects
 // defaultISOBuildDeps.
-func buildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions, deps isoBuildDeps) (string, error) {
+func buildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions, deps isoBuildDeps) (ISOBuildResult, error) {
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("live ISO build canceled: %w", err)
+		return ISOBuildResult{}, fmt.Errorf("live ISO build canceled: %w", err)
 	}
 	if opts.WorkDir == "" {
-		return "", fmt.Errorf("a work directory is required to build the live ISO")
+		return ISOBuildResult{}, fmt.Errorf("a work directory is required to build the live ISO")
 	}
 	if opts.LCAImage == "" {
-		return "", fmt.Errorf("lca-cli image is required to embed the shipping binary (set --lca-image)")
+		return ISOBuildResult{}, fmt.Errorf("lca-cli image is required to stage the shipping binary (set --lca-image)")
 	}
 
 	baseISO := filepath.Join(opts.WorkDir, baseISOFileName)
 	if err := fetchAndVerifyISO(ctx, deps.fetcher, m.RHCOSLiveISO, baseISO); err != nil {
-		return "", err
+		return ISOBuildResult{}, err
 	}
 
-	binaryPath := filepath.Join(opts.WorkDir, "lca-cli")
+	// Extract the exact shipping binary from --lca-image and stage it under WorkDir. It is
+	// NOT embedded in the ignition (it is far larger than the ISO embed area); the wiring
+	// story copies it onto p2, where the embedded unit's ExecStart resolves it on boot.
+	binaryPath := filepath.Join(opts.WorkDir, stagedLCABinaryName)
 	if err := deps.extractor.ExtractLCABinary(opts.LCAImage, opts.AuthFile, binaryPath); err != nil {
-		return "", fmt.Errorf("extracting lca-cli binary from %q: %w", opts.LCAImage, err)
-	}
-	lcaBinary, err := os.ReadFile(filepath.Clean(binaryPath)) //nolint:gosec // binaryPath is build-time, under the caller's WorkDir
-	if err != nil {
-		return "", fmt.Errorf("reading extracted lca-cli binary: %w", err)
+		return ISOBuildResult{}, fmt.Errorf("extracting lca-cli binary from %q: %w", opts.LCAImage, err)
 	}
 
-	ignitionBytes, err := renderEmbeddedIgnition(m, lcaBinary)
+	ignitionBytes, err := renderEmbeddedIgnition(m)
 	if err != nil {
-		return "", fmt.Errorf("rendering embedded ignition: %w", err)
+		return ISOBuildResult{}, fmt.Errorf("rendering embedded ignition: %w", err)
 	}
 
 	outISO := filepath.Join(opts.WorkDir, customizedISOFileName)
 	if err := deps.customizer.EmbedIgnition(log, ignitionBytes, baseISO, outISO); err != nil {
-		return "", fmt.Errorf("embedding ignition into live ISO: %w", err)
+		return ISOBuildResult{}, fmt.Errorf("embedding ignition into live ISO: %w", err)
 	}
-	return outISO, nil
+	return ISOBuildResult{ISOPath: outISO, LCABinaryPath: binaryPath}, nil
 }
 
 // fetchAndVerifyISO downloads iso.URL over HTTPS into destPath and verifies its sha256
@@ -252,22 +272,18 @@ func deriveIBIPrepareConfig(m *Manifest) ibiconfig.IBIPrepareConfig {
 }
 
 // renderEmbeddedIgnition builds the ignition config (version 3.2.0, hand-built map[string]any
-// per the repo convention in postpivot.go) embedded into the live ISO. It writes three
-// things: the lca-cli binary at embeddedLCABinaryPath (executable), the rendered
-// IBIPrepareConfig at embeddedIBIConfigPath, and a oneshot systemd unit that runs
-// `lca-cli ibi -f <cfg>` on boot. File contents are gzip+base64 data URLs so the large
-// binary does not bloat the ignition.
-func renderEmbeddedIgnition(m *Manifest, lcaBinary []byte) ([]byte, error) {
+// per the repo convention in postpivot.go) embedded into the live ISO. It writes the rendered
+// IBIPrepareConfig at embeddedIBIConfigPath and a oneshot systemd unit that runs
+// `lca-cli ibi -f <cfg>` on boot. The ignition deliberately carries NO binary: the multi-MB
+// lca-cli binary is staged on p2 (common.LocalImagesLCABinaryPath) because it far exceeds the
+// fixed ISO ignition embed area, so the ignition stays tiny regardless of binary size.
+func renderEmbeddedIgnition(m *Manifest) ([]byte, error) {
 	cfg := deriveIBIPrepareConfig(m)
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling embedded IBIPrepareConfig: %w", err)
 	}
 
-	binaryFile, err := ignitionFile(embeddedLCABinaryPath, embeddedLCABinaryMode, lcaBinary)
-	if err != nil {
-		return nil, fmt.Errorf("encoding embedded lca-cli binary: %w", err)
-	}
 	configFile, err := ignitionFile(embeddedIBIConfigPath, embeddedIBIConfigMode, cfgJSON)
 	if err != nil {
 		return nil, fmt.Errorf("encoding embedded ibi config: %w", err)
@@ -276,7 +292,7 @@ func renderEmbeddedIgnition(m *Manifest, lcaBinary []byte) ([]byte, error) {
 	ignConfig := map[string]any{
 		"ignition": map[string]string{"version": common.IgnitionVersion32},
 		"storage": map[string]any{
-			"files": []any{binaryFile, configFile},
+			"files": []any{configFile},
 		},
 		"systemd": map[string]any{
 			"units": []any{
@@ -327,11 +343,15 @@ func gzipBase64DataURL(data []byte) (string, error) {
 	return "data:;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-// lcaIBIUnitContents returns the oneshot systemd unit that auto-runs the embedded
-// `lca-cli ibi` on boot, modeled on installation-configuration.service.
+// lcaIBIUnitContents returns the oneshot systemd unit that auto-runs `lca-cli ibi` on boot,
+// modeled on installation-configuration.service. The lca-cli binary and the mirrored images
+// both live on the p2 (ibi-images) partition mounted at common.LocalImagesMountPath, so the
+// unit declares RequiresMountsFor on that path: systemd adds the Requires= and After= ordering
+// on the covering mount unit, ensuring the binary is present before ExecStart runs it.
 func lcaIBIUnitContents() string {
 	return fmt.Sprintf(`[Unit]
 Description=LCA USB-based image-based install preparation
+RequiresMountsFor=%s
 
 [Service]
 Type=oneshot
@@ -340,7 +360,7 @@ ExecStart=%s ibi -f %s
 
 [Install]
 WantedBy=multi-user.target
-`, embeddedLCABinaryPath, embeddedIBIConfigPath)
+`, common.LocalImagesMountPath, common.LocalImagesLCABinaryPath, embeddedIBIConfigPath)
 }
 
 // ---- production seam implementations ----
@@ -432,7 +452,7 @@ func (e *opsLCABinaryExtractor) ExtractLCABinary(lcaImage, authFile, destPath st
 	if err != nil {
 		return fmt.Errorf("reading %s from lca-cli image: %w", lcaBinarySourcePath, err)
 	}
-	if err := os.WriteFile(destPath, data, embeddedLCABinaryMode); err != nil {
+	if err := os.WriteFile(destPath, data, stagedLCABinaryMode); err != nil {
 		return fmt.Errorf("writing extracted lca-cli binary: %w", err)
 	}
 	return nil

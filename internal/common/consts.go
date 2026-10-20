@@ -175,6 +175,16 @@ const (
 	// writable mount area in the RHCOS live environment.
 	LocalImagesMountPath = "/var/mnt/ibi-images"
 
+	// LocalImagesLCABinaryPath is where create-usb stages the exact shipping lca-cli binary
+	// on the p2 (ibi-images) partition, mounted at LocalImagesMountPath on the node. The
+	// live-ISO embedded ignition's lca-ibi.service execs the binary from this path; the
+	// media-assembly wiring (CNF-27171) copies the extracted binary here. The binary is
+	// staged on p2 rather than embedded in the ISO ignition because it is far larger
+	// (~90 MB uncompressed) than the fixed RHCOS ISO ignition embed area (~256 KB), which
+	// the embed would overflow. Kept next to LocalImagesMountPath so the unit's exec path
+	// and the staged file never diverge.
+	LocalImagesLCABinaryPath = LocalImagesMountPath + "/lca-cli"
+
 	ContainerStoragePath = "/var/lib/containers"
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"

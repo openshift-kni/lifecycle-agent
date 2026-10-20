@@ -109,10 +109,13 @@ mirroring (`BuildImageLayout`), and p3 content rendering (`RenderP3Tree`) are
 implemented as separate building blocks but are not yet called by `create-usb`.
 `BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its sha256 before
 use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the build),
-embeds an ignition that auto-runs `lca-cli ibi` on boot with the exact shipping `lca-cli`
-binary, and produces the bootable customized ISO that is written into p1 once wired. For
-the verified-ISO contract and the embedded-ignition details, and for the self-contained
-p3 config tree, digest pinning, and offline mirror-resource rules, see
+embeds a small ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
+customized ISO that is written into p1 once wired. The exact shipping `lca-cli` binary is
+extracted from `--lca-image` and **staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather
+than embedded in the ISO ignition, because at ~90 MB it far exceeds the fixed ISO ignition
+embed area; the embedded unit execs it from there once p2 is mounted. For the verified-ISO
+contract and the embedded-ignition details, and for the self-contained p3 config tree,
+digest pinning, and offline mirror-resource rules, see
 [docs/create-usb.md](../docs/create-usb.md).
 
 Creating the partition table requires a Linux host with loop-device access and

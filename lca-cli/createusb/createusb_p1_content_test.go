@@ -72,7 +72,7 @@ func (f *fakeLCAExtractor) ExtractLCABinary(lcaImage, authFile, destPath string)
 	if f.err != nil {
 		return f.err
 	}
-	return os.WriteFile(destPath, f.content, embeddedLCABinaryMode)
+	return os.WriteFile(destPath, f.content, stagedLCABinaryMode)
 }
 
 type fakeISOCustomizer struct {
@@ -239,9 +239,13 @@ func TestHTTPISOFetcher(t *testing.T) {
 	})
 }
 
-func TestRenderEmbeddedIgnition(t *testing.T) {
-	binary := []byte("exact-shipping-lca-cli-binary\x00\x01\x02")
+// ignitionEmbedAreaLimitBytes is the approximate fixed RHCOS ISO ignition embed area
+// (~256 KB, per coreos/fedora-coreos-tracker#1595). The rendered ignition must stay well
+// under it regardless of the lca-cli binary size, which is why the binary is staged on p2
+// instead of embedded. The size-regression test asserts against this limit.
+const ignitionEmbedAreaLimitBytes = 256 * 1024
 
+func TestRenderEmbeddedIgnition(t *testing.T) {
 	tests := []struct {
 		name         string
 		manifest     func() *Manifest
@@ -252,18 +256,16 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := renderEmbeddedIgnition(tc.manifest(), binary)
+			out, err := renderEmbeddedIgnition(tc.manifest())
 			require.NoError(t, err)
 
 			var ign parsedIgnition
 			require.NoError(t, json.Unmarshal(out, &ign))
 			assert.Equal(t, common.IgnitionVersion32, ign.Ignition.Version)
 
-			// The lca-cli binary is embedded executable and byte-for-byte.
-			bin := ign.file(t, embeddedLCABinaryPath)
-			assert.Equal(t, embeddedLCABinaryMode, bin.Mode)
-			assert.Equal(t, "gzip", bin.Contents.Compression)
-			assert.Equal(t, binary, decodeIgnitionSource(t, bin.Contents.Source))
+			// The lca-cli binary is NOT embedded: it is staged on p2 (option A). The ignition
+			// carries only the config file, so it stays tiny regardless of binary size.
+			require.Len(t, ign.Storage.Files, 1, "only the config must be embedded, not the binary")
 
 			// The embedded IBIPrepareConfig is present and correctly derived from the manifest.
 			cfgFile := ign.file(t, embeddedIBIConfigPath)
@@ -283,20 +285,60 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 				assert.False(t, present, "self-contained must not shut down (pivot)")
 			}
 
-			// The oneshot unit auto-runs the embedded binary against the embedded config.
+			// The oneshot unit runs the staged p2 binary against the embedded config and waits
+			// for the p2 mount so the binary is present before ExecStart.
 			require.Len(t, ign.Systemd.Units, 1)
 			unit := ign.Systemd.Units[0]
 			assert.Equal(t, lcaIBIServiceName, unit.Name)
 			assert.True(t, unit.Enabled)
 			assert.Contains(t, unit.Contents, "Type=oneshot")
 			assert.Contains(t, unit.Contents,
-				fmt.Sprintf("ExecStart=%s ibi -f %s", embeddedLCABinaryPath, embeddedIBIConfigPath))
+				fmt.Sprintf("RequiresMountsFor=%s", common.LocalImagesMountPath))
+			assert.Contains(t, unit.Contents,
+				fmt.Sprintf("ExecStart=%s ibi -f %s", common.LocalImagesLCABinaryPath, embeddedIBIConfigPath))
 			assert.Contains(t, unit.Contents, "WantedBy=multi-user.target")
 		})
 	}
 }
 
-func TestExtractLCABinaryEmbedded(t *testing.T) {
+// TestEmbeddedIgnitionStaysUnderEmbedArea is the size regression for the option-A packaging:
+// a realistically large lca-cli binary (the real one is ~90 MB uncompressed) must not flow
+// into the ISO ignition, so the rendered ignition stays far under the fixed embed area. If a
+// future change re-embeds the binary in storage.files, this test fails instead of CI only
+// discovering the overflow with a production --lca-image.
+func TestEmbeddedIgnitionStaysUnderEmbedArea(t *testing.T) {
+	// 4 MiB stands in for the multi-MB shipping binary -- already 16x the embed limit, while
+	// staying cheap for CI. It is extracted and staged, never embedded.
+	largeBinary := bytes.Repeat([]byte{0xAB}, 4<<20)
+
+	m := validInstallOnly()
+	m.RHCOSLiveISO = RHCOSLiveISO{
+		URL:    "https://example.com/rhcos.iso",
+		SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("base-iso"))),
+	}
+	deps := isoBuildDeps{
+		fetcher:    &fakeISOFetcher{content: []byte("base-iso")},
+		extractor:  &fakeLCAExtractor{content: largeBinary},
+		customizer: &fakeISOCustomizer{},
+	}
+
+	work := t.TempDir()
+	res, err := buildLiveISO(context.Background(), testLogger(), m,
+		ISOBuildOptions{LCAImage: "quay.io/example/lca@sha256:" + validSHA256, WorkDir: work}, deps)
+	require.NoError(t, err)
+
+	ignition := deps.customizer.(*fakeISOCustomizer).gotIgnition
+	assert.Less(t, len(ignition), ignitionEmbedAreaLimitBytes,
+		"embedded ignition (%d bytes) must stay under the ISO embed area (%d bytes); the binary must be staged on p2, not embedded",
+		len(ignition), ignitionEmbedAreaLimitBytes)
+
+	// The large binary is staged on disk byte-for-byte for the wiring story to place on p2.
+	staged, err := os.ReadFile(res.LCABinaryPath)
+	require.NoError(t, err)
+	assert.Equal(t, largeBinary, staged)
+}
+
+func TestExtractLCABinaryStaged(t *testing.T) {
 	binary := []byte("the-only-lca-cli-that-ships\x7fELF\x02")
 
 	// The extractor writes the exact bytes it was given...
@@ -307,13 +349,14 @@ func TestExtractLCABinaryEmbedded(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, binary, extracted)
 
-	// ...and that is exactly what is embedded on p1 (byte-for-byte through the ignition).
-	ign, err := renderEmbeddedIgnition(validInstallOnly(), extracted)
+	// ...and the binary is staged on p2, never embedded in the ISO ignition.
+	ign, err := renderEmbeddedIgnition(validInstallOnly())
 	require.NoError(t, err)
 	var parsed parsedIgnition
 	require.NoError(t, json.Unmarshal(ign, &parsed))
-	embedded := decodeIgnitionSource(t, parsed.file(t, embeddedLCABinaryPath).Contents.Source)
-	assert.Equal(t, binary, embedded)
+	for _, f := range parsed.Storage.Files {
+		assert.NotEqual(t, common.LocalImagesLCABinaryPath, f.Path, "the binary must not be embedded in ignition")
+	}
 }
 
 func TestBuildLiveISO(t *testing.T) {
@@ -330,20 +373,25 @@ func TestBuildLiveISO(t *testing.T) {
 	deps := isoBuildDeps{fetcher: fetcher, extractor: extractor, customizer: customizer}
 
 	work := t.TempDir()
-	out, err := buildLiveISO(context.Background(), testLogger(), m,
+	res, err := buildLiveISO(context.Background(), testLogger(), m,
 		ISOBuildOptions{LCAImage: "quay.io/example/lca@sha256:" + validSHA256, WorkDir: work}, deps)
 	require.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(work, customizedISOFileName), out)
+	assert.Equal(t, filepath.Join(work, customizedISOFileName), res.ISOPath)
+	assert.Equal(t, filepath.Join(work, stagedLCABinaryName), res.LCABinaryPath)
 	assert.Equal(t, "quay.io/example/lca@sha256:"+validSHA256, extractor.gotImage)
 	assert.Equal(t, filepath.Join(work, baseISOFileName), customizer.gotBase)
-	assert.Equal(t, out, customizer.gotOut)
+	assert.Equal(t, res.ISOPath, customizer.gotOut)
+	assert.FileExists(t, res.ISOPath)
 
-	// The customizer received the embedded ignition with the exact extracted binary.
+	// The binary is staged byte-for-byte for placement on p2, and is NOT embedded in the
+	// ignition the customizer received.
+	staged, err := os.ReadFile(res.LCABinaryPath)
+	require.NoError(t, err)
+	assert.Equal(t, binary, staged)
 	var parsed parsedIgnition
 	require.NoError(t, json.Unmarshal(customizer.gotIgnition, &parsed))
-	assert.Equal(t, binary, decodeIgnitionSource(t, parsed.file(t, embeddedLCABinaryPath).Contents.Source))
-	assert.FileExists(t, out)
+	require.Len(t, parsed.Storage.Files, 1, "only the config is embedded, not the binary")
 }
 
 func TestBuildLiveISORequiresInputs(t *testing.T) {
