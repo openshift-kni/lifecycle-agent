@@ -198,6 +198,11 @@ type partitionOps interface {
 	// validated (ext4/xfs) before mkfs runs.
 	FormatPartition(partDev, fsType, label string) error
 
+	// WriteImageToPartition writes the raw image file at srcPath directly onto partDev (no
+	// filesystem). It backs the p1 live-ISO stage, which writes the customized bootable ISO
+	// into the reserved p1 region; p2/p3/p4 format filesystems instead and never call it.
+	WriteImageToPartition(partDev, srcPath string) error
+
 	// MountPartition and UnmountPartition back p3's populate step; p2 creates an empty
 	// partition and never mounts.
 
@@ -625,6 +630,22 @@ func (p *opsPartitionOps) FormatPartition(partDev, fsType, label string) error {
 	}
 	if _, err := p.ops.RunInHostNamespace(mkfs[0], mkfs[1:]...); err != nil {
 		return fmt.Errorf("running %s -L %s on %s: %w", mkfs[0], label, partDev, err)
+	}
+	return nil
+}
+
+// WriteImageToPartition writes the raw image at srcPath onto partDev with dd, syncing before
+// it returns (conv=fsync) so the bytes are durable once the write completes. The partition
+// carries no filesystem: p1 holds the bootable ISO image as raw bytes, so this is a
+// block-level copy rather than a mkfs + file copy.
+func (p *opsPartitionOps) WriteImageToPartition(partDev, srcPath string) error {
+	if _, err := p.ops.RunInHostNamespace("dd",
+		fmt.Sprintf("if=%s", srcPath),
+		fmt.Sprintf("of=%s", partDev),
+		"bs=1M",
+		"conv=fsync",
+	); err != nil {
+		return fmt.Errorf("writing image %s to %s: %w", srcPath, partDev, err)
 	}
 	return nil
 }

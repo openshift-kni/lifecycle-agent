@@ -22,6 +22,7 @@ package createusb
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/sirupsen/logrus"
 )
@@ -40,6 +41,45 @@ func createP1Partition(log *logrus.Logger, plan PartitionPlan, dev string, deps 
 	log.Infof("create-usb: creating placeholder p%d (%s, %d bytes)", p1.Number, p1.Label, p1.Size)
 	if err := deps.partition.CreateBaseLayout(dev, plan); err != nil {
 		return fmt.Errorf("creating base GPT and placeholder p1 on %s: %w", dev, err)
+	}
+	return nil
+}
+
+// WriteLiveISOToP1 writes a built live ISO into the reserved p1 region of the media attached
+// at loopDev, with a reservation-size guard. It is a standalone building block (mirroring
+// Build → build) wired into the assembly pipeline by CNF-27171; Build still ships the
+// placeholder p1 until then.
+func WriteLiveISOToP1(log *logrus.Logger, plan PartitionPlan, loopDev, isoPath string) error {
+	return writeLiveISOToP1(log, plan, loopDev, isoPath, defaultMediaBuildDeps(log))
+}
+
+// writeLiveISOToP1 writes a built live ISO into the reserved p1 region. It first guards that
+// the ISO fits the reservation (fail the build loudly rather than truncating the ISO into a
+// too-small p1), then settles the p1 device node and writes the ISO bytes onto it with no
+// filesystem. It is a standalone building block: Build still ships the placeholder p1 until
+// CNF-27171 wires the live-ISO build and calls this with the customized ISO path.
+func writeLiveISOToP1(log *logrus.Logger, plan PartitionPlan, dev, isoPath string, deps mediaBuildDeps) error {
+	p1, ok := plannedPartition(plan, labelLiveISO)
+	if !ok || p1.Number != 1 {
+		return fmt.Errorf("p1 (%s) not found at partition number 1 in the media layout", labelLiveISO)
+	}
+	info, err := os.Stat(isoPath)
+	if err != nil {
+		return fmt.Errorf("stat live ISO %s: %w", isoPath, err)
+	}
+	if info.Size() > p1.Size {
+		return fmt.Errorf("customized live ISO (%d bytes) exceeds the reserved p%d (%s) region (%d bytes)",
+			info.Size(), p1.Number, p1.Label, p1.Size)
+	}
+	log.Infof("create-usb: writing live ISO (%d bytes) into p%d (%s, %d bytes reserved)",
+		info.Size(), p1.Number, p1.Label, p1.Size)
+
+	partDev, err := deps.partition.SettlePartition(dev, p1.Number)
+	if err != nil {
+		return fmt.Errorf("settling p%d (%s) partition node: %w", p1.Number, p1.Label, err)
+	}
+	if err := deps.partition.WriteImageToPartition(partDev, isoPath); err != nil {
+		return fmt.Errorf("writing live ISO into p%d (%s): %w", p1.Number, p1.Label, err)
 	}
 	return nil
 }

@@ -56,6 +56,7 @@ type fakePartitionOps struct {
 	formatErr     error
 	mountErr      error
 	umountErr     error
+	writeImageErr error
 	// onMount, if set, runs after a successful MountPartition with the mountpoint path, so a
 	// test can perturb the mountpoint (e.g. force a populate failure) deterministically.
 	onMount func(mountpoint string)
@@ -75,6 +76,8 @@ type fakePartitionOps struct {
 	formatLabel  string
 	mountedDev   string
 	mountpoint   string
+	writtenDev   string
+	writtenSrc   string
 	// mountSnapshot is the rel-path->content tree captured from the mountpoint at
 	// UnmountPartition, so a test can assert what was populated before the (simulated) unmount
 	// made the files no longer visible at the mountpoint.
@@ -159,6 +162,13 @@ func (f *fakePartitionOps) UnmountPartition(mountpoint string) error {
 	f.mountSnapshot = snapshotTree(mountpoint)
 	clearDir(mountpoint)
 	return f.umountErr
+}
+
+func (f *fakePartitionOps) WriteImageToPartition(partDev, srcPath string) error {
+	f.calls = append(f.calls, "writeImage")
+	f.writtenDev = partDev
+	f.writtenSrc = srcPath
+	return f.writeImageErr
 }
 
 func TestPartitionPlanPerMode(t *testing.T) {

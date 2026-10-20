@@ -18,6 +18,8 @@ package createusb
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,4 +46,44 @@ func TestCreateP1PartitionRejectsMissingOrFailedLayout(t *testing.T) {
 	err = createP1Partition(testLogger(), partitionPlan(ModeInstallOnly, defaultP1ReservationBytes),
 		"/dev/loop1", mediaBuildDeps{partition: fp})
 	require.ErrorContains(t, err, "sgdisk boom")
+}
+
+// writeTempISO writes size bytes to a temp file and returns its path.
+func writeTempISO(t *testing.T, size int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "live.iso")
+	require.NoError(t, os.WriteFile(path, make([]byte, size), 0o600))
+	return path
+}
+
+func TestWriteLiveISOToP1(t *testing.T) {
+	plan := partitionPlan(ModeInstallOnly, int64(4096))
+	isoPath := writeTempISO(t, 1024)
+	fp := &fakePartitionOps{settleDev: "/dev/loop1p1"}
+
+	err := writeLiveISOToP1(testLogger(), plan, "/dev/loop1", isoPath, mediaBuildDeps{partition: fp})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"settle", "writeImage"}, fp.calls)
+	assert.Equal(t, "/dev/loop1p1", fp.writtenDev)
+	assert.Equal(t, isoPath, fp.writtenSrc)
+}
+
+func TestP1WriteRejectsOversizeISO(t *testing.T) {
+	// A p1 reservation smaller than the ISO must fail the build before any write.
+	plan := partitionPlan(ModeInstallOnly, int64(512))
+	isoPath := writeTempISO(t, 1024)
+	fp := &fakePartitionOps{}
+
+	err := writeLiveISOToP1(testLogger(), plan, "/dev/loop1", isoPath, mediaBuildDeps{partition: fp})
+	require.ErrorContains(t, err, "exceeds the reserved p1")
+	assert.Empty(t, fp.calls, "nothing is settled or written when the ISO does not fit")
+}
+
+func TestWriteLiveISOToP1SurfacesWriteError(t *testing.T) {
+	plan := partitionPlan(ModeInstallOnly, int64(4096))
+	isoPath := writeTempISO(t, 1024)
+	fp := &fakePartitionOps{settleDev: "/dev/loop1p1", writeImageErr: fmt.Errorf("dd boom")}
+
+	err := writeLiveISOToP1(testLogger(), plan, "/dev/loop1", isoPath, mediaBuildDeps{partition: fp})
+	require.ErrorContains(t, err, "dd boom")
 }
