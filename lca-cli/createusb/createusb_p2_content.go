@@ -45,13 +45,20 @@ package createusb
 // staging file; both are validated and sized before anything committed is touched. Only then
 // are they committed together by a recoverable swap: the previous store/ and storage.conf are
 // moved aside, the staging artifacts renamed into place, and the previous pair restored if any
-// step fails. So the committed store/ only ever appears complete and validated, the store and
-// its storage.conf are always a matched pair, and a failed or crashed commit never destroys
-// the last valid store -- closing the gap a plain remove-then-rename left. Each build
-// garbage-collects stale staging and backup artifacts first, so a crashed build self-heals on
-// the next run (which rebuilds from the OCI layout + digests.json, the source of truth that
-// always remains on the media) instead of failing, and a re-run replaces a previous store/
-// rather than erroring on it.
+// step fails. So the committed store/ only ever appears complete and validated, and the store
+// and its storage.conf are always a matched pair.
+//
+// The preservation guarantee is scoped to an in-process commit *failure*: if a rename returns
+// an error mid-swap, the moved-aside previous pair is restored before returning, so the last
+// valid store survives. A crash mid-commit (the process dies after a moveAside, before the swap
+// completes) is a different case and is not preserved in place: the previous pair is left in a
+// .store-backup-* backup, and the next build GCs that backup and rebuilds the store from the OCI
+// layout + digests.json (the source of truth that always remains on the media) rather than
+// restoring it. A rebuild that then fails is surfaced as a hard error out of
+// BuildDurabilityStore, so media assembly (CNF-27171) must treat an unsuccessful rebuild as
+// unusable media rather than shipping a store-less medium. Each build garbage-collects stale
+// staging and backup artifacts first, so a crashed build self-heals on the next run instead of
+// failing, and a re-run replaces a previous store/ rather than erroring on it.
 //
 // # Target architecture
 //
@@ -326,8 +333,9 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 
 	// Commit both artifacts with a recoverable swap: the previous store/ and storage.conf are
 	// moved aside, the validated staging artifacts renamed into place, and the previous
-	// artifacts restored if any step fails -- so a failed or crashed commit never leaves the
-	// media without a valid, matched store + storage.conf pair.
+	// artifacts restored if any step returns an error -- so an in-process commit failure never
+	// leaves the media without a valid, matched store + storage.conf pair. A crash mid-commit is
+	// instead recovered by rebuild-from-layout on the next build (see the file header).
 	storePath := filepath.Join(p2Root, durabilityStoreDirName)
 	confPath := filepath.Join(p2Root, storageConfDropInName)
 	if err := commitStoreAndConf(log, staging, stagingConf, storePath, confPath); err != nil {
@@ -407,13 +415,17 @@ func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *l
 // commitStoreAndConf atomically swaps the validated staging store and storage.conf into
 // store/ and storage.conf, preserving the previous pair until both new artifacts are in
 // place. It moves the previous store/ and storage.conf aside, renames the staging artifacts
-// into place, and restores the previous pair if any step fails -- so a failed commit never
-// leaves the media without a valid, matched store + storage.conf (the gap the plain
-// remove-then-rename left). On success the preserved previous artifacts are discarded.
+// into place, and restores the previous pair if any step returns an error -- so an in-process
+// commit *failure* never leaves the media without a valid, matched store + storage.conf (the
+// gap the plain remove-then-rename left). On success the preserved previous artifacts are
+// discarded.
 //
-// Builds are serialized by the p2 lock, so no concurrent build observes the swap window, and
-// a crash mid-swap self-heals on the next build (which GCs the backups and rebuilds from the
-// OCI layout + digests.json, the source of truth that always remains on the media).
+// A crash mid-swap is a different case and is not recovered in place: the previous pair is left
+// aside in a .store-backup-* backup that the next build GCs rather than restores. Builds are
+// serialized by the p2 lock, so no concurrent build observes the swap window; the crashed build
+// self-heals on the next build, which rebuilds the store from the OCI layout + digests.json (the
+// source of truth that always remains on the media). A rebuild that itself fails is surfaced as
+// a hard error, so media assembly must treat an unsuccessful rebuild as unusable media.
 func commitStoreAndConf(log *logrus.Logger, stagingStore, stagingConf, storePath, confPath string) error {
 	p2Root := filepath.Dir(storePath)
 	storeBackup := filepath.Join(p2Root, storeBackupPrefix+durabilityStoreDirName)

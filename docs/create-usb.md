@@ -106,11 +106,17 @@ cannot run.
 The store and its `storage.conf` are built into **build-unique staging artifacts** and both are
 validated before anything committed is touched. They are then committed together by a
 **recoverable swap**: the previous `store/` and `storage.conf` are moved aside, the staging
-artifacts are renamed into place, and the previous pair is **restored if any step fails**. So a
-failed or crashed commit never destroys the last valid store, and `store/` is always paired with
-its matching `storage.conf`. Stale staging and backup artifacts from a crashed build are
-garbage-collected on the next run (which rebuilds from the OCI layout + `digests.json`, the
-source of truth that always remains on the media).
+artifacts are renamed into place, and the previous pair is **restored if any step returns an
+error**. So an **in-process commit failure** never destroys the last valid store, and `store/`
+is always paired with its matching `storage.conf`.
+
+A **crash mid-commit** is a different case: the previous pair is left in a `.store-backup-*`
+backup and is **not restored in place**. Instead, the next build garbage-collects that backup and
+**rebuilds the store from the OCI layout + `digests.json`** (the source of truth that always
+remains on the media). A rebuild that itself fails is surfaced as a **hard error**, so media
+assembly must treat an unsuccessful rebuild as **unusable media** rather than shipping a
+store-less medium. Stale staging and backup artifacts from a crashed build are likewise
+garbage-collected on the next run.
 
 ### Overlay compatibility gate (§6.6)
 
