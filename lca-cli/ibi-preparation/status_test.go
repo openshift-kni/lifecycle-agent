@@ -242,9 +242,14 @@ func TestReentryWithSuccessMarkerBlocksWipe(t *testing.T) {
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	// No wipe: the installation disk is never cleaned up or written.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-	// p4 unmounts on the way out; the node halts powered-on, never powers off; p2 never mounted.
-	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
-	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	// p4 unmounts BEFORE the halt (not merely on the way out): isolating emergency.target
+	// may stop this prepare service before a deferred-only unmount could run, so the explicit
+	// unmount must precede the terminal action. The node halts powered-on, never powers off;
+	// p2 is never mounted.
+	gomock.InOrder(
+		mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1),
+		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1),
+	)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()
@@ -451,10 +456,14 @@ func TestP4MalformedMarkerFailsClosed(t *testing.T) {
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
 	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
-	// Fail closed before any wipe; p4 unmounts; node halts powered-on; p2 never mounted.
+	// Fail closed before any wipe; p4 unmounts BEFORE the halt (an emergency isolate may
+	// stop this service before a deferred-only unmount runs); node halts powered-on; p2
+	// never mounted.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
-	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	gomock.InOrder(
+		mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1),
+		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1),
+	)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()

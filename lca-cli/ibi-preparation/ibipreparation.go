@@ -118,10 +118,16 @@ func (i *IBIPrepare) Run() error {
 	blocked, guardErr := i.guardReentry(sp)
 	if guardErr != nil {
 		// An unreadable/malformed existing marker is never treated as safe to wipe.
+		// Unmount p4 before the halt: isolating emergency.target may stop this prepare
+		// service before the deferred unmount runs, and finalizeDisconnected already
+		// unmounts explicitly before its terminal action.
+		_ = sp.unmount()
 		return i.haltPoweredOn(fmt.Errorf("ibi-status re-entry guard failed: %w", guardErr))
 	}
 	if blocked {
 		// Completed install preserved and re-entry recorded: halt powered-on, no wipe.
+		// Unmount p4 before the halt for the same reason as the guard-error path above.
+		_ = sp.unmount()
 		return i.haltPoweredOn(errReentryBlocked)
 	}
 
