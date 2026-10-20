@@ -236,13 +236,13 @@ func TestReentryWithSuccessMarkerBlocksWipe(t *testing.T) {
 	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	// p4 mount + guard are the first preconditions, so a blocked re-entry halts before p2.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	// No wipe: the installation disk is never cleaned up or written.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-	// Both partitions unmount on the way out; the node halts powered-on, never powers off.
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	// p4 unmounts on the way out; the node halts powered-on, never powers off; p2 never mounted.
 	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
@@ -269,11 +269,11 @@ func TestRepeatedReentryPreservesSuccessMarker(t *testing.T) {
 		cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-		mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+		// p4 mount + guard are the first preconditions, so a blocked re-entry halts before p2.
+		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+		mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 		mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 		cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-		mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
 		mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 		mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
@@ -361,13 +361,14 @@ func TestZeroOrMultipleP4HaltsWithoutWipe(t *testing.T) {
 				cfg := disconnectedCfg(profile)
 				ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-				mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(2)
-				mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+				// p4 discovery is the first precondition, so it fails before p2 is ever touched.
+				mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
+				mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 				// p4 is never mounted and nothing is wiped.
 				mockOps.EXPECT().Mount(gomock.Any(), gomock.Any()).Times(0)
 				cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-				// p2 unmounted on the way out; node halts powered-on.
-				mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+				// Node halts powered-on; p2 is never mounted so nothing to unmount.
+				mockOps.EXPECT().Umount(gomock.Any()).Times(0)
 				mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 				mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
@@ -389,12 +390,13 @@ func TestP4MountFailureFailsClosed(t *testing.T) {
 	cfg := disconnectedCfg(ibiconfig.ProfileSelfContained)
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	// p4 is the first precondition, so a p4 mount failure halts before p2 is ever touched.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(fmt.Errorf("mount failed")).Times(1)
-	// No wipe; p2 unmounted; node halts powered-on.
+	// No wipe; p2 never mounted; node halts powered-on.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount(gomock.Any()).Times(0)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
@@ -416,13 +418,13 @@ func TestP4ReadOnlyFailsClosed(t *testing.T) {
 	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	// p4 is the first precondition, so the probe failure halts before p2 is ever touched.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusPartitionMountDir).Return(nil).Times(1)
-	// The probe failure unmounts the partition and fails closed; no wipe.
+	// The probe failure unmounts the p4 partition and fails closed; no wipe, p2 never mounted.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
 	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
@@ -445,12 +447,12 @@ func TestP4MalformedMarkerFailsClosed(t *testing.T) {
 	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	// p4 mount + guard are the first preconditions, so a malformed marker halts before p2.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
-	// Fail closed before any wipe; both partitions unmount; node halts powered-on.
+	// Fail closed before any wipe; p4 unmounts; node halts powered-on; p2 never mounted.
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
 	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
@@ -484,12 +486,12 @@ func TestP4UnknownResultMarkerFailsClosed(t *testing.T) {
 			cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-			mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-			mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+			// p4 mount + guard are the first preconditions, so an unknown marker halts before p2.
+			mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+			mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 			mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
-			// Fail closed before any wipe; both partitions unmount; node halts powered-on.
+			// Fail closed before any wipe; p4 unmounts; node halts powered-on; p2 never mounted.
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-			mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
 			mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 			mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 			mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
@@ -514,7 +516,8 @@ func TestWriteLogBundle(t *testing.T) {
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, &ibiconfig.IBIPrepareConfig{})
 	sp := &statusPartition{deviceName: "sdb2", mountDir: dir, unmount: func() error { return nil }}
 
-	mockOps.EXPECT().RunInHostNamespace("journalctl", "--no-pager", "-b").Return("boot journal contents", nil).Times(1)
+	cmd := fmt.Sprintf("set -o pipefail; journalctl --no-pager -b | tail -c %d", prepareLogBundleCap)
+	mockOps.EXPECT().RunBashInHostNamespace(cmd).Return("boot journal contents", nil).Times(1)
 
 	assert.NoError(t, ibi.writeLogBundle(sp))
 
@@ -541,7 +544,8 @@ func TestWriteLogBundleJournalFailure(t *testing.T) {
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, &ibiconfig.IBIPrepareConfig{})
 	sp := &statusPartition{deviceName: "sdb2", mountDir: dir, unmount: func() error { return nil }}
 
-	mockOps.EXPECT().RunInHostNamespace("journalctl", "--no-pager", "-b").Return("", fmt.Errorf("no journal")).Times(1)
+	cmd := fmt.Sprintf("set -o pipefail; journalctl --no-pager -b | tail -c %d", prepareLogBundleCap)
+	mockOps.EXPECT().RunBashInHostNamespace(cmd).Return("", fmt.Errorf("no journal")).Times(1)
 
 	assert.Error(t, ibi.writeLogBundle(sp))
 	_, err := os.Stat(filepath.Join(dir, common.IBIStatusLogsDir, prepareLogBundleName))

@@ -672,27 +672,37 @@ func TestMountLocalImages(t *testing.T) {
 }
 
 // TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite proves that a failed p2
-// discovery (0 or >1 devices) fails Run() before any disk write: no mount, no disk
-// cleanup, no image write.
+// discovery (0 or >1 devices) fails Run() before any disk write: no p2 mount, no disk
+// cleanup, no image write. Because p4 (ibi-status) is mounted and the guard passes first,
+// the failure is now finalized -- a failure prepare.json is recorded and the node is halted
+// powered-on (never powered off) -- rather than aborting Run bare.
 func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
 	cases := []struct {
 		name    string
 		devices []ops.BlockDevice
 	}{
-		{"zero devices", []ops.BlockDevice{{Name: "sda", Label: "root"}}},
-		{"multiple devices", []ops.BlockDevice{
+		{"zero p2 devices", []ops.BlockDevice{
+			{Name: "sda", Label: "root"},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel},
+		}},
+		{"multiple p2 devices", []ops.BlockDevice{
 			{Name: "sdb1", Label: common.LocalImagesFSLabel},
 			{Name: "sdc1", Label: common.LocalImagesFSLabel},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel},
 		}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			saveSeams(t)
+			statusDir := useTempStatusPartition(t)
+
 			ctrl := gomock.NewController(t)
 			mockOps := ops.NewMockOps(ctrl)
 			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 			cfg := &ibiconfig.IBIPrepareConfig{
 				Disconnected:     true,
+				Profile:          ibiconfig.ProfileInstallOnly,
 				LocalImagesPath:  "/var/mnt/ibi",
 				SeedImage:        testSeedImageRef(),
 				SeedVersion:      "4.15.0",
@@ -700,20 +710,33 @@ func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
 			}
 			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
-			// Fail-fast before any disk write: no mount, no cleanup of the install disk.
+			// The same block-device list serves p4 discovery (first) and p2 discovery (second).
+			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(2)
+			mockOps.EXPECT().Mount("sdp4", statusDir).Return(nil).Times(1)
+			// Fail-fast before any disk write: no p2 mount, no cleanup of the install disk.
 			mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+			// Failure is finalized: result write-back syncs, p4 is unmounted, node halts powered-on.
+			mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+			mockOps.EXPECT().Umount("sdp4").Return(nil).Times(1)
+			mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 			err := ibi.Run()
 			assert.Error(t, err)
+
+			// A failure result is recorded on p4 so a later boot can read how prepare ended.
+			result := readPrepareResult(t, statusDir)
+			assert.Equal(t, resultFailure, result.Result)
 		})
 	}
 }
 
 // TestManifestValidatedBeforeDiskWrite proves that a missing/malformed manifest or a
 // manifest lacking the seed entry fails Run() in preflight -- after the p2 mount but
-// before any disk write -- and that p2 is unmounted on the way out.
+// before any disk write -- that p2 is unmounted on the way out, and that (because p4 is
+// mounted and the guard passes first) the failure is finalized: a failure prepare.json is
+// recorded and the node is halted powered-on rather than aborting Run bare.
 func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -750,6 +773,7 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			saveSeams(t)
+			statusDir := useTempStatusPartition(t)
 			parseDigestManifest = tc.parse
 			newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
 				t.Fatal("importer must not be created before manifest validation")
@@ -761,6 +785,7 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 			cfg := &ibiconfig.IBIPrepareConfig{
 				Disconnected:        true,
+				Profile:             ibiconfig.ProfileInstallOnly,
 				LocalImagesPath:     "/var/mnt/ibi",
 				ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
 				SeedImage:           testSeedImageRef(),
@@ -769,16 +794,27 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			}
 			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
+			// The same block-device list serves p4 discovery (first) and p2 discovery (second).
 			mockOps.EXPECT().ListBlockDevices().
-				Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+				Return(statusDevices("sdb1", "sdp4"), nil).Times(2)
+			mockOps.EXPECT().Mount("sdp4", statusDir).Return(nil).Times(1)
 			mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 			// No disk write.
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-			// p2 is unmounted on the error path (deferred unmount).
+			// p2 is unmounted on the error path (deferred unmount); the failure is finalized:
+			// sync, p4 unmount, and halt powered-on (never power off).
 			mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+			mockOps.EXPECT().Umount("sdp4").Return(nil).Times(1)
+			mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 			err := ibi.Run()
 			assert.Error(t, err)
+
+			// A failure result is recorded on p4 so a later boot can read how prepare ended.
+			result := readPrepareResult(t, statusDir)
+			assert.Equal(t, resultFailure, result.Result)
 		})
 	}
 }
