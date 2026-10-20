@@ -27,9 +27,10 @@ const (
 	// ibi-status logs directory (a gzip-compressed journal capture).
 	prepareLogBundleName = "prepare-logs.txt.gz"
 
-	// prepareLogBundleCap bounds the uncompressed journal capture so a runaway journal
-	// can never fill the p4 partition; the most recent output (the tail, where a
-	// failure's cause is recorded) is kept.
+	// prepareLogBundleCap bounds the journal capture so a runaway journal can never fill the
+	// p4 partition or be buffered whole in memory during failure handling. The capture is
+	// streamed through `tail -c` (see writeLogBundle), so only the most recent output -- the
+	// tail, where a failure's cause is recorded -- is ever read back.
 	prepareLogBundleCap = 16 << 20 // 16 MiB
 
 	// emergencyTarget halts the node powered-on (and reachable for a technician) rather
@@ -338,19 +339,20 @@ func (i *IBIPrepare) writeLogBundle(sp *statusPartition) error {
 		return fmt.Errorf("failed to create logs directory %s: %w", logsDir, err)
 	}
 
-	out, err := i.ops.RunInHostNamespace("journalctl", "--no-pager", "-b")
+	// Bound the captured journal to prepareLogBundleCap bytes by streaming it through
+	// `tail -c` in the host namespace, so the full (potentially huge) boot journal is never
+	// buffered in memory during failure handling -- only its most recent cap bytes (the tail,
+	// where a failure's cause is recorded) are read back. pipefail makes a journalctl failure
+	// surface as an error instead of being masked by tail's success exit status.
+	cmd := fmt.Sprintf("set -o pipefail; journalctl --no-pager -b | tail -c %d", prepareLogBundleCap)
+	out, err := i.ops.RunBashInHostNamespace(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to collect journal: %w", err)
 	}
 
-	journal := []byte(out)
-	if len(journal) > prepareLogBundleCap {
-		journal = journal[len(journal)-prepareLogBundleCap:]
-	}
-
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	if _, err := gz.Write(journal); err != nil {
+	if _, err := gz.Write([]byte(out)); err != nil {
 		_ = gz.Close()
 		return fmt.Errorf("failed to compress journal: %w", err)
 	}
