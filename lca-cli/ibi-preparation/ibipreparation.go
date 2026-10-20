@@ -139,6 +139,62 @@ func (i *IBIPrepare) Run() error {
 		defer removeAuthFile()
 	}
 
+	// Disconnected (USB) prepare: establish the writable ibi-status (p4) partition and run
+	// the re-entry guard before any destructive disk operation. p4 is a mandatory
+	// precondition in both profiles -- exactly one writable ibi-status device, mountable
+	// and writable -- and the guard refuses to wipe over a completed install. Every
+	// uncertain p4 state fails closed (halt powered-on without wiping); the partition stays
+	// mounted so the result write-back at the end of the run reuses it.
+	var statusPart *statusPartition
+	if i.config.Disconnected {
+		sp, err := i.mountStatusPartition()
+		if err != nil {
+			// Cannot establish exactly one writable p4 -> do not wipe, halt powered-on.
+			return i.haltPoweredOn(fmt.Errorf("ibi-status partition precondition failed: %w", err))
+		}
+		// Idempotent backup unmount for the error paths; finalizeDisconnected unmounts
+		// explicitly before the terminal action on the normal paths.
+		defer func() { _ = sp.unmount() }()
+		statusPart = sp
+
+		blocked, guardErr := i.guardReentry(sp)
+		if guardErr != nil {
+			// An unreadable/malformed existing marker is never treated as safe to wipe.
+			return i.haltPoweredOn(fmt.Errorf("ibi-status re-entry guard failed: %w", guardErr))
+		}
+		if blocked {
+			// Completed install preserved and re-entry recorded: halt powered-on, no wipe.
+			return i.haltPoweredOn(errReentryBlocked)
+		}
+	}
+
+	prepErr := i.runPreparation(ctx, manifest, seedEntry, unmountP2, removeAuthFile)
+
+	if i.config.Disconnected {
+		// Record prepare.json (success or failure) + log bundle on p4, then take the
+		// terminal action: power off on success, halt powered-on on failure.
+		imagesExpected := 0
+		if manifest != nil {
+			imagesExpected = len(manifest.Images)
+		}
+		return i.finalizeDisconnected(statusPart, imagesExpected, prepErr)
+	}
+
+	// Connected flow: terminal behaviour unchanged.
+	if prepErr != nil {
+		return prepErr
+	}
+	return i.shutdownNode()
+}
+
+// runPreparation performs the core prepare work shared by the connected and disconnected
+// flows: it writes the image to disk, acquires and deploys the seed, precaches, runs the
+// post-deployment hooks, flushes to disk, and (disconnected) unmounts the p2 local-images
+// partition last. It returns the first error encountered without taking any terminal
+// action; the caller decides the terminal action (and, for the disconnected flow, records
+// the result on the ibi-status partition first).
+func (i *IBIPrepare) runPreparation(ctx context.Context, manifest *localimages.DigestManifest,
+	seedEntry localimages.ImageEntry, unmountP2 func() error, removeAuthFile func()) error {
 	if err := i.diskPreparation(); err != nil {
 		return fmt.Errorf("failed to prepare disk: %w", err)
 	}
@@ -232,7 +288,7 @@ func (i *IBIPrepare) Run() error {
 		}
 	}
 
-	return i.shutdownNode()
+	return nil
 }
 
 // mountLocalImages discovers the p2 installer-media partition by its filesystem
