@@ -10,14 +10,14 @@ USB stick (or the node's p4 partition) to a workstation.
 1. Identify the partition by its filesystem label and mount it read-only:
 
    ```console
-   $ lsblk -o NAME,LABEL,FSTYPE | grep ibi-status
-   $ sudo mount -o ro /dev/disk/by-label/ibi-status /mnt/ibi-status
+   lsblk -o NAME,LABEL,FSTYPE | grep ibi-status
+   sudo mount -o ro /dev/disk/by-label/ibi-status /mnt/ibi-status
    ```
 
 2. Read the prepare result at the partition **root**:
 
    ```console
-   $ cat /mnt/ibi-status/prepare.json
+   cat /mnt/ibi-status/prepare.json
    ```
 
    - `result: "success"` — the prepare phase completed. On install-only media a completed
@@ -33,7 +33,7 @@ USB stick (or the node's p4 partition) to a workstation.
 3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
 
    ```console
-   $ zcat /mnt/ibi-status/logs/prepare-logs.txt.gz | less
+   zcat /mnt/ibi-status/logs/prepare-logs.txt.gz | less
    ```
 
 > If `prepare.json` is **absent**, the prepare phase never reached the result write-back —
