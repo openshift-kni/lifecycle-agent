@@ -127,6 +127,10 @@ func testManifest(images int) *localimages.DigestManifest {
 
 const testRuntimeStorePath = "/var/mnt/ibi-images/store"
 
+// testTargetArch is the explicit target node architecture the store build selects image
+// instances for (see localimages.StoreConfig.Architecture).
+const testTargetArch = "amd64"
+
 // TestBuildDurabilityStoreInstallOnlyEmitsNothing proves install-only ships no durability
 // store: the stage is a no-op (nil result, nil error) that never opens an importer and
 // writes nothing to the media root.
@@ -135,7 +139,7 @@ func TestBuildDurabilityStoreInstallOnlyEmitsNothing(t *testing.T) {
 	fake := &fakeStoreImporter{t: t}
 	deps := storeTestDeps(fake, testManifest(3), nil, nil, nil)
 
-	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeInstallOnly}, p2Root, testRuntimeStorePath, deps)
+	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeInstallOnly}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
@@ -154,7 +158,7 @@ func TestBuildDurabilityStoreSelfContained(t *testing.T) {
 	var cfg localimages.StoreConfig
 	deps := storeTestDeps(fake, manifest, nil, nil, &cfg)
 
-	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
@@ -167,6 +171,7 @@ func TestBuildDurabilityStoreSelfContained(t *testing.T) {
 	assert.True(t, strings.HasPrefix(filepath.Base(cfg.GraphRoot), storeStagingDirPrefix), "the store is built into a staging dir, not store/ directly")
 	assert.NotEmpty(t, cfg.RunRoot)
 	assert.NotEqual(t, p2Root, filepath.Dir(cfg.RunRoot), "the runroot must live outside the p2 media tree")
+	assert.Equal(t, testTargetArch, cfg.Architecture, "the target node architecture must be selected explicitly, not the build host's")
 	assert.Equal(t, 1, fake.importCalls)
 	assert.Equal(t, p2Root, fake.importedRoot, "the layout is resolved under the p2 media root")
 	assert.Equal(t, 3, fake.importedImages)
@@ -202,7 +207,7 @@ func TestBuildDurabilityStoreStorageConfContents(t *testing.T) {
 	fake := &fakeStoreImporter{t: t, createValid: true, imageCount: 1}
 	deps := storeTestDeps(fake, testManifest(1), nil, nil, nil)
 
-	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(res.StorageConfPath)
@@ -242,9 +247,30 @@ func TestBuildDurabilityStoreRejectsBadRuntimePath(t *testing.T) {
 			fake := &fakeStoreImporter{t: t}
 			deps := storeTestDeps(fake, testManifest(1), nil, nil, nil)
 
-			_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, path, deps)
+			_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, path, testTargetArch, deps)
 			require.Error(t, err)
 			assert.Equal(t, 0, fake.importCalls, "no store must be opened when the runtime path is invalid")
+		})
+	}
+}
+
+// TestBuildDurabilityStoreRejectsEmptyTargetArch covers the guard on the target architecture:
+// a missing/blank target arch would let the import default to the build host's architecture
+// (copy.CopySystemImage), so the build fails without opening a store.
+func TestBuildDurabilityStoreRejectsEmptyTargetArch(t *testing.T) {
+	for name, arch := range map[string]string{
+		"empty": "",
+		"blank": "   ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			p2Root := t.TempDir()
+			fake := &fakeStoreImporter{t: t}
+			deps := storeTestDeps(fake, testManifest(1), nil, nil, nil)
+
+			_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, arch, deps)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "target architecture")
+			assert.Equal(t, 0, fake.importCalls, "no store must be opened when the target architecture is missing")
 		})
 	}
 }
@@ -256,7 +282,7 @@ func TestBuildDurabilityStoreManifestError(t *testing.T) {
 	fake := &fakeStoreImporter{t: t}
 	deps := storeTestDeps(fake, nil, assert.AnError, nil, nil)
 
-	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, digestManifestFileName)
 	assert.Equal(t, 0, fake.importCalls)
@@ -269,7 +295,7 @@ func TestBuildDurabilityStoreImportError(t *testing.T) {
 	fake := &fakeStoreImporter{t: t, importErr: assert.AnError}
 	deps := storeTestDeps(fake, testManifest(2), nil, nil, nil)
 
-	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "importing image closure")
 	assert.NoDirExists(t, filepath.Join(p2Root, durabilityStoreDirName), "a failed import must leave no store on the media")
@@ -284,7 +310,7 @@ func TestBuildDurabilityStoreOpenError(t *testing.T) {
 	fake := &fakeStoreImporter{t: t}
 	deps := storeTestDeps(fake, testManifest(1), nil, assert.AnError, nil)
 
-	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, durabilityStoreDriver)
 	assert.NoDirExists(t, filepath.Join(p2Root, durabilityStoreDirName))
@@ -300,7 +326,7 @@ func TestBuildDurabilityStoreValidationError(t *testing.T) {
 	fake := &fakeStoreImporter{t: t, createValid: false}
 	deps := storeTestDeps(fake, testManifest(1), nil, nil, nil)
 
-	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	_, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "validating durability store")
 	assert.NoDirExists(t, filepath.Join(p2Root, durabilityStoreDirName))
@@ -321,13 +347,50 @@ func TestBuildDurabilityStoreReplacesExistingStore(t *testing.T) {
 	fake := &fakeStoreImporter{t: t, createValid: true, imageCount: 2}
 	deps := storeTestDeps(fake, testManifest(2), nil, nil, nil)
 
-	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, 1, fake.importCalls)
 	assert.NoFileExists(t, filepath.Join(storePath, "stale-marker"), "the previous store must be replaced, not merged")
 	assert.DirExists(t, filepath.Join(storePath, overlayGraphDirName))
 	assertNoStagingDirs(t, p2Root)
+}
+
+// TestCommitStoreAndConfRecoversOnFailure proves the recoverable swap preserves the last
+// valid store + storage.conf when the commit fails partway: a previous pair is restored intact
+// rather than destroyed, and no backup or half-committed artifact is left behind.
+func TestCommitStoreAndConfRecoversOnFailure(t *testing.T) {
+	p2Root := t.TempDir()
+	storePath := filepath.Join(p2Root, durabilityStoreDirName)
+	confPath := filepath.Join(p2Root, storageConfDropInName)
+
+	// A complete previous pair with sentinels that must survive a failed commit.
+	writeFakeOverlayStore(t, storePath, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(storePath, "prev-marker"), []byte("keep"), 0o600))
+	require.NoError(t, os.WriteFile(confPath, []byte("PREVIOUS CONF"), 0o600))
+
+	// A validated staging store, but a missing staging storage.conf so the conf swap (the last
+	// commit step) fails and triggers the full rollback.
+	staging := filepath.Join(p2Root, storeStagingDirPrefix+"new")
+	writeFakeOverlayStore(t, staging, 1)
+	stagingConf := staging + stagingConfSuffix // deliberately not created
+
+	err := commitStoreAndConf(testLogger(), staging, stagingConf, storePath, confPath)
+	require.Error(t, err)
+
+	// The previous store and storage.conf are restored intact -- the last valid store is not lost.
+	assert.FileExists(t, filepath.Join(storePath, "prev-marker"))
+	data, readErr := os.ReadFile(confPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "PREVIOUS CONF", string(data))
+
+	// No backup or staging leftovers survive the rollback.
+	entries, err := os.ReadDir(p2Root)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), storeBackupPrefix), "leftover backup %q", e.Name())
+		assert.False(t, strings.HasPrefix(e.Name(), storeStagingDirPrefix), "leftover staging artifact %q", e.Name())
+	}
 }
 
 // TestBuildDurabilityStoreGCsStaleStaging proves a staging directory orphaned by a crashed
@@ -342,7 +405,7 @@ func TestBuildDurabilityStoreGCsStaleStaging(t *testing.T) {
 	fake := &fakeStoreImporter{t: t, createValid: true, imageCount: 1}
 	deps := storeTestDeps(fake, testManifest(1), nil, nil, nil)
 
-	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, deps)
+	res, err := buildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, p2Root, testRuntimeStorePath, testTargetArch, deps)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.NoDirExists(t, stale, "a stale staging directory must be garbage-collected")
@@ -416,4 +479,3 @@ func TestRenderStorageConfDropIn(t *testing.T) {
 	assert.Contains(t, conf, "[storage.options]")
 	assert.Contains(t, conf, fmt.Sprintf("%q", testRuntimeStorePath))
 }
-

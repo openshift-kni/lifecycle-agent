@@ -92,6 +92,26 @@ image closure resolves locally with no registry and no network.
 **install-only media emits nothing here** — it ships no on-media site configuration and no
 durability store.
 
+### Target architecture
+
+The media is built on a workstation whose architecture may differ from the node the media
+installs, and the OCI layout deliberately preserves **every** architecture. The build therefore
+selects the **target node's architecture explicitly** when importing into the store, rather than
+defaulting to the build host's. A layout that carries no instance for the target architecture
+**fails the build**, so a cross-architecture build can never ship a valid-looking store the node
+cannot run.
+
+### Crash-safe, recoverable commit
+
+The store and its `storage.conf` are built into **build-unique staging artifacts** and both are
+validated before anything committed is touched. They are then committed together by a
+**recoverable swap**: the previous `store/` and `storage.conf` are moved aside, the staging
+artifacts are renamed into place, and the previous pair is **restored if any step fails**. So a
+failed or crashed commit never destroys the last valid store, and `store/` is always paired with
+its matching `storage.conf`. Stale staging and backup artifacts from a crashed build are
+garbage-collected on the next run (which rebuilds from the OCI layout + `digests.json`, the
+source of truth that always remains on the media).
+
 ### Overlay compatibility gate (§6.6)
 
 The store is built with the **overlay** graph driver because that is the driver RHCOS/CRI-O

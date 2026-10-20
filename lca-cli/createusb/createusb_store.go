@@ -38,15 +38,29 @@ package createusb
 // no registry: the proposal's "skopeo copy oci:<layout> containers-storage:..." is
 // realized in-process, symmetric with the layout producer and the prepare-side consumer.
 //
-// # Crash-safe staging
+// # Crash-safe staging and recoverable commit
 //
 // Mirroring createusb_images.go's model, the store is built into a fresh, build-unique
-// staging directory under p2Root, validated and sized there, and only then committed by an
-// atomic rename into store/. The committed store/ therefore only ever appears complete and
-// validated: a crash (or an in-process failure) before the rename leaves at most an orphan
-// staging directory, never a half-built store/. Each build garbage-collects stale staging
-// directories first, so a crashed build self-heals on the next run instead of failing, and
-// a re-run replaces a previous store/ rather than erroring on it.
+// staging directory under p2Root and the storage.conf drop-in is rendered into a build-unique
+// staging file; both are validated and sized before anything committed is touched. Only then
+// are they committed together by a recoverable swap: the previous store/ and storage.conf are
+// moved aside, the staging artifacts renamed into place, and the previous pair restored if any
+// step fails. So the committed store/ only ever appears complete and validated, the store and
+// its storage.conf are always a matched pair, and a failed or crashed commit never destroys
+// the last valid store -- closing the gap a plain remove-then-rename left. Each build
+// garbage-collects stale staging and backup artifacts first, so a crashed build self-heals on
+// the next run (which rebuilds from the OCI layout + digests.json, the source of truth that
+// always remains on the media) instead of failing, and a re-run replaces a previous store/
+// rather than erroring on it.
+//
+// # Target architecture
+//
+// The media is built on a workstation whose architecture may differ from the node the media
+// installs, and the OCI layout preserves every architecture. BuildDurabilityStore therefore
+// selects the target node's architecture explicitly (via localimages.StoreConfig.Architecture)
+// rather than defaulting to the build host's; a layout that carries no instance for the target
+// architecture fails the build, so a cross-architecture build can never ship a store the node
+// cannot run.
 //
 // # §6.6 compatibility gate
 //
@@ -89,9 +103,21 @@ const (
 	durabilityStoreDirName = "store"
 
 	// storeStagingDirPrefix prefixes the fresh, build-unique directory the store is built
-	// into before it is atomically renamed to store/. Stale directories with this prefix
+	// into before it is atomically renamed to store/. Stale entries with this prefix
 	// (orphaned by a crashed build) are garbage-collected at the start of every build.
 	storeStagingDirPrefix = ".store-staging-"
+
+	// stagingConfSuffix is appended to the staging directory's path to name the build-unique
+	// staging storage.conf (so it shares storeStagingDirPrefix and is GC'd alongside a crashed
+	// build's staging directory). The drop-in is rendered here and renamed into place at commit.
+	stagingConfSuffix = ".conf"
+
+	// storeBackupPrefix prefixes the build-unique locations the previous store/ and
+	// storage.conf are moved aside to during a commit, so they can be restored if the swap
+	// fails. Stale backups (orphaned by a crash mid-commit) are garbage-collected at the start
+	// of every build; the media is always rebuildable from the OCI layout + digests.json, so a
+	// discarded stale backup is never load-bearing.
+	storeBackupPrefix = ".store-backup-"
 
 	// storageConfDropInName is the rendered storage.conf drop-in staged at the p2 root
 	// beside the store. It registers the store as a read-only additional image store under
@@ -176,17 +202,23 @@ func defaultStoreBuildDeps() storeBuildDeps {
 // digest-pinned closure in the digests.json BuildImageLayout committed at the p2 root, so
 // the store and the OCI layout carry the same image set.
 //
+// targetArch is the architecture of the node the media installs (e.g. "amd64", "arm64").
+// It is selected explicitly from the multi-arch OCI layout rather than defaulting to the
+// build host's architecture, so media built on a workstation of a different architecture
+// still produces a store the installed node can consume; a layout that carries no instance
+// for targetArch fails the build.
+//
 // install-only emits nothing: it ships no on-media durability store, so the call is a
 // no-op returning a nil result.
 //
 // It is the entry point the media-assembly story (CNF-27171) wires in, after the OCI
-// layout + digests.json are committed.
-func BuildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath string) (*StoreBuildResult, error) {
-	return buildDurabilityStore(ctx, log, m, p2Root, runtimeStorePath, defaultStoreBuildDeps())
+// layout + digests.json are committed; it supplies runtimeStorePath and targetArch.
+func BuildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error) {
+	return buildDurabilityStore(ctx, log, m, p2Root, runtimeStorePath, targetArch, defaultStoreBuildDeps())
 }
 
 // buildDurabilityStore is the dependency-injected core of BuildDurabilityStore.
-func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath string, deps storeBuildDeps) (result *StoreBuildResult, err error) {
+func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string, deps storeBuildDeps) (result *StoreBuildResult, err error) {
 	// install-only ships no on-media durability store (the node is not reconfigured
 	// offline), so this stage emits nothing.
 	if m.Mode != ModeSelfContained {
@@ -203,6 +235,15 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 	}
 	if !filepath.IsAbs(runtimeStorePath) {
 		return nil, fmt.Errorf("runtime store path %q must be absolute", runtimeStorePath)
+	}
+
+	// The store must carry the target node's architecture, not the build host's. A build on
+	// a workstation of a different architecture would otherwise silently import the builder's
+	// instance via copy.CopySystemImage, producing a valid-looking store the node cannot run,
+	// so the target architecture is required and selected explicitly from the layout.
+	targetArch = strings.TrimSpace(targetArch)
+	if targetArch == "" {
+		return nil, errors.New("target architecture is required to select the node's image instances from the layout")
 	}
 
 	// p2Root is normally created by the image-layout stage; create it defensively so this
@@ -229,28 +270,37 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 		return nil, fmt.Errorf("reading on-media digest manifest %q (run the image-layout stage first): %w", manifestPath, err)
 	}
 
-	// Garbage-collect staging directories orphaned by an earlier crashed build, so a crash
-	// self-heals here rather than accumulating leftovers under p2Root.
-	gcStaleStoreStaging(log, p2Root)
+	// Garbage-collect staging and backup artifacts orphaned by an earlier crashed build, so a
+	// crash self-heals here rather than accumulating leftovers under p2Root.
+	gcStaleStoreArtifacts(log, p2Root)
 
 	// Build into a fresh, build-unique staging directory; it is never store/, so an
-	// in-process failure or a crash before the commit rename below cannot leave a half-built
-	// store/ on the media. The committed defer keeps the staging dir only once it has become
-	// store/.
+	// in-process failure or a crash before the commit below cannot leave a half-built store/
+	// on the media. The storage.conf is likewise rendered into a build-unique staging file,
+	// so both artifacts are complete and validated before the previous store/ is touched. The
+	// committed defer keeps the staging artifacts only once they have become store/ +
+	// storage.conf.
 	staging, err := os.MkdirTemp(p2Root, storeStagingDirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating durability store staging directory under %q: %w", p2Root, err)
 	}
+	// stagingConf shares the staging prefix (so gcStaleStoreArtifacts collects a crashed
+	// build's leftover config too) and is unique per build via the staging dir's token.
+	stagingConf := staging + stagingConfSuffix
 	committed := false
 	defer func() {
-		if !committed {
-			if rmErr := os.RemoveAll(staging); rmErr != nil && err == nil {
-				err = fmt.Errorf("cleaning up durability store staging directory %q: %w", staging, rmErr)
-			}
+		if committed {
+			return
+		}
+		if rmErr := os.RemoveAll(staging); rmErr != nil && err == nil {
+			err = fmt.Errorf("cleaning up durability store staging directory %q: %w", staging, rmErr)
+		}
+		if rmErr := os.Remove(stagingConf); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
+			err = fmt.Errorf("cleaning up durability store staging config %q: %w", stagingConf, rmErr)
 		}
 	}()
 
-	if err := importClosureIntoStore(ctx, log, manifest, p2Root, staging, deps); err != nil {
+	if err := importClosureIntoStore(ctx, log, manifest, p2Root, staging, targetArch, deps); err != nil {
 		return nil, err
 	}
 
@@ -261,27 +311,29 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 	}
 
 	// Size the staging store before the commit, so a sizing failure cannot leave a committed
-	// store/ behind (nothing is committed until the rename below).
+	// store/ behind (nothing is committed until the swap below).
 	storeBytes, err := dirSize(staging)
 	if err != nil {
 		return nil, fmt.Errorf("sizing durability store %q: %w", staging, err)
 	}
 
-	// Commit: atomically replace store/ with the validated staging store. After the rename
-	// store/ is the complete, validated store and the staging name no longer exists.
+	// Render the storage.conf drop-in into its staging file, so both artifacts are ready
+	// before the previous store/ is touched; a render failure here leaves the committed store/
+	// and storage.conf untouched.
+	if err := renderStorageConfDropIn(stagingConf, runtimeStorePath); err != nil {
+		return nil, err
+	}
+
+	// Commit both artifacts with a recoverable swap: the previous store/ and storage.conf are
+	// moved aside, the validated staging artifacts renamed into place, and the previous
+	// artifacts restored if any step fails -- so a failed or crashed commit never leaves the
+	// media without a valid, matched store + storage.conf pair.
 	storePath := filepath.Join(p2Root, durabilityStoreDirName)
-	if err := commitStore(staging, storePath); err != nil {
+	confPath := filepath.Join(p2Root, storageConfDropInName)
+	if err := commitStoreAndConf(log, staging, stagingConf, storePath, confPath); err != nil {
 		return nil, err
 	}
 	committed = true
-
-	// Render the storage.conf drop-in beside the committed store. If it fails, roll the store
-	// back so the stage never leaves a store/ without its drop-in.
-	confPath := filepath.Join(p2Root, storageConfDropInName)
-	if err := renderStorageConfDropIn(confPath, runtimeStorePath); err != nil {
-		removeStoreDir(log, storePath)
-		return nil, err
-	}
 
 	log.WithFields(logrus.Fields{
 		"storePath":        storePath,
@@ -304,7 +356,7 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 // it. The store is opened with a temporary runroot outside p2Root (a store open needs a
 // writable runroot and the media tree must carry only the graphroot) and shut down via the
 // importer's Close before the caller validates/sizes the on-disk result.
-func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *localimages.DigestManifest, p2Root, storePath string, deps storeBuildDeps) error {
+func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *localimages.DigestManifest, p2Root, storePath, targetArch string, deps storeBuildDeps) error {
 	runRoot, err := os.MkdirTemp("", storeRunRootPrefix)
 	if err != nil {
 		return fmt.Errorf("creating temporary store runroot: %w", err)
@@ -319,6 +371,10 @@ func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *l
 		GraphDriverName: durabilityStoreDriver,
 		GraphRoot:       storePath,
 		RunRoot:         runRoot,
+		// Select the target node's architecture explicitly: the build host may differ, and
+		// the OCI layout preserves every architecture, so a host-default selection could
+		// import the wrong instances.
+		Architecture: targetArch,
 	})
 	if err != nil {
 		// A failure to open an overlay store here is the §6.6 gate firing: the build
@@ -348,37 +404,120 @@ func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *l
 	return nil
 }
 
-// commitStore atomically replaces storePath with the validated staging store. A previous
-// store/ (from an earlier build) is removed first so the rename succeeds; builds are
-// serialized by the p2 lock, so no concurrent build observes the brief window, and a crash
-// in it self-heals on the next build (which GCs staging and rebuilds store/).
-func commitStore(staging, storePath string) error {
-	if err := os.RemoveAll(storePath); err != nil {
-		return fmt.Errorf("removing previous durability store %q: %w", storePath, err)
+// commitStoreAndConf atomically swaps the validated staging store and storage.conf into
+// store/ and storage.conf, preserving the previous pair until both new artifacts are in
+// place. It moves the previous store/ and storage.conf aside, renames the staging artifacts
+// into place, and restores the previous pair if any step fails -- so a failed commit never
+// leaves the media without a valid, matched store + storage.conf (the gap the plain
+// remove-then-rename left). On success the preserved previous artifacts are discarded.
+//
+// Builds are serialized by the p2 lock, so no concurrent build observes the swap window, and
+// a crash mid-swap self-heals on the next build (which GCs the backups and rebuilds from the
+// OCI layout + digests.json, the source of truth that always remains on the media).
+func commitStoreAndConf(log *logrus.Logger, stagingStore, stagingConf, storePath, confPath string) error {
+	p2Root := filepath.Dir(storePath)
+	storeBackup := filepath.Join(p2Root, storeBackupPrefix+durabilityStoreDirName)
+	confBackup := filepath.Join(p2Root, storeBackupPrefix+storageConfDropInName)
+
+	// Move the previous artifacts aside (a first build has none, backing up to ""), so they
+	// can be restored if a later step fails.
+	savedStore, err := moveAside(storePath, storeBackup)
+	if err != nil {
+		return fmt.Errorf("preserving previous durability store %q: %w", storePath, err)
 	}
-	if err := os.Rename(staging, storePath); err != nil {
+	savedConf, err := moveAside(confPath, confBackup)
+	if err != nil {
+		restoreAside(log, savedStore, storePath)
+		return fmt.Errorf("preserving previous storage.conf %q: %w", confPath, err)
+	}
+
+	// Swap in the new store; restore the previous pair if it fails.
+	if err := os.Rename(stagingStore, storePath); err != nil {
+		restoreAside(log, savedStore, storePath)
+		restoreAside(log, savedConf, confPath)
 		return fmt.Errorf("committing durability store to %q: %w", storePath, err)
 	}
+
+	// Swap in the new storage.conf; roll the new store back too if it fails, so the media
+	// never carries a new store paired with the previous (mismatched) config.
+	if err := os.Rename(stagingConf, confPath); err != nil {
+		removeStoreDir(log, storePath)
+		restoreAside(log, savedStore, storePath)
+		restoreAside(log, savedConf, confPath)
+		return fmt.Errorf("committing storage.conf to %q: %w", confPath, err)
+	}
+
+	// Both artifacts committed; discard the preserved previous pair.
+	discardAside(log, savedStore)
+	discardAside(log, savedConf)
 	return nil
 }
 
-// gcStaleStoreStaging removes staging directories under p2Root left by a crashed earlier
-// build (those with storeStagingDirPrefix). It is best-effort: a failure wastes media space
-// but cannot leave a mismatched medium, so it is logged rather than returned. It must be
-// called under the p2 lock so it never races a concurrent build's live staging directory.
-func gcStaleStoreStaging(log *logrus.Logger, p2Root string) {
+// moveAside renames path to backup so a failed commit can restore it, returning the backup
+// path (or "" when path does not exist and there is nothing to preserve). The backup is a
+// sibling under the same p2 root, so the rename is atomic (same filesystem). A stale backup
+// (orphaned by a crashed earlier commit) is GC'd before the build, but is removed defensively
+// here so the rename cannot fail on an existing target.
+func moveAside(path, backup string) (string, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("checking %q: %w", path, err)
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("renaming %q aside to %q: %w", path, backup, err)
+	}
+	return backup, nil
+}
+
+// restoreAside renames a backup produced by moveAside back to its original path on a failed
+// commit. A "" backup (nothing was preserved) is a no-op. It is best-effort: the commit is
+// already failing and returning an error, so a restore failure is logged rather than masking
+// the original error.
+func restoreAside(log *logrus.Logger, backup, path string) {
+	if backup == "" {
+		return
+	}
+	if err := os.Rename(backup, path); err != nil {
+		log.Warnf("create-usb: failed to restore previous durability artifact %s to %s: %v", backup, path, err)
+	}
+}
+
+// discardAside removes a backup produced by moveAside once the commit has succeeded. A ""
+// backup is a no-op. Best-effort: a leftover backup wastes media space but is GC'd by the
+// next build and never misleads a consumer.
+func discardAside(log *logrus.Logger, backup string) {
+	if backup == "" {
+		return
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		log.Warnf("create-usb: failed to remove durability artifact backup %s: %v", backup, err)
+	}
+}
+
+// gcStaleStoreArtifacts removes staging and backup artifacts under p2Root left by a crashed
+// earlier build (those with storeStagingDirPrefix or storeBackupPrefix). It is best-effort: a
+// failure wastes media space but cannot leave a mismatched medium, so it is logged rather than
+// returned. It must be called under the p2 lock so it never races a concurrent build's live
+// staging or backup artifacts.
+func gcStaleStoreArtifacts(log *logrus.Logger, p2Root string) {
 	entries, err := os.ReadDir(p2Root)
 	if err != nil {
-		log.Warnf("create-usb: failed to scan for stale durability store staging directories: %v", err)
+		log.Warnf("create-usb: failed to scan for stale durability store artifacts: %v", err)
 		return
 	}
 	for _, ent := range entries {
-		if !ent.IsDir() || !strings.HasPrefix(ent.Name(), storeStagingDirPrefix) {
+		name := ent.Name()
+		if !strings.HasPrefix(name, storeStagingDirPrefix) && !strings.HasPrefix(name, storeBackupPrefix) {
 			continue
 		}
-		path := filepath.Join(p2Root, ent.Name())
+		path := filepath.Join(p2Root, name)
 		if rmErr := os.RemoveAll(path); rmErr != nil {
-			log.Warnf("create-usb: failed to remove stale durability store staging directory %s: %v", path, rmErr)
+			log.Warnf("create-usb: failed to remove stale durability store artifact %s: %v", path, rmErr)
 		}
 	}
 }
