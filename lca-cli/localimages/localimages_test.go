@@ -464,6 +464,57 @@ func TestVerifyAllMissingImage(t *testing.T) {
 	assert.Contains(t, err.Error(), "verified 1/2")
 }
 
+// TestVerifyAllSourceReferenceUnresolved proves VerifyAll fails when a manifest
+// entry's canonical name@digest is resident but a source reference the seed
+// requests for it does not resolve. registerSourceAliases skips digest-pinned
+// sources on the assumption they resolve by their canonical reference, which does
+// not hold for a source in a repository different from Name: such a source is
+// never aliased, so the reference the node requests offline is unavailable even
+// though the canonical image would pass a name@digest-only check. VerifyAll must
+// catch this before any terminal action.
+func TestVerifyAllSourceReferenceUnresolved(t *testing.T) {
+	requireCopyCapable(t)
+	im, _ := newImporter(t)
+	mediaRoot, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{"amd64"}},
+	})
+
+	// A digest-pinned source in a DIFFERENT repository than Name. It shares the
+	// imported digest (so it would pass a metadata-only coverage check), but
+	// registerSourceAliases skips it (digest-pinned) and the image is stored only
+	// under testImageName -- so this reference never resolves.
+	crossRepoSource := "quay.io/openshift-release-dev/other-repo@" + m.Images[0].Digest
+	m.Images[0].Sources = []string{crossRepoSource}
+
+	require.NoError(t, im.ImportAll(context.Background(), mediaRoot, m))
+
+	err := im.VerifyAll(context.Background(), m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), crossRepoSource, "the unresolved source reference must be named")
+	assert.Contains(t, err.Error(), "verified 0/1")
+}
+
+// TestVerifyAllTaggedSourceResolves proves VerifyAll passes when an entry's source
+// references resolve: the tagged source through the local alias ImportImage
+// registered for it, and the same-repo digest-pinned source through its canonical
+// reference -- the references the seed's containers.list actually requests,
+// confirmed resolvable in the installed store.
+func TestVerifyAllTaggedSourceResolves(t *testing.T) {
+	requireCopyCapable(t)
+	im, _ := newImporter(t)
+	mediaRoot, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{"amd64"}},
+	})
+
+	m.Images[0].Sources = []string{
+		testImageName + ":4.15.0",                // tagged: registered as a local alias
+		testImageName + "@" + m.Images[0].Digest, // digest-pinned, same repo: resolves canonically
+	}
+
+	require.NoError(t, im.ImportAll(context.Background(), mediaRoot, m))
+	assert.NoError(t, im.VerifyAll(context.Background(), m))
+}
+
 // ----- helpers -----
 
 func writeJSONFile(t *testing.T, v any) string {

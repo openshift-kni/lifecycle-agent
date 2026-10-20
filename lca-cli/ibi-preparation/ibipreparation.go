@@ -451,7 +451,9 @@ func (i *IBIPrepare) importClosureToStateroot(ctx context.Context, manifest *loc
 // verifyImportedClosure runs the mandatory image self-check: it re-opens the
 // installed stateroot's containers-storage store (the same store the closure was
 // imported into) and confirms every image in the on-media manifest is resident
-// under its canonical name@digest. A missing/unresolvable image means the closure
+// under its canonical name@digest and that every source reference the seed
+// requests for it resolves to that same imported image. A missing/unresolvable
+// image -- or a seed source reference that does not resolve -- means the closure
 // import was incomplete; returning an error here fails Run() before any terminal
 // action so an incomplete node is never powered off / rebooted.
 //
