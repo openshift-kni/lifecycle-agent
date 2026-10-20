@@ -44,6 +44,23 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 )
 
+// requireOverlayStore skips the test when an overlay containers/storage store cannot be opened
+// in this environment (containers/storage probes real overlay support at open time). With
+// overlay confirmed available, a later BuildDurabilityStore error is a genuine build regression
+// rather than an environment limitation, so the caller can assert NoError on the build itself.
+func requireOverlayStore(t *testing.T) {
+	t.Helper()
+	im, err := localimages.NewImporter(testLogger(), localimages.StoreConfig{
+		GraphDriverName: durabilityStoreDriver,
+		GraphRoot:       filepath.Join(t.TempDir(), "overlay-probe"),
+		RunRoot:         filepath.Join(t.TempDir(), "overlay-probe-run"),
+	})
+	if err != nil {
+		t.Skipf("overlay containers-storage unavailable in this environment: %v", err)
+	}
+	require.NoError(t, im.Close())
+}
+
 // TestBuildDurabilityStoreIntegration builds a real overlay durability store from a staged
 // OCI layout for self-contained media and asserts the store, its overlay layer format, and
 // the storage.conf drop-in are produced on the media.
@@ -67,13 +84,14 @@ func TestBuildDurabilityStoreIntegration(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("building an overlay containers-storage store requires root (or a user namespace)")
 	}
+	// Probe overlay availability (e.g. no overlay-on-overlay) up front, so a subsequent
+	// BuildDurabilityStore error is a genuine build regression -- not an environment limitation
+	// silently swallowed by a skip.
+	requireOverlayStore(t)
 
-	res, err := BuildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, mediaRoot, testRuntimeStorePath)
-	if err != nil {
-		// Overlay may be unavailable in the test environment (e.g. no overlay-on-overlay):
-		// that is the §6.6 gate firing, not a test failure here.
-		t.Skipf("overlay durability store unavailable: %v", err)
-	}
+	// The layout carries the runtime.GOARCH instance, so the build selects that architecture.
+	res, err := BuildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, mediaRoot, testRuntimeStorePath, runtime.GOARCH)
+	require.NoError(t, err, "overlay is available, so a build error is a real regression")
 	require.NotNil(t, res)
 
 	// The store was staged at <p2Root>/store in overlay format, and reports the imported image.
