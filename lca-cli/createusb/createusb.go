@@ -257,7 +257,7 @@ func (m *Manifest) validateRHCOSLiveISO() error {
 	}
 	// Parse the URL and require an https scheme and a non-empty host so an unusable
 	// source such as "https://" (no host) fails the build rather than being accepted.
-	if u, err := url.Parse(m.RHCOSLiveISO.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+	if u, err := url.Parse(m.RHCOSLiveISO.URL); err != nil || u.Scheme != schemeHTTPS || u.Host == "" {
 		return fmt.Errorf("rhcosLiveIso.url must be an https url with a host")
 	}
 	if m.RHCOSLiveISO.SHA256 == "" {

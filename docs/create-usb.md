@@ -9,14 +9,49 @@ manifest. Two profiles are supported:
   on-media site configuration, without contacting the network.
 
 Today the CLI `lca-cli create-usb --output` path only scaffolds the GPT placeholder image
-(empty formatted partitions). The p3 render / digest-pin / mirror-scan behavior below is
-implemented by `RenderP3Tree` and run from the separate `BuildImageLayout` stage; it is
-not yet wired into the CLI. See [lca-cli/README.md](../lca-cli/README.md#creating-usb-media)
-for the current CLI behavior and manifest schema.
+(empty formatted partitions). The p1 live-ISO build (`BuildLiveISO`) and the p3 render /
+digest-pin / mirror-scan behavior below (`RenderP3Tree`, run from the separate
+`BuildImageLayout` stage) are implemented as standalone building blocks; they are not yet
+wired into the CLI (CNF-27171 wires them). See
+[lca-cli/README.md](../lca-cli/README.md#creating-usb-media) for the current CLI behavior and
+manifest schema.
 
 This document describes the self-contained **p3 config tree**: how it is rendered from the
 manifest, how image references in the shipped manifests are pinned to digests, and which
-mirror resources are rejected. (install-only media is unaffected by everything below.)
+mirror resources are rejected. (install-only media is unaffected by everything below.) It
+also describes the **p1 live ISO** build block, which applies to both profiles.
+
+## The p1 live ISO: verified source and embedded prepare
+
+The p1 partition carries the bootable RHCOS live ISO, customized so the node runs
+`lca-cli ibi` automatically on boot. `BuildLiveISO` builds it as a standalone block (like
+`BuildImageLayout` and `RenderP3Tree`, it is wired into the CLI by CNF-27171):
+
+1. **Verified ISO source (HTTPS + sha256).** The RHCOS live ISO is fetched from
+   `rhcosLiveIso.url` **over HTTPS only** and its SHA-256 is verified against
+   `rhcosLiveIso.sha256` **before the ISO is used**. Any of the following **fails the build**:
+   a non-`https` URL (plain HTTP is never used, and a redirect to a non-`https` URL is
+   refused), a download error (missing or unreachable source), or a checksum mismatch. The
+   ISO host must therefore serve the ISO over HTTPS. The RHCOS live ISO on
+   `mirror.openshift.com` is public and needs no pull secret; only the container images
+   mirrored into p2 need `--auth-file`.
+2. **Embedded ignition.** The build embeds an ignition config (version 3.2.0) that writes
+   three things into the live environment: the exact shipping `lca-cli` binary at
+   `/usr/local/bin/lca-cli`, the rendered `IBIPrepareConfig` at `/etc/lca-cli/ibi-config.json`,
+   and a oneshot systemd unit (`lca-ibi.service`) that runs
+   `lca-cli ibi -f /etc/lca-cli/ibi-config.json` on boot. The embedded config sets
+   `disconnected: true`, `localImagesPath` to the on-node p2 (`ibi-images`) mount point, and
+   `expectedDigestsPath` to the on-media `digests.json`. `shutdown` is carried from the
+   manifest: install-only ends in shutdown, self-contained sets `shutdown: false` so the
+   embedded binary performs the pivot reboot (the pivot / pivot-failure logic and its
+   end-to-end verification are owned by CNF-27164).
+3. **Exact shipping binary.** The stock RHCOS live ISO ships no `lca-cli`, so the binary is
+   extracted from the `--lca-image` container at build time and embedded via ignition. This
+   is byte-identical to the binary mirrored into p2.
+
+The customized ISO is written into the reserved p1 region with a **reservation-size guard**:
+if the customized ISO is larger than the p1 reservation, the build fails loudly rather than
+truncating the ISO.
 
 ## The /opt/openshift config tree
 

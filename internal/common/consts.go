@@ -167,6 +167,14 @@ const (
 	// at the configured LocalImagesPath.
 	LocalImagesFSLabel = "ibi-images"
 
+	// LocalImagesMountPath is the on-node mount point create-usb records as the
+	// embedded IBIPrepareConfig.LocalImagesPath and that the prepare phase mounts the
+	// p2 (ibi-images) partition at. It is the cross-story contract between create-usb's
+	// embedded-config rendering and the prepare mount stages (CNF-27161/CNF-27162);
+	// both sides must use this constant so the path never diverges. /var/mnt is the
+	// writable mount area in the RHCOS live environment.
+	LocalImagesMountPath = "/var/mnt/ibi-images"
+
 	ContainerStoragePath = "/var/lib/containers"
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
