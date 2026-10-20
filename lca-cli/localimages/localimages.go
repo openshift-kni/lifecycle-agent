@@ -75,6 +75,13 @@
 // index, against the index manifest the selected instance belongs to), and the
 // stored image is re-resolved after the copy to confirm it is present under its
 // canonical digest.
+//
+// VerifyAll provides a standalone store-residency gate over a whole manifest: it
+// confirms every image is recorded and resolvable in the store under its
+// canonical name@digest, which a disconnected prepare runs after ImportAll to
+// catch an incomplete import before any terminal action. It is a residency check,
+// not a second integrity pass -- content integrity is already enforced above at
+// import time by the digest-verified copy.
 package localimages
 
 import (
@@ -331,6 +338,71 @@ func (im *Importer) ImportAll(ctx context.Context, mediaRoot string, m *DigestMa
 			return fmt.Errorf("importing %s@%s: %w", e.Name, e.Digest, err)
 		}
 		im.log.WithFields(logrus.Fields{"name": e.Name, "digest": e.Digest}).Info("imported local image")
+	}
+	return nil
+}
+
+// VerifyAll reports whether every image in the manifest is resident in this
+// Importer's store under its canonical name@digest reference. It is the
+// store-residency / resolvability gate a disconnected prepare runs after
+// ImportAll to confirm the installed node's store holds the full image closure
+// before any terminal action (power-off / reboot) -- a correctness gate, not a
+// best-effort check.
+//
+// It is a residency check, not a fresh integrity check: content integrity is
+// already enforced at import time by copy.Image's digest-verified copy (see
+// "Selection and verification" above). VerifyAll confirms each manifest image is
+// recorded and resolvable in the store under name@digest; it does not re-hash
+// stored layer content.
+//
+// Every entry is checked (not fail-fast): the returned error names every
+// missing/unresolvable image and reports the verified count. It returns nil only
+// when all images resolve. The logic is deliberately factored here -- rather than
+// inline in the prepare flow -- so a future check-usb media-verification tool can
+// reuse the exact same store-residency contract.
+func (im *Importer) VerifyAll(ctx context.Context, m *DigestManifest) error {
+	// Guard the standalone contract: an empty (or nil) manifest must not pass
+	// vacuously. ParseDigestManifest already rejects an empty Images list, but a
+	// future caller (e.g. check-usb) may build the manifest another way.
+	if m == nil || len(m.Images) == 0 {
+		return errors.New("cannot verify store residency: digest manifest has no images")
+	}
+
+	var missing []string
+	for i := range m.Images {
+		e := m.Images[i]
+		if err := im.verifyImage(e); err != nil {
+			im.log.WithFields(logrus.Fields{"name": e.Name, "digest": e.Digest}).
+				WithError(err).Warn("manifest image not resident in store")
+			missing = append(missing, e.Name+"@"+e.Digest)
+		}
+	}
+
+	verified := len(m.Images) - len(missing)
+	if len(missing) > 0 {
+		return fmt.Errorf("verified %d/%d images resident; %d missing from the store: %s",
+			verified, len(m.Images), len(missing), strings.Join(missing, ", "))
+	}
+	im.log.Infof("verified %d/%d images resident in the store", verified, len(m.Images))
+	return nil
+}
+
+// verifyImage reports whether a single manifest entry is resident in the store
+// under its canonical name@digest reference, using the same containers-storage
+// resolve path (ParseStoreReference + ResolveReference) that ImportImage runs as
+// its post-copy post-condition. It does not re-hash stored content.
+func (im *Importer) verifyImage(e ImageEntry) error {
+	if err := e.validate(); err != nil {
+		return fmt.Errorf("invalid image entry: %w", err)
+	}
+
+	ref, err := istorage.Transport.ParseStoreReference(im.store, e.Name+"@"+e.Digest)
+	if err != nil {
+		return fmt.Errorf("building containers-storage reference for %s@%s: %w", e.Name, e.Digest, err)
+	}
+
+	if _, _, err := istorage.ResolveReference(ref); err != nil {
+		return fmt.Errorf("resolving stored image %s@%s: %w", e.Name, e.Digest, err)
 	}
 	return nil
 }

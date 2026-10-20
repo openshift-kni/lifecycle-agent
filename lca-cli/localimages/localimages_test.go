@@ -363,6 +363,107 @@ func TestImportAll_FailFastNoCopy(t *testing.T) {
 	assert.Empty(t, imgs, "no image should have been imported")
 }
 
+// ----- VerifyAll (store-residency gate) -----
+
+// TestVerifyAllEmptyStore proves VerifyAll against a real (but empty) store reports
+// every manifest image as missing, naming each missing name@digest and the verified
+// count. It exercises the real ParseStoreReference + ResolveReference residency path
+// and needs no privileged layer copy (nothing is imported).
+func TestVerifyAllEmptyStore(t *testing.T) {
+	im, _ := newImporter(t)
+	_, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{"amd64"}},
+	})
+
+	err := im.VerifyAll(context.Background(), m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "verified 0/1")
+	assert.Contains(t, err.Error(), m.Images[0].Name+"@"+m.Images[0].Digest)
+}
+
+// TestVerifyAllAllPresent imports every manifest image into a real store, then
+// VerifyAll resolves them all and returns nil -- exercising the real residency path
+// over a populated store, not a fake. The release entry is a multi-arch index (as
+// OpenShift release content normally is), so this also covers VerifyAll resolving
+// the stored host instance under the canonical name@<index-digest>.
+func TestVerifyAllAllPresent(t *testing.T) {
+	requireCopyCapable(t)
+	im, _ := newImporter(t)
+
+	otherArch := "arm64"
+	if runtime.GOARCH == "arm64" {
+		otherArch = "amd64"
+	}
+	mediaRoot, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{runtime.GOARCH, otherArch}},
+		{tag: "workload", name: "quay.io/openshift-release-dev/ocp-v4.0-art-dev", arches: []string{"amd64"}},
+	})
+
+	require.NoError(t, im.ImportAll(context.Background(), mediaRoot, m))
+	assert.NoError(t, im.VerifyAll(context.Background(), m))
+}
+
+// TestVerifyAllAfterReopen proves the production two-open pattern that
+// ibi-preparation uses (importClosureToStateroot then verifyImportedClosure):
+// import the closure through one importer, close it, then open a SECOND importer at
+// the same graphRoot with a DIFFERENT runRoot and VerifyAll. containers-storage's
+// store cache keys on (graphRoot, runRoot), so the distinct runRoot yields a fresh,
+// working store rather than reusing the first (already shut-down) one.
+func TestVerifyAllAfterReopen(t *testing.T) {
+	requireCopyCapable(t)
+	graphRoot := filepath.Join(t.TempDir(), "graph")
+
+	importer, err := NewImporter(logrus.New(), StoreConfig{
+		GraphDriverName: "vfs",
+		GraphRoot:       graphRoot,
+		RunRoot:         filepath.Join(t.TempDir(), "run-import"),
+	})
+	require.NoError(t, err)
+
+	mediaRoot, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{"amd64"}},
+	})
+	require.NoError(t, importer.ImportAll(context.Background(), mediaRoot, m))
+	require.NoError(t, importer.Close())
+
+	// Second open at the same graphRoot with a distinct runRoot, as the self-check does.
+	verifier, err := NewImporter(logrus.New(), StoreConfig{
+		GraphDriverName: "vfs",
+		GraphRoot:       graphRoot,
+		RunRoot:         filepath.Join(t.TempDir(), "run-verify"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = verifier.Close() })
+
+	assert.NoError(t, verifier.VerifyAll(context.Background(), m))
+}
+
+// TestVerifyAllMissingImage proves VerifyAll fails against the real store when a
+// manifest entry was never imported: the imported entries resolve, the absent one
+// does not, and the error names the missing name@digest and the verified count.
+func TestVerifyAllMissingImage(t *testing.T) {
+	requireCopyCapable(t)
+	im, _ := newImporter(t)
+	mediaRoot, m := buildLayout(t, []layoutImage{
+		{tag: testOCITag, name: testImageName, arches: []string{"amd64"}},
+	})
+
+	require.NoError(t, im.ImportAll(context.Background(), mediaRoot, m))
+
+	// Append a manifest entry that was never imported into the store.
+	missing := ImageEntry{
+		Name:   "quay.io/openshift-release-dev/absent",
+		Digest: "sha256:" + strings.Repeat("a", 64),
+		OCITag: "absent",
+	}
+	m.Images = append(m.Images, missing)
+
+	err := im.VerifyAll(context.Background(), m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), missing.Name+"@"+missing.Digest)
+	assert.Contains(t, err.Error(), "verified 1/2")
+}
+
 // ----- helpers -----
 
 func writeJSONFile(t *testing.T, v any) string {

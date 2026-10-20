@@ -45,6 +45,7 @@ const (
 type imageImporter interface {
 	ImportImage(ctx context.Context, mediaRoot string, m *localimages.DigestManifest, e localimages.ImageEntry) error
 	ImportAll(ctx context.Context, mediaRoot string, m *localimages.DigestManifest) error
+	VerifyAll(ctx context.Context, m *localimages.DigestManifest) error
 	Close() error
 }
 
@@ -182,6 +183,21 @@ func (i *IBIPrepare) Run() error {
 
 	if err := i.precacheFlow(common.ContainersListFilePath, common.IBISeedInfoFilePath, defaultRegistriesConfFile, manifest); err != nil {
 		return fmt.Errorf("failed to precache: %w", err)
+	}
+
+	// Disconnected: mandatory image self-check. After import + precache, confirm every
+	// image in the on-media manifest is resident in the installed stateroot store before
+	// any terminal action. A missing/unresolvable image means the closure import was
+	// incomplete, so fail Run() here -- before postDeployment, cleanupRhcosSysroot, the
+	// final sync, the explicit p2 unmount and shutdownNode -- rather than powering off /
+	// rebooting a node short an image it can never pull offline. This is a correctness
+	// gate, not optional hardening. The deferred best-effort cleanup (p2 unmount +
+	// authfile removal) still runs on this error path, as on any other.
+	if i.config.Disconnected {
+		i.log.Info("Running mandatory image self-check against the on-media manifest")
+		if err := i.verifyImportedClosure(ctx, manifest); err != nil {
+			return fmt.Errorf("image self-check failed: %w", err)
+		}
 	}
 
 	if err := i.postDeployment(common.IBIPostDeploymentScriptPath); err != nil {
@@ -381,13 +397,16 @@ func (i *IBIPrepare) importSeedToLiveStore(ctx context.Context, manifest *locali
 	return nil
 }
 
-// importClosureToStateroot imports the full release/workload closure from the
-// mounted p2 layout into the installed stateroot's containers-storage graphroot,
-// addressed by explicit graphroot (the stateroot's /var/lib/containers/storage
-// under the /mnt deploy prefix). A second store open needs a writable runroot, so a
-// temporary one is created and removed afterwards; the importer is closed (via defer)
-// to release its store locks before the later sync/unmount.
-func (i *IBIPrepare) importClosureToStateroot(ctx context.Context, manifest *localimages.DigestManifest) error {
+// withInstalledStaterootStore opens the installed stateroot's containers-storage
+// graphroot (the stateroot's /var/lib/containers/storage under the /mnt deploy
+// prefix) and invokes fn with an importer bound to it. A second store open needs a
+// writable runroot, so a temporary one is created and removed afterwards; the
+// importer is closed (via defer) to release its store locks before the later
+// sync/unmount. It is the single store-open path shared by the closure import and
+// the post-import self-check, so both read exactly the same store; the self-check
+// relies on the import's importer having been closed first (this helper closes it)
+// to avoid a double-open lock.
+func (i *IBIPrepare) withInstalledStaterootStore(fn func(importer imageImporter) error) error {
 	osname := common.GetStaterootName(i.config.SeedVersion)
 	graphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
 
@@ -415,10 +434,39 @@ func (i *IBIPrepare) importClosureToStateroot(ctx context.Context, manifest *loc
 		}
 	}()
 
-	if err := importer.ImportAll(ctx, i.config.LocalImagesPath, manifest); err != nil {
-		return fmt.Errorf("failed to import image closure into installed stateroot store %s: %w", graphRoot, err)
-	}
-	return nil
+	return fn(importer)
+}
+
+// importClosureToStateroot imports the full release/workload closure from the
+// mounted p2 layout into the installed stateroot's containers-storage graphroot.
+func (i *IBIPrepare) importClosureToStateroot(ctx context.Context, manifest *localimages.DigestManifest) error {
+	return i.withInstalledStaterootStore(func(importer imageImporter) error {
+		if err := importer.ImportAll(ctx, i.config.LocalImagesPath, manifest); err != nil {
+			return fmt.Errorf("failed to import image closure into installed stateroot store: %w", err)
+		}
+		return nil
+	})
+}
+
+// verifyImportedClosure runs the mandatory image self-check: it re-opens the
+// installed stateroot's containers-storage store (the same store the closure was
+// imported into) and confirms every image in the on-media manifest is resident
+// under its canonical name@digest. A missing/unresolvable image means the closure
+// import was incomplete; returning an error here fails Run() before any terminal
+// action so an incomplete node is never powered off / rebooted.
+//
+// The store it reads is the installed graphroot on the installation disk -- read
+// directly in-process, not via the /host chroot the precache step uses -- so it is
+// the authoritative installed-node residency gate and does not depend on p2 being
+// mounted. The residency check itself lives in localimages.VerifyAll so it can
+// later move to the proposed check-usb media-verification tooling.
+func (i *IBIPrepare) verifyImportedClosure(ctx context.Context, manifest *localimages.DigestManifest) error {
+	return i.withInstalledStaterootStore(func(importer imageImporter) error {
+		if err := importer.VerifyAll(ctx, manifest); err != nil {
+			return fmt.Errorf("verifying imported closure in the installed stateroot store: %w", err)
+		}
+		return nil
+	})
 }
 
 // setupPrepareAuthFile ensures a synthetic empty authfile exists at path for the
@@ -497,11 +545,10 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 // registry override applied so the images resolve to the registry they will be
 // pulled from.
 //
-// Disconnected: the seed's own containers.list references, verbatim (registry
-// replacement bypassed), after confirming the v2 digest manifest covers every one
-// of them by exact source reference. The closure import stores each image under
-// name@digest and registers its tagged sources as local aliases, so the references
-// the seed requests resolve locally with `podman image exists`.
+// Disconnected: every image in the on-media digest manifest, by canonical
+// name@digest (see disconnectedPrecacheList). The manifest is already
+// profile-scoped by create-usb, so this covers the full closure the node needs.
+// Presence is checked with `podman image exists`; nothing is pulled.
 func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesConfFile string, manifest *localimages.DigestManifest) ([]string, error) {
 	if i.config.Disconnected {
 		return i.disconnectedPrecacheList(imageListFile, manifest)
@@ -535,16 +582,24 @@ func (i *IBIPrepare) precacheImageList(imageListFile, seedInfoFile, registriesCo
 	return imageList, nil
 }
 
-// disconnectedPrecacheList returns the references the seed actually requests
-// (its containers.list, verbatim) as the disconnected precache presence set, after
-// confirming the digest manifest covers every one of them by exact source
-// reference. Verifying the seed's own references -- not the manifest's digests --
-// is deliberate: the closure import registered each tagged source as a local alias
-// of its imported digest, so `podman image exists <ref>` resolves the exact
-// reference the seed uses. Digest-only verification would pass without proving the
-// seed's requested tag resolves locally. A missing manifest, or a seed requirement
-// the closure does not cover, is a hard failure rather than a silently incomplete
-// precache.
+// disconnectedPrecacheList returns the disconnected precache presence set: one
+// canonical name@digest reference per entry in the on-media digest manifest. The
+// closure import (ImportAll) stored every manifest image under its canonical
+// digest, so `podman image exists <name@digest>` resolves each locally.
+//
+// Driving the set from the whole manifest -- not just the seed's containers.list --
+// is what makes precache cover the full profile-scoped closure: for install-only
+// media that is the seed closure plus ExtraPrecacheImages and recert/lca-cli; for
+// self-contained media it is the entire p3 site closure as well. Because create-usb
+// already emits a profile-scoped manifest, this needs no on-node profile branching.
+// Verifying only the seed's containers.list (as the first disconnected
+// implementation did) would silently leave those extra images unverified.
+//
+// As a retained defense-in-depth invariant, the seed's own containers.list must
+// still be fully covered by the manifest (verifyManifestCoversSeed) before the set
+// is built: a manifest that does not satisfy every seed requirement by exact source
+// reference, or a missing manifest, is a hard failure rather than a silently
+// incomplete precache.
 func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *localimages.DigestManifest) ([]string, error) {
 	if manifest == nil {
 		return nil, errors.New("disconnected precache requires the on-media digest manifest")
@@ -559,8 +614,13 @@ func (i *IBIPrepare) disconnectedPrecacheList(imageListFile string, manifest *lo
 		return nil, err
 	}
 
-	i.log.Infof("Disconnected precache will verify %d image reference(s) required by the seed", len(required))
-	return required, nil
+	precacheSet := make([]string, 0, len(manifest.Images))
+	for _, e := range manifest.Images {
+		precacheSet = append(precacheSet, e.Name+"@"+e.Digest)
+	}
+
+	i.log.Infof("Disconnected precache will verify %d image(s) from the on-media manifest", len(precacheSet))
+	return precacheSet, nil
 }
 
 // readSeedRequiredImages reads the seed's containers.list verbatim (no registry
