@@ -75,6 +75,14 @@
 // index, against the index manifest the selected instance belongs to), and the
 // stored image is re-resolved after the copy to confirm it is present under its
 // canonical digest.
+//
+// VerifyAll provides a standalone store-residency gate over a whole manifest: it
+// confirms every image is recorded and resolvable in the store under its
+// canonical name@digest AND that every source reference the seed requests for it
+// (ImageEntry.Sources) resolves to that same imported image, which a disconnected
+// prepare runs after ImportAll to catch an incomplete import before any terminal
+// action. It is a residency check, not a second integrity pass -- content
+// integrity is already enforced above at import time by the digest-verified copy.
 package localimages
 
 import (
@@ -335,6 +343,114 @@ func (im *Importer) ImportAll(ctx context.Context, mediaRoot string, m *DigestMa
 	return nil
 }
 
+// VerifyAll reports whether every image in the manifest is resident in this
+// Importer's store under its canonical name@digest reference, and whether every
+// source reference the seed requests for it (ImageEntry.Sources) resolves to that
+// same imported image. It is the store-residency / resolvability gate a
+// disconnected prepare runs after ImportAll to confirm the installed node's store
+// holds the full image closure -- addressable by both its canonical reference and
+// every reference the seed's containers.list actually requests -- before any
+// terminal action (power-off / reboot). It is a correctness gate, not a
+// best-effort check.
+//
+// It is a residency check, not a fresh integrity check: content integrity is
+// already enforced at import time by copy.Image's digest-verified copy (see
+// "Selection and verification" above). VerifyAll confirms each manifest image and
+// its source references are recorded and resolvable in the store; it does not
+// re-hash stored layer content.
+//
+// Every entry is checked (not fail-fast): the returned error names every
+// missing/unresolvable image and reports the verified count. It returns nil only
+// when all images resolve. The logic is deliberately factored here -- rather than
+// inline in the prepare flow -- so a future check-usb media-verification tool can
+// reuse the exact same store-residency contract.
+func (im *Importer) VerifyAll(ctx context.Context, m *DigestManifest) error {
+	// Guard the standalone contract: an empty (or nil) manifest must not pass
+	// vacuously. ParseDigestManifest already rejects an empty Images list, but a
+	// future caller (e.g. check-usb) may build the manifest another way.
+	if m == nil || len(m.Images) == 0 {
+		return errors.New("cannot verify store residency: digest manifest has no images")
+	}
+
+	var failures []string
+	for i := range m.Images {
+		e := m.Images[i]
+		if err := im.verifyImage(e); err != nil {
+			im.log.WithFields(logrus.Fields{"name": e.Name, "digest": e.Digest}).
+				WithError(err).Warn("manifest image not resolvable in store")
+			failures = append(failures, err.Error())
+		}
+	}
+
+	verified := len(m.Images) - len(failures)
+	if len(failures) > 0 {
+		return fmt.Errorf("verified %d/%d images resident; %d not resolvable: %s",
+			verified, len(m.Images), len(failures), strings.Join(failures, "; "))
+	}
+	im.log.Infof("verified %d/%d images resident in the store", verified, len(m.Images))
+	return nil
+}
+
+// verifyImage reports whether a single manifest entry is resident in the store
+// under its canonical name@digest reference AND that every source reference the
+// seed requests for it (e.Sources) resolves in the same store to that same
+// imported image. It uses the same containers-storage resolve path
+// (ParseStoreReference + ResolveReference) that ImportImage runs as its post-copy
+// post-condition. It does not re-hash stored content.
+//
+// Verifying the sources -- not only the canonical name@digest -- closes a gap a
+// canonical-only check leaves open. registerSourceAliases skips digest-pinned
+// sources on the assumption they already resolve by their canonical reference,
+// which only holds when the source repository equals e.Name. A manifest may name a
+// digest-pinned source in a repository different from Name: its canonical image is
+// resident (name@digest resolves) and would pass a canonical-only check, yet the
+// reference the seed's containers.list actually requests resolves to nothing. By
+// requiring every source to resolve to the imported image, verifyImage (via
+// VerifyAll) fails such a manifest before any terminal action instead of leaving
+// the node short an image it can never pull offline.
+func (im *Importer) verifyImage(e ImageEntry) error {
+	if err := e.validate(); err != nil {
+		return fmt.Errorf("invalid image entry: %w", err)
+	}
+
+	canonical := e.Name + "@" + e.Digest
+	storedImage, err := im.resolveStoredImage(canonical)
+	if err != nil {
+		return err
+	}
+
+	// Every source reference the seed requests for this image must resolve to the
+	// same stored image. A source that does not resolve -- or resolves to a
+	// different image -- means the reference the node will request at runtime is
+	// unavailable (or bound to the wrong content) offline.
+	for _, src := range e.Sources {
+		srcImage, err := im.resolveStoredImage(src)
+		if err != nil {
+			return fmt.Errorf("source reference %q of %s is not resident: %w", src, canonical, err)
+		}
+		if srcImage.ID != storedImage.ID {
+			return fmt.Errorf("source reference %q of %s resolves to image %s, want the imported image %s",
+				src, canonical, srcImage.ID, storedImage.ID)
+		}
+	}
+	return nil
+}
+
+// resolveStoredImage parses ref as a containers-storage reference in this
+// Importer's store and resolves it to the stored image, returning an error if ref
+// is not resident. It does not re-hash stored content.
+func (im *Importer) resolveStoredImage(ref string) (*cstorage.Image, error) {
+	storeRef, err := istorage.Transport.ParseStoreReference(im.store, ref)
+	if err != nil {
+		return nil, fmt.Errorf("building containers-storage reference for %s: %w", ref, err)
+	}
+	_, img, err := istorage.ResolveReference(storeRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolving stored image %s: %w", ref, err)
+	}
+	return img, nil
+}
+
 // ImportImage selects the layout descriptor matching both e.Digest and e.OCITag,
 // copies that exact descriptor into containers-storage as e.Name@e.Digest, and
 // verifies the stored image is present under its canonical digest.
@@ -412,9 +528,12 @@ func (im *Importer) ImportImage(ctx context.Context, mediaRoot string, m *Digest
 // registerSourceAliases adds each tagged source reference in e.Sources as an
 // additional name on the stored image, so the reference the seed actually
 // requests (e.g. name:tag) resolves locally to the imported digest. Digest-pinned
-// sources are skipped: the image is already stored under its canonical
-// name@digest, so name@digest resolves without an alias. Adding a name the image
-// already carries is a harmless no-op (the store dedupes names).
+// sources are skipped: when the source repository is e.Name the image is already
+// stored under that canonical name@digest, so it resolves without an alias, and
+// adding a name the image already carries is a harmless no-op (the store dedupes
+// names). A digest-pinned source in a different repository is not aliased here and
+// will not resolve; VerifyAll's source-resolution check catches that and fails the
+// prepare rather than leaving the reference unavailable offline.
 func (im *Importer) registerSourceAliases(storedImage *cstorage.Image, e ImageEntry) error {
 	if storedImage == nil {
 		return fmt.Errorf("stored image %s@%s resolved to nil", e.Name, e.Digest)

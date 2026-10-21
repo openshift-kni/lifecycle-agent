@@ -423,8 +423,10 @@ type fakeImporter struct {
 	events      *[]string
 	importedOne []localimages.ImageEntry
 	importedAll int
+	verifiedAll int
 	mediaRoots  []string
 	importErr   error
+	verifyErr   error
 	closed      bool
 }
 
@@ -446,28 +448,43 @@ func (f *fakeImporter) ImportAll(_ context.Context, mediaRoot string, _ *localim
 	return f.importErr
 }
 
+func (f *fakeImporter) VerifyAll(_ context.Context, _ *localimages.DigestManifest) error {
+	f.verifiedAll++
+	if f.events != nil {
+		*f.events = append(*f.events, "verifyClosure")
+	}
+	return f.verifyErr
+}
+
 func (f *fakeImporter) Close() error {
 	f.closed = true
 	return nil
 }
 
 // importerFactory routes newImageImporter calls to the seed importer (the host
-// store resolved from podman info) or the closure importer (the installed
-// stateroot graphroot under ostree/deploy). Both stores are now explicit, so the
-// closure is distinguished by its graphroot living under the stateroot deploy path.
+// store resolved from podman info) or the installed-stateroot importers (graphroot
+// under ostree/deploy). The stateroot store is opened twice -- once for the closure
+// import and once for the post-import self-check -- with the same config, so they
+// are distinguished by order: the first stateroot open is the closure importer, the
+// second is the verify importer.
 type importerFactory struct {
 	seed      *fakeImporter
 	closure   *fakeImporter
+	verify    *fakeImporter
 	events    *[]string
 	importErr error
+	verifyErr error
 }
 
 func (ff *importerFactory) new(_ *logrus.Logger, cfg localimages.StoreConfig) (imageImporter, error) {
-	imp := &fakeImporter{cfg: cfg, events: ff.events, importErr: ff.importErr}
-	if strings.Contains(cfg.GraphRoot, "ostree/deploy") {
-		ff.closure = imp
-	} else {
+	imp := &fakeImporter{cfg: cfg, events: ff.events, importErr: ff.importErr, verifyErr: ff.verifyErr}
+	switch {
+	case !strings.Contains(cfg.GraphRoot, "ostree/deploy"):
 		ff.seed = imp
+	case ff.closure == nil:
+		ff.closure = imp
+	default:
+		ff.verify = imp
 	}
 	return imp, nil
 }
@@ -974,7 +991,7 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	// relative ordering of the recorded events.
 	for _, name := range []string{
 		"listBlockDevices", "mountReadOnly", "parseManifest", "cleanupInstallDevice",
-		"importSeed", "setupStateroot", "importClosure", "sync", "umount",
+		"importSeed", "setupStateroot", "importClosure", "verifyClosure", "sync", "umount",
 	} {
 		assert.GreaterOrEqual(t, idxOf(events, name), 0, "missing event %q", name)
 	}
@@ -984,16 +1001,23 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	// Seed imports before stateroot; closure imports after stateroot.
 	assert.Less(t, idxOf(events, "importSeed"), idxOf(events, "setupStateroot"))
 	assert.Less(t, idxOf(events, "setupStateroot"), idxOf(events, "importClosure"))
-	// Closure import precedes the final sync; p2 is unmounted last, after sync.
-	assert.Less(t, idxOf(events, "importClosure"), idxOf(events, "sync"))
+	// Self-check runs after the closure import (precache precedes it, disabled here)
+	// and before the final sync; p2 is unmounted last, after sync.
+	assert.Less(t, idxOf(events, "importClosure"), idxOf(events, "verifyClosure"))
+	assert.Less(t, idxOf(events, "verifyClosure"), idxOf(events, "sync"))
 	assert.Less(t, idxOf(events, "sync"), idxOf(events, "umount"))
 	assert.Equal(t, "umount", events[len(events)-1], "p2 unmount must be the last action")
 
-	// Closure targeted the installed stateroot graphroot under /mnt.
+	// Closure import and self-check both targeted the installed stateroot graphroot
+	// under /mnt (the same store, opened once each).
+	osname := common.GetStaterootName(cfg.SeedVersion)
+	wantGraphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
 	if assert.NotNil(t, ff.closure) {
-		osname := common.GetStaterootName(cfg.SeedVersion)
-		assert.Equal(t, filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage"),
-			ff.closure.cfg.GraphRoot)
+		assert.Equal(t, wantGraphRoot, ff.closure.cfg.GraphRoot)
+	}
+	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
+		assert.Equal(t, wantGraphRoot, ff.verify.cfg.GraphRoot)
+		assert.Equal(t, 1, ff.verify.verifiedAll, "the self-check must verify the manifest exactly once")
 	}
 }
 
@@ -1109,26 +1133,32 @@ func writeContainersList(t *testing.T, refs ...string) string {
 	return p
 }
 
-// TestDisconnectedPrecacheListVerifiesSeedReferences proves the disconnected
-// precache set is the seed's own containers.list references verbatim (the
-// references that resolve locally via the registered tag aliases), not the
-// manifest's digests -- so `podman image exists` checks the exact references the
-// seed uses. Each reference is covered by an exact source match in the manifest.
-func TestDisconnectedPrecacheListVerifiesSeedReferences(t *testing.T) {
+// TestDisconnectedPrecacheSetEqualsManifestScope proves the disconnected precache
+// presence set is one canonical name@digest per manifest entry -- the full
+// profile-scoped closure -- not just the seed's containers.list. The seed list here
+// references only the seed image, yet the returned set still includes the workload
+// image (an entry absent from containers.list), proving manifest extras (e.g.
+// ExtraPrecacheImages, recert, or the self-contained p3 site closure) are covered.
+func TestDisconnectedPrecacheSetEqualsManifestScope(t *testing.T) {
 	manifest := testManifest()
-	// containers.list carries the seed by digest and the workload by tag; both are
-	// listed as sources on their manifest entries, so both are covered.
-	refs := []string{
-		testSeedImageRef(),
-		"quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.15.0",
-	}
-	listFile := writeContainersList(t, refs...)
+	// containers.list references only the seed (an exact source on its manifest
+	// entry); the workload entry is deliberately NOT listed by the seed.
+	listFile := writeContainersList(t, testSeedImageRef())
 	ibi := &IBIPrepare{log: logrus.New(), config: &ibiconfig.IBIPrepareConfig{Disconnected: true}}
 
 	got, err := ibi.disconnectedPrecacheList(listFile, manifest)
 	assert.NoError(t, err)
-	// The verification set is exactly the seed's requested references.
-	assert.Equal(t, refs, got)
+
+	// One name@digest per manifest entry, in manifest order.
+	want := make([]string, 0, len(manifest.Images))
+	for _, e := range manifest.Images {
+		want = append(want, e.Name+"@"+e.Digest)
+	}
+	assert.Equal(t, want, got)
+	assert.Len(t, got, 2)
+	// The workload image is not in the seed's containers.list but is still precached.
+	assert.Contains(t, got, manifest.Images[1].Name+"@"+manifest.Images[1].Digest,
+		"a manifest image absent from the seed containers.list must still be in the precache set")
 }
 
 // TestDisconnectedPrecacheListNilManifest proves a disconnected precache without a
@@ -1251,5 +1281,113 @@ func TestVerifyManifestCoversSeed(t *testing.T) {
 				assert.NoError(t, err)
 			}
 		})
+	}
+}
+
+// --- Mandatory image self-check gate (CNF-27162) ---
+
+// TestSelfCheckPassesWhenAllPresent drives the disconnected happy path (precache
+// disabled) and proves that when the self-check reports every manifest image
+// resident, Run() proceeds through the terminal action: the manifest is verified
+// exactly once in the installed stateroot store, the final sync runs, p2 is
+// unmounted and the node is shut down.
+func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	ff := &importerFactory{} // verifyErr nil => self-check passes
+	newImageImporter = ff.new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+		Shutdown:            true, // prove the terminal action is reached on a passing self-check
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().
+		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	expectPodmanInfo(mockOps)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", "now").Return("", nil).Times(1)
+
+	err := ibi.Run()
+	assert.NoError(t, err)
+	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
+		assert.Equal(t, 1, ff.verify.verifiedAll, "the self-check must verify the manifest exactly once")
+	}
+}
+
+// TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before any
+// terminal action: when VerifyAll reports a missing image, Run() returns that error
+// and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the final
+// sync or shutdown. The deferred best-effort cleanup still runs, so p2 is unmounted
+// on the way out ("no terminal action on verification failure", not "p2 stays
+// mounted").
+func TestSelfCheckFailsOnMissingImage(t *testing.T) {
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	ff := &importerFactory{verifyErr: fmt.Errorf("image quay.io/x@sha256:dead missing from the store")}
+	newImageImporter = ff.new
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+		Shutdown:            true, // must NOT be honored: the gate fails before any terminal action
+	}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().
+		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	expectPodmanInfo(mockOps)
+	// Deferred best-effort cleanup still unmounts p2 on the error path.
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	// No terminal action: no ostree undeploy, no final sync, no shutdown.
+	ostreeMock.EXPECT().Undeploy(gomock.Any()).Times(0)
+	mockOps.EXPECT().RunInHostNamespace("sync").Times(0)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "image self-check failed")
+	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
+		assert.Equal(t, 1, ff.verify.verifiedAll)
 	}
 }
