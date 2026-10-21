@@ -295,6 +295,17 @@ func (c *IBIPrepareConfig) Validate() error {
 		// recorded in the per-phase result and selects the ibi-status (p4) re-entry guard
 		// behaviour, so an empty or unsupported value is rejected now rather than defaulting
 		// silently. When connected the field is ignored.
+		//
+		// Compatibility boundary: this Validate() runs in ReadIBIConfigFile at the cmd layer
+		// (lca-cli/cmd/ibi.go: runIBI), which log.Fatals before IBIPrepare.Run() mounts the
+		// ibi-status (p4) partition. A disconnected config that reaches this point without a
+		// profile -- notably pre-Profile media that already carries p4 but no profile field --
+		// therefore exits here and never writes prepare.json nor takes the promised powered-on
+		// halt. That boundary is accepted rather than closed: the USB-based disconnected
+		// prepare (p4/Profile) is unreleased, and its sole producer -- create-usb -- always
+		// emits a profile, so "p4 present but no profile" only exists as pre-release dev media.
+		// Routing this validation failure through the p4 finalize path is tracked for
+		// evaluation on CNF-27171.
 		switch c.Profile {
 		case ProfileInstallOnly, ProfileSelfContained:
 		case "":
