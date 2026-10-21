@@ -518,11 +518,12 @@ func useTempStatusPartition(t *testing.T) string {
 }
 
 // statusDevices returns the block-device list a disconnected Run discovers: the p2
-// local-images device and the p4 ibi-status device (both label-matched by Run).
+// local-images device and the p4 ibi-status device (both label-matched by Run). The p4
+// device is reported as ext4, the only filesystem mountStatusPartition accepts.
 func statusDevices(p2, p4 string) []ops.BlockDevice {
 	return []ops.BlockDevice{
 		{Name: p2, Label: common.LocalImagesFSLabel},
-		{Name: p4, Label: common.IBIStatusFSLabel},
+		{Name: p4, Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
 	}
 }
 
@@ -683,12 +684,12 @@ func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
 	}{
 		{"zero p2 devices", []ops.BlockDevice{
 			{Name: "sda", Label: "root"},
-			{Name: "sdp4", Label: common.IBIStatusFSLabel},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
 		}},
 		{"multiple p2 devices", []ops.BlockDevice{
 			{Name: "sdb1", Label: common.LocalImagesFSLabel},
 			{Name: "sdc1", Label: common.LocalImagesFSLabel},
-			{Name: "sdp4", Label: common.IBIStatusFSLabel},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
 		}},
 	}
 

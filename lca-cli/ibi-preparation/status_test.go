@@ -164,6 +164,60 @@ func TestSuccessWriteFailureHaltsPoweredOn(t *testing.T) {
 	assert.True(t, unmounted, "p4 must be unmounted before the terminal action")
 }
 
+// TestSuccessSyncFailureHaltsPoweredOn proves that when the core prepare and the result
+// write both succeed but the final durability sync fails, the node halts powered-on instead
+// of signalling success via power-off: the record may not survive a power loss.
+func TestSuccessSyncFailureHaltsPoweredOn(t *testing.T) {
+	saveSeams(t)
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	dir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileInstallOnly, SeedVersion: "4.15.0", Shutdown: true}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	unmounted := false
+	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { unmounted = true; return nil }}
+
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", fmt.Errorf("sync failed")).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.finalizeDisconnected(sp, 5, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "durability sync failed")
+	assert.True(t, unmounted, "p4 must still be unmounted before the terminal action")
+
+	// The success result is still recorded even though the sync failed.
+	result := readPrepareResult(t, dir)
+	assert.Equal(t, resultSuccess, result.Result)
+}
+
+// TestSuccessUnmountFailureHaltsPoweredOn proves that when the core prepare, result write,
+// and sync all succeed but p4 cannot be unmounted, the node halts powered-on rather than
+// powering off with the removable status filesystem still mounted.
+func TestSuccessUnmountFailureHaltsPoweredOn(t *testing.T) {
+	saveSeams(t)
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	dir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileInstallOnly, SeedVersion: "4.15.0", Shutdown: true}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+
+	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { return fmt.Errorf("umount failed") }}
+
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.finalizeDisconnected(sp, 5, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unmounting the ibi-status partition failed")
+}
+
 // TestInstallOnlySuccessPowersOff proves a successful prepare writes the success result and
 // takes the existing power-off terminal action (install-only), and that a best-effort log
 // bundle failure does not block the result write or the terminal action.
@@ -400,6 +454,39 @@ func TestP4MountFailureFailsClosed(t *testing.T) {
 	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(fmt.Errorf("mount failed")).Times(1)
 	// No wipe; p2 never mounted; node halts powered-on.
+	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+	mockOps.EXPECT().Umount(gomock.Any()).Times(0)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+}
+
+// TestP4NonExt4FailsClosed proves a device that carries the ibi-status label but uses a
+// non-ext4 filesystem (e.g. a hand-altered or mislabeled writable vfat stick) is rejected
+// before it is mounted or adopted as the status partition: the node halts powered-on
+// without wiping and p2 is never touched.
+func TestP4NonExt4FailsClosed(t *testing.T) {
+	stubDisconnectedSeams(t)
+	useTempStatusPartition(t)
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+	// Exactly one device carries the ibi-status label, but it is vfat rather than ext4.
+	devices := []ops.BlockDevice{
+		{Name: "sdb1", Label: common.LocalImagesFSLabel},
+		{Name: "sdb2", Label: common.IBIStatusFSLabel, FSType: "vfat"},
+	}
+	// p4 discovery is the first precondition, so the fstype rejection halts before p2.
+	mockOps.EXPECT().ListBlockDevices().Return(devices, nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
+	// The wrong-filesystem device is never mounted and nothing is wiped.
+	mockOps.EXPECT().Mount(gomock.Any(), gomock.Any()).Times(0)
 	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
 	mockOps.EXPECT().Umount(gomock.Any()).Times(0)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)

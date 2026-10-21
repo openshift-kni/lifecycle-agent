@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
 
 const (
@@ -37,6 +38,12 @@ const (
 	// than powering it off, so a failed or re-entered prepare never emits the
 	// install-only power-off success signal.
 	emergencyTarget = "emergency.target"
+
+	// fsTypeExt4 is the only filesystem the writable ibi-status (p4) partition is ever
+	// created with (see create-usb). Requiring it rejects a device that merely carries the
+	// ibi-status label but uses another filesystem (e.g. a hand-altered or mislabeled
+	// writable vfat stick) before it can be adopted as the status partition.
+	fsTypeExt4 = "ext4"
 )
 
 // errReentryBlocked is the terminal outcome when a boot re-enters a completed install:
@@ -84,28 +91,37 @@ type statusPartition struct {
 }
 
 // mountStatusPartition discovers the writable ibi-status (p4) partition by its
-// filesystem label, requires exactly one such device, mounts it read-write, and confirms
-// it is writable. It is a hard precondition for both media profiles: a disconnected
-// prepare runs it before any destructive disk operation, so 0 or >1 devices, a mount
-// failure, or a read-only filesystem all fail here while the installation disk is still
-// intact. It returns an idempotent unmount closure.
+// filesystem label, requires exactly one such device using the ext4 filesystem, mounts it
+// read-write, and confirms it is writable. It is a hard precondition for both media
+// profiles: a disconnected prepare runs it before any destructive disk operation, so 0 or
+// >1 devices, a non-ext4 filesystem, a mount failure, or a read-only filesystem all fail
+// here while the installation disk is still intact. It returns an idempotent unmount
+// closure.
 func (i *IBIPrepare) mountStatusPartition() (*statusPartition, error) {
 	blockDevices, err := i.ops.ListBlockDevices()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list block devices: %w", err)
 	}
 
-	matches := make([]string, 0, 1)
+	matches := make([]ops.BlockDevice, 0, 1)
 	for _, bd := range blockDevices {
 		if bd.Label == common.IBIStatusFSLabel {
-			matches = append(matches, bd.Name)
+			matches = append(matches, bd)
 		}
 	}
 	if len(matches) != 1 {
 		return nil, fmt.Errorf("expected exactly one block device labelled %q, found %d",
 			common.IBIStatusFSLabel, len(matches))
 	}
-	deviceName := matches[0]
+	// The p4 partition is always ext4 (see create-usb). Requiring the filesystem type -- not
+	// just the label and writability -- rejects a hand-altered or mislabeled writable device
+	// (e.g. a vfat stick labelled "ibi-status") before it can be adopted as the status
+	// partition, while the installation disk is still intact.
+	if matches[0].FSType != fsTypeExt4 {
+		return nil, fmt.Errorf("ibi-status device %s must use the %q filesystem, found %q",
+			matches[0].Name, fsTypeExt4, matches[0].FSType)
+	}
+	deviceName := matches[0].Name
 
 	if err := i.ops.Mount(deviceName, statusPartitionMountDir); err != nil {
 		return nil, fmt.Errorf("failed to mount ibi-status device %s: %w", deviceName, err)
@@ -206,9 +222,11 @@ func (i *IBIPrepare) guardReentry(sp *statusPartition) (blocked bool, err error)
 // finalizeDisconnected records the prepare outcome on the ibi-status partition and
 // performs the terminal action. prepErr is the result of the core prepare (nil on
 // success). The fixed order is: write prepare.json (success or failure) and a best-effort
-// log bundle -> durability sync -> unmount p4 -> terminal action. A failed success-path
-// result write downgrades to halt-powered-on: a successful prepare must not emit the
-// power-off success signal when its required record could not be committed.
+// log bundle -> durability sync -> unmount p4 -> terminal action. On the success path any
+// of a failed result write, a failed durability sync, or a failed p4 unmount downgrades to
+// halt-powered-on: a successful prepare must not emit the power-off success signal when its
+// required record could not be committed, the durability sequence did not complete, or the
+// removable status filesystem is still mounted.
 func (i *IBIPrepare) finalizeDisconnected(sp *statusPartition, imagesExpected int, prepErr error) error {
 	result := i.buildResult(imagesExpected, prepErr)
 
@@ -223,12 +241,19 @@ func (i *IBIPrepare) finalizeDisconnected(sp *statusPartition, imagesExpected in
 	}
 
 	// Durability: flush the whole filesystem so the record survives a power loss, then
-	// unmount before the terminal action.
+	// unmount before the terminal action. A sync or unmount failure on the success path
+	// means the documented durability sequence did not complete (prepare.json may be stale
+	// or unavailable after power loss, or p4 may still be mounted when the stick is pulled),
+	// so both are captured and downgrade the success power-off to a powered-on halt, exactly
+	// like a failed result write.
+	var syncErr error
 	if _, err := i.ops.RunInHostNamespace("sync"); err != nil {
-		i.log.Warnf("failed to sync filesystems before terminal action: %v", err)
+		syncErr = fmt.Errorf("failed to sync filesystems before terminal action: %w", err)
+		i.log.Warnf("%v", syncErr)
 	}
-	if err := sp.unmount(); err != nil {
-		i.log.Warnf("failed to unmount ibi-status partition before terminal action: %v", err)
+	unmountErr := sp.unmount()
+	if unmountErr != nil {
+		i.log.Warnf("failed to unmount ibi-status partition before terminal action: %v", unmountErr)
 	}
 
 	switch {
@@ -239,6 +264,14 @@ func (i *IBIPrepare) finalizeDisconnected(sp *statusPartition, imagesExpected in
 		// Success path, but the required record could not be committed: do not signal
 		// success via power-off; halt powered-on instead.
 		return i.haltPoweredOn(fmt.Errorf("prepare succeeded but recording the result failed: %w", writeErr))
+	case syncErr != nil:
+		// Success path, but the whole-filesystem durability flush failed: the record may not
+		// survive a power loss, so halt powered-on rather than signalling success.
+		return i.haltPoweredOn(fmt.Errorf("prepare succeeded but the final durability sync failed: %w", syncErr))
+	case unmountErr != nil:
+		// Success path, but p4 could not be unmounted: do not power off with the removable
+		// status filesystem still mounted; halt powered-on instead.
+		return i.haltPoweredOn(fmt.Errorf("prepare succeeded but unmounting the ibi-status partition failed: %w", unmountErr))
 	default:
 		// Success: existing terminal behaviour (install-only powers off on success; the
 		// self-contained shutdown/pivot split remains CNF-27164's scope).
