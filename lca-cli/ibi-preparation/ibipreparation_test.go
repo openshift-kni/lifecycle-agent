@@ -1492,16 +1492,20 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	statusDir := useTempStatusPartition(t)
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 	expectPodmanInfo(mockOps)
 	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	// The core flow syncs once; the result write-back syncs again before the terminal action.
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(2)
 	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", "now").Return("", nil).Times(1)
 
 	err := ibi.Run()
@@ -1509,14 +1513,18 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
 		assert.Equal(t, 1, ff.verify.verifiedAll, "the self-check must verify the manifest exactly once")
 	}
+	// The disconnected flow records a successful prepare on the p4 partition.
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultSuccess, result.Result)
 }
 
-// TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before any
-// terminal action: when VerifyAll reports a missing image, Run() returns that error
-// and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the final
-// sync or shutdown. The deferred best-effort cleanup still runs, so p2 is unmounted
-// on the way out ("no terminal action on verification failure", not "p2 stays
-// mounted").
+// TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before the
+// success terminal action: when VerifyAll reports a missing image, Run() returns that
+// error and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the
+// core sync, or a power-off shutdown. The failure is still finalized on the ibi-status
+// (p4) partition -- a failure result is written, the finalize sync runs, p2 and p4 are
+// unmounted -- and the node is halted powered-on (never powered off) even though
+// Shutdown is set.
 func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())
@@ -1544,18 +1552,24 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	statusDir := useTempStatusPartition(t)
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 	expectPodmanInfo(mockOps)
-	// Deferred best-effort cleanup still unmounts p2 on the error path.
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
-	// No terminal action: no ostree undeploy, no final sync, no shutdown.
+	// The gate fails before postDeployment / cleanupRhcosSysroot, so there is no ostree
+	// undeploy and no core sync. The failure is still finalized on p4: the failure result is
+	// written, the finalize sync runs, p2 and p4 are unmounted, and the node is halted
+	// powered-on (never powered off) despite Shutdown being set.
 	ostreeMock.EXPECT().Undeploy(gomock.Any()).Times(0)
-	mockOps.EXPECT().RunInHostNamespace("sync").Times(0)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()
@@ -1564,4 +1578,7 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
 		assert.Equal(t, 1, ff.verify.verifiedAll)
 	}
+	// A failure result is recorded on p4 so a later boot can read how prepare ended.
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultFailure, result.Result)
 }
