@@ -257,6 +257,8 @@ func sha256File(path string) (string, error) {
 // disconnected offline-prepare invariant and the cross-story on-media paths, and carries
 // Shutdown verbatim (install-only true ⇒ shutdown; self-contained false ⇒ the binary pivots,
 // CNF-27164). m.Shutdown is non-nil here: Validate rejects a nil Shutdown before any build.
+// Profile mirrors the manifest mode (the Mode values are identical to the ibiconfig Profile
+// constants); a disconnected config must carry it or the prepare phase's Validate rejects it.
 func deriveIBIPrepareConfig(m *Manifest) ibiconfig.IBIPrepareConfig {
 	return ibiconfig.IBIPrepareConfig{
 		SeedImage:           m.SeedImage,
@@ -266,6 +268,7 @@ func deriveIBIPrepareConfig(m *Manifest) ibiconfig.IBIPrepareConfig {
 		Shutdown:            m.Shutdown != nil && *m.Shutdown,
 		LocalImagesPath:     common.LocalImagesMountPath,
 		ExpectedDigestsPath: filepath.Join(common.LocalImagesMountPath, digestManifestFileName),
+		Profile:             string(m.Mode),
 	}
 }
 
