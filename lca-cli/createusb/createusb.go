@@ -250,15 +250,26 @@ func (m *Manifest) validateRequiredFields() error {
 	return m.validateRHCOSLiveISO()
 }
 
+// validateHTTPSURL returns an error unless rawURL parses to an https url with a non-empty
+// host, so an unusable source such as "https://" (no host) is rejected. It is the single
+// source of truth for the RHCOS live ISO scheme/host rule, shared by
+// Manifest.validateRHCOSLiveISO (in-pipeline validation) and fetchAndVerifyISO
+// (defense-in-depth before download) so the rule and the "https url with a host" wording
+// cannot drift between the two call sites.
+func validateHTTPSURL(rawURL string) error {
+	if u, err := url.Parse(rawURL); err != nil || u.Scheme != schemeHTTPS || u.Host == "" {
+		return fmt.Errorf("must be an https url with a host")
+	}
+	return nil
+}
+
 // validateRHCOSLiveISO enforces an HTTPS url and a well-formed SHA-256 digest.
 func (m *Manifest) validateRHCOSLiveISO() error {
 	if m.RHCOSLiveISO.URL == "" {
 		return fmt.Errorf("rhcosLiveIso.url is required")
 	}
-	// Parse the URL and require an https scheme and a non-empty host so an unusable
-	// source such as "https://" (no host) fails the build rather than being accepted.
-	if u, err := url.Parse(m.RHCOSLiveISO.URL); err != nil || u.Scheme != schemeHTTPS || u.Host == "" {
-		return fmt.Errorf("rhcosLiveIso.url must be an https url with a host")
+	if err := validateHTTPSURL(m.RHCOSLiveISO.URL); err != nil {
+		return fmt.Errorf("rhcosLiveIso.url %w", err)
 	}
 	if m.RHCOSLiveISO.SHA256 == "" {
 		return fmt.Errorf("rhcosLiveIso.sha256 is required")

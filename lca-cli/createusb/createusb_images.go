@@ -1015,6 +1015,38 @@ func (*containersImageMirrorer) MirrorToLayout(ctx context.Context, imageRef, de
 	return copyIntoLayout(ctx, srcRef, destLayoutDir, ociTag, authFile)
 }
 
+// withMountedImage pulls image with the host podman, mounts it, and invokes fn with the
+// mountpoint, unmounting and removing the image on every exit path (including a mount
+// failure). The cleanup error is surfaced only when the pull, mount, and fn all
+// succeeded, so a real failure is never masked by a cleanup error.
+//
+// It factors the shared podman pull → defer cleanup → mount lifecycle used by both
+// opsSeedClosureReader (here) and opsLCABinaryExtractor (createusb_p1_content.go); each
+// caller supplies the image-specific read via fn.
+func withMountedImage(o ops.Ops, image, authFile string, fn func(mountpoint string) error) (err error) {
+	pullArgs := []string{"pull"}
+	if authFile != "" {
+		pullArgs = append(pullArgs, "--authfile", authFile)
+	}
+	pullArgs = append(pullArgs, image)
+	if _, err := o.RunInHostNamespace("podman", pullArgs...); err != nil {
+		return fmt.Errorf("pulling image %q: %w", image, err)
+	}
+	// Clean up the pulled image on every exit path, including a mount failure below.
+	// UnmountAndRemoveImage is a no-op unmount when the image was never mounted.
+	defer func() {
+		if umErr := o.UnmountAndRemoveImage(image); umErr != nil && err == nil {
+			err = fmt.Errorf("cleaning up image %q: %w", image, umErr)
+		}
+	}()
+
+	mountpoint, err := o.MountImage(image)
+	if err != nil {
+		return fmt.Errorf("mounting image %q: %w", image, err)
+	}
+	return fn(mountpoint)
+}
+
 // opsSeedClosureReader reads the seed image's embedded containers.list by pulling
 // and mounting the seed image with the host podman via ops.
 type opsSeedClosureReader struct {
@@ -1025,32 +1057,18 @@ type opsSeedClosureReader struct {
 // ReadContainersList pulls and mounts the seed image, reads its root
 // /containers.list, and returns the deduplicated non-empty references.
 func (r *opsSeedClosureReader) ReadContainersList(seedImage, authFile string) (list []string, err error) {
-	pullArgs := []string{"pull"}
-	if authFile != "" {
-		pullArgs = append(pullArgs, "--authfile", authFile)
-	}
-	pullArgs = append(pullArgs, seedImage)
-	if _, err := r.ops.RunInHostNamespace("podman", pullArgs...); err != nil {
-		return nil, fmt.Errorf("pulling seed image %q: %w", seedImage, err)
-	}
-	// Clean up the pulled image on every exit path, including a mount failure below.
-	// UnmountAndRemoveImage is a no-op unmount when the image was never mounted.
-	defer func() {
-		if umErr := r.ops.UnmountAndRemoveImage(seedImage); umErr != nil && err == nil {
-			err = fmt.Errorf("cleaning up seed image %q: %w", seedImage, umErr)
+	err = withMountedImage(r.ops, seedImage, authFile, func(mountpoint string) error {
+		data, err := r.ops.ReadFile(filepath.Join(mountpoint, common.ContainersListFileName))
+		if err != nil {
+			return fmt.Errorf("reading %s from seed image: %w", common.ContainersListFileName, err)
 		}
-	}()
-
-	mountpoint, err := r.ops.MountImage(seedImage)
+		list = parseContainersList(data)
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("mounting seed image %q: %w", seedImage, err)
+		return nil, err
 	}
-
-	data, err := r.ops.ReadFile(filepath.Join(mountpoint, common.ContainersListFileName))
-	if err != nil {
-		return nil, fmt.Errorf("reading %s from seed image: %w", common.ContainersListFileName, err)
-	}
-	return parseContainersList(data), nil
+	return list, nil
 }
 
 // parseContainersList splits a containers.list file (one reference per line) into a

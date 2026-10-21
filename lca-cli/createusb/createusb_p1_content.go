@@ -51,7 +51,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,9 +221,8 @@ func buildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISO
 // enforced the URL/digest shape; this re-checks the scheme as defense in depth because the
 // download must never fall back to plain HTTP.
 func fetchAndVerifyISO(ctx context.Context, fetcher isoFetcher, iso RHCOSLiveISO, destPath string) error {
-	u, err := url.Parse(iso.URL)
-	if err != nil || u.Scheme != schemeHTTPS || u.Host == "" {
-		return fmt.Errorf("rhcos live ISO url %q must be an https url with a host", iso.URL)
+	if err := validateHTTPSURL(iso.URL); err != nil {
+		return fmt.Errorf("rhcos live ISO url %q %w", iso.URL, err)
 	}
 	if err := fetcher.FetchToFile(ctx, iso.URL, destPath); err != nil {
 		return fmt.Errorf("fetching rhcos live ISO from %q: %w", iso.URL, err)
@@ -419,43 +417,24 @@ func (f *httpISOFetcher) FetchToFile(ctx context.Context, rawURL, destPath strin
 }
 
 // opsLCABinaryExtractor is the production lcaBinaryExtractor. It pulls and mounts the
-// --lca-image container and copies the lca-cli binary out, reusing the pull/mount/cleanup
-// pattern of opsSeedClosureReader in createusb_images.go.
+// --lca-image container and copies the lca-cli binary out, sharing the pull/mount/cleanup
+// lifecycle (withMountedImage) with opsSeedClosureReader in createusb_images.go.
 type opsLCABinaryExtractor struct {
 	ops ops.Ops
 	log *logrus.Logger
 }
 
-func (e *opsLCABinaryExtractor) ExtractLCABinary(lcaImage, authFile, destPath string) (err error) {
-	pullArgs := []string{"pull"}
-	if authFile != "" {
-		pullArgs = append(pullArgs, "--authfile", authFile)
-	}
-	pullArgs = append(pullArgs, lcaImage)
-	if _, err := e.ops.RunInHostNamespace("podman", pullArgs...); err != nil {
-		return fmt.Errorf("pulling lca-cli image %q: %w", lcaImage, err)
-	}
-	// Clean up the pulled image on every exit path, including a mount failure below.
-	// UnmountAndRemoveImage is a no-op unmount when the image was never mounted.
-	defer func() {
-		if umErr := e.ops.UnmountAndRemoveImage(lcaImage); umErr != nil && err == nil {
-			err = fmt.Errorf("cleaning up lca-cli image %q: %w", lcaImage, umErr)
+func (e *opsLCABinaryExtractor) ExtractLCABinary(lcaImage, authFile, destPath string) error {
+	return withMountedImage(e.ops, lcaImage, authFile, func(mountpoint string) error {
+		data, err := e.ops.ReadFile(filepath.Join(mountpoint, lcaBinarySourcePath))
+		if err != nil {
+			return fmt.Errorf("reading %s from lca-cli image: %w", lcaBinarySourcePath, err)
 		}
-	}()
-
-	mountpoint, err := e.ops.MountImage(lcaImage)
-	if err != nil {
-		return fmt.Errorf("mounting lca-cli image %q: %w", lcaImage, err)
-	}
-
-	data, err := e.ops.ReadFile(filepath.Join(mountpoint, lcaBinarySourcePath))
-	if err != nil {
-		return fmt.Errorf("reading %s from lca-cli image: %w", lcaBinarySourcePath, err)
-	}
-	if err := os.WriteFile(destPath, data, stagedLCABinaryMode); err != nil {
-		return fmt.Errorf("writing extracted lca-cli binary: %w", err)
-	}
-	return nil
+		if err := os.WriteFile(destPath, data, stagedLCABinaryMode); err != nil {
+			return fmt.Errorf("writing extracted lca-cli binary: %w", err)
+		}
+		return nil
+	})
 }
 
 // opsISOCustomizer is the production isoCustomizer backed by the in-tree isoeditor primitive
