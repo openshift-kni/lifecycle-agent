@@ -104,10 +104,18 @@ not download the ISO, populate images or site configuration, or verify bootabili
 **The output is not bootable installation media.** `--write-device` remains deferred.
 
 The command reads a single YAML or JSON manifest and validates its schema and fields
-before creating the placeholder image. Image mirroring (`BuildImageLayout`) and p3
-content rendering (`RenderP3Tree`) are implemented as separate building blocks but
-are not yet called by `create-usb`. For the self-contained p3 config tree, digest
-pinning, and offline mirror-resource rules those stages enforce, see
+before creating the placeholder image. The p1 live-ISO build (`BuildLiveISO`), image
+mirroring (`BuildImageLayout`), and p3 content rendering (`RenderP3Tree`) are
+implemented as separate building blocks but are not yet called by `create-usb`.
+`BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its sha256 before
+use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the build),
+embeds a small ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
+customized ISO that is written into p1 once wired. The exact shipping `lca-cli` binary is
+extracted from `--lca-image` and **staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather
+than embedded in the ISO ignition, because at ~90 MB it far exceeds the fixed ISO ignition
+embed area; the embedded unit execs it from there once p2 is mounted. For the verified-ISO
+contract and the embedded-ignition details, and for the self-contained p3 config tree,
+digest pinning, and offline mirror-resource rules, see
 [docs/create-usb.md](../docs/create-usb.md).
 
 Creating the partition table requires a Linux host with loop-device access and
@@ -126,7 +134,7 @@ labels:
 
 | Partition | Label | Size | Modes | Content today |
 | --- | --- | --- | --- | --- |
-| p1 | `live-iso` | 2 GiB | both | GPT reservation only (no ISO bytes) |
+| p1 | `live-iso` | 2 GiB | both | GPT reservation only today; the verified, ignition-customized bootable live ISO (`BuildLiveISO`) is written here once wired (CNF-27171) |
 | p2 | `ibi-images` | 8 GiB | both | Empty ext4 |
 | p3 | `cluster-config` | 256 MiB | self-contained only | Empty ext4 |
 | p4 | `ibi-status` | 64 MiB | both | Empty ext4 |
