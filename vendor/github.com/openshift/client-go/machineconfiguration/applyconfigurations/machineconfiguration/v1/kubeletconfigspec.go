@@ -4,6 +4,7 @@ package v1
 
 import (
 	configv1 "github.com/openshift/api/config/v1"
+	machineconfigurationv1 "github.com/openshift/api/machineconfiguration/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
@@ -11,22 +12,44 @@ import (
 // KubeletConfigSpecApplyConfiguration represents a declarative configuration of the KubeletConfigSpec type for use
 // with apply.
 //
-// KubeletConfigSpec defines the desired state of KubeletConfig
+// KubeletConfigSpec configures the kubelet running on cluster nodes.
 type KubeletConfigSpecApplyConfiguration struct {
-	AutoSizingReserved *bool  `json:"autoSizingReserved,omitempty"`
-	LogLevel           *int32 `json:"logLevel,omitempty"`
-	// machineConfigPoolSelector selects which pools the KubeletConfig shoud apply to.
-	// A nil selector will result in no pools being selected.
+	// autoSizingReserved controls whether system-reserved CPU and memory are automatically
+	// calculated based on each node's installed capacity. When set to true, this prevents node failure
+	// from resource starvation of system components (kubelet, CRI-O) without manual configuration.
+	// When omitted, this means the user has no opinion and the platform is left to choose a reasonable default,
+	// which is subject to change over time. The current default is true for worker nodes and false for control plane nodes.
+	// When set to false, automatic resource reservation is disabled and manual settings must be configured.
+	AutoSizingReserved *bool `json:"autoSizingReserved,omitempty"`
+	// logLevel sets the kubelet log verbosity, controlling the amount of detail in kubelet logs.
+	// Valid values range from 0 (minimal logging) to 10 (maximum verbosity with trace-level detail).
+	// Higher log levels may impact node performance. When omitted, the platform chooses a reasonable default,
+	// which is subject to change over time. The current default is 2 (standard informational logging).
+	LogLevel *int32 `json:"logLevel,omitempty"`
+	// machineConfigPoolSelector selects which pools the KubeletConfig should apply to.
+	// When omitted or set to an empty selector {}, no pools are selected, which is equivalent
+	// to not matching any MachineConfigPool.
 	MachineConfigPoolSelector *metav1.LabelSelectorApplyConfiguration `json:"machineConfigPoolSelector,omitempty"`
-	// kubeletConfig fields are defined in kubernetes upstream. Please refer to the types defined in the version/commit used by
-	// OpenShift of the upstream kubernetes. It's important to note that, since the fields of the kubelet configuration are directly fetched from
-	// upstream the validation of those values is handled directly by the kubelet. Please refer to the upstream version of the relevant kubernetes
-	// for the valid values of these fields. Invalid values of the kubelet configuration fields may render cluster nodes unusable.
+	// kubeletConfig contains upstream Kubernetes kubelet configuration fields.
+	// Values are validated by the kubelet itself. Invalid values may render nodes unusable.
+	// Refer to OpenShift documentation for the Kubernetes version corresponding to your
+	// OpenShift release to find valid kubelet configuration options.
 	KubeletConfig *runtime.RawExtension `json:"kubeletConfig,omitempty"`
-	// If unset, the default is based on the apiservers.config.openshift.io/cluster resource.
-	// Note that only Old and Intermediate profiles are currently supported, and
-	// the maximum available minTLSVersion is VersionTLS12.
+	// tlsSecurityProfile configures TLS settings for the kubelet.
+	// When omitted, the TLS configuration defaults to the value from apiservers.config.openshift.io/cluster.
+	// When specified, the type field can be set to either "Old", "Intermediate", "Modern", "Custom" or omitted for backward compatibility.
 	TLSSecurityProfile *configv1.TLSSecurityProfile `json:"tlsSecurityProfile,omitempty"`
+	// systemGomaxprocsBehavior controls whether the kubelet-auto-node-size service automatically configures
+	// GOMAXPROCS for kubelet and CRI-O system services based on the system reserved CPU allocation.
+	// Valid values are "Autosize" and "Disabled".
+	// When set to "Autosize", the GOMAXPROCS environment variable for kubelet and CRI-O is set to
+	// max(ceil(system_reserved_cpu), 1). This optimizes the runtime parallelism of these Go-based system
+	// services based on their CPU allocation rather than total node capacity.
+	// When set to "Disabled", automatic GOMAXPROCS configuration is disabled and the system services
+	// use Go's default GOMAXPROCS behavior.
+	// When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time.
+	// The current default is "Disabled".
+	SystemGomaxprocsBehavior *machineconfigurationv1.GomaxprocsBehaviorType `json:"systemGomaxprocsBehavior,omitempty"`
 }
 
 // KubeletConfigSpecApplyConfiguration constructs a declarative configuration of the KubeletConfigSpec type for use with
@@ -72,5 +95,13 @@ func (b *KubeletConfigSpecApplyConfiguration) WithKubeletConfig(value runtime.Ra
 // If called multiple times, the TLSSecurityProfile field is set to the value of the last call.
 func (b *KubeletConfigSpecApplyConfiguration) WithTLSSecurityProfile(value configv1.TLSSecurityProfile) *KubeletConfigSpecApplyConfiguration {
 	b.TLSSecurityProfile = &value
+	return b
+}
+
+// WithSystemGomaxprocsBehavior sets the SystemGomaxprocsBehavior field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SystemGomaxprocsBehavior field is set to the value of the last call.
+func (b *KubeletConfigSpecApplyConfiguration) WithSystemGomaxprocsBehavior(value machineconfigurationv1.GomaxprocsBehaviorType) *KubeletConfigSpecApplyConfiguration {
+	b.SystemGomaxprocsBehavior = &value
 	return b
 }
