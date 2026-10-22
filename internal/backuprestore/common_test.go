@@ -366,6 +366,22 @@ func TestSortBackupSpecsByApplyWave(t *testing.T) {
 		assert.Equal(t, "b", groups[1][0].Name)
 		assert.Equal(t, "d", groups[1][1].Name)
 	})
+
+	t.Run("negative apply-wave does not panic and groups correctly", func(t *testing.T) {
+		specs := []BackupSpec{
+			{Name: "b", ApplyWave: "0"},
+			{Name: "a", ApplyWave: "-1"},
+			{Name: "c", ApplyWave: "-1"},
+		}
+		groups, err := SortBackupSpecsByApplyWave(specs)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(groups))
+		assert.Equal(t, 2, len(groups[0]))
+		assert.Equal(t, "a", groups[0][0].Name)
+		assert.Equal(t, "c", groups[0][1].Name)
+		assert.Equal(t, 1, len(groups[1]))
+		assert.Equal(t, "b", groups[1][0].Name)
+	})
 }
 
 func TestExtractRestoreSpecsFromConfigmaps(t *testing.T) {
@@ -577,6 +593,47 @@ func TestValidateBackupRestoreMapping(t *testing.T) {
 		}
 		assert.NoError(t, ValidateBackupRestoreMapping(restores))
 	})
+}
+
+func TestValidateBackupSpecs(t *testing.T) {
+	t.Run("specs without legacy field pass", func(t *testing.T) {
+		specs := []BackupSpec{
+			{Name: "b1", IncludedNamespaceScopedResources: []string{"configmaps"}},
+			{Name: "b2", IncludedClusterScopedResources: []string{"clusterroles"}},
+		}
+		assert.NoError(t, ValidateBackupSpecs(specs))
+	})
+
+	t.Run("legacy includedResources field is rejected", func(t *testing.T) {
+		specs := []BackupSpec{
+			{Name: "b1", IncludedResources: []string{"deployments"}},
+		}
+		err := ValidateBackupSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "includedResources")
+	})
+}
+
+func TestExtractBackupSpecsParsesLegacyIncludedResources(t *testing.T) {
+	cm := corev1.ConfigMap{
+		Data: map[string]string{
+			"backup.yaml": `
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: legacy-backup
+spec:
+  includedResources:
+    - deployments
+    - configmaps
+`,
+		},
+	}
+	specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+	assert.NoError(t, err)
+	assert.Len(t, specs, 1)
+	assert.Equal(t, []string{"deployments", "configmaps"}, specs[0].IncludedResources)
+	assert.Error(t, ValidateBackupSpecs(specs))
 }
 
 func TestFindRestoreForBackup(t *testing.T) {
