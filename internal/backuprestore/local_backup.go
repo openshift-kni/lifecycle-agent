@@ -394,6 +394,8 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 		}
 	}
 
+	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedNamespaceScopedResources)
+
 	listOpts := metav1.ListOptions{}
 	if spec.LabelSelector != nil {
 		selector, err := metav1.LabelSelectorAsSelector(spec.LabelSelector)
@@ -404,16 +406,20 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	}
 
 	for _, resourceType := range resourceTypes {
-		if isExcluded(resourceType, spec.ExcludedResources, spec.ExcludedNamespaceScopedResources) {
-			continue
-		}
-
-		gvr, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+		gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			h.Log.Info("Resource type not found in API discovery, skipping",
+				"resource", resourceType, "namespace", namespace)
+			continue
+		}
+		if excluded[gvr.GroupResource().String()] {
+			continue
+		}
+		if !namespaced {
+			h.Log.Info("Resource configured as namespace-scoped is cluster-scoped per discovery, skipping in namespace listing",
 				"resource", resourceType, "namespace", namespace)
 			continue
 		}
@@ -436,16 +442,23 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 }
 
 func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList) ([]*unstructured.Unstructured, error) {
-	if isExcluded(resourceType, spec.ExcludedResources, spec.ExcludedClusterScopedResources) {
-		return nil, nil
-	}
-
-	gvr, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+	gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		h.Log.Info("Cluster-scoped resource type not found in API discovery, skipping",
+			"resource", resourceType)
+		return nil, nil
+	}
+
+	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedClusterScopedResources)
+	if excluded[gvr.GroupResource().String()] {
+		return nil, nil
+	}
+
+	if namespaced {
+		h.Log.Info("Resource configured as cluster-scoped is namespace-scoped per discovery, skipping cluster-scoped listing",
 			"resource", resourceType)
 		return nil, nil
 	}
@@ -525,57 +538,77 @@ func shouldPreserveStatus(resource *unstructured.Unstructured, statusResources m
 	return statusResources[pluralizeKind(kind)]
 }
 
-// isExcluded reports whether the given resource type matches any entry in the
-// provided exclusion lists. A resource matches either by its full type string
-// (e.g. "deployments.apps") or by its bare resource name (e.g. "deployments"),
-// case-insensitively.
-func isExcluded(resource string, excludedLists ...[]string) bool {
-	bare := strings.SplitN(resource, ".", 2)[0]
+// excludedGroupResources resolves each configured exclusion through the resolver
+// and returns the set of canonical GroupResource strings to exclude, so that
+// inclusions and exclusions are compared in a normalized form regardless of
+// whether they were written as plural, singular, Kind-like, short-name, bare or
+// qualified. Entries that cannot be resolved are skipped: a resource type absent
+// from discovery is never fetched, so it cannot be included either.
+func excludedGroupResources(apiResourceLists []*metav1.APIResourceList, excludedLists ...[]string) map[string]bool {
+	excluded := make(map[string]bool)
 	for _, list := range excludedLists {
-		for _, excluded := range list {
-			if strings.EqualFold(resource, excluded) || strings.EqualFold(bare, excluded) {
-				return true
+		for _, entry := range list {
+			gvr, _, found, err := resolveResourceGVR(entry, apiResourceLists)
+			if err != nil || !found {
+				continue
 			}
+			excluded[gvr.GroupResource().String()] = true
+		}
+	}
+	return excluded
+}
+
+// resourceMatches reports whether an APIResource is referred to by the given
+// name, matching its plural Name, SingularName, Kind or any advertised
+// ShortName, case-insensitively.
+func resourceMatches(apiResource metav1.APIResource, name string) bool {
+	if strings.EqualFold(apiResource.Name, name) ||
+		strings.EqualFold(apiResource.SingularName, name) ||
+		strings.EqualFold(apiResource.Kind, name) {
+		return true
+	}
+	for _, short := range apiResource.ShortNames {
+		if strings.EqualFold(short, name) {
+			return true
 		}
 	}
 	return false
 }
 
-func parseResourceType(resourceType string) schema.GroupVersionResource {
-	parts := strings.SplitN(resourceType, ".", 2)
-	resource := parts[0]
-	group := ""
-	if len(parts) > 1 {
-		group = parts[1]
-	}
-	return schema.GroupVersionResource{
-		Group:    group,
-		Version:  "v1",
-		Resource: resource,
-	}
-}
-
 // resolveResourceGVR resolves a user-provided resource type string to its
-// preferred GroupVersionResource using the supplied server-preferred API
-// resource lists (from discovery).
+// canonical, preferred GroupVersionResource using the supplied server-preferred
+// API resource lists (from discovery). The resource portion is parsed with
+// schema.ParseGroupResource and matched against an APIResource's plural Name,
+// SingularName, Kind (case-insensitively) and advertised ShortNames, so bare,
+// singular, Kind-like and short-name forms all resolve (e.g.
+// "dataprotectionapplications", "dataprotectionapplication",
+// "DataProtectionApplication", "dpa"). The returned GVR is always the canonical
+// preferred one, groupVersion.WithResource(APIResource.Name).
 //
 // For qualified names like "deployments.apps" or "routes.route.openshift.io"
 // the explicit group is honored. For bare names like "lvmclusters" the matching
 // API group is discovered. If a bare name matches more than one API group, an
-// ambiguity error is returned instead of silently falling back to core/v1, so
-// the caller can surface the conflict and fail the backup.
+// ambiguity error is returned instead of guessing, so the caller can surface
+// the conflict and fail the backup. No pluralization or core/v1 fallback is
+// performed.
 //
-// The second return value reports whether the resource type was found in
+// The found return value reports whether the resource type was found in
 // discovery at all; a value of false (with a nil error) means the resource is
-// absent from the cluster and should be skipped.
-func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResourceList) (schema.GroupVersionResource, bool, error) {
-	parsed := parseResourceType(resourceType)
-	resourceName := strings.ToLower(parsed.Resource)
+// absent from the cluster and should be skipped. The namespaced return value
+// reflects APIResource.Namespaced so the caller can validate scope and select
+// the correct dynamic-client operation.
+func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResourceList) (schema.GroupVersionResource, bool, bool, error) {
+	parsed := schema.ParseGroupResource(resourceType)
+	wanted := parsed.Resource
 	explicitGroup := parsed.Group
 
-	// Collect one candidate GVR per matching API group (ServerPreferredResources
+	type candidate struct {
+		gvr        schema.GroupVersionResource
+		namespaced bool
+	}
+	// Collect one candidate per matching API group (ServerPreferredResources
 	// already returns only the preferred version for each group).
-	candidatesByGroup := make(map[string]schema.GroupVersionResource)
+	candidatesByGroup := make(map[string]candidate)
 	var groups []string
 	for _, list := range apiResourceLists {
 		if list == nil {
@@ -585,19 +618,22 @@ func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResou
 		if err != nil {
 			continue
 		}
+		if explicitGroup != "" && gv.Group != explicitGroup {
+			continue
+		}
 		for _, apiResource := range list.APIResources {
 			// Skip subresources such as "pods/status".
 			if strings.Contains(apiResource.Name, "/") {
 				continue
 			}
-			if !strings.EqualFold(apiResource.Name, resourceName) {
-				continue
-			}
-			if explicitGroup != "" && gv.Group != explicitGroup {
+			if !resourceMatches(apiResource, wanted) {
 				continue
 			}
 			if _, ok := candidatesByGroup[gv.Group]; !ok {
-				candidatesByGroup[gv.Group] = gv.WithResource(apiResource.Name)
+				candidatesByGroup[gv.Group] = candidate{
+					gvr:        gv.WithResource(apiResource.Name),
+					namespaced: apiResource.Namespaced,
+				}
 				groups = append(groups, gv.Group)
 			}
 		}
@@ -605,12 +641,13 @@ func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResou
 
 	switch len(candidatesByGroup) {
 	case 0:
-		return schema.GroupVersionResource{}, false, nil
+		return schema.GroupVersionResource{}, false, false, nil
 	case 1:
-		return candidatesByGroup[groups[0]], true, nil
+		c := candidatesByGroup[groups[0]]
+		return c.gvr, c.namespaced, true, nil
 	default:
 		sort.Strings(groups)
-		return schema.GroupVersionResource{}, false, fmt.Errorf(
+		return schema.GroupVersionResource{}, false, false, fmt.Errorf(
 			"ambiguous resource %q matches multiple API groups %v; qualify it as <resource>.<group>",
 			resourceType, groups)
 	}
