@@ -44,7 +44,7 @@ import (
 
 type (
 	UpgradeHandler interface {
-		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, targetDir string) (ctrl.Result, error)
+		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		HandleRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (ctrl.Result, error)
 		PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
@@ -138,22 +138,13 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		return requeueWithHealthCheckInterval(), nil
 	}
 
-	u.Log.Info("Remounting sysroot")
-	if err := u.Ops.RemountSysroot(); err != nil {
-		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
-	}
-
-	stateroot := common.GetDesiredStaterootName(ibu)
-	staterootPath := getStaterootPath(stateroot)
-	staterootVarPath := getStaterootVarPath(stateroot)
-
 	utils.SetUpgradeStatusInProgress(ibu, "Backing up Application Data")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
 	u.Log.Info("Handling local backup")
-	ctrlResult, err := u.HandleBackup(ctx, ibu, staterootVarPath)
+	ctrlResult, err := u.HandleBackup(ctx, ibu)
 	if err != nil {
 		if backuprestore.IsBRFailedValidationError(err) ||
 			backuprestore.IsBRFailedError(err) {
@@ -168,6 +159,15 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 		utils.SetUpgradeStatusInProgress(ibu, "Backup of Application Data is in progress")
 		return ctrlResult, nil
 	}
+
+	u.Log.Info("Remounting sysroot")
+	if err := u.Ops.RemountSysroot(); err != nil {
+		return requeueWithError(fmt.Errorf("error while remounting sysroot: %w", err))
+	}
+
+	stateroot := common.GetDesiredStaterootName(ibu)
+	staterootPath := getStaterootPath(stateroot)
+	staterootVarPath := getStaterootVarPath(stateroot)
 
 	utils.SetUpgradeStatusInProgress(ibu, "Exporting Policy and Config Manifests")
 	if updateErr := utils.UpdateIBUStatus(ctx, u.Client, ibu); updateErr != nil {
@@ -432,7 +432,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 }
 
 // HandleBackup manages backup flow using local backup
-func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, targetDir string) (ctrl.Result, error) {
+func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	if len(ibu.Spec.OADPContent) == 0 {
 		u.Log.Info("No backup requests, skipping")
 		return doNotRequeue(), nil
@@ -442,7 +442,7 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
 	}
 
-	backupTracker, err := u.BackupRestore.StartBackup(ctx, ibu.Spec.OADPContent, targetDir)
+	backupTracker, err := u.BackupRestore.StartBackup(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while running backup: %w", err))
 	}
