@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,13 +34,20 @@ import (
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
 )
+
+// crdEstablishTimeout bounds how long restore waits for a freshly-applied
+// CustomResourceDefinition to be reported as Established by the API server
+// before dependent custom resources are restored.
+const crdEstablishTimeout = 60 * time.Second
 
 var resourceWaveOrder = map[string]int{
 	"Namespace":                0,
@@ -99,59 +107,105 @@ func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapR
 		return rt, nil
 	}
 
+	// Flatten the wave groups into a single ordered list, preserving wave-group
+	// order and the intra-wave kind ordering.
+	var ordered []resourceEntry
 	for _, wg := range waveGroups {
-		h.Log.Info("Processing restore wave group", "wave", wg.wave, "resourceCount", len(wg.resources))
-
+		h.Log.Info("Loaded restore wave group", "wave", wg.wave, "resourceCount", len(wg.resources))
 		sortResourcesByWave(wg.resources)
+		ordered = append(ordered, wg.resources...)
+	}
 
-		for _, entry := range wg.resources {
-			resource := entry.resource
-			name := resource.GetName()
-			namespace := resource.GetNamespace()
-			kind := resource.GetKind()
-
-			if shouldSkipRestore(resource) {
-				h.Log.Info("Skipping auto-generated resource during restore",
-					"kind", kind, "name", name, "namespace", namespace)
-				continue
-			}
-
-			savedStatus, hasStatus := resource.Object["status"]
-			prepareResourceForRestore(resource)
-
-			unstructured.RemoveNestedField(resource.Object, "status")
-
-			err := h.applyResource(ctx, resource)
-			if err != nil {
-				rt.FailedRestores = append(rt.FailedRestores,
-					fmt.Sprintf("%s/%s/%s", kind, namespace, name))
-				return rt, NewBRFailedError("Restore",
-					fmt.Sprintf("failed to restore %s %s/%s: %s", kind, namespace, name, err.Error()))
-			}
-
-			if hasStatus && savedStatus != nil {
-				if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
-					h.Log.Info("Failed to restore status subresource, continuing",
-						"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
-				}
-			}
-
-			logFields := []interface{}{
-				"file", entry.fileName, "resourceType", kind, "name", name,
-			}
-			if namespace != "" {
-				logFields = append(logFields, "namespace", namespace)
-			}
-			h.Log.Info("Resource restored", logFields...)
-
-			rt.SucceededRestores = append(rt.SucceededRestores,
-				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+	// Apply CustomResourceDefinitions first, regardless of their configured
+	// wave. Dependent custom resources must be sent to a registered, established
+	// endpoint; after each CRD is applied we wait for it to become established
+	// and refresh discovery (see restoreResourceEntry). Non-CRD resources are
+	// then applied in wave order.
+	for _, entry := range ordered {
+		if !isCRD(entry.resource) {
+			continue
+		}
+		if err := h.restoreResourceEntry(ctx, entry, rt); err != nil {
+			return rt, err
+		}
+	}
+	for _, entry := range ordered {
+		if isCRD(entry.resource) {
+			continue
+		}
+		if err := h.restoreResourceEntry(ctx, entry, rt); err != nil {
+			return rt, err
 		}
 	}
 
 	h.Log.Info("All resources restored successfully",
 		"restoredCount", len(rt.SucceededRestores))
 	return rt, nil
+}
+
+// restoreResourceEntry applies a single backed-up resource to the cluster and
+// records the outcome in the tracker. When the resource is a CRD it waits for
+// the CRD to become established and refreshes discovery so that dependent
+// custom resources resolve to the correct, registered endpoint.
+func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntry, rt *RestoreTracker) error {
+	resource := entry.resource
+	name := resource.GetName()
+	namespace := resource.GetNamespace()
+	kind := resource.GetKind()
+
+	if shouldSkipRestore(resource) {
+		h.Log.Info("Skipping auto-generated resource during restore",
+			"kind", kind, "name", name, "namespace", namespace)
+		return nil
+	}
+
+	savedStatus, hasStatus := resource.Object["status"]
+	prepareResourceForRestore(resource)
+
+	unstructured.RemoveNestedField(resource.Object, "status")
+
+	if err := h.applyResource(ctx, resource); err != nil {
+		rt.FailedRestores = append(rt.FailedRestores,
+			fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to restore %s %s/%s: %s", kind, namespace, name, err.Error()))
+	}
+
+	// A newly created or updated CRD is not immediately usable: wait until the
+	// API server reports it Established and refresh discovery so the dependent
+	// custom resources restored afterwards resolve to the right GVR.
+	if isCRD(resource) {
+		if err := h.waitForCRDEstablished(ctx, name); err != nil {
+			rt.FailedRestores = append(rt.FailedRestores,
+				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+			return NewBRFailedError("Restore",
+				fmt.Sprintf("CRD %s did not become established: %s", name, err.Error()))
+		}
+		h.invalidateDiscovery()
+	}
+
+	if hasStatus && savedStatus != nil {
+		if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
+			h.Log.Info("Failed to restore status subresource, continuing",
+				"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
+		}
+	}
+
+	logFields := []interface{}{
+		"file", entry.fileName, "resourceType", kind, "name", name,
+	}
+	if namespace != "" {
+		logFields = append(logFields, "namespace", namespace)
+	}
+	h.Log.Info("Resource restored", logFields...)
+
+	rt.SucceededRestores = append(rt.SucceededRestores,
+		fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+	return nil
+}
+
+func isCRD(resource *unstructured.Unstructured) bool {
+	return resource.GetKind() == "CustomResourceDefinition"
 }
 
 func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstructured.Unstructured, status interface{}) error {
@@ -187,10 +241,17 @@ func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstru
 
 func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Unstructured) error {
 	gvk := resource.GroupVersionKind()
-	gvr := h.resolveGVR(gvk)
 
 	name := resource.GetName()
 	namespace := resource.GetNamespace()
+
+	// Resolve the resource type to its actual GVR. If the type is not yet
+	// registered (e.g. a custom resource whose CRD is still becoming
+	// established) this refreshes discovery and retries resolution.
+	gvr, err := h.resolveGVRWithRetry(ctx, gvk)
+	if err != nil {
+		return err
+	}
 
 	apply := func() error {
 		if namespace != "" {
@@ -199,7 +260,7 @@ func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Un
 		return h.applyClusterScopedResource(ctx, gvr, name, resource)
 	}
 
-	err := apply()
+	err = apply()
 	if err == nil {
 		return nil
 	}
@@ -213,19 +274,150 @@ func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Un
 	return retryWithBackoff(ctx, apply)
 }
 
+// resolveGVR resolves a GroupVersionKind to its GroupVersionResource on a
+// best-effort basis for callers that cannot fail (e.g. the status subresource
+// update). It prefers live discovery, then the REST mapper, and only as a last
+// resort falls back to naive pluralization of the kind.
 func (h *BRHandler) resolveGVR(gvk schema.GroupVersionKind) schema.GroupVersionResource {
-	mapping, err := h.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		gvr := schema.GroupVersionResource{
-			Group:    gvk.Group,
-			Version:  gvk.Version,
-			Resource: pluralizeKind(gvk.Kind),
-		}
-		h.Log.Info("REST mapper lookup failed, using pluralized kind",
-			"gvk", gvk.String(), "gvr", gvr.String(), "error", err.Error())
+	if gvr, err := h.resolveGVRFromCluster(gvk); err == nil {
 		return gvr
 	}
-	return mapping.Resource
+	gvr := schema.GroupVersionResource{
+		Group:    gvk.Group,
+		Version:  gvk.Version,
+		Resource: pluralizeKind(gvk.Kind),
+	}
+	h.Log.Info("GVR resolution failed, using pluralized kind",
+		"gvk", gvk.String(), "gvr", gvr.String())
+	return gvr
+}
+
+// resolveGVRWithRetry resolves a resource's GVK to its GVR, refreshing discovery
+// and retrying with a bounded backoff while the type is not yet registered (a
+// no-match error — e.g. a custom resource whose CRD is still becoming
+// established). Only no-match/not-ready errors are retried; this resolves the
+// resource *type* and never an individual object, so ordinary object NotFound
+// responses are never involved here.
+func (h *BRHandler) resolveGVRWithRetry(ctx context.Context, gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+	var gvr schema.GroupVersionResource
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Steps:    4,
+	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
+		var resolveErr error
+		gvr, resolveErr = h.resolveGVRFromCluster(gvk)
+		if resolveErr == nil {
+			return true, nil
+		}
+		if isNoMatchError(resolveErr) {
+			h.Log.Info("Resource type not registered yet, refreshing discovery and retrying",
+				"gvk", gvk.String())
+			h.invalidateDiscovery()
+			return false, nil
+		}
+		return false, resolveErr
+	})
+	if err != nil {
+		return schema.GroupVersionResource{}, fmt.Errorf("failed to resolve GVR for %s: %w", gvk.String(), err)
+	}
+	return gvr, nil
+}
+
+// resolveGVRFromCluster resolves a GVK to its GVR using live discovery first
+// (authoritative for custom resources with irregular plurals), then the REST
+// mapper. It returns a no-match error when neither source knows the type.
+func (h *BRHandler) resolveGVRFromCluster(gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+	if h.DiscoveryClient != nil {
+		list, err := h.DiscoveryClient.ServerResourcesForGroupVersion(gvk.GroupVersion().String())
+		if err == nil && list != nil {
+			for _, apiResource := range list.APIResources {
+				// Skip subresources such as "widgets/status".
+				if strings.Contains(apiResource.Name, "/") {
+					continue
+				}
+				if strings.EqualFold(apiResource.Kind, gvk.Kind) {
+					return gvk.GroupVersion().WithResource(apiResource.Name), nil
+				}
+			}
+		}
+	}
+
+	if h.Client != nil {
+		mapping, err := h.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err == nil {
+			return mapping.Resource, nil
+		}
+	}
+
+	return schema.GroupVersionResource{}, &noMatchGVKError{gvk: gvk}
+}
+
+// invalidateDiscovery drops any cached discovery data so the next resolution
+// sees API resources registered since the last query (e.g. a CRD just
+// established). A non-cached discovery client is always live, so this is a
+// no-op for it.
+func (h *BRHandler) invalidateDiscovery() {
+	if cached, ok := h.DiscoveryClient.(discovery.CachedDiscoveryInterface); ok {
+		cached.Invalidate()
+	}
+}
+
+// waitForCRDEstablished polls a CustomResourceDefinition until the API server
+// reports it Established, bounded by crdEstablishTimeout.
+func (h *BRHandler) waitForCRDEstablished(ctx context.Context, name string) error {
+	crdGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, crdEstablishTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			crd, err := h.DynamicClient.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				if k8serrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, fmt.Errorf("failed to get CRD %s: %w", name, err)
+			}
+			conditions, _, _ := unstructured.NestedSlice(crd.Object, "status", "conditions")
+			for _, c := range conditions {
+				cond, ok := c.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				condType, _ := cond["type"].(string)
+				condStatus, _ := cond["status"].(string)
+				if condType == "Established" && condStatus == "True" {
+					return true, nil
+				}
+			}
+			return false, nil
+		})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for CRD %s to become established: %w", name, err)
+	}
+	return nil
+}
+
+// noMatchGVKError reports that no registered resource exists for a GVK.
+type noMatchGVKError struct {
+	gvk schema.GroupVersionKind
+}
+
+func (e *noMatchGVKError) Error() string {
+	return fmt.Sprintf("no registered resource found for %s", e.gvk.String())
+}
+
+// isNoMatchError reports whether err indicates the resource type is not (yet)
+// registered, as opposed to an individual object being missing.
+func isNoMatchError(err error) bool {
+	var nm *noMatchGVKError
+	if errors.As(err, &nm) {
+		return true
+	}
+	return meta.IsNoMatchError(err)
 }
 
 func (h *BRHandler) applyNamespacedResource(ctx context.Context, gvr schema.GroupVersionResource,
