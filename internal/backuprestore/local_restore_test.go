@@ -49,6 +49,17 @@ func (f *fakeDiscovery) ServerResourcesForGroupVersion(groupVersion string) (*me
 	return nil, k8serrors.NewNotFound(schema.GroupResource{Resource: "APIResourceList"}, groupVersion)
 }
 
+// ServerPreferredResources returns every APIResourceList the fake knows about so
+// callers that discover preferred resources (e.g. the backup resource fetcher)
+// can run against the fake. An empty map yields an empty (but non-error) result.
+func (f *fakeDiscovery) ServerPreferredResources() ([]*metav1.APIResourceList, error) {
+	lists := make([]*metav1.APIResourceList, 0, len(f.byGV))
+	for _, list := range f.byGV {
+		lists = append(lists, list)
+	}
+	return lists, nil
+}
+
 func newConfigMapScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	scheme.AddKnownTypeWithName(
