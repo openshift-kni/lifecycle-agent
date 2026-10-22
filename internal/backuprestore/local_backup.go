@@ -77,7 +77,7 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	return nil
 }
 
-func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef, targetDir string) (*BackupTracker, error) {
+func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error) {
 	bt := &BackupTracker{}
 
 	if len(content) == 0 {

@@ -85,18 +85,18 @@ func (mr *MockBackuperRestorerMockRecorder) RestorePVsReclaimPolicy(ctx any) *go
 }
 
 // StartBackup mocks base method.
-func (m *MockBackuperRestorer) StartBackup(ctx context.Context, content []v1.ConfigMapRef, targetDir string) (*backuprestore.BackupTracker, error) {
+func (m *MockBackuperRestorer) StartBackup(ctx context.Context, content []v1.ConfigMapRef) (*backuprestore.BackupTracker, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartBackup", ctx, content, targetDir)
+	ret := m.ctrl.Call(m, "StartBackup", ctx, content)
 	ret0, _ := ret[0].(*backuprestore.BackupTracker)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StartBackup indicates an expected call of StartBackup.
-func (mr *MockBackuperRestorerMockRecorder) StartBackup(ctx, content, targetDir any) *gomock.Call {
+func (mr *MockBackuperRestorerMockRecorder) StartBackup(ctx, content any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartBackup", reflect.TypeOf((*MockBackuperRestorer)(nil).StartBackup), ctx, content, targetDir)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartBackup", reflect.TypeOf((*MockBackuperRestorer)(nil).StartBackup), ctx, content)
 }
 
 // StartRestore mocks base method.
