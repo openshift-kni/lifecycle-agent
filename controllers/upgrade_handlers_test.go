@@ -82,7 +82,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			if tt.hasContent {
 				ibu.Spec.OADPContent = []ibuv1.ConfigMapRef{{Name: "test-cm"}}
 				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
-				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.tracker())
+				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any()).Return(tt.tracker())
 			}
 
 			uph := &UpgHandler{
@@ -91,7 +91,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 				Log:             logr.Logger{},
 				BackupRestore:   mockBackuprestore,
 			}
-			got, err := uph.HandleBackup(context.Background(), ibu, "/tmp/test")
+			got, err := uph.HandleBackup(context.Background(), ibu)
 			if !tt.wantErr(t, err, fmt.Sprintf("handleBackup")) {
 				return
 			}
@@ -236,9 +236,6 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			getStartBackupReturn: func() (*backuprestore.BackupTracker, error) {
 				return nil, backuprestore.NewBRFailedError("Backup", "this is a test - error")
 			},
-			remountSysrootReturn: func() error {
-				return nil
-			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
 			wantConditions: []metav1.Condition{
@@ -271,9 +268,6 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			getStartBackupReturn: func() (*backuprestore.BackupTracker, error) {
 				return nil,
 					backuprestore.NewBRFailedValidationError("Backup", "this is a test - FailedValidation")
-			},
-			remountSysrootReturn: func() error {
-				return nil
 			},
 			want:    doNotRequeue(),
 			wantErr: assert.NoError,
@@ -410,7 +404,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(tt.getPatchPVsReclaimPolicyReturn())
 			}
 			if tt.getStartBackupReturn != nil {
-				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
+				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())

@@ -64,7 +64,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	ValidateBackupConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
-	StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef, targetDir string) (*BackupTracker, error)
+	StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error)
 	StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error)
 	CleanupBackups(ctx context.Context) error
 	PatchPVsReclaimPolicy(ctx context.Context) error
