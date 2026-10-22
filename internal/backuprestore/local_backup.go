@@ -281,14 +281,17 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	for _, ns := range spec.IncludedNamespaces {
 		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
 		if err != nil {
+			// An explicitly included namespace that does not exist is a
+			// configuration error: fail the backup instead of silently skipping
+			// it (and the resources it should contain), matching Velero's
+			// behavior for non-existing configured resources. Do not continue
+			// listing resources from a missing namespace.
 			if k8serrors.IsNotFound(err) {
-				h.Log.Info("Namespace not found, skipping", "namespace", ns)
-			} else {
-				return nil, fmt.Errorf("failed to get namespace %s: %w", ns, err)
+				return nil, fmt.Errorf("included namespace %q does not exist", ns)
 			}
-		} else {
-			resources = append(resources, nsObj)
+			return nil, fmt.Errorf("failed to get namespace %s: %w", ns, err)
 		}
+		resources = append(resources, nsObj)
 	}
 
 	// When the apply-label annotation is present, the backup scope is limited
