@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,6 +60,10 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	}
 
 	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
+		return NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateBackupSpecs(backupSpecs); err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -105,6 +110,10 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	}
 
 	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
+		return bt, NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateBackupSpecs(backupSpecs); err != nil {
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -307,7 +316,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// Discover the server's preferred API resources on every fetch so that CRDs
 	// installed after the controller started (e.g. lvmclusters) are visible and
 	// resources configured by name only can be resolved to their preferred GVR.
-	apiResourceLists, err := h.getServerPreferredResources()
+	apiResourceLists, failedGroups, err := h.getServerPreferredResources()
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +324,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// No apply-label: back up all resources of the included types in each
 	// included namespace and every included cluster-scoped resource type.
 	for _, ns := range spec.IncludedNamespaces {
-		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec, apiResourceLists)
+		nsResources, err := h.fetchNamespacedResources(ctx, ns, spec, apiResourceLists, failedGroups)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch resources in namespace %s: %w", ns, err)
 		}
@@ -323,7 +332,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	}
 
 	for _, resourceType := range spec.IncludedClusterScopedResources {
-		clusterResources, err := h.fetchClusterScopedResources(ctx, resourceType, spec, apiResourceLists)
+		clusterResources, err := h.fetchClusterScopedResources(ctx, resourceType, spec, apiResourceLists, failedGroups)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch cluster-scoped resource %s: %w", resourceType, err)
 		}
@@ -337,21 +346,30 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 // the discovery client. A partial discovery failure (e.g. a single aggregated
 // API group being unavailable) is tolerated: the successfully discovered
 // resources are returned and the error is logged, matching how kubectl behaves.
-func (h *BRHandler) getServerPreferredResources() ([]*metav1.APIResourceList, error) {
+// The names of the groups that failed discovery are returned as well so callers
+// can distinguish "resource type genuinely not registered" from "resource type
+// unknown because its API group could not be discovered" and avoid silently
+// omitting requested resources from the backup.
+func (h *BRHandler) getServerPreferredResources() ([]*metav1.APIResourceList, map[string]bool, error) {
 	if h.DiscoveryClient == nil {
-		return nil, fmt.Errorf("discovery client is not initialized")
+		return nil, nil, fmt.Errorf("discovery client is not initialized")
 	}
 
+	failedGroups := map[string]bool{}
 	lists, err := h.DiscoveryClient.ServerPreferredResources()
 	if err != nil {
-		if discovery.IsGroupDiscoveryFailedError(err) {
+		var groupErr *discovery.ErrGroupDiscoveryFailed
+		if errors.As(err, &groupErr) {
+			for gv := range groupErr.Groups {
+				failedGroups[gv.Group] = true
+			}
 			h.Log.Info("Partial API discovery failure, continuing with available resources",
-				"error", err.Error())
+				"failedGroups", failedGroups, "error", err.Error())
 		} else {
-			return nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
+			return nil, nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
 		}
 	}
-	return lists, nil
+	return lists, failedGroups, nil
 }
 
 func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata) (*unstructured.Unstructured, error) {
@@ -380,7 +398,19 @@ func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata)
 	return result, nil
 }
 
-func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList) ([]*unstructured.Unstructured, error) {
+// requestedTypeInFailedGroup reports whether a group-qualified resource type
+// (e.g. "widgets.example.com") belongs to an API group whose discovery failed.
+// Such a type cannot be resolved, so skipping it silently would omit it from the
+// backup; callers treat this as a hard failure instead.
+func requestedTypeInFailedGroup(resourceType string, failedGroups map[string]bool) bool {
+	if len(failedGroups) == 0 {
+		return false
+	}
+	group := schema.ParseGroupResource(resourceType).Group
+	return group != "" && failedGroups[group]
+}
+
+func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]*unstructured.Unstructured, error) {
 	var resources []*unstructured.Unstructured
 
 	resourceTypes := spec.IncludedNamespaceScopedResources
@@ -411,6 +441,9 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 			return nil, err
 		}
 		if !found {
+			if requestedTypeInFailedGroup(resourceType, failedGroups) {
+				return nil, fmt.Errorf("cannot back up requested resource %q in namespace %s: its API group failed discovery", resourceType, namespace)
+			}
 			h.Log.Info("Resource type not found in API discovery, skipping",
 				"resource", resourceType, "namespace", namespace)
 			continue
@@ -429,9 +462,11 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 			if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
 				continue
 			}
-			h.Log.Info("Failed to list resources, skipping",
-				"resource", resourceType, "namespace", namespace, "error", err.Error())
-			continue
+			// An unexpected error (Forbidden, timeout, 5xx, ...) must fail the
+			// backup rather than be silently skipped, otherwise an incomplete
+			// backup would be recorded as successful and cause data loss on restore.
+			// This matches the cluster-scoped path's behavior.
+			return nil, fmt.Errorf("failed to list %s in namespace %s: %w", resourceType, namespace, err)
 		}
 		for i := range list.Items {
 			resources = append(resources, &list.Items[i])
@@ -441,12 +476,15 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	return resources, nil
 }
 
-func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList) ([]*unstructured.Unstructured, error) {
+func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]*unstructured.Unstructured, error) {
 	gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
+		if requestedTypeInFailedGroup(resourceType, failedGroups) {
+			return nil, fmt.Errorf("cannot back up requested cluster-scoped resource %q: its API group failed discovery", resourceType)
+		}
 		h.Log.Info("Cluster-scoped resource type not found in API discovery, skipping",
 			"resource", resourceType)
 		return nil, nil

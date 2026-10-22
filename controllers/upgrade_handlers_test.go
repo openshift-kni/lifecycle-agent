@@ -701,6 +701,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			restorePVsReclaimPolicyReturn: func() error {
 				return nil
 			},
+			cleanupBackupsReturn: func() error {
+				return nil
+			},
 			disableInitMonitorReturn: func() error {
 				return nil
 			},
@@ -760,6 +763,9 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)
+			}
+			if tt.cleanupBackupsReturn != nil {
+				mockBackuprestore.EXPECT().CleanupBackups(gomock.Any()).Return(tt.cleanupBackupsReturn()).Times(1)
 			}
 			if tt.initiateRollbackReturn != nil {
 				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
