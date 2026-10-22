@@ -140,37 +140,6 @@ metadata:
 	})
 }
 
-func TestParseResourceType(t *testing.T) {
-	testcases := []struct {
-		name         string
-		resourceType string
-		expected     schema.GroupVersionResource
-	}{
-		{
-			name:         "bare resource defaults to core API group",
-			resourceType: "secrets",
-			expected:     schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"},
-		},
-		{
-			name:         "qualified resource with single-segment group",
-			resourceType: "deployments.apps",
-			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
-		},
-		{
-			name:         "qualified resource with multi-segment group",
-			resourceType: "routes.route.openshift.io",
-			expected:     schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"},
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := parseResourceType(tc.resourceType)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestResolveResourceGVR(t *testing.T) {
 	// Simulated output of discovery.ServerPreferredResources(): one preferred
 	// version per API group. "widgets" intentionally appears in two groups to
@@ -180,29 +149,41 @@ func TestResolveResourceGVR(t *testing.T) {
 		{
 			GroupVersion: "v1",
 			APIResources: []metav1.APIResource{
-				{Name: "secrets", Namespaced: true, Kind: "Secret"},
-				{Name: "services", Namespaced: true, Kind: "Service"},
-				{Name: "namespaces", Namespaced: false, Kind: "Namespace"},
+				{Name: "secrets", SingularName: "secret", Namespaced: true, Kind: "Secret"},
+				{Name: "services", SingularName: "service", Namespaced: true, Kind: "Service", ShortNames: []string{"svc"}},
+				{Name: "namespaces", SingularName: "namespace", Namespaced: false, Kind: "Namespace", ShortNames: []string{"ns"}},
 			},
 		},
 		{
 			GroupVersion: "apps/v1",
 			APIResources: []metav1.APIResource{
-				{Name: "deployments", Namespaced: true, Kind: "Deployment"},
+				{Name: "deployments", SingularName: "deployment", Namespaced: true, Kind: "Deployment", ShortNames: []string{"deploy"}},
 				{Name: "deployments/status", Namespaced: true, Kind: "Deployment"},
-				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet"},
+				{Name: "statefulsets", SingularName: "statefulset", Namespaced: true, Kind: "StatefulSet", ShortNames: []string{"sts"}},
 			},
 		},
 		{
 			GroupVersion: "route.openshift.io/v1",
 			APIResources: []metav1.APIResource{
-				{Name: "routes", Namespaced: true, Kind: "Route"},
+				{Name: "routes", SingularName: "route", Namespaced: true, Kind: "Route"},
 			},
 		},
 		{
 			GroupVersion: "lvm.topolvm.io/v1alpha1",
 			APIResources: []metav1.APIResource{
-				{Name: "lvmclusters", Namespaced: false, Kind: "LVMCluster"},
+				{Name: "lvmclusters", SingularName: "lvmcluster", Namespaced: false, Kind: "LVMCluster"},
+			},
+		},
+		{
+			GroupVersion: "oadp.openshift.io/v1alpha1",
+			APIResources: []metav1.APIResource{
+				{
+					Name:         "dataprotectionapplications",
+					SingularName: "dataprotectionapplication",
+					Namespaced:   true,
+					Kind:         "DataProtectionApplication",
+					ShortNames:   []string{"dpa"},
+				},
 			},
 		},
 		{
@@ -219,42 +200,105 @@ func TestResolveResourceGVR(t *testing.T) {
 		},
 	}
 
+	dpaGVR := schema.GroupVersionResource{Group: "oadp.openshift.io", Version: "v1alpha1", Resource: "dataprotectionapplications"}
+
 	testcases := []struct {
-		name         string
-		resourceType string
-		expected     schema.GroupVersionResource
-		expectFound  bool
-		expectErr    bool
+		name            string
+		resourceType    string
+		expected        schema.GroupVersionResource
+		expectNamespace bool
+		expectFound     bool
+		expectErr       bool
 	}{
 		{
-			name:         "bare 'deployments' resolves to apps group",
-			resourceType: "deployments",
-			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			name:            "bare 'deployments' resolves to apps group",
+			resourceType:    "deployments",
+			expected:        schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "qualified 'deployments.apps' uses explicit group",
+			resourceType:    "deployments.apps",
+			expected:        schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "singular 'deployment' resolves to canonical plural",
+			resourceType:    "deployment",
+			expected:        schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "short name 'deploy' resolves to canonical plural",
+			resourceType:    "deploy",
+			expected:        schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "bare 'secrets' resolves to core group",
+			resourceType:    "secrets",
+			expected:        schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"},
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:         "cluster-scoped 'namespaces' reports non-namespaced",
+			resourceType: "namespaces",
+			expected:     schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"},
 			expectFound:  true,
 		},
 		{
-			name:         "qualified 'deployments.apps' uses explicit group",
-			resourceType: "deployments.apps",
-			expected:     schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
-			expectFound:  true,
+			name:            "qualified 'routes.route.openshift.io' uses explicit group",
+			resourceType:    "routes.route.openshift.io",
+			expected:        schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"},
+			expectNamespace: true,
+			expectFound:     true,
 		},
 		{
-			name:         "bare 'secrets' resolves to core group",
-			resourceType: "secrets",
-			expected:     schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"},
-			expectFound:  true,
+			name:            "bare CRD 'lvmclusters' discovers non-core group and preferred version",
+			resourceType:    "lvmclusters",
+			expected:        schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"},
+			expectFound:     true,
+			expectNamespace: false,
 		},
 		{
-			name:         "qualified 'routes.route.openshift.io' uses explicit group",
-			resourceType: "routes.route.openshift.io",
-			expected:     schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"},
-			expectFound:  true,
+			name:            "plural 'dataprotectionapplications' resolves to canonical GVR",
+			resourceType:    "dataprotectionapplications",
+			expected:        dpaGVR,
+			expectNamespace: true,
+			expectFound:     true,
 		},
 		{
-			name:         "bare CRD 'lvmclusters' discovers non-core group and preferred version",
-			resourceType: "lvmclusters",
-			expected:     schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"},
-			expectFound:  true,
+			name:            "singular 'dataprotectionapplication' resolves to canonical plural",
+			resourceType:    "dataprotectionapplication",
+			expected:        dpaGVR,
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "Kind-like 'DataProtectionApplication' resolves case-insensitively",
+			resourceType:    "DataProtectionApplication",
+			expected:        dpaGVR,
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "short name 'dpa' resolves to canonical plural",
+			resourceType:    "dpa",
+			expected:        dpaGVR,
+			expectNamespace: true,
+			expectFound:     true,
+		},
+		{
+			name:            "qualified short name 'dpa.oadp.openshift.io' resolves to canonical plural",
+			resourceType:    "dpa.oadp.openshift.io",
+			expected:        dpaGVR,
+			expectNamespace: true,
+			expectFound:     true,
 		},
 		{
 			name:         "ambiguous bare name matching multiple groups returns error",
@@ -262,10 +306,11 @@ func TestResolveResourceGVR(t *testing.T) {
 			expectErr:    true,
 		},
 		{
-			name:         "qualified 'widgets.example.io' disambiguates by explicit group",
-			resourceType: "widgets.example.io",
-			expected:     schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "widgets"},
-			expectFound:  true,
+			name:            "qualified 'widgets.example.io' disambiguates by explicit group",
+			resourceType:    "widgets.example.io",
+			expected:        schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "widgets"},
+			expectNamespace: true,
+			expectFound:     true,
 		},
 		{
 			name:         "unknown resource is not found and skippable",
@@ -281,7 +326,7 @@ func TestResolveResourceGVR(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, found, err := resolveResourceGVR(tc.resourceType, apiResourceLists)
+			result, namespaced, found, err := resolveResourceGVR(tc.resourceType, apiResourceLists)
 			if tc.expectErr {
 				assert.Error(t, err)
 				assert.False(t, found)
@@ -291,6 +336,7 @@ func TestResolveResourceGVR(t *testing.T) {
 			assert.Equal(t, tc.expectFound, found)
 			if tc.expectFound {
 				assert.Equal(t, tc.expected, result)
+				assert.Equal(t, tc.expectNamespace, namespaced)
 			}
 		})
 	}
@@ -469,30 +515,39 @@ spec:
 	assert.Equal(t, []string{"persistentvolumes"}, specs[0].ExcludedClusterScopedResources)
 }
 
-func TestIsExcluded(t *testing.T) {
-	t.Run("matches bare resource name", func(t *testing.T) {
-		assert.True(t, isExcluded("deployments.apps", []string{"deployments"}))
+func TestExcludedGroupResources(t *testing.T) {
+	apiResourceLists := []*metav1.APIResourceList{
+		{
+			GroupVersion: "v1",
+			APIResources: []metav1.APIResource{
+				{Name: "secrets", SingularName: "secret", Namespaced: true, Kind: "Secret"},
+				{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap", ShortNames: []string{"cm"}},
+				{Name: "persistentvolumes", SingularName: "persistentvolume", Namespaced: false, Kind: "PersistentVolume", ShortNames: []string{"pv"}},
+			},
+		},
+		{
+			GroupVersion: "apps/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "deployments", SingularName: "deployment", Namespaced: true, Kind: "Deployment", ShortNames: []string{"deploy"}},
+			},
+		},
+	}
+
+	t.Run("exclusions are normalized to canonical GroupResource", func(t *testing.T) {
+		// "Deployment" (Kind), "pv" (short name) and "configmap" (singular) must
+		// all normalize to the same canonical GroupResource as their inclusions.
+		excluded := excludedGroupResources(apiResourceLists,
+			[]string{"Deployment"}, []string{"pv", "configmap"})
+
+		assert.True(t, excluded["deployments.apps"])
+		assert.True(t, excluded["persistentvolumes"])
+		assert.True(t, excluded["configmaps"])
+		assert.False(t, excluded["secrets"])
 	})
 
-	t.Run("matches full resource type", func(t *testing.T) {
-		assert.True(t, isExcluded("deployments.apps", []string{"deployments.apps"}))
-	})
-
-	t.Run("case insensitive", func(t *testing.T) {
-		assert.True(t, isExcluded("secrets", []string{"Secrets"}))
-	})
-
-	t.Run("no match returns false", func(t *testing.T) {
-		assert.False(t, isExcluded("secrets", []string{"configmaps"}))
-	})
-
-	t.Run("checks multiple lists", func(t *testing.T) {
-		assert.True(t, isExcluded("persistentvolumes",
-			[]string{"events"}, []string{"persistentvolumes"}))
-	})
-
-	t.Run("empty lists returns false", func(t *testing.T) {
-		assert.False(t, isExcluded("secrets"))
+	t.Run("unresolvable exclusions are skipped", func(t *testing.T) {
+		excluded := excludedGroupResources(apiResourceLists, []string{"doesnotexist"})
+		assert.Empty(t, excluded)
 	})
 }
 
