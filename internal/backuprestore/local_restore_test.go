@@ -24,12 +24,30 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clienttesting "k8s.io/client-go/testing"
 )
+
+// fakeDiscovery is a minimal discovery.DiscoveryInterface that answers only
+// ServerResourcesForGroupVersion from a static map. Embedding the interface
+// leaves the other methods unimplemented (they panic if called, which the
+// tests never do).
+type fakeDiscovery struct {
+	discovery.DiscoveryInterface
+	byGV map[string]*metav1.APIResourceList
+}
+
+func (f *fakeDiscovery) ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error) {
+	if list, ok := f.byGV[groupVersion]; ok {
+		return list, nil
+	}
+	return nil, k8serrors.NewNotFound(schema.GroupResource{Resource: "APIResourceList"}, groupVersion)
+}
 
 func newConfigMapScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
@@ -105,4 +123,73 @@ func TestCreateOrUpdateResourceConflictRetry(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, 1, updateAttempts, "a non-conflict error must not be retried")
 	})
+}
+
+// TestResolveGVRIrregularPlural verifies that a custom resource whose plural
+// does not follow the naive pluralization rules is resolved to the correct GVR
+// using live discovery rather than a derived plural.
+func TestResolveGVRIrregularPlural(t *testing.T) {
+	octopusGVK := schema.GroupVersionKind{Group: "zoo.example.io", Version: "v1", Kind: "Octopus"}
+	octopiGVR := schema.GroupVersionResource{Group: "zoo.example.io", Version: "v1", Resource: "octopi"}
+
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"zoo.example.io/v1": {
+			GroupVersion: "zoo.example.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "octopi", Namespaced: false, Kind: "Octopus"},
+				{Name: "octopi/status", Namespaced: false, Kind: "Octopus"},
+			},
+		},
+	}}
+	h := &BRHandler{DiscoveryClient: disc, Log: logr.Discard()}
+
+	gvr, err := h.resolveGVRFromCluster(octopusGVK)
+	assert.NoError(t, err)
+	assert.Equal(t, octopiGVR, gvr)
+
+	// Sanity check: the naive pluralizer would send the resource to the wrong
+	// endpoint, which is exactly what discovery-based resolution avoids.
+	assert.NotEqual(t, "octopi", pluralizeKind("Octopus"))
+}
+
+// TestApplyResourceIrregularPluralEndpoint verifies that restoring a custom
+// resource with an irregular plural creates it at the discovery-reported
+// endpoint (octopi), not the naively pluralized one (octopuses).
+func TestApplyResourceIrregularPluralEndpoint(t *testing.T) {
+	octopiGVR := schema.GroupVersionResource{Group: "zoo.example.io", Version: "v1", Resource: "octopi"}
+	octopusesGVR := schema.GroupVersionResource{Group: "zoo.example.io", Version: "v1", Resource: "octopuses"}
+
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "zoo.example.io", Version: "v1", Kind: "Octopus"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "zoo.example.io", Version: "v1", Kind: "OctopusList"}, &unstructured.UnstructuredList{})
+
+	dc := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{octopiGVR: "OctopusList"})
+
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"zoo.example.io/v1": {
+			GroupVersion: "zoo.example.io/v1",
+			APIResources: []metav1.APIResource{{Name: "octopi", Namespaced: false, Kind: "Octopus"}},
+		},
+	}}
+
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+
+	cr := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "zoo.example.io/v1",
+		"kind":       "Octopus",
+		"metadata":   map[string]interface{}{"name": "inky"},
+	}}
+
+	err := h.applyResource(context.Background(), cr)
+	assert.NoError(t, err)
+
+	got, err := dc.Resource(octopiGVR).Get(context.Background(), "inky", metav1.GetOptions{})
+	assert.NoError(t, err, "custom resource must be created at the octopi endpoint")
+	assert.Equal(t, "inky", got.GetName())
+
+	_, err = dc.Resource(octopusesGVR).Get(context.Background(), "inky", metav1.GetOptions{})
+	assert.Error(t, err, "custom resource must not be created at the naively pluralized endpoint")
 }
