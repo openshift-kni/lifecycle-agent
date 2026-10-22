@@ -45,7 +45,14 @@ import (
 	k8syaml "sigs.k8s.io/yaml"
 )
 
-// +kubebuilder:rbac:groups="*",resources="*",verbs="*"
+// The local restore path recreates arbitrary resources across all API groups, so
+// broad group/resource coverage is required. The verbs are restricted to the
+// standard CRUD set (dropping the sensitive wildcard verbs impersonate and
+// deletecollection, which are unused) to follow least privilege. escalate and
+// bind are granted only for RBAC roles/clusterroles, which restoring those
+// objects legitimately requires.
+// +kubebuilder:rbac:groups="*",resources="*",verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;clusterroles,verbs=escalate;bind
 
 const (
 	applyLabelAnn = "lca.openshift.io/apply-label"
@@ -107,6 +114,12 @@ type BackupSpec struct {
 	IncludedNamespaces               []string
 	IncludedNamespaceScopedResources []string
 	IncludedClusterScopedResources   []string
+	// IncludedResources is the legacy Velero field that selects resources across
+	// both namespace and cluster scope. LCA does not resolve it (that would
+	// require per-entry scope classification at backup time); configurations that
+	// set it are rejected during validation so they cannot silently fall back to
+	// the default resource selection. Use the *Scoped variants instead.
+	IncludedResources                []string
 	ExcludedResources                []string
 	ExcludedNamespaceScopedResources []string
 	ExcludedClusterScopedResources   []string
@@ -231,6 +244,7 @@ type veleroBackupSpec struct {
 	IncludedNamespaces               []string              `json:"includedNamespaces"`
 	IncludedNamespaceScopedResources []string              `json:"includedNamespaceScopedResources"`
 	IncludedClusterScopedResources   []string              `json:"includedClusterScopedResources"`
+	IncludedResources                []string              `json:"includedResources"`
 	ExcludedResources                []string              `json:"excludedResources"`
 	ExcludedNamespaceScopedResources []string              `json:"excludedNamespaceScopedResources"`
 	ExcludedClusterScopedResources   []string              `json:"excludedClusterScopedResources"`
@@ -344,6 +358,19 @@ func ValidateBackupRestoreMapping(restoreSpecs []RestoreSpec) error {
 	return nil
 }
 
+// ValidateBackupSpecs rejects Backup CR specs that use fields LCA cannot honor,
+// so an unsupported configuration fails loudly instead of silently backing up the
+// wrong (default) set of resources.
+func ValidateBackupSpecs(specs []BackupSpec) error {
+	for _, s := range specs {
+		if len(s.IncludedResources) > 0 {
+			return fmt.Errorf("backup %q sets the unsupported legacy spec.includedResources field; "+
+				"use spec.includedNamespaceScopedResources and spec.includedClusterScopedResources instead", s.Name)
+		}
+	}
+	return nil
+}
+
 // FindRestoreForBackup returns the RestoreSpec matching a backup name, or nil if none
 func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *RestoreSpec {
 	for i := range restoreSpecs {
@@ -381,6 +408,7 @@ func (b *veleroBackup) toBackupSpec() BackupSpec {
 		IncludedNamespaces:               b.Spec.IncludedNamespaces,
 		IncludedNamespaceScopedResources: b.Spec.IncludedNamespaceScopedResources,
 		IncludedClusterScopedResources:   b.Spec.IncludedClusterScopedResources,
+		IncludedResources:                b.Spec.IncludedResources,
 		// excludedResources is the legacy Velero filter that applies to both
 		// namespace- and cluster-scoped resources; the *Scoped variants match the
 		// newer Velero resource-policy API and apply to their respective scope.
@@ -422,12 +450,14 @@ func SortBackupSpecsByApplyWave(specs []BackupSpec) ([][]BackupSpec, error) {
 		return items[i].spec.Name < items[j].spec.Name
 	})
 
+	// The first item always starts a new group; subsequent items start a new group
+	// only when their wave differs from the preceding item. Comparing against the
+	// previous item (rather than a sentinel) avoids an index-out-of-range panic when
+	// the lowest wave happens to equal a sentinel value such as a negative apply-wave.
 	var groups [][]BackupSpec
-	prevWave := -1
-	for _, item := range items {
-		if item.wave != prevWave {
+	for i, item := range items {
+		if i == 0 || item.wave != items[i-1].wave {
 			groups = append(groups, []BackupSpec{})
-			prevWave = item.wave
 		}
 		groups[len(groups)-1] = append(groups[len(groups)-1], item.spec)
 	}

@@ -416,6 +416,14 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return requeueWithHealthCheckInterval(), nil
 	}
 
+	// The restore is complete and the system is healthy, so the local backup is no
+	// longer needed. Remove it here (not in HandleRestore) so that a requeue after a
+	// transient health-check delay can still re-run the restore. A cleanup failure
+	// must not fail the upgrade; the idle handler cleans up as a fallback.
+	if err := u.BackupRestore.CleanupBackups(ctx); err != nil {
+		u.Log.Error(err, "Failed to remove local backup files")
+	}
+
 	if err := u.RebootClient.DisableInitMonitor(); err != nil {
 		// Don't fail the upgrade on failure here, just log it
 		u.Log.Error(err, "Unable to disable LCA init monitor")
@@ -476,11 +484,12 @@ func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMa
 		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
 	}
 
-	backupPath := common.PathOutsideChroot(backuprestore.LocalBackupPath)
-	if err := os.RemoveAll(backupPath); err != nil {
-		return requeueWithError(fmt.Errorf("error while removing local backup path: %w", err))
-	}
-	u.Log.Info("Local backup path removed", "path", backupPath)
+	// Note: the local backup directory is intentionally NOT removed here. PostPivot
+	// can re-enter and call HandleRestore again (e.g. when a deferred health check
+	// requeues after a successful restore), and StartRestore hard-fails if the
+	// backup content is configured but missing on disk. The backup is cleaned up by
+	// PostPivot only after the deferred health checks pass, with the idle handler's
+	// CleanupBackups as a fallback.
 
 	return doNotRequeue(), nil
 }
