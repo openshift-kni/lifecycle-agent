@@ -37,6 +37,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 )
 
 var resourceWaveOrder = map[string]int{
@@ -229,35 +231,35 @@ func (h *BRHandler) resolveGVR(gvk schema.GroupVersionKind) schema.GroupVersionR
 func (h *BRHandler) applyNamespacedResource(ctx context.Context, gvr schema.GroupVersionResource,
 	namespace, name string, resource *unstructured.Unstructured) error {
 
-	existing, err := h.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("failed to get existing resource: %w", err)
-		}
-		_, err = h.DynamicClient.Resource(gvr).Namespace(namespace).Create(ctx, resource, metav1.CreateOptions{})
-		if err != nil && !k8serrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create resource: %w", err)
-		}
-		return nil
-	}
-
-	resource.SetResourceVersion(existing.GetResourceVersion())
-	_, err = h.DynamicClient.Resource(gvr).Namespace(namespace).Update(ctx, resource, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update resource: %w", err)
-	}
-	return nil
+	ri := h.DynamicClient.Resource(gvr).Namespace(namespace)
+	return h.createOrUpdateResource(ctx, ri, name, resource)
 }
 
 func (h *BRHandler) applyClusterScopedResource(ctx context.Context, gvr schema.GroupVersionResource,
 	name string, resource *unstructured.Unstructured) error {
 
-	existing, err := h.DynamicClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+	ri := h.DynamicClient.Resource(gvr)
+	return h.createOrUpdateResource(ctx, ri, name, resource)
+}
+
+// createOrUpdateResource creates the resource if it does not exist yet, or
+// updates it in place otherwise.
+//
+// Updates use a bounded conflict retry: a resource can change between the Get
+// that reads its resourceVersion and the Update, so if the Update fails with a
+// 409 Conflict the live object is re-fetched, its latest resourceVersion is
+// re-applied to the resource being restored, and the Update is retried (bounded
+// by retry.DefaultRetry). The existing create, AlreadyExists, success, and
+// non-conflict error handling are preserved.
+func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.ResourceInterface,
+	name string, resource *unstructured.Unstructured) error {
+
+	existing, err := ri.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get existing resource: %w", err)
 		}
-		_, err = h.DynamicClient.Resource(gvr).Create(ctx, resource, metav1.CreateOptions{})
+		_, err = ri.Create(ctx, resource, metav1.CreateOptions{})
 		if err != nil && !k8serrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create resource: %w", err)
 		}
@@ -265,11 +267,29 @@ func (h *BRHandler) applyClusterScopedResource(ctx context.Context, gvr schema.G
 	}
 
 	resource.SetResourceVersion(existing.GetResourceVersion())
-	_, err = h.DynamicClient.Resource(gvr).Update(ctx, resource, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update resource: %w", err)
-	}
-	return nil
+	// updateErr is always either nil or an error already wrapped inside the
+	// closure below (RetryOnConflict returns the closure's own error verbatim),
+	// so it does not need re-wrapping here.
+	updateErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		_, err := ri.Update(ctx, resource, metav1.UpdateOptions{})
+		if err == nil {
+			return nil
+		}
+		if !k8serrors.IsConflict(err) {
+			return fmt.Errorf("failed to update resource: %w", err)
+		}
+		// The live object changed since we read its resourceVersion. Re-fetch
+		// it, re-apply the latest resourceVersion, and let RetryOnConflict
+		// retry the Update. The returned error stays conflict-typed (errors.As
+		// unwraps it) so RetryOnConflict keeps retrying.
+		latest, getErr := ri.Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to re-fetch resource during conflict retry: %w", getErr)
+		}
+		resource.SetResourceVersion(latest.GetResourceVersion())
+		return fmt.Errorf("update conflict, retrying: %w", err)
+	})
+	return updateErr //nolint:wrapcheck
 }
 
 func isTransientError(err error) bool {
