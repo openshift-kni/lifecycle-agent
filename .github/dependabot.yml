@@ -16,6 +16,8 @@ updates:
         patterns: ["open-cluster-management.io/*"]
       otel:
         patterns: ["go.opentelemetry.io/otel/*"]
+      podman:
+        patterns: ["go.podman.io/*"]
     open-pull-requests-limit: 5
     package-ecosystem: "gomod"  # See documentation for possible values
     schedule:
