@@ -124,6 +124,38 @@ func writeMBRISOExtent(t *testing.T, fileSize int, startLBA, sectorCount uint32)
 	return writeISOWithContent(t, b)
 }
 
+// mbrEntrySpec is one primary entry to stamp into a stand-in ISO's MBR: its type byte, start LBA,
+// and sector count. A zero type byte with a nonzero start/count mirrors the isohybrid/ISO9660 slots
+// that sfdisk still treats as occupied.
+type mbrEntrySpec struct {
+	typeCode    byte
+	startLBA    uint32
+	sectorCount uint32
+}
+
+// writeMBRISOEntries writes a stand-in ISO of fileSize bytes carrying the given primary entries (up
+// to the four-slot MBR limit) and a valid boot signature, so occupancy and extent can be driven per
+// entry (including zero-type-but-sized slots) to exercise the layout guards.
+func writeMBRISOEntries(t *testing.T, fileSize int, entries []mbrEntrySpec) string {
+	t.Helper()
+	if fileSize < mbrSectorSize {
+		fileSize = mbrSectorSize
+	}
+	b := make([]byte, fileSize)
+	for i, e := range entries {
+		if i >= mbrPartitionEntryCount {
+			break
+		}
+		entry := b[mbrPartitionTableOffset+i*mbrPartitionEntrySize:]
+		entry[mbrPartitionTypeOffset] = e.typeCode
+		binary.LittleEndian.PutUint32(entry[mbrPartitionStartLBAOffset:], e.startLBA)
+		binary.LittleEndian.PutUint32(entry[mbrPartitionSectorCountOffset:], e.sectorCount)
+	}
+	b[mbrSignatureOffset] = 0x55
+	b[mbrSignatureOffset+1] = 0xAA
+	return writeISOWithContent(t, b)
+}
+
 // TestInspectISOMBR covers MBR parsing: the used-primary count, the furthest partition extent, and
 // the boot-signature and short-read guards.
 func TestInspectISOMBR(t *testing.T) {
@@ -139,6 +171,16 @@ func TestInspectISOMBR(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, layout.usedPrimaries)
 		assert.Equal(t, int64(11*mbrSectorSize), layout.maxEndByte)
+	})
+	t.Run("counts a zero-type entry with a nonzero sector count as occupied", func(t *testing.T) {
+		// A zero type byte with a nonzero length is still a real partition to sfdisk, so it must be
+		// counted and its extent measured rather than skipped.
+		layout, err := inspectISOMBR(writeMBRISOEntries(t, mbrSectorSize, []mbrEntrySpec{
+			{typeCode: 0x00, startLBA: 0, sectorCount: 10},
+		}))
+		require.NoError(t, err)
+		assert.Equal(t, 1, layout.usedPrimaries)
+		assert.Equal(t, int64(10*mbrSectorSize), layout.maxEndByte)
 	})
 	t.Run("missing boot signature is rejected", func(t *testing.T) {
 		_, err := inspectISOMBR(writeMBRISO(t, 2, false))
@@ -170,6 +212,20 @@ func TestValidateISOLayout(t *testing.T) {
 	t.Run("all four used fails", func(t *testing.T) {
 		iso := writeMBRISO(t, 4, true)
 		err := validateISOLayout(testLogger(), iso, partitionPlan(ModeSelfContained))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "does not leave enough free primary slots")
+	})
+	t.Run("a zero-type but sized entry still counts against the free-slot budget", func(t *testing.T) {
+		// Two conventional primaries plus a zero-type entry that carries a nonzero sector count:
+		// sfdisk sees three occupied slots, leaving only one free, so install-only (needs two) must
+		// fail on the slot count. The sized entry stays well before the 1 MiB append offset so the
+		// failure is the slot budget, not the extent guard.
+		iso := writeMBRISOEntries(t, mbrSectorSize, []mbrEntrySpec{
+			{typeCode: 0x83},
+			{typeCode: 0x83},
+			{typeCode: 0x00, startLBA: 0, sectorCount: 10},
+		})
+		err := validateISOLayout(testLogger(), iso, partitionPlan(ModeInstallOnly))
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "does not leave enough free primary slots")
 	})

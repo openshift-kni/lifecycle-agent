@@ -140,7 +140,7 @@ bytes until content is written):
 | Role | Filesystem label | FS | Size | Modes | Content today |
 | --- | --- | --- | --- | --- | --- |
 | live ISO | — (ISO9660/EFI) | — | ISO size | both | The verified, ignition-customized bootable RHCOS live ISO at LBA 0 |
-| images | `ibi-images` | ext4 | 8 GiB | both | Empty (OCI image layout + `digests.json` populated by CNF-27171) |
+| images | `ibi-images` | ext4 | 8 GiB | both | OCI image layout + `digests.json`, the staged `lca-cli` binary, and (self-contained) the read-only durability `store/` |
 | config | `cluster-config` | ext4 | 256 MiB | self-contained only | Rendered `/opt/openshift` config tree (empty if none supplied) |
 | status | `ibi-status` | ext4 | 64 MiB | both | Empty (runtime records written on-node by CNF-27163) |
 
@@ -154,8 +154,8 @@ partitions inside an MBR extended container.
 | --- | --- |
 | `--manifest`, `-f` | Path to the USB-based IBI YAML/JSON manifest (required). |
 | `--auth-file` | Workstation credentials used at build time to pull `--lca-image` (never written to the media). |
-| `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use fails until image mirroring is wired in (CNF-27171). |
-| `--lca-image` | lca-cli image pull-spec. The exact shipping `lca-cli` binary is extracted from it and embedded in the live ISO. Required for media assembly. |
+| `--recert-image` | Recert image pull-spec added to the on-media image set and mirrored into the OCI image layout (defaults to `$RELATED_IMAGE_RECERT_IMAGE` or the built-in default). |
+| `--lca-image` | lca-cli image pull-spec. The exact shipping `lca-cli` binary is extracted from it and staged on the `ibi-images` partition (not embedded in the ISO); the embedded ignition mounts that partition and execs it on boot. Required for media assembly. |
 | `--output` | Path of the `.img` file to write. The path must not already exist — the command refuses to overwrite an existing file. Mutually exclusive with `--write-device`; exactly one is required. |
 | `--write-device` | Reserved block-device target. The command rejects it (the only supported target is a sparse `.img`). Mutually exclusive with `--output`; exactly one target is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
@@ -268,17 +268,16 @@ siteConfig:
   pullSecret: "@/path/to/pull-secret.json"
 ```
 
-### Planned image payload (`digests.json`)
+### Image payload (`digests.json`)
 
-`create-usb --output` does **not** currently create `digests.json` or an OCI image
-layout. The separately implemented `BuildImageLayout` stage resolves the profile's
-image set to digests, mirrors it into a build-unique OCI layout directory (named
-`oci-<unique>`), and emits a digest manifest. For self-contained profiles it first
-runs `RenderP3Tree` and scans the rendered manifests for image references and offline
-mirror-resource rules. It pins image references to the mirrored digests after
-mirroring; see [docs/create-usb.md](../docs/create-usb.md). Wiring that stage into
-the placeholder image is follow-up work. The format and publication behavior below
-describe that standalone stage, not the current `create-usb` output.
+`create-usb --output` populates the `ibi-images` partition with an OCI image layout and
+`digests.json`. The `BuildImageLayout` stage resolves the profile's image set to digests,
+mirrors it into a build-unique OCI layout directory (named `oci-<unique>`), and emits a
+digest manifest. For self-contained profiles it first runs `RenderP3Tree` and scans the
+rendered manifests for image references and offline mirror-resource rules. It pins image
+references to the mirrored digests after mirroring; see
+[docs/create-usb.md](../docs/create-usb.md). The format and publication behavior below
+describe that stage.
 
 When `BuildImageLayout` runs, it emits the manifest in two places, byte-identical:
 

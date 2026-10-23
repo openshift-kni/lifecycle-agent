@@ -42,9 +42,10 @@ const labelLiveISO = "live-iso"
 
 // MBR (DOS) partition-table geometry used to inspect the ISO's layout as a precondition. An MBR
 // lives in the first 512-byte sector: the partition table is four 16-byte entries at offset 446,
-// each carrying its partition type at byte 4 (0x00 = unused), its absolute start sector (LBA) as a
-// little-endian uint32 at byte 8, and its length in sectors as a little-endian uint32 at byte 12.
-// The sector ends with the 0x55AA boot signature at offset 510.
+// each carrying its partition type at byte 4, its absolute start sector (LBA) as a little-endian
+// uint32 at byte 8, and its length in sectors as a little-endian uint32 at byte 12. A slot is
+// unused only when the whole entry is cleared (type, start, and length all zero); a zero type byte
+// alone does not mean unused. The sector ends with the 0x55AA boot signature at offset 510.
 const (
 	mbrSectorSize                 = 512
 	mbrPartitionTableOffset       = 446
@@ -67,7 +68,9 @@ const requiredFreePrimarySlots = 2
 // needs both: the free-slot count, and whether any ISO partition extends into the region after the
 // ISO where the data partitions are appended.
 type isoMBRLayout struct {
-	// usedPrimaries is the number of non-empty primary entries (type byte != 0).
+	// usedPrimaries is the number of occupied primary entries. An entry is occupied unless it is
+	// fully cleared (type byte, start LBA, and sector count all zero), matching how sfdisk/libfdisk
+	// (is_cleared_partition) decide whether a slot holds a real partition.
 	usedPrimaries int
 	// maxEndByte is the highest (start + length) offset, in bytes, across the occupied entries.
 	maxEndByte int64
@@ -131,12 +134,19 @@ func inspectISOMBR(isoPath string) (isoMBRLayout, error) {
 	var layout isoMBRLayout
 	for i := 0; i < mbrPartitionEntryCount; i++ {
 		entry := sector[mbrPartitionTableOffset+i*mbrPartitionEntrySize:]
-		if entry[mbrPartitionTypeOffset] == 0x00 {
+		typeCode := entry[mbrPartitionTypeOffset]
+		start := binary.LittleEndian.Uint32(entry[mbrPartitionStartLBAOffset:])
+		count := binary.LittleEndian.Uint32(entry[mbrPartitionSectorCountOffset:])
+		// Occupancy is decided by the whole entry, not the type byte alone: sfdisk/libfdisk treat a
+		// slot as a real partition unless it is fully cleared, so an isohybrid/ISO9660 entry with a
+		// zero type byte but a nonzero start or sector count (produced by some RHCOS/CentOS live
+		// ISOs) still consumes a primary slot and reaches into the media. Counting by type byte
+		// alone would both overstate the free-slot count and skip that entry's extent -- defeating
+		// both guards below for exactly the ISOs that hit them.
+		if typeCode == 0x00 && start == 0 && count == 0 {
 			continue
 		}
 		layout.usedPrimaries++
-		start := binary.LittleEndian.Uint32(entry[mbrPartitionStartLBAOffset:])
-		count := binary.LittleEndian.Uint32(entry[mbrPartitionSectorCountOffset:])
 		if end := (int64(start) + int64(count)) * mbrSectorSize; end > layout.maxEndByte {
 			layout.maxEndByte = end
 		}
