@@ -76,8 +76,9 @@ func TestBuildDurabilityStoreIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	destLayout := filepath.Join(mediaRoot, integrationLayoutDir)
-	recordedDigest, err := copyIntoLayout(context.Background(), srcRef, destLayout, integrationOCITag, "")
+	mirrored, err := copyIntoLayout(context.Background(), testLogger(), srcRef, destLayout, integrationOCITag, "")
 	require.NoError(t, err)
+	recordedDigest := mirrored.digest
 
 	entry := localimages.ImageEntry{Name: integrationImageName, Digest: recordedDigest, OCITag: integrationOCITag}
 	manifest := localimages.DigestManifest{Version: digestManifestVersion, OCILayoutPath: integrationLayoutDir, Images: []localimages.ImageEntry{entry}}
@@ -142,8 +143,9 @@ func TestDurabilityStoreReadableAsAdditionalImageStoreIntegration(t *testing.T) 
 	require.NoError(t, err)
 
 	destLayout := filepath.Join(mediaRoot, integrationLayoutDir)
-	recordedDigest, err := copyIntoLayout(context.Background(), srcRef, destLayout, integrationOCITag, "")
+	mirrored, err := copyIntoLayout(context.Background(), testLogger(), srcRef, destLayout, integrationOCITag, "")
 	require.NoError(t, err)
+	recordedDigest := mirrored.digest
 
 	entry := localimages.ImageEntry{Name: integrationImageName, Digest: recordedDigest, OCITag: integrationOCITag}
 	manifest := localimages.DigestManifest{Version: digestManifestVersion, OCILayoutPath: integrationLayoutDir, Images: []localimages.ImageEntry{entry}}

@@ -43,9 +43,14 @@ package createusb
 //
 // # Trust
 //
-// Mirroring uses an accept-anything signature policy (as localimages does). Pinning
-// each reference to a digest guarantees content-addressing/immutability, not
-// publisher identity or provenance.
+// Mirroring runs under the build host's configured container trust policy
+// (newTrustPolicyContext / signature.DefaultPolicy), so a host that requires signatures
+// rejects an unsigned or untrusted source and an unsigned image is mirrored only when the
+// host policy permits it. Pinning each reference to a digest additionally guarantees
+// content-addressing/immutability. An OCI layout cannot store signatures, so the
+// signatures the source serves are stripped from the layout copy and staged beside it
+// (createusb_signatures.go), keyed by manifest instance digest, and re-attached to the
+// image when the node imports it into containers-storage (lca-cli/localimages).
 //
 // # Crash-safe publication
 //
@@ -103,6 +108,7 @@ import (
 	"syscall"
 
 	"github.com/distribution/reference"
+	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 	"go.podman.io/image/v5/copy"
@@ -110,6 +116,7 @@ import (
 	"go.podman.io/image/v5/oci/layout"
 	"go.podman.io/image/v5/signature"
 	"go.podman.io/image/v5/types"
+	"go.podman.io/storage/pkg/configfile"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
@@ -136,8 +143,9 @@ const (
 	// build-side copy (<output>.digests.json).
 	digestManifestSuffix = ".digests.json"
 
-	// digestManifestVersion includes the source references required by disconnected prepare.
-	digestManifestVersion = localimages.SourcesManifestVersion
+	// digestManifestVersion includes the source references required by disconnected
+	// prepare and the per-image signatures staged beside the layout.
+	digestManifestVersion = localimages.SignaturesManifestVersion
 )
 
 // ociTagInvalidChars matches every run of characters that is not allowed in the
@@ -196,13 +204,24 @@ type seedClosureReader interface {
 	ReadContainersList(seedImage, authFile string) ([]string, error)
 }
 
+// mirrorResult is the outcome of mirroring one image into the OCI layout: the pinned
+// top-level index digest and the signatures captured from the source and staged beside
+// the layout (empty for an unsigned image). The digest manifest records both.
+type mirrorResult struct {
+	// digest is the pinned, content-addressed top-level index.json descriptor digest.
+	digest string
+	// signatures is the per-instance signature metadata staged for this image.
+	signatures []localimages.InstanceSignatures
+}
+
 // imageMirrorer copies a single image reference into an OCI image layout under
 // ociTag, preserving the full multi-arch index, and returns the digest of the
-// top-level index.json descriptor that now carries the ociTag annotation. A
-// reference that cannot be reached/resolved fails the copy (and therefore the
-// build); the returned digest is the pinned, content-addressed reference.
+// top-level index.json descriptor that now carries the ociTag annotation together with
+// the signatures captured from the source (the OCI layout cannot hold them, so they are
+// staged beside it). A reference that cannot be reached/resolved fails the copy (and
+// therefore the build); the returned digest is the pinned, content-addressed reference.
 type imageMirrorer interface {
-	MirrorToLayout(ctx context.Context, imageRef, destLayoutDir, ociTag, authFile string) (string, error)
+	MirrorToLayout(ctx context.Context, imageRef, destLayoutDir, ociTag, authFile string) (mirrorResult, error)
 }
 
 // imageBuildDeps bundles the injectable seams.
@@ -219,7 +238,7 @@ func defaultImageBuildDeps(log *logrus.Logger) imageBuildDeps {
 			ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)),
 			log: log,
 		},
-		mirrorer: &containersImageMirrorer{},
+		mirrorer: &containersImageMirrorer{log: log},
 	}
 }
 
@@ -527,15 +546,16 @@ func mirrorToOCILayout(ctx context.Context, refs []string, stagingLayoutDir, aut
 	usedTags := make(map[string]struct{}, len(refs))
 	for i, ref := range refs {
 		tag := uniqueOCITag(ref, i, usedTags)
-		dgst, err := deps.mirrorer.MirrorToLayout(ctx, ref, stagingLayoutDir, tag, authFile)
+		res, err := deps.mirrorer.MirrorToLayout(ctx, ref, stagingLayoutDir, tag, authFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to mirror and digest-pin image %q: %w", ref, err)
 		}
 		entries = append(entries, localimages.ImageEntry{
-			Name:    nameForRef(ref),
-			Digest:  dgst,
-			OCITag:  tag,
-			Sources: []string{ref},
+			Name:       nameForRef(ref),
+			Digest:     res.digest,
+			OCITag:     tag,
+			Sources:    []string{ref},
+			Signatures: res.signatures,
 		})
 	}
 	return entries, nil
@@ -777,6 +797,11 @@ func verifyLayoutEntries(layoutDir string, entries []localimages.ImageEntry) err
 		if matches != 1 {
 			return fmt.Errorf("image %q (%s, tag %q) resolves to %d layout descriptors, want exactly 1", e.Name, e.Digest, e.OCITag, matches)
 		}
+		// Read back every staged signature and confirm it matches its recorded size and
+		// sha256, so a producer bug is caught here rather than at prepare time on the node.
+		if err := localimages.VerifyStagedSignatures(layoutDir, e); err != nil {
+			return fmt.Errorf("verifying staged signatures for image %q (%s): %w", e.Name, e.Digest, err)
+		}
 	}
 	return nil
 }
@@ -923,53 +948,85 @@ func layoutDigestForTag(layoutDir, ociTag string) (string, error) {
 }
 
 // copyIntoLayout copies srcRef into the OCI layout at destLayoutDir under ociTag,
-// preserving the full multi-arch index (copy.CopyAllImages), then returns the
-// digest of the top-level index.json descriptor written under ociTag. It is shared
-// by the production docker-source mirrorer and the integration test (which supplies
+// preserving the full multi-arch index (copy.CopyAllImages), then returns the digest of
+// the top-level index.json descriptor written under ociTag together with the signatures
+// captured from the source. An OCI layout cannot store signatures, so they are stripped
+// from the copy (copy.Options.RemoveSignatures) and captured out-of-band here, keyed by
+// manifest instance digest, for re-attachment on the node (lca-cli/localimages). The
+// copy itself runs under the build host's configured trust policy (newTrustPolicyContext),
+// so an unsigned or untrusted source is accepted only when that policy permits it. It is
+// shared by the production docker-source mirrorer and the integration test (which supplies
 // an OCI-layout source), so the real copy + digest-capture path is exercised in CI.
-func copyIntoLayout(ctx context.Context, srcRef types.ImageReference, destLayoutDir, ociTag, authFile string) (string, error) {
+func copyIntoLayout(ctx context.Context, log *logrus.Logger, srcRef types.ImageReference, destLayoutDir, ociTag, authFile string) (mirrorResult, error) {
 	if err := os.MkdirAll(destLayoutDir, 0o750); err != nil {
-		return "", fmt.Errorf("creating OCI layout directory %q: %w", destLayoutDir, err)
+		return mirrorResult{}, fmt.Errorf("creating OCI layout directory %q: %w", destLayoutDir, err)
 	}
 
 	destRef, err := layout.NewReference(destLayoutDir, ociTag)
 	if err != nil {
-		return "", fmt.Errorf("building OCI layout destination for tag %q: %w", ociTag, err)
+		return mirrorResult{}, fmt.Errorf("building OCI layout destination for tag %q: %w", ociTag, err)
 	}
-
-	policyCtx, err := newAcceptAnythingPolicyContext()
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = policyCtx.Destroy() }()
 
 	sysCtx := &types.SystemContext{}
 	if authFile != "" {
 		sysCtx.AuthFilePath = authFile
 	}
 
+	policyCtx, err := newTrustPolicyContext(log, sysCtx)
+	if err != nil {
+		return mirrorResult{}, err
+	}
+	defer func() { _ = policyCtx.Destroy() }()
+
+	// An OCI layout destination cannot store signatures, so strip them from the copy
+	// (otherwise copy.Image fails on a signed source). The signatures are captured from
+	// the source below and staged beside the layout for re-attachment on the node.
 	if _, err := copy.Image(ctx, policyCtx, destRef, srcRef, &copy.Options{
 		SourceCtx:          sysCtx,
 		DestinationCtx:     sysCtx,
 		ImageListSelection: copy.CopyAllImages,
+		RemoveSignatures:   true,
 	}); err != nil {
-		return "", fmt.Errorf("copying image into OCI layout under tag %q: %w", ociTag, err)
+		return mirrorResult{}, fmt.Errorf("copying image into OCI layout under tag %q: %w", ociTag, err)
 	}
 
 	copiedDigest, err := layoutDigestForTag(destLayoutDir, ociTag)
 	if err != nil {
-		return "", err
+		return mirrorResult{}, err
 	}
 	if canonical, ok := srcRef.DockerReference().(reference.Canonical); ok && canonical.Digest().String() != copiedDigest {
 		if err := preservePinnedDockerManifest(ctx, srcRef, destLayoutDir, ociTag, authFile, canonical.Digest()); err != nil {
-			return "", err
+			return mirrorResult{}, err
 		}
 		copiedDigest = canonical.Digest().String()
 	}
 	if err := verifyPinnedSourceDigest(srcRef, copiedDigest); err != nil {
-		return "", err
+		return mirrorResult{}, err
 	}
-	return copiedDigest, nil
+
+	// Capture the signatures the source serves (keyed by the same digest the consumer
+	// imports by) and stage them beside the layout.
+	signatures, err := captureSourceSignatures(ctx, srcRef, destLayoutDir, copiedDigest, sysCtx)
+	if err != nil {
+		return mirrorResult{}, fmt.Errorf("capturing signatures under tag %q: %w", ociTag, err)
+	}
+
+	return mirrorResult{digest: copiedDigest, signatures: signatures}, nil
+}
+
+// captureSourceSignatures opens the source image and stages its signatures beside the
+// layout, keyed by copiedDigest (the pinned top-level digest the consumer imports by).
+func captureSourceSignatures(ctx context.Context, srcRef types.ImageReference, destLayoutDir, copiedDigest string, sysCtx *types.SystemContext) ([]localimages.InstanceSignatures, error) {
+	topDigest, err := digest.Parse(copiedDigest)
+	if err != nil {
+		return nil, fmt.Errorf("parsing copied digest %q: %w", copiedDigest, err)
+	}
+	imgSrc, err := srcRef.NewImageSource(ctx, sysCtx)
+	if err != nil {
+		return nil, fmt.Errorf("opening source image to capture signatures: %w", err)
+	}
+	defer func() { _ = imgSrc.Close() }()
+	return captureAndStageSignatures(ctx, imgSrc, destLayoutDir, topDigest)
 }
 
 // verifyPinnedSourceDigest ensures a digest-pinned source remains addressable by
@@ -983,13 +1040,32 @@ func verifyPinnedSourceDigest(srcRef types.ImageReference, copiedDigest string) 
 	return nil
 }
 
-// newAcceptAnythingPolicyContext builds a signature policy context that accepts any
-// image. Mirroring from a registry reached by digest provides content-addressing;
-// signature/publisher verification is intentionally not performed (matching the
-// consumer's localimages.NewImporter policy).
-func newAcceptAnythingPolicyContext() (*signature.PolicyContext, error) {
-	policy := &signature.Policy{
-		Default: []signature.PolicyRequirement{signature.NewPRInsecureAcceptAnything()},
+// newTrustPolicyContext builds the signature policy context that governs which source
+// images may be mirrored. It uses the build host's configured trust policy
+// (signature.DefaultPolicy, honoring sysCtx.SignaturePolicyPath, $CONTAINERS_POLICY_JSON,
+// or /etc/containers/policy.json) rather than a hardcoded accept-anything policy, so a
+// host configured to require signatures rejects an unsigned or untrusted source, and an
+// unsigned image is mirrored only when the host policy permits it (the developer-of-record
+// directive's explicit trust check).
+//
+// If the host has no trust policy configured at all, DefaultPolicy reports the file as
+// absent; rather than fail every build on an unconfigured host, the mirror falls back to
+// accepting any source but logs the absence loudly, so the operator knows no publisher
+// trust is being enforced. A malformed or otherwise unreadable policy is a hard error.
+func newTrustPolicyContext(log *logrus.Logger, sysCtx *types.SystemContext) (*signature.PolicyContext, error) {
+	policy, err := signature.DefaultPolicy(sysCtx)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, configfile.ErrConfigFileNotFound) {
+			return nil, fmt.Errorf("loading signature trust policy: %w", err)
+		}
+		if log != nil {
+			log.Warn("no container signature trust policy is configured on the build host " +
+				"(set $CONTAINERS_POLICY_JSON or /etc/containers/policy.json); mirroring will " +
+				"accept any source without verifying publisher trust")
+		}
+		policy = &signature.Policy{
+			Default: []signature.PolicyRequirement{signature.NewPRInsecureAcceptAnything()},
+		}
 	}
 	policyCtx, err := signature.NewPolicyContext(policy)
 	if err != nil {
@@ -1003,16 +1079,18 @@ func newAcceptAnythingPolicyContext() (*signature.PolicyContext, error) {
 // containersImageMirrorer mirrors from a docker:// registry into an OCI layout
 // using in-process containers/image (resolving USB-based IBI §6.6: no oc-mirror or
 // external skopeo binary; symmetric with the localimages import side).
-type containersImageMirrorer struct{}
+type containersImageMirrorer struct {
+	log *logrus.Logger
+}
 
 // MirrorToLayout parses imageRef as a docker registry reference and copies it into
 // the layout.
-func (*containersImageMirrorer) MirrorToLayout(ctx context.Context, imageRef, destLayoutDir, ociTag, authFile string) (string, error) {
+func (m *containersImageMirrorer) MirrorToLayout(ctx context.Context, imageRef, destLayoutDir, ociTag, authFile string) (mirrorResult, error) {
 	srcRef, err := docker.ParseReference("//" + imageRef)
 	if err != nil {
-		return "", fmt.Errorf("parsing source image reference %q: %w", imageRef, err)
+		return mirrorResult{}, fmt.Errorf("parsing source image reference %q: %w", imageRef, err)
 	}
-	return copyIntoLayout(ctx, srcRef, destLayoutDir, ociTag, authFile)
+	return copyIntoLayout(ctx, m.log, srcRef, destLayoutDir, ociTag, authFile)
 }
 
 // withMountedImage pulls image with the host podman, mounts it, and invokes fn with the

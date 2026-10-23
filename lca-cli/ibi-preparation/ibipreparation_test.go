@@ -597,7 +597,9 @@ func idxOf(events []string, name string) int {
 
 // TestMountLocalImages exercises the p2 discovery precondition directly: zero or
 // more than one labelled device fails (no MountReadOnly); exactly one proceeds to a
-// read-only mount and returns an idempotent unmount closure.
+// read-only mount and returns an idempotent unmount closure. When the boot-time
+// systemd .mount unit already owns the mount point, the existing read-only mount is
+// reused (no MountReadOnly, no Umount); a conflicting existing mount fails.
 func TestMountLocalImages(t *testing.T) {
 	const localImagesPath = "/var/mnt/ibi-images"
 
@@ -605,7 +607,11 @@ func TestMountLocalImages(t *testing.T) {
 		name       string
 		devices    []ops.BlockDevice
 		wantDevice string // device mountLocalImages should select (empty => expect error)
-		expectErr  bool
+		// hostMounts is the host /proc/self/mounts content inspectHostMount reads. It is
+		// consulted only when device discovery succeeds (exactly one labelled device).
+		hostMounts  string
+		expectReuse bool // mount is reused: no MountReadOnly, cleanup is a no-op
+		expectErr   bool
 	}{
 		{
 			name:      "zero matches fails before mount",
@@ -628,6 +634,7 @@ func TestMountLocalImages(t *testing.T) {
 				{Name: "sdb1", Label: "boot"},
 				{Name: "sdb2", Label: common.LocalImagesFSLabel},
 			},
+			hostMounts: "/dev/sda3 /sysroot ext4 ro,relatime 0 0\n",
 			wantDevice: "sdb2",
 		},
 		{
@@ -636,7 +643,32 @@ func TestMountLocalImages(t *testing.T) {
 				{Name: "sda", Label: "root"},
 				{Name: "sdb", Label: common.LocalImagesFSLabel},
 			},
+			hostMounts: "",
 			wantDevice: "sdb",
+		},
+		{
+			name: "existing read-only mount from the discovered device is reused",
+			devices: []ops.BlockDevice{
+				{Name: "sdb2", Label: common.LocalImagesFSLabel},
+			},
+			hostMounts:  "/dev/sdb2 /var/mnt/ibi-images ext4 ro,relatime 0 0\n",
+			expectReuse: true,
+		},
+		{
+			name: "mount point occupied by another device fails before mount",
+			devices: []ops.BlockDevice{
+				{Name: "sdb2", Label: common.LocalImagesFSLabel},
+			},
+			hostMounts: "/dev/sdc9 /var/mnt/ibi-images ext4 ro,relatime 0 0\n",
+			expectErr:  true,
+		},
+		{
+			name: "expected device mounted read-write fails before mount",
+			devices: []ops.BlockDevice{
+				{Name: "sdb2", Label: common.LocalImagesFSLabel},
+			},
+			hostMounts: "/dev/sdb2 /var/mnt/ibi-images ext4 rw,relatime 0 0\n",
+			expectErr:  true,
 		},
 	}
 
@@ -648,6 +680,14 @@ func TestMountLocalImages(t *testing.T) {
 				&ibiconfig.IBIPrepareConfig{LocalImagesPath: localImagesPath})
 
 			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
+			// inspectHostMount is reached only once device discovery has selected exactly one
+			// device; the discovery-failure cases return before reading the host mount table.
+			discoverySucceeds := tc.wantDevice != "" || tc.expectReuse ||
+				(tc.expectErr && countLabelMatches(tc.devices) == 1)
+			if discoverySucceeds {
+				mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").
+					Return(tc.hostMounts, nil).Times(1)
+			}
 			if tc.wantDevice != "" {
 				mockOps.EXPECT().MountReadOnly(tc.wantDevice, localImagesPath).Return(nil).Times(1)
 			} else {
@@ -661,6 +701,15 @@ func TestMountLocalImages(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
+			if tc.expectReuse {
+				// A reused systemd-owned mount must never be torn down from here.
+				mockOps.EXPECT().Umount(gomock.Any()).Times(0)
+				if assert.NotNil(t, unmount) {
+					assert.NoError(t, unmount())
+					assert.NoError(t, unmount())
+				}
+				return
+			}
 			if assert.NotNil(t, unmount) {
 				// Idempotent: Umount runs at most once even if the closure is called
 				// twice (explicit happy-path call + deferred error-path call).
@@ -670,6 +719,17 @@ func TestMountLocalImages(t *testing.T) {
 			}
 		})
 	}
+}
+
+// countLabelMatches returns how many block devices carry the local-images filesystem label.
+func countLabelMatches(devices []ops.BlockDevice) int {
+	n := 0
+	for _, bd := range devices {
+		if bd.Label == common.LocalImagesFSLabel {
+			n++
+		}
+	}
+	return n
 }
 
 // TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite proves that a failed p2
@@ -799,6 +859,7 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			mockOps.EXPECT().ListBlockDevices().
 				Return(statusDevices("sdb1", "sdp4"), nil).Times(2)
 			mockOps.EXPECT().Mount("sdp4", statusDir).Return(nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 			mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 			// No disk write.
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
@@ -1016,6 +1077,7 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 
 	// p2 and p4 are discovered from the same block-device list (two label matches).
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb2", statusPartitionMountDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
@@ -1086,6 +1148,7 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 		events = append(events, "listBlockDevices")
 		return statusDevices("sdb1", "sdb2"), nil
 	}).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).DoAndReturn(func(_, _ string) error {
 		events = append(events, "mountReadOnlyP2")
 		return nil
@@ -1216,6 +1279,7 @@ func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 
 	// p2 ("sdb2") and p4 ("sdb3") are discovered from the same block-device list.
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb2", "sdb3"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb2", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb3", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
@@ -1496,6 +1560,7 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	statusDir := useTempStatusPartition(t)
 	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
@@ -1556,6 +1621,7 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	statusDir := useTempStatusPartition(t)
 	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)

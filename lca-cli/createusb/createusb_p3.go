@@ -16,22 +16,23 @@ limitations under the License.
 
 package createusb
 
-// This file implements the self-contained p3 cluster-config media stage (USB-based IBI
+// This file implements the self-contained cluster-config populate stage (USB-based IBI
 // proposal §6.4 step 5, split from CNF-27171 as CNF-28669). It is the media/partition side
-// of p3; the config-tree content is rendered and digest-pinned separately by
+// of cluster-config; the config-tree content is rendered and digest-pinned separately by
 // createusb_p3_content.go (RenderP3Tree) + createusb_images.go (CNF-27169).
 //
-// The reserved p3 slot (number 3, label cluster-config, 256 MiB) is laid out by the p1 seam
-// (CNF-28667) in partitionPlan; install-only carries no p3 entry. This stage fills that slot:
-// it creates the GPT entry, settles the kernel partition node, formats ext4, sets the FS
-// label, mounts the partition, and populates it content-verbatim from the rendered p3 tree.
+// In the DOS/MBR append-after-ISO layout the cluster-config partition is appended after the live
+// ISO (as a logical inside the MBR extended container) and formatted + labelled by the shared
+// format stage (formatDataPartitions in createusb_assemble.go); install-only has no cluster-config
+// partition. This stage fills the formatted partition: it resolves it by filesystem label, mounts
+// it, and populates it content-verbatim from the rendered config tree.
 //
 // # Privileged-ops seam
 //
-// Every privileged step (create entry, settle, mkfs, mount, umount) goes through the
-// partitionOps seam so the ordering/lifecycle logic is unit-testable with a fake and only the
-// real device path is exercised by the root-gated integration test. The pure populate (tree
-// copy) is plain filesystem code.
+// Every privileged step (resolve-by-label, mount, umount) goes through the partitionOps seam so
+// the ordering/lifecycle logic is unit-testable with a fake and only the real device path is
+// exercised by the root-gated integration test. The pure populate (tree copy) is plain filesystem
+// code.
 //
 // # Teardown
 //
@@ -40,8 +41,8 @@ package createusb
 //
 // # Source-tree handoff
 //
-// p3Root is consumed read-only. When it is empty, self-contained placeholder media
-// gets a formatted but unpopulated p3 slot; a supplied invalid tree fails the build.
+// p3Root is consumed read-only. When it is empty, self-contained placeholder media keeps a
+// formatted but unpopulated cluster-config partition; a supplied invalid tree fails the build.
 
 import (
 	"context"
@@ -71,58 +72,53 @@ const (
 // rollback checks for this via errors.Is and preserves the image + loop handle instead.
 var errP3Mounted = errors.New("cluster-config (p3) partition is still mounted")
 
-// createP3Partition fills the reserved self-contained p3 cluster-config slot on the media
-// handle: it creates the GPT entry, settles the kernel node, formats an ext4 filesystem,
-// labels it cluster-config, mounts it, and populates it content-verbatim from p3Root.
+// populateClusterConfig fills the formatted self-contained cluster-config partition on the media
+// handle: it resolves the partition by its filesystem label, mounts it, and populates it
+// content-verbatim from p3Root.
 //
-// It is a no-op when the plan carries no p3 entry (install-only). When the plan has a p3 entry
-// and p3Root is empty, it creates an empty ext4 placeholder. A supplied root that is
-// missing, not a directory, oversized, or contains a non-regular file fails loudly.
-func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, p3Root string) (err error) {
+// It is a no-op when the plan carries no cluster-config partition (install-only) or when p3Root is
+// empty (self-contained placeholder media keeps the formatted-but-empty partition). A supplied
+// root that is missing, not a directory, oversized, or contains a non-regular file fails loudly.
+func populateClusterConfig(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, p3Root string) (err error) {
 	if cerr := ctx.Err(); cerr != nil {
-		return fmt.Errorf("p3 partition creation canceled: %w", cerr)
+		return fmt.Errorf("cluster-config populate canceled: %w", cerr)
 	}
 
 	p3, ok := plannedPartition(media.Plan, labelClusterConfig)
 	if !ok {
-		// install-only: the plan reserves no cluster-config slot, so there is nothing to create.
-		log.Infof("create-usb: no cluster-config (p3) partition in the plan (mode=%s); skipping p3 stage", media.Plan.Mode)
+		// install-only: the plan has no cluster-config partition, so there is nothing to populate.
+		log.Infof("create-usb: no cluster-config partition in the plan (mode=%s); skipping populate", media.Plan.Mode)
 		return nil
-	}
-
-	if p3Root != "" {
-		// Reject an invalid supplied payload before touching the partition.
-		if err := validateP3Source(p3Root, p3.Size); err != nil {
-			return err
-		}
-	}
-
-	// Create, settle, and format the partition through the shared create -> settle -> format
-	// sequence p2 and p3 both use (createusb_assemble.go). p3 then mounts the returned device
-	// node and populates it -- the mount/populate/unmount steps below are p3-specific.
-	partDev, err := createAndFormatPartition(deps.partition, media.LoopDevice, p3, clusterConfigFSType)
-	if err != nil {
-		return fmt.Errorf("creating cluster-config (p3) partition: %w", err)
 	}
 	if p3Root == "" {
-		log.Infof("create-usb: created empty cluster-config (p3) placeholder")
+		log.Infof("create-usb: cluster-config partition left empty (no config tree supplied)")
 		return nil
+	}
+
+	// Reject an invalid supplied payload before touching the partition.
+	if err := validateP3Source(p3Root, p3.Size); err != nil {
+		return err
+	}
+
+	partDev, err := deps.partition.ResolvePartitionByFSLabel(media.LoopDevice, labelClusterConfig)
+	if err != nil {
+		return fmt.Errorf("resolving cluster-config partition by label: %w", err)
 	}
 
 	mountpoint, err := os.MkdirTemp("", "create-usb-p3-")
 	if err != nil {
-		return fmt.Errorf("creating cluster-config (p3) mountpoint: %w", err)
+		return fmt.Errorf("creating cluster-config mountpoint: %w", err)
 	}
 	// Remove the (empty, post-unmount) mountpoint directory last. Deferred before the mount so
 	// it runs after the unmount below (defers run LIFO).
 	defer func() {
 		if rerr := os.Remove(mountpoint); rerr != nil && !os.IsNotExist(rerr) {
-			log.Warnf("create-usb: removing cluster-config (p3) mountpoint %s: %v", mountpoint, rerr)
+			log.Warnf("create-usb: removing cluster-config mountpoint %s: %v", mountpoint, rerr)
 		}
 	}()
 
 	if err := deps.partition.MountPartition(partDev, mountpoint); err != nil {
-		return fmt.Errorf("mounting cluster-config (p3) partition %s at %s: %w", partDev, mountpoint, err)
+		return fmt.Errorf("mounting cluster-config partition %s at %s: %w", partDev, mountpoint, err)
 	}
 	// Always unmount before the loop device is detached (Close does not unmount). Aggregate a
 	// cleanup failure into the returned error rather than swallowing it, and tag it with
@@ -130,17 +126,16 @@ func createP3Partition(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 	// (detaching/removing them while mounted would discard the recovery path).
 	defer func() {
 		if uerr := deps.partition.UnmountPartition(mountpoint); uerr != nil {
-			err = errors.Join(err, fmt.Errorf("unmounting cluster-config (p3) partition at %s: %w",
+			err = errors.Join(err, fmt.Errorf("unmounting cluster-config partition at %s: %w",
 				mountpoint, errors.Join(errP3Mounted, uerr)))
 		}
 	}()
 
 	if err := copyTreeContentVerbatim(p3Root, mountpoint); err != nil {
-		return fmt.Errorf("populating cluster-config (p3) partition from %s: %w", p3Root, err)
+		return fmt.Errorf("populating cluster-config partition from %s: %w", p3Root, err)
 	}
 
-	log.Infof("create-usb: cluster-config (p3) partition created, formatted ext4, labeled %q, and populated from %s",
-		labelClusterConfig, p3Root)
+	log.Infof("create-usb: cluster-config partition (%s) populated from %s", partDev, p3Root)
 	return nil
 }
 

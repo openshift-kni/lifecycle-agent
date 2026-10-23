@@ -20,11 +20,13 @@ limitations under the License.
 // self-contained flows depend on, and resolves @file pull-secret references on the
 // workstation at build time.
 //
-// The media-assembly pipeline is split across sibling stories: the media container, base
-// GPT and placeholder p1 construction are coordinated by createusb_assemble.go and
-// implemented in createusb_p1.go; OCI image layout and the on-media digest manifest land in
-// createusb_images.go. Build produces a sparse placeholder image with the planned
-// GPT partitions; ISO writing and payload population are not wired in yet.
+// The media-assembly pipeline is coordinated by createusb_assemble.go: it builds the customized
+// RHCOS live ISO (createusb_p1_content.go), writes it to the front of the media at LBA 0
+// (createusb_p1.go), and appends the formatted, labelled data partitions after it following the
+// CNF-27197-proven DOS/MBR "append after the ISO" layout (the ibi-images, cluster-config, and
+// ibi-status filesystem policies live in createusb_p2.go / createusb_p3.go / createusb_p4.go).
+// OCI image layout and the on-media digest manifest land in createusb_images.go. Content
+// population of ibi-images and ibi-status is owned by the sibling runtime/populate stories.
 package createusb
 
 import (

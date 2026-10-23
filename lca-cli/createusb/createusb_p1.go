@@ -16,95 +16,205 @@ limitations under the License.
 
 package createusb
 
-// This file owns the p1 live-ISO placeholder stage. It initializes the GPT and reserves
-// the planned p1 region without writing ISO bytes. The later ISO stage can extend this
-// file while the media assembly caller retains the same partition-stage boundary.
+// This file owns the p1 live-ISO placement stage. In the CNF-27197-proven DOS/MBR layout the
+// customized RHCOS live ISO owns the front of the media (LBA 0): it is copied byte-for-byte to
+// the output image so its own DOS/MBR partition table and EFI entries -- which make it bootable
+// under UEFI/Secure Boot -- stay at sector 0. The image is then grown to the full media size so
+// the data partitions have room to be appended after the ISO (createusb_assemble.go).
+//
+// The customized ISO itself (fetch+verify, embedded ignition, embedded lca-cli binary) is built
+// by createusb_p1_content.go.
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/sirupsen/logrus"
 )
 
+// labelLiveISO names the live-ISO role in logs. The live ISO carries its own ISO9660/EFI
+// partition table (it is not a create-usb-formatted partition), so this is a role label only,
+// not a filesystem label set by create-usb.
+const labelLiveISO = "live-iso"
+
+// MBR (DOS) partition-table geometry used to inspect the ISO's layout as a precondition. An MBR
+// lives in the first 512-byte sector: the partition table is four 16-byte entries at offset 446,
+// each carrying its partition type at byte 4, its absolute start sector (LBA) as a little-endian
+// uint32 at byte 8, and its length in sectors as a little-endian uint32 at byte 12. A slot is
+// unused only when the whole entry is cleared (type, start, and length all zero); a zero type byte
+// alone does not mean unused. The sector ends with the 0x55AA boot signature at offset 510.
 const (
-	// This provisional 2 GiB slot reserves room for a future verified RHCOS live ISO.
-	defaultP1ReservationBytes = int64(2) << 30
-	labelLiveISO              = "live-iso"
+	mbrSectorSize                 = 512
+	mbrPartitionTableOffset       = 446
+	mbrPartitionEntrySize         = 16
+	mbrPartitionEntryCount        = 4
+	mbrPartitionTypeOffset        = 4
+	mbrPartitionStartLBAOffset    = 8
+	mbrPartitionSectorCountOffset = 12
+	mbrSignatureOffset            = 510
 )
 
-func createP1Partition(log *logrus.Logger, plan PartitionPlan, dev string, deps mediaBuildDeps) error {
-	p1, ok := plannedPartition(plan, labelLiveISO)
-	if !ok || p1.Number != 1 {
-		return fmt.Errorf("p1 (%s) not found at partition number 1 in the media layout", labelLiveISO)
-	}
-	log.Infof("create-usb: creating placeholder p%d (%s, %d bytes)", p1.Number, p1.Label, p1.Size)
-	if err := deps.partition.CreateBaseLayout(dev, plan); err != nil {
-		return fmt.Errorf("creating base GPT and placeholder p1 on %s: %w", dev, err)
-	}
-	return nil
+// requiredFreePrimarySlots is the number of top-level MBR slots assembleMedia appends after the
+// ISO for either mode: install-only appends two primaries (ibi-images, ibi-status); self-contained
+// appends ibi-images as a primary plus one MBR extended container (holding the cluster-config and
+// ibi-status logicals). Both modes therefore need two free primary slots.
+const requiredFreePrimarySlots = 2
+
+// isoMBRLayout summarizes the ISO's MBR primary table: how many slots are occupied and the highest
+// byte offset any occupied partition reaches (start sector + length, in bytes). The precondition
+// needs both: the free-slot count, and whether any ISO partition extends into the region after the
+// ISO where the data partitions are appended.
+type isoMBRLayout struct {
+	// usedPrimaries is the number of occupied primary entries. An entry is occupied unless it is
+	// fully cleared (type byte, start LBA, and sector count all zero), matching how sfdisk/libfdisk
+	// (is_cleared_partition) decide whether a slot holds a real partition.
+	usedPrimaries int
+	// maxEndByte is the highest (start + length) offset, in bytes, across the occupied entries.
+	maxEndByte int64
 }
 
-// WriteLiveISOToP1 writes a built live ISO into the reserved p1 region of the media attached
-// at loopDev, with a reservation-size guard. It is a standalone building block (mirroring
-// Build → build) wired into the assembly pipeline by CNF-27171; Build still ships the
-// placeholder p1 until then.
-func WriteLiveISOToP1(log *logrus.Logger, plan PartitionPlan, loopDev, isoPath string) error {
-	return writeLiveISOToP1(log, plan, loopDev, isoPath, defaultMediaBuildDeps(log))
-}
-
-// writeLiveISOToP1 writes a built live ISO into the reserved p1 region. It first guards that
-// the ISO fits the reservation (fail the build loudly rather than truncating the ISO into a
-// too-small p1), then settles the p1 device node and writes the ISO bytes onto it with no
-// filesystem. It is a standalone building block: Build still ships the placeholder p1 until
-// CNF-27171 wires the live-ISO build and calls this with the customized ISO path.
-func writeLiveISOToP1(log *logrus.Logger, plan PartitionPlan, dev, isoPath string, deps mediaBuildDeps) error {
-	p1, ok := plannedPartition(plan, labelLiveISO)
-	if !ok || p1.Number != 1 {
-		return fmt.Errorf("p1 (%s) not found at partition number 1 in the media layout", labelLiveISO)
-	}
+// validateISOLayout inspects the customized live ISO's actual MBR partition table before the image
+// is grown or appended to, and fails with a clear, actionable error when the ISO cannot host the
+// append. MBR has only four primary slots; a real RHCOS isohybrid live ISO uses two (ISO9660 + ESP),
+// leaving the two the append needs. Two things are verified, not assumed, because either would
+// otherwise fail opaquely mid-build:
+//
+//  1. Enough free primary slots remain for the selected mode.
+//  2. No occupied ISO partition extends past the first safe append offset — the MiB-aligned end of
+//     the ISO's bytes, which is exactly where containerSize plans the first data partition and where
+//     `sfdisk --append` (which places new partitions after the last occupied sector) will land them.
+//     An ISO whose own partition table claims space in that region would push the appended
+//     partitions beyond the sized image, so it is rejected up front.
+func validateISOLayout(log *logrus.Logger, isoPath string, plan PartitionPlan) error {
 	info, err := os.Stat(isoPath)
 	if err != nil {
 		return fmt.Errorf("stat live ISO %s: %w", isoPath, err)
 	}
-	if info.Size() > p1.Size {
-		return fmt.Errorf("customized live ISO (%d bytes) exceeds the reserved p%d (%s) region (%d bytes)",
-			info.Size(), p1.Number, p1.Label, p1.Size)
-	}
-	log.Infof("create-usb: writing live ISO (%d bytes) into p%d (%s, %d bytes reserved)",
-		info.Size(), p1.Number, p1.Label, p1.Size)
-
-	partDev, err := deps.partition.SettlePartition(dev, p1.Number)
+	layout, err := inspectISOMBR(isoPath)
 	if err != nil {
-		return fmt.Errorf("settling p%d (%s) partition node: %w", p1.Number, p1.Label, err)
+		return err
 	}
-	if err := deps.partition.WriteImageToPartition(partDev, isoPath); err != nil {
-		return fmt.Errorf("writing live ISO into p%d (%s): %w", p1.Number, p1.Label, err)
+	free := mbrPartitionEntryCount - layout.usedPrimaries
+	log.Infof("create-usb: live ISO MBR layout: %d of %d primary slots used, %d free, partitions reach byte %d (mode=%s needs %d free)",
+		layout.usedPrimaries, mbrPartitionEntryCount, free, layout.maxEndByte, plan.Mode, requiredFreePrimarySlots)
+	if free < requiredFreePrimarySlots {
+		return fmt.Errorf("live ISO uses %d of %d MBR primary slots, leaving only %d free, but %s media must append %d partitions after the ISO; the ISO does not leave enough free primary slots to assemble %s media",
+			layout.usedPrimaries, mbrPartitionEntryCount, free, plan.Mode, requiredFreePrimarySlots, plan.Mode)
+	}
+
+	appendOffset := alignUpToMiB(info.Size())
+	if layout.maxEndByte > appendOffset {
+		return fmt.Errorf("live ISO has a partition reaching byte %d, past the %d-byte first safe append offset where %s media appends its data partitions; the ISO's own partition table claims space in the append region, so create-usb cannot safely append after it",
+			layout.maxEndByte, appendOffset, plan.Mode)
 	}
 	return nil
 }
 
-// CreateBaseLayout zeroes any existing table, creates a fresh GPT at the full container
-// size, and adds the placeholder p1 entry reserving the live-ISO region. The p2/p3/p4
-// entries are added separately into the offsets reserved by the plan.
-func (p *opsPartitionOps) CreateBaseLayout(dev string, plan PartitionPlan) error {
-	if len(plan.Partitions) == 0 || plan.Partitions[0].Number != 1 || plan.Partitions[0].Label != labelLiveISO {
-		return fmt.Errorf("media layout must start with p1 (%s)", labelLiveISO)
+// inspectISOMBR reads the ISO's MBR (first sector), validates the 0x55AA boot signature, and returns
+// the occupied-primary count and the furthest byte offset any occupied partition reaches. A missing
+// signature means the source is not a bootable DOS/MBR (isohybrid) image and is rejected.
+func inspectISOMBR(isoPath string) (isoMBRLayout, error) {
+	f, err := os.Open(filepath.Clean(isoPath))
+	if err != nil {
+		return isoMBRLayout{}, fmt.Errorf("opening live ISO %s: %w", isoPath, err)
 	}
-	p1 := plan.Partitions[0]
-	startSector := p1.Offset / sectorSize
-	endSector := (p1.Offset+p1.Size)/sectorSize - 1
+	defer func() { _ = f.Close() }()
 
-	// Zap any residual table so the backup GPT lands at the true end of the full-size device.
-	if _, err := p.ops.RunInHostNamespace("sgdisk", "--zap-all", dev); err != nil {
-		return fmt.Errorf("zapping partition table on %s: %w", dev, err)
+	sector := make([]byte, mbrSectorSize)
+	if _, err := io.ReadFull(f, sector); err != nil {
+		return isoMBRLayout{}, fmt.Errorf("reading the live ISO %s MBR sector: %w", isoPath, err)
 	}
-	if _, err := p.ops.RunInHostNamespace("sgdisk",
-		fmt.Sprintf("--new=%d:%d:%d", p1.Number, startSector, endSector),
-		fmt.Sprintf("--change-name=%d:%s", p1.Number, p1.Label),
-		fmt.Sprintf("--typecode=%d:%s", p1.Number, placeholderTypeCode),
-		dev); err != nil {
-		return fmt.Errorf("creating placeholder p1 on %s: %w", dev, err)
+	if sector[mbrSignatureOffset] != 0x55 || sector[mbrSignatureOffset+1] != 0xAA {
+		return isoMBRLayout{}, fmt.Errorf("live ISO %s has no MBR boot signature (0x55AA); is the source a RHCOS isohybrid live ISO?", isoPath)
+	}
+
+	var layout isoMBRLayout
+	for i := 0; i < mbrPartitionEntryCount; i++ {
+		entry := sector[mbrPartitionTableOffset+i*mbrPartitionEntrySize:]
+		typeCode := entry[mbrPartitionTypeOffset]
+		start := binary.LittleEndian.Uint32(entry[mbrPartitionStartLBAOffset:])
+		count := binary.LittleEndian.Uint32(entry[mbrPartitionSectorCountOffset:])
+		// Occupancy is decided by the whole entry, not the type byte alone: sfdisk/libfdisk treat a
+		// slot as a real partition unless it is fully cleared, so an isohybrid/ISO9660 entry with a
+		// zero type byte but a nonzero start or sector count (produced by some RHCOS/CentOS live
+		// ISOs) still consumes a primary slot and reaches into the media. Counting by type byte
+		// alone would both overstate the free-slot count and skip that entry's extent -- defeating
+		// both guards below for exactly the ISOs that hit them.
+		if typeCode == 0x00 && start == 0 && count == 0 {
+			continue
+		}
+		layout.usedPrimaries++
+		if end := (int64(start) + int64(count)) * mbrSectorSize; end > layout.maxEndByte {
+			layout.maxEndByte = end
+		}
+	}
+	return layout, nil
+}
+
+// WriteLiveISOToFront copies a built live ISO to the front of the media image at imgPath and
+// grows the image to totalBytes. It is a standalone building block wired into the media-assembly
+// pipeline by assembleMedia.
+func WriteLiveISOToFront(log *logrus.Logger, imgPath, isoPath string, totalBytes int64) error {
+	log.Infof("create-usb: writing live ISO (%s) to the front of %s and growing to %d bytes", labelLiveISO, imgPath, totalBytes)
+	return writeLiveISOToFront(imgPath, isoPath, totalBytes)
+}
+
+// writeLiveISOToFront copies the customized live ISO byte-for-byte to the front of a freshly
+// created media image and truncates the image up to totalBytes so the data partitions can be
+// appended after the ISO. The byte-for-byte copy preserves the ISO's DOS/MBR table and the EFI
+// entries that make it bootable, exactly as the CNF-27197 spike's `dd if=ISO of=OUTPUT` +
+// `truncate` does.
+//
+// The image is created exclusively (O_EXCL): if the output path already exists it fails without
+// touching the existing file, so a build never destroys an existing image at a reused output path.
+func writeLiveISOToFront(imgPath, isoPath string, totalBytes int64) (err error) {
+	iso, err := os.Open(filepath.Clean(isoPath))
+	if err != nil {
+		return fmt.Errorf("opening live ISO %s: %w", isoPath, err)
+	}
+	defer func() { _ = iso.Close() }()
+	isoInfo, err := iso.Stat()
+	if err != nil {
+		return fmt.Errorf("stat live ISO %s: %w", isoPath, err)
+	}
+	if isoInfo.Size() > totalBytes {
+		return fmt.Errorf("live ISO (%d bytes) is larger than the planned media size (%d bytes)", isoInfo.Size(), totalBytes)
+	}
+
+	out, err := os.OpenFile(filepath.Clean(imgPath), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // output path is supplied by the operator at build time
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("output path %s already exists; refusing to overwrite it (remove it or choose a different --output path): %w", imgPath, err)
+		}
+		return fmt.Errorf("creating media image %s: %w", imgPath, err)
+	}
+	// On any failure after creation, remove the partial image so a reused output path stays
+	// available and no truncated media is left behind.
+	defer func() {
+		if err != nil {
+			if removeErr := os.Remove(imgPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				err = fmt.Errorf("%w; additionally failed to remove the partial media image %s: %w", err, imgPath, removeErr)
+			}
+		}
+	}()
+
+	if _, err = io.Copy(out, iso); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("copying live ISO %s to %s: %w", isoPath, imgPath, err)
+	}
+	if terr := out.Truncate(totalBytes); terr != nil {
+		_ = out.Close()
+		return fmt.Errorf("growing media image %s to %d bytes: %w", imgPath, totalBytes, terr)
+	}
+	if serr := out.Sync(); serr != nil {
+		_ = out.Close()
+		return fmt.Errorf("syncing media image %s: %w", imgPath, serr)
+	}
+	if cerr := out.Close(); cerr != nil {
+		return fmt.Errorf("closing media image %s: %w", imgPath, cerr)
 	}
 	return nil
 }

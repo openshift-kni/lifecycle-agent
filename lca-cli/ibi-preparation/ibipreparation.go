@@ -292,7 +292,7 @@ func (i *IBIPrepare) runPreparation(ctx context.Context, manifest *localimages.D
 }
 
 // mountLocalImages discovers the p2 installer-media partition by its filesystem
-// label (common.LocalImagesFSLabel) and mounts it read-only at
+// label (common.LocalImagesFSLabel) and makes it available read-only at
 // i.config.LocalImagesPath. Discovery is a hard precondition with no network
 // fallback: if zero or more than one device carries the label the function fails,
 // and because Run calls it before diskPreparation the installation disk is still
@@ -300,6 +300,16 @@ func (i *IBIPrepare) runPreparation(ctx context.Context, manifest *localimages.D
 // it (error paths) and invoke it explicitly as the last p2 action on the happy path.
 // The closure returns the umount error so the caller can surface a failed final
 // unmount as Run's result.
+//
+// On USB boot the embedded ignition's label-based systemd .mount unit already owns
+// this partition, mounted read-only at i.config.LocalImagesPath. In that case this
+// function reuses the existing mount and returns a no-op cleanup, so the systemd-owned
+// mount is never torn down from under the unit: the mount is left exactly as the boot
+// unit established it. If the mount point is instead occupied by another device, or the
+// expected device is mounted read-write, that is an unsafe state and the function fails
+// before diskPreparation touches the installation disk. When nothing is mounted there
+// (e.g. the connected/online path or a manual invocation) it mounts the device
+// read-only itself, as before.
 func (i *IBIPrepare) mountLocalImages() (func() error, error) {
 	blockDevices, err := i.ops.ListBlockDevices()
 	if err != nil {
@@ -317,6 +327,31 @@ func (i *IBIPrepare) mountLocalImages() (func() error, error) {
 			common.LocalImagesFSLabel, len(matches))
 	}
 	deviceName := matches[0]
+	expectedSource := "/dev/" + deviceName
+
+	// If the systemd .mount unit already owns the mount point, reuse it rather than
+	// mounting again. The check reads the host mount namespace so a container-local
+	// view cannot report a false answer.
+	mount, err := i.inspectHostMount(i.config.LocalImagesPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect existing mount at %s: %w", i.config.LocalImagesPath, err)
+	}
+	if mount.mounted {
+		if mount.source != expectedSource {
+			return nil, fmt.Errorf(
+				"%s is already mounted from %s, not the discovered ibi-images device %s; refusing to proceed",
+				i.config.LocalImagesPath, mount.source, expectedSource)
+		}
+		if !mount.readOnly {
+			return nil, fmt.Errorf(
+				"%s is already mounted read-write from %s; the ibi-images partition must be read-only; refusing to proceed",
+				i.config.LocalImagesPath, expectedSource)
+		}
+		i.log.Infof("Reusing existing read-only mount of %s at %s (owned by the boot-time .mount unit)",
+			expectedSource, i.config.LocalImagesPath)
+		// The mount is owned by the systemd unit; never unmount it from here.
+		return func() error { return nil }, nil
+	}
 
 	if err := i.ops.MountReadOnly(deviceName, i.config.LocalImagesPath); err != nil {
 		return nil, fmt.Errorf("failed to mount local images device %s read-only: %w", deviceName, err)
@@ -338,6 +373,49 @@ func (i *IBIPrepare) mountLocalImages() (func() error, error) {
 		return nil
 	}
 	return unmount, nil
+}
+
+// hostMount describes the state of a mount point as seen in the host mount namespace.
+type hostMount struct {
+	// mounted is true when the mount point carries a mount.
+	mounted bool
+	// source is the backing device the kernel reports for the mount (e.g. /dev/sdb2).
+	source string
+	// readOnly is true when the mount carries the ro option.
+	readOnly bool
+}
+
+// inspectHostMount reports whether mountpoint is mounted in the host mount namespace and,
+// if so, its backing device and whether it is read-only. It reads the host's
+// /proc/self/mounts through the host namespace (RunInHostNamespace), never this process's
+// own (possibly container) mount table, so a container mount namespace cannot give a false
+// answer about what the boot-time unit mounted on the host.
+func (i *IBIPrepare) inspectHostMount(mountpoint string) (hostMount, error) {
+	out, err := i.ops.RunInHostNamespace("cat", "/proc/self/mounts")
+	if err != nil {
+		return hostMount{}, fmt.Errorf("failed to read host mount table: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		// Each /proc/self/mounts line is: <source> <mountpoint> <fstype> <options> <dump> <pass>.
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		// The mount point is escaped in /proc/self/mounts (space -> \040 etc.); the
+		// ibi-images mount point contains no such characters, so a direct compare is exact.
+		if fields[1] != mountpoint {
+			continue
+		}
+		m := hostMount{mounted: true, source: fields[0]}
+		for _, opt := range strings.Split(fields[3], ",") {
+			if opt == "ro" {
+				m.readOnly = true
+				break
+			}
+		}
+		return m, nil
+	}
+	return hostMount{}, nil
 }
 
 // preflightValidateManifest parses the on-media digest manifest and resolves the

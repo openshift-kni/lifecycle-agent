@@ -293,18 +293,39 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 				assert.False(t, present, "self-contained must not shut down (pivot)")
 			}
 
-			// The oneshot unit runs the staged p2 binary against the embedded config and waits
-			// for the p2 mount so the binary is present before ExecStart.
-			require.Len(t, ign.Systemd.Units, 1)
-			unit := ign.Systemd.Units[0]
-			assert.Equal(t, lcaIBIServiceName, unit.Name)
-			assert.True(t, unit.Enabled)
-			assert.Contains(t, unit.Contents, "Type=oneshot")
-			assert.Contains(t, unit.Contents,
-				fmt.Sprintf("RequiresMountsFor=%s", common.LocalImagesMountPath))
-			assert.Contains(t, unit.Contents,
+			// Two units are embedded: the label-based .mount unit for ibi-images and the oneshot
+			// service ordered after it.
+			require.Len(t, ign.Systemd.Units, 2)
+			mountUnit := ign.Systemd.Units[0]
+			serviceUnit := ign.Systemd.Units[1]
+
+			// The label-based .mount unit mounts the ibi-images partition so the staged lca-cli binary
+			// is present before the service execs it. It is addressed by filesystem label (never a
+			// partition number), its unit name is the systemd-escaped mount point, and it is not noexec.
+			wantMountName := systemdEscapePath(common.LocalImagesMountPath) + ".mount"
+			assert.Equal(t, wantMountName, mountUnit.Name)
+			assert.True(t, mountUnit.Enabled)
+			assert.Contains(t, mountUnit.Contents,
+				fmt.Sprintf("What=/dev/disk/by-label/%s", common.LocalImagesFSLabel))
+			assert.Contains(t, mountUnit.Contents,
+				fmt.Sprintf("Where=%s", common.LocalImagesMountPath))
+			assert.NotContains(t, mountUnit.Contents, "noexec", "ibi-images must be exec-capable so init_t can exec lca-cli")
+			// The build-host ext4 labels are not the node's policy labels, so the mount assigns bin_t
+			// via a context= option; without it the staged lca-cli mounts as unlabeled_t and the
+			// service domain cannot exec it under SELinux Enforcing (status=203/EXEC).
+			assert.Contains(t, mountUnit.Contents, "Options=ro,context=system_u:object_r:bin_t:s0",
+				"ibi-images must carry an executable SELinux context so init_t can exec lca-cli under Enforcing")
+
+			// The oneshot unit runs the staged p2 binary against the embedded config and is ordered
+			// after the .mount unit (Requires=/After=) so the binary is present before ExecStart.
+			assert.Equal(t, lcaIBIServiceName, serviceUnit.Name)
+			assert.True(t, serviceUnit.Enabled)
+			assert.Contains(t, serviceUnit.Contents, "Type=oneshot")
+			assert.Contains(t, serviceUnit.Contents, fmt.Sprintf("Requires=%s", wantMountName))
+			assert.Contains(t, serviceUnit.Contents, fmt.Sprintf("After=%s", wantMountName))
+			assert.Contains(t, serviceUnit.Contents,
 				fmt.Sprintf("ExecStart=%s ibi -f %s", common.LocalImagesLCABinaryPath, embeddedIBIConfigPath))
-			assert.Contains(t, unit.Contents, "WantedBy=multi-user.target")
+			assert.Contains(t, serviceUnit.Contents, "WantedBy=multi-user.target")
 		})
 	}
 }
@@ -412,4 +433,26 @@ func TestBuildLiveISORequiresInputs(t *testing.T) {
 	_, err = buildLiveISO(context.Background(), testLogger(), validInstallOnly(),
 		ISOBuildOptions{WorkDir: t.TempDir()}, deps)
 	require.ErrorContains(t, err, "lca-cli image is required")
+}
+
+// TestSystemdEscapePath covers the systemd path escaping used to derive the ibi-images .mount unit
+// name from its mount point (matching `systemd-escape --path`): '/' becomes '-', and '-' in a path
+// component is escaped as \x2d.
+func TestSystemdEscapePath(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/var/mnt/ibi-images", `var-mnt-ibi\x2dimages`},
+		{"/", "-"},
+		{"/var/mnt", "var-mnt"},
+	} {
+		assert.Equal(t, tc.want, systemdEscapePath(tc.path), "escape %q", tc.path)
+	}
+}
+
+// TestIBIImagesMountUnitName pins the derived .mount unit name to the systemd-escaped mount point;
+// a name that does not match Where= would be rejected by systemd.
+func TestIBIImagesMountUnitName(t *testing.T) {
+	assert.Equal(t, systemdEscapePath(common.LocalImagesMountPath)+".mount", ibiImagesMountUnitName())
 }

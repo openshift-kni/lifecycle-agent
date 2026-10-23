@@ -17,80 +17,61 @@ limitations under the License.
 package createusb
 
 import (
-	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// p2Handle builds a MediaHandle for the given mode with a fixed loop device, as assembleMedia
-// would hand to the p2 step, and the fake seam backing it.
-func p2Handle(mode Mode, fp *fakePartitionOps) *MediaHandle {
-	return &MediaHandle{
-		ImagePath:  "/tmp/media.img",
-		LoopDevice: "/dev/loop8",
-		Plan:       partitionPlan(mode, defaultP1ReservationBytes),
-		IsImage:    true,
-		partition:  fp,
-	}
-}
-
-func TestCreateP2Partition(t *testing.T) {
-	// The p2 (ibi-images) entry has the same fixed number and reserved offset/size in both
-	// modes, so createP2Partition drives the seam identically regardless of mode.
-	for _, mode := range []Mode{ModeInstallOnly, ModeSelfContained} {
-		t.Run(string(mode), func(t *testing.T) {
-			fp := &fakePartitionOps{}
-			h := p2Handle(mode, fp)
-			wantP2, ok := plannedPartition(h.Plan, labelIBIImages)
-			require.True(t, ok)
-
-			require.NoError(t, createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp}))
-
-			// p2 runs the shared create -> settle -> format sequence and stops (no mount): it
-			// ships an empty filesystem.
-			assert.Equal(t, []string{"createPart", "settle", "format"}, fp.calls)
-
-			// The planned ibi-images entry (fixed number 2) was the entry created, and it was
-			// formatted on the settled node as ext4 labeled ibi-images.
-			require.Len(t, fp.createdParts, 1)
-			assert.Equal(t, wantP2, fp.createdParts[0])
-			assert.Equal(t, 2, fp.createdParts[0].Number, "ibi-images is the fixed p2 entry")
-			assert.Equal(t, labelIBIImages, fp.createdParts[0].Label)
-			assert.Equal(t, "/dev/loop8p2", fp.formattedDev)
-			assert.Equal(t, ibiImagesFSType, fp.formatFSType)
-			assert.Equal(t, labelIBIImages, fp.formatLabel)
-		})
-	}
-}
-
-// TestCreateP2PartitionError covers the error path: a failure in the shared create/format
-// sequence is surfaced (wrapped, naming the ibi-images partition) by createP2Partition so build
-// can tear the handle down.
-func TestCreateP2PartitionError(t *testing.T) {
-	fp := &fakePartitionOps{formatErr: fmt.Errorf("mkfs boom")}
-	h := p2Handle(ModeInstallOnly, fp)
-
-	err := createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "mkfs boom")
-	assert.ErrorContains(t, err, labelIBIImages)
-}
-
-// TestCreateP2PartitionMissingEntry covers the guard for a plan that has no ibi-images entry:
-// createP2Partition errors without driving the seam.
-func TestCreateP2PartitionMissingEntry(t *testing.T) {
-	fp := &fakePartitionOps{}
-	h := &MediaHandle{LoopDevice: "/dev/loop8", Plan: PartitionPlan{Mode: ModeInstallOnly}, partition: fp}
-
-	err := createP2Partition(testLogger(), h, mediaBuildDeps{partition: fp})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, labelIBIImages)
-	assert.Empty(t, fp.calls, "the seam must not be driven when the partition is absent")
-}
-
-// TestIBIImagesFSType documents the settled default (ext4) so a change is a deliberate edit.
+// TestIBIImagesFSType documents the settled default (ext4) so a change is a deliberate edit. The
+// ibi-images partition is appended after the live ISO and formatted by the shared format stage
+// (formatDataPartitions); its filesystem type is the only policy this file owns.
 func TestIBIImagesFSType(t *testing.T) {
 	assert.Equal(t, fsTypeExt4, ibiImagesFSType)
+}
+
+// TestMeasureTreeCountsNonRegularEntries confirms measureTree sizes symlinks (and other
+// non-regular entries) rather than silently skipping them: the self-contained durability store
+// carries overlay symlinks, so skipping them would undercount the payload the metadata-preserving
+// copier writes and risk a mid-copy ENOSPC on a partition sized from the measurement.
+func TestMeasureTreeCountsNonRegularEntries(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("regular-file-content")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "regular"), content, 0o600))
+	// A symlink whose target path has a known, non-zero length.
+	target := "some/relative/target"
+	require.NoError(t, os.Symlink(target, filepath.Join(root, "link")))
+
+	total, err := measureTree(root)
+	require.NoError(t, err)
+	// The regular file contributes its content size; the symlink contributes its target length.
+	assert.Equal(t, int64(len(content)+len(target)), total)
+}
+
+// TestStageLCABinary covers staging the shipping lca-cli binary onto the (mounted) ibi-images root:
+// it is copied to <p2Root>/lca-cli with an executable mode, and a missing source fails loudly.
+func TestStageLCABinary(t *testing.T) {
+	t.Run("copies the binary with an executable mode", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "lca-cli")
+		require.NoError(t, os.WriteFile(src, []byte("binary-bytes"), 0o600))
+		p2Root := t.TempDir()
+
+		require.NoError(t, stageLCABinary(testLogger(), src, p2Root))
+
+		dst := filepath.Join(p2Root, "lca-cli")
+		got, err := os.ReadFile(dst)
+		require.NoError(t, err)
+		assert.Equal(t, "binary-bytes", string(got), "the binary is copied byte-for-byte")
+		fi, err := os.Stat(dst)
+		require.NoError(t, err)
+		assert.NotZero(t, fi.Mode()&0o111, "the staged binary must be executable so init_t can exec it")
+	})
+
+	t.Run("missing extracted binary fails loudly", func(t *testing.T) {
+		err := stageLCABinary(testLogger(), "", t.TempDir())
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "did not return an extracted lca-cli binary")
+	})
 }

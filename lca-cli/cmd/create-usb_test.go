@@ -150,15 +150,29 @@ func TestCreateUsbISOFlagWins(t *testing.T) {
 	})
 }
 
-func TestCreateUsbFutureImageFlagsRejectExplicitValues(t *testing.T) {
+// TestCreateUsbAcceptsImageFlags verifies the image-mirroring flags are now accepted (CNF-27171
+// wired image mirroring into the command): --auth-file, --lca-image, and --recert-image feed the
+// media build. With --write-device set the command reaches Build and surfaces its deferral error
+// rather than rejecting the flags.
+func TestCreateUsbAcceptsImageFlags(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "m.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(validManifestYAML()), 0o600))
-	for _, flag := range []string{"--auth-file", "--recert-image", "--lca-image"} {
+	for _, flag := range []string{"--auth-file", "--lca-image", "--recert-image"} {
 		t.Run(flag, func(t *testing.T) {
 			err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx", flag, "example")
-			assert.ErrorContains(t, err, flag+" is not supported until image mirroring is wired")
+			assert.ErrorContains(t, err, "--write-device is not yet supported",
+				"the flag is accepted; the command reaches Build and surfaces the write-device deferral")
 		})
 	}
+}
+
+// TestCreateUsbRejectsInvalidUSBSize verifies --usb-size is parsed and an unparseable value is
+// rejected before the build runs.
+func TestCreateUsbRejectsInvalidUSBSize(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "m.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte(validManifestYAML()), 0o600))
+	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx", "--usb-size", "not-a-size")
+	assert.ErrorContains(t, err, "invalid --usb-size")
 }
 
 // TestCreateUsbWriteDeviceDeferred verifies the command wires createusb.Build and surfaces
@@ -173,7 +187,6 @@ func TestCreateUsbWriteDeviceDeferred(t *testing.T) {
 	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--write-device is not yet supported")
-	assert.Contains(t, err.Error(), "CNF-27158")
 }
 
 func TestCreateUsbInvalidManifestFailsValidation(t *testing.T) {
