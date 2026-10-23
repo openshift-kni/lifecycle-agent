@@ -126,8 +126,8 @@ embedded-ignition details, and the self-contained p3 config tree, digest pinning
 mirror-resource rules, see [docs/create-usb.md](../docs/create-usb.md).
 
 Assembling the media requires a Linux host with loop-device access and `losetup`, `sfdisk`,
-`blockdev`, `udevadm`, `mkfs.ext4`, `mkfs.xfs`, `blkid`, and `lsblk` available. Run with
-sufficient privileges to create and format loopback partitions.
+`blockdev`, `udevadm`, `mkfs.ext4`, `blkid`, and `lsblk` available (every create-usb partition
+is `ext4`). Run with sufficient privileges to create and format loopback partitions.
 
 ```bash
 ./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img --lca-image <lca-cli-pullspec>
@@ -167,6 +167,7 @@ partitions inside an MBR extended container.
 | `--write-device` | Reserved block-device target. The command rejects it (the only supported target is a sparse `.img`). Mutually exclusive with `--output`; exactly one target is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
 | `--rhcos-live-iso-sha256` | Override the manifest `rhcosLiveIso.sha256`. Must be set together with `--rhcos-live-iso`. |
+| `--usb-size` | Whole-stick size budget (e.g. `14Gi`, `32G`). The build fails if the final apparent media size exceeds it. Empty disables the check. |
 
 ### Manifest schema
 
@@ -230,8 +231,11 @@ siteConfig:
 ```
 
 The command reads the referenced file during validation and fails if it is missing or
-does not contain valid JSON. A future media-population stage will use the resolved
-value; the current placeholder image contains no pull secret.
+does not contain valid JSON. The resolved value is rendered into the `SeedReconfiguration`
+(`cluster-configuration/manifest.json` on the `cluster-config` partition), so a
+self-contained stick carries the pull secret in the clear — treat the media as a
+secret-bearing credential (see the threat model in
+[docs/create-usb.md](../docs/create-usb.md#threat-model-physical-possession-is-trusted)).
 
 ### Example: install-only
 
@@ -323,7 +327,7 @@ and 2, which carry no `sources` / `signatures` respectively):
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
 | `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2+ only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
-| `images[].signatures` | list | Signatures captured from the source registry, keyed by manifest instance digest (the index digest and every signed per-platform instance), each blob recorded with its `size` and `sha256`. Version 3 only; the raw bytes are staged under `<ociLayoutPath>/signatures/` because an OCI layout cannot hold them, and are re-attached when the node imports the image into containers-storage. Empty / omitted in versions 1 and 2. |
+| `images[].signatures` | list | Source-registry signatures keyed by manifest instance digest (index digest and each signed per-platform instance); each blob records `size`+`sha256`. Version 3 only; bytes live under `<ociLayoutPath>/signatures/`, re-attached on import. Omitted in v1/v2. |
 
 **Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
 mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
