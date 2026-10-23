@@ -383,3 +383,13 @@ containers-storage — which *can* store signatures — the staged bytes are ver
 their recorded hashes and **re-attached**, so the installed store carries the same
 signatures the registry served. A missing, truncated, or hash-mismatched signature **fails
 the import** rather than silently dropping trust material.
+
+For a **multi-arch index**, containers-storage stores only the single platform instance the
+node imports, so the installed store carries **that platform instance's** signatures
+(addressable as the image's default set and under the platform-instance digest) — the
+signatures that sign the single manifest the store can verify. **Index-level (manifest-list)
+signatures are not restored** into a single-platform store: querying the index digest resolves
+to the stored platform image and returns its platform signatures, not a distinct
+index-signature set. The index-level bytes are still staged and verified on media, but not
+re-attached on a single-platform import. See [`docs/create-usb.md`](../docs/create-usb.md) for
+details.

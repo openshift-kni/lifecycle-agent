@@ -32,6 +32,24 @@ func TestIBIImagesFSType(t *testing.T) {
 	assert.Equal(t, fsTypeExt4, ibiImagesFSType)
 }
 
+// TestMeasureTreeCountsNonRegularEntries confirms measureTree sizes symlinks (and other
+// non-regular entries) rather than silently skipping them: the self-contained durability store
+// carries overlay symlinks, so skipping them would undercount the payload the metadata-preserving
+// copier writes and risk a mid-copy ENOSPC on a partition sized from the measurement.
+func TestMeasureTreeCountsNonRegularEntries(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("regular-file-content")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "regular"), content, 0o600))
+	// A symlink whose target path has a known, non-zero length.
+	target := "some/relative/target"
+	require.NoError(t, os.Symlink(target, filepath.Join(root, "link")))
+
+	total, err := measureTree(root)
+	require.NoError(t, err)
+	// The regular file contributes its content size; the symlink contributes its target length.
+	assert.Equal(t, int64(len(content)+len(target)), total)
+}
+
 // TestStageLCABinary covers staging the shipping lca-cli binary onto the (mounted) ibi-images root:
 // it is copied to <p2Root>/lca-cli with an executable mode, and a missing source fails loudly.
 func TestStageLCABinary(t *testing.T) {

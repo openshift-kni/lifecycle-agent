@@ -471,6 +471,20 @@ preserves the signatures rather than re-verifying them against the local OCI-lay
 reference; cryptographic verification against the node's policy happens at container runtime
 against the restored signatures.
 
+> **Limitation — multi-arch index signatures.** containers-storage stores **single-platform**
+> images. When the source is a multi-arch index, disconnected prepare materialises only the
+> instance matching the node's architecture (`copy.Image` with `CopySystemImage`), and the
+> store holds **that platform instance's** signatures — addressable both as the image's default
+> set and under the platform-instance digest. This is the correct, verifiable representation: the
+> stored signatures sign the single manifest the store can actually verify, exactly as a registry
+> pull of one platform would produce. The **index-level (manifest-list) signatures are not
+> restored** into a single-platform store — querying the index digest resolves to the stored
+> platform image and returns its platform signatures, not a distinct index-signature set. The
+> capture side still stages the index-level signatures on media (and verifies them at build time)
+> for completeness and forward compatibility, but they are not re-attached on a single-platform
+> import. Index-signature preservation would require storing the full manifest list as a
+> verifiable image, which containers-storage does not do.
+
 ## Threat model: physical possession is trusted
 
 USB-based IBI media is a **physical-possession-trusted** artifact: whoever holds the stick can

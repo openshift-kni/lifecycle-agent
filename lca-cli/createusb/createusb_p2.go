@@ -59,6 +59,7 @@ import (
 	"syscall"
 
 	"github.com/sirupsen/logrus"
+	"go.podman.io/storage/pkg/archive"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
@@ -141,8 +142,8 @@ func stageIBIImagesPayload(ctx context.Context, log *logrus.Logger, deps mediaBu
 
 // copyStagedIBIImages copies the staged ibi-images payload onto the formatted partition: it resolves
 // the partition by filesystem label, mounts it, verifies the sized filesystem has room for the
-// payload, copies the staged tree onto it (preserving file modes so the staged lca-cli binary stays
-// executable), and unmounts.
+// payload, copies the staged tree onto it with the metadata-preserving copier (so the staged lca-cli
+// binary stays executable and the durability store's symlinks/ownership/xattrs survive), and unmounts.
 //
 // It runs before assembleMedia marks success, so any error here triggers the caller's rollback. An
 // unmount failure is tagged errP2Mounted so the rollback preserves the still-mounted image + loop
@@ -188,7 +189,7 @@ func copyStagedIBIImages(log *logrus.Logger, deps mediaBuildDeps, media *MediaHa
 			"the partition is undersized for the payload", free, payloadBytes)
 	}
 
-	if err := copyTree(stagingRoot, mountpoint); err != nil {
+	if err := copyStagedTree(stagingRoot, mountpoint); err != nil {
 		return fmt.Errorf("copying the staged ibi-images payload onto %s: %w", partDev, err)
 	}
 	log.Infof("create-usb: copied the ibi-images payload (%d bytes) onto %s", payloadBytes, partDev)
@@ -246,18 +247,24 @@ func copyFilePreservingMode(src, dst string, perm os.FileMode) (err error) {
 	return nil
 }
 
-// measureTree returns the total byte size of the regular files under root -- the apparent
-// (file-content) size of the staged payload. It is used to size the ibi-images partition to its
-// payload and to verify the formatted filesystem has room for the copy.
+// measureTree returns the total apparent byte size of every non-directory entry under root --
+// regular files by their content size and symlinks/special files by their (small) apparent size.
+// It is used to size the ibi-images partition to its payload and to verify the formatted filesystem
+// has room for the copy. The self-contained durability store is a containers/storage overlay store
+// whose on-disk form carries symlinks (the overlay layer link farm) and may carry special files, so
+// skipping non-regular entries would undercount the payload the metadata-preserving copier writes
+// and risk a mid-copy ENOSPC; counting them keeps the size/free-space guards conservative.
 func measureTree(root string) (int64, error) {
 	var total int64
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.Type().IsRegular() {
+		if d.IsDir() {
 			return nil
 		}
+		// WalkDir does not follow symlinks, so d.Info() is the lstat of the entry itself: a symlink
+		// reports the length of its target path, a special file reports zero.
 		info, ierr := d.Info()
 		if ierr != nil {
 			return fmt.Errorf("stating staged payload entry %q: %w", path, ierr)
@@ -271,39 +278,24 @@ func measureTree(root string) (int64, error) {
 	return total, nil
 }
 
-// copyTree recursively copies the directory tree under srcRoot into dstRoot, preserving each entry's
-// permission bits (so the staged lca-cli binary stays executable and the OCI layout / durability
-// store keep their modes). Unlike copyTreeContentVerbatim (createusb_p3.go), which normalizes modes,
-// this is mode-preserving because the ibi-images payload carries an executable. The staged payload is
-// regular files and directories only; any other file type is a hard error rather than a silent skip.
-func copyTree(srcRoot, dstRoot string) error {
-	walkErr := filepath.WalkDir(srcRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, rerr := filepath.Rel(srcRoot, path)
-		if rerr != nil {
-			return fmt.Errorf("computing relative path for %q under %q: %w", path, srcRoot, rerr)
-		}
-		target := filepath.Join(dstRoot, rel)
-		info, ierr := d.Info()
-		if ierr != nil {
-			return fmt.Errorf("stating staged payload entry %q: %w", path, ierr)
-		}
-		switch {
-		case d.IsDir():
-			if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("creating directory %q: %w", target, err)
-			}
-			return nil
-		case info.Mode().IsRegular():
-			return copyFilePreservingMode(path, target, info.Mode().Perm())
-		default:
-			return fmt.Errorf("staged ibi-images payload entry %q is not a regular file (mode %s); refusing to copy", path, info.Mode())
-		}
-	})
-	if walkErr != nil {
-		return fmt.Errorf("copying staged ibi-images payload %q to %q: %w", srcRoot, dstRoot, walkErr)
+// copyStagedTree copies the staged ibi-images payload under srcRoot onto dstRoot with a
+// metadata-preserving archive copier (go.podman.io/storage/pkg/archive). The self-contained
+// durability store is a containers/storage overlay store whose on-disk form includes symlinks
+// (the overlay layer link farm), hardlinks, numeric ownership, xattrs and special mode bits; the
+// earlier regular-files-only copier rejected those entries and would fail the copy of a real store.
+// CopyWithTar streams the tree through a tar pipe, preserving symlinks (without following them),
+// hardlinks, numeric ownership, capability/IMA/user.* xattrs, special mode bits
+// (setuid/setgid/sticky) and device/FIFO nodes, and returns an error if a required attribute cannot
+// be restored -- so a store that cannot be copied faithfully fails the build rather than shipping a
+// subtly-broken store. It equally handles the OCI layout and the staged lca-cli binary (plain
+// files/dirs, executable mode preserved).
+//
+// The in-process archiver (not the chroot variant) is used deliberately: the source is the tool's
+// own staged tree, not untrusted input, so the chroot hardening is unnecessary and its
+// CAP_SYS_CHROOT requirement would needlessly narrow where the copy can run.
+func copyStagedTree(srcRoot, dstRoot string) error {
+	if err := archive.NewDefaultArchiver().CopyWithTar(srcRoot, dstRoot); err != nil {
+		return fmt.Errorf("copying staged ibi-images payload %q to %q (metadata-preserving): %w", srcRoot, dstRoot, err)
 	}
 	return nil
 }

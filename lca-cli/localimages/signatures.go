@@ -34,6 +34,19 @@ package localimages
 // hashes) through the public ImageSource.GetSignatures seam and writes them to the
 // store exactly as a registry pull would.
 //
+// Limitation (multi-arch indexes): containers-storage stores single-platform images, and
+// ImportImage copies with copy.CopySystemImage, which materialises only the instance matching
+// the target architecture. copy.Image then reads that platform instance's signatures (via its
+// instance digest) and writes them as the stored image's default/own set. The index
+// (manifest-list) digest therefore carries no distinct signature set in the store: resolving
+// name@<indexDigest> yields the single stored platform image, whose signatures are the platform
+// instance's -- the correct, verifiable representation, since those are the signatures that sign
+// the one manifest the store can verify. The staged index-level signatures (served here under
+// topLevel for a nil instance) are consumed only when the top-level manifest is itself the
+// imported single manifest (a single-arch image); for a multi-arch index they are not routed
+// into the store and so are NOT restored. This is a documented limitation rather than full
+// index-signature preservation; see docs/create-usb.md.
+//
 // On-media layout (relative to the OCI layout directory, OCILayoutPath):
 //
 //	<layout>/signatures/<algo>/<encoded>/<n>   # the n-th signature of instance <algo>:<encoded>
