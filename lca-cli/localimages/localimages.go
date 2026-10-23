@@ -56,9 +56,11 @@
 //
 // containers-storage stores single-platform images; it cannot hold a manifest
 // list and all of its instances as a group. So for a multi-arch index the
-// package imports the single instance matching the target platform (the host
-// architecture/OS, which for IBI is the node being installed): that instance's
-// layers are materialised. The index manifest is still recorded against the
+// package imports the single instance matching the target platform: the host
+// architecture/OS by default (for the on-node prepare path, where the host is
+// the node being installed), or StoreConfig.Architecture when the caller builds
+// media on a workstation whose architecture may differ from the target node's.
+// That instance's layers are materialised. The index manifest is still recorded against the
 // stored image, so the canonical name@<entry.Digest> reference resolves to it
 // and round-trips end-to-end -- the index digest is preserved as a resolvable
 // reference, even though the non-host platforms' layers are not copied. A
@@ -242,6 +244,14 @@ type StoreConfig struct {
 	RunRoot string
 	// DriverOptions are optional graph-driver options.
 	DriverOptions []string
+	// Architecture, when non-empty, selects the image instance for this
+	// architecture from a multi-arch index (types.SystemContext.ArchitectureChoice)
+	// instead of the build host's architecture. create-usb sets it because the media
+	// is built on a workstation whose architecture may differ from the target node's;
+	// the on-node prepare leaves it empty so the host architecture (the node's own) is
+	// used. It does not participate in isDefault: it is a copy-time platform selector,
+	// not a store-location option.
+	Architecture string
 }
 
 // isDefault reports whether the config targets the live/default store.
@@ -302,11 +312,15 @@ func NewImporter(log *logrus.Logger, cfg StoreConfig) (*Importer, error) {
 		return nil, fmt.Errorf("creating signature policy context: %w", err)
 	}
 
+	// ArchitectureChoice, when set, makes copy.CopySystemImage select the instance for
+	// the caller's target architecture from a multi-arch index rather than the build
+	// host's. An empty value preserves the host-architecture default (the on-node
+	// prepare path, where host == node).
 	return &Importer{
 		log:       log,
 		store:     store,
 		policyCtx: policyCtx,
-		sysCtx:    &types.SystemContext{},
+		sysCtx:    &types.SystemContext{ArchitectureChoice: cfg.Architecture},
 	}, nil
 }
 

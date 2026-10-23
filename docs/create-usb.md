@@ -18,8 +18,10 @@ manifest schema.
 
 This document describes the self-contained **p3 config tree**: how it is rendered from the
 manifest, how image references in the shipped manifests are pinned to digests, and which
-mirror resources are rejected. (install-only media is unaffected by everything below.) It
-also describes the **p1 live ISO** build block, which applies to both profiles.
+mirror resources are rejected. It also describes the **p1 live ISO** build block, which
+applies to both profiles, and the self-contained **p2 durability store** built from the
+image closure. (Apart from the p1 live ISO, install-only media is unaffected by everything
+below.)
 
 ## The p1 live ISO: verified source and embedded prepare
 
@@ -59,6 +61,87 @@ The p1 partition carries the bootable RHCOS live ISO, customized so the node run
 The customized ISO is written into the reserved p1 region with a **reservation-size guard**:
 if the customized ISO is larger than the p1 reservation, the build fails loudly rather than
 truncating the ISO.
+
+## The self-contained durability store (p2)
+
+For **self-contained** media the build stages a read-only durability store on the `p2`
+(`ibi-images`) partition, beside the OCI image layout and `digests.json`. It is the node's
+**primary runtime durability artifact**: a `containers/storage` overlay store that the
+installed node registers as a **read-only additional image store**, so the digest-pinned
+image closure resolves locally with no registry and no network.
+
+```console
+<p2 root>/
+  oci-<build-id>/      # OCI image layout (BuildImageLayout)
+  digests.json         # on-media digest manifest (BuildImageLayout)
+  store/               # read-only containers/storage overlay store (this stage)
+  storage.conf         # drop-in registering store/ as a read-only additional image store
+```
+
+- **`store/`** is built from the **same digest-pinned closure** recorded in `digests.json`:
+  the build reads that committed manifest and imports its images, by their canonical
+  `name@sha256:...` references, from the OCI layout into the store. The store and the OCI
+  layout can therefore never drift. The import runs in-process through the same
+  `containers/image` path the on-node consumer (`localimages`) and prepare use — there is no
+  external `skopeo` binary and no registry (the proposal's
+  `skopeo copy oci:<layout> containers-storage:...` is realized in-process).
+- **`storage.conf`** is a rendered drop-in that registers `store/` under the `overlay`
+  driver via `additionalimagestores`, which is read-only by definition. It never references a
+  registry.
+
+**install-only media emits nothing here** — it ships no on-media site configuration and no
+durability store.
+
+### Target architecture
+
+The media is built on a workstation whose architecture may differ from the node the media
+installs, and the OCI layout deliberately preserves **every** architecture. The build therefore
+selects the **target node's architecture explicitly** when importing into the store, rather than
+defaulting to the build host's. A layout that carries no instance for the target architecture
+**fails the build**, so a cross-architecture build can never ship a valid-looking store the node
+cannot run.
+
+### Crash-safe, recoverable commit
+
+The store and its `storage.conf` are built into **build-unique staging artifacts** and both are
+validated before anything committed is touched. They are then committed together by a
+**recoverable swap**: the previous `store/` and `storage.conf` are moved aside, the staging
+artifacts are renamed into place, and the previous pair is **restored if any step returns an
+error**. So an **in-process commit failure** never destroys the last valid store, and `store/`
+is always paired with its matching `storage.conf`.
+
+A **crash mid-commit** is a different case: the previous pair is left in a `.store-backup-*`
+backup and is **not restored in place**. Instead, the next build garbage-collects that backup and
+**rebuilds the store from the OCI layout + `digests.json`** (the source of truth that always
+remains on the media). A rebuild that itself fails is surfaced as a **hard error**, so media
+assembly must treat an unsuccessful rebuild as **unusable media** rather than shipping a
+store-less medium. Stale staging and backup artifacts from a crashed build are likewise
+garbage-collected on the next run.
+
+### Overlay compatibility gate (§6.6)
+
+The store is built with the **overlay** graph driver because that is the driver RHCOS/CRI-O
+use for the node's persistent container store; a store built with any other driver (or a
+silent fallback to `vfs`) could not be consumed there. Requiring overlay at build time is the
+build side of the §6.6 compatibility gate: if the build environment cannot produce an overlay
+store, the build **fails** rather than shipping an unusable store. After the import, the build
+validates that the staged store is in the overlay driver/layer format CRI-O reads (the
+`overlay/` graph-driver directory, a non-empty `overlay-images/images.json`, and
+`overlay-layers/layers.json`).
+
+### Registry fallback — documented alternative only
+
+If the overlay read-only-additional-image-store model is ever found unworkable, the
+**documented alternative** is the registry fallback: emit a digest `ImageDigestMirrorSet`
+(canonical → `localhost:5000`, `mirrorSourcePolicy: NeverContactSource`, never an
+`ImageTagMirrorSet`) plus a host-level registry service (its own image, a systemd unit, and
+an OCI-layout→registry-storage conversion). Because post-pivot runs
+`deleteAllOldMirrorResources` before applying the config directory, the IDMS must be in the
+applied set, and — critically — the IDMS and the registry service are an **all-or-nothing
+unit**: shipping the IDMS without a running `localhost:5000` registry would break image
+resolution. This fallback is **not implemented**; it is the deferred §6.6 contingency, and the
+rendered `storage.conf` never references a registry. It would only be built if the compat gate
+above proves overlay unworkable.
 
 ## The /opt/openshift config tree
 
