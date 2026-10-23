@@ -22,14 +22,17 @@
 // Selection is driven by an on-media digest manifest:
 //
 //	{
-//	  "version": 2,
+//	  "version": 3,
 //	  "ociLayoutPath": "oci",
 //	  "images": [
 //	    {
 //	      "name": "quay.io/openshift-release-dev/ocp-release",
 //	      "digest": "sha256:9a1f...c3",
 //	      "ociTag": "ocp-release",
-//	      "sources": ["quay.io/openshift-release-dev/ocp-release:4.15.0"]
+//	      "sources": ["quay.io/openshift-release-dev/ocp-release:4.15.0"],
+//	      "signatures": [
+//	        {"instanceDigest": "sha256:0b2e...7a", "blobs": [{"sha256": "e3b0...55", "size": 568}]}
+//	      ]
 //	    }
 //	  ]
 //	}
@@ -46,6 +49,12 @@
 // each tagged source as a local alias of the imported digest so a consumer that
 // asks for name:tag (not name@digest) resolves the image locally. Version 1
 // manifests carry no sources.
+//
+// signatures (version 3) records the signatures captured from the source registry
+// for this image, keyed by manifest instance digest, with each blob's size and
+// sha256. An OCI layout cannot hold signatures, so the raw bytes are staged beside
+// the layout (see signatures.go) and re-attached when the image is imported into
+// containers-storage, which can store them. Versions 1 and 2 carry no signatures.
 //
 // # What entry.Digest represents
 //
@@ -117,12 +126,15 @@ const (
 	// package understands. Version 1 carries no per-image sources.
 	minSupportedManifestVersion = 1
 	// SourcesManifestVersion is the first schema version that records each image's
-	// source references (ImageEntry.Sources). It is also the newest version this
-	// package understands.
+	// source references (ImageEntry.Sources).
 	SourcesManifestVersion = 2
+	// SignaturesManifestVersion is the first schema version that records each image's
+	// staged signatures (ImageEntry.Signatures). It is also the newest version this
+	// package understands.
+	SignaturesManifestVersion = 3
 	// maxSupportedManifestVersion is the newest digest-manifest schema version this
 	// package understands.
-	maxSupportedManifestVersion = SourcesManifestVersion
+	maxSupportedManifestVersion = SignaturesManifestVersion
 )
 
 // ociLayoutIndexFile is the index file at the root of an OCI image layout.
@@ -174,6 +186,14 @@ type ImageEntry struct {
 	// asks for name:tag (not name@digest) resolves the image locally. Empty in
 	// version 1 manifests.
 	Sources []string `json:"sources,omitempty"`
+	// Signatures are the signatures captured from the source registry for this
+	// image's manifest instances (the top-level index/image digest and every signed
+	// per-platform instance), staged on the media beside the OCI layout because an
+	// OCI layout cannot hold signatures. They are re-attached to the image when it is
+	// imported into containers-storage, so the installed store carries the same
+	// signatures the registry served. Version 3 only; empty / omitted in versions 1
+	// and 2. See signatures.go.
+	Signatures []InstanceSignatures `json:"signatures,omitempty"`
 }
 
 // ParseDigestManifest reads and validates the on-media digest manifest at path.
@@ -498,6 +518,22 @@ func (im *Importer) ImportImage(ctx context.Context, mediaRoot string, m *Digest
 	srcRef, err := layout.NewIndexReference(srcDir, pos)
 	if err != nil {
 		return fmt.Errorf("building OCI layout reference for %s[%d]: %w", srcDir, pos, err)
+	}
+
+	// Re-attach the signatures staged on the media. The OCI layout cannot hold
+	// signatures, so the builder stripped them from the layout and staged the raw
+	// bytes beside it; load and verify them (size + sha256) and wrap the source so
+	// copy.Image carries them into containers-storage, which can store them. A
+	// missing, truncated, or hash-mismatched signature fails the import before any
+	// terminal action rather than silently dropping trust material. Images with no
+	// staged signatures (older manifests, or sources the build-host trust policy
+	// permitted unsigned) carry none and import unchanged.
+	if len(e.Signatures) > 0 {
+		staged, topLevel, err := loadAndVerifyStagedSignatures(srcDir, e)
+		if err != nil {
+			return fmt.Errorf("restoring signatures for %s@%s: %w", e.Name, e.Digest, err)
+		}
+		srcRef = signatureInjectingReference{ImageReference: srcRef, sigs: staged, topLevel: topLevel}
 	}
 
 	// Canonical by construction: containers-storage:<name>@<digest>. The store

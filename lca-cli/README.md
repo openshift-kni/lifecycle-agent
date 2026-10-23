@@ -291,19 +291,25 @@ When `BuildImageLayout` runs, it emits the manifest in two places, byte-identica
 - `digests.json` at the media (p2) root — the committed, read-only on-media reference.
 - `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.
 
-Schema (producer emits **version 2**; the on-node consumer still accepts version 1,
-which carries no `sources`):
+Schema (producer emits **version 3**; the on-node consumer still accepts versions 1
+and 2, which carry no `sources` / `signatures` respectively):
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "ociLayoutPath": "oci-1234567890",
   "images": [
     {
       "name": "quay.io/openshift-release-dev/ocp-release",
       "digest": "sha256:9a1f…c3",
       "ociTag": "ocp-release-0",
-      "sources": ["quay.io/openshift-release-dev/ocp-release:4.20.0"]
+      "sources": ["quay.io/openshift-release-dev/ocp-release:4.20.0"],
+      "signatures": [
+        {
+          "instanceDigest": "sha256:0b2e…7a",
+          "blobs": [{ "sha256": "e3b0…b855", "size": 568 }]
+        }
+      ]
     }
   ]
 }
@@ -311,12 +317,13 @@ which carries no `sources`):
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `version` | int | Schema version. The image stage emits `2`. Consumers accept `1` and `2`. |
+| `version` | int | Schema version. The image stage emits `3`. Consumers accept `1`, `2`, and `3`. |
 | `ociLayoutPath` | string | OCI image layout directory, relative to the media root. Each build mirrors into a fresh, build-unique directory (`oci-<unique>`); the consumer locates the layout through this field. |
 | `images[].name` | string | Canonical repository name the image is stored under. |
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
-| `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2 only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
+| `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2+ only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
+| `images[].signatures` | list | Signatures captured from the source registry, keyed by manifest instance digest (the index digest and every signed per-platform instance), each blob recorded with its `size` and `sha256`. Version 3 only; the raw bytes are staged under `<ociLayoutPath>/signatures/` because an OCI layout cannot hold them, and are re-attached when the node imports the image into containers-storage. Empty / omitted in versions 1 and 2. |
 
 **Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
 mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
@@ -349,7 +356,22 @@ The build also emits a resulting-size estimate (the OCI-layout subtotal and the 
 subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
 excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
 
-> **Trust caveat:** mirroring uses an accept-anything signature policy. Pinning each
-> reference to a digest guarantees the content is immutable and content-addressed, but it
-> verifies **neither publisher identity nor image trust** (no signature verification is
-> performed).
+### Image trust and signature preservation
+
+Mirroring runs under the **build host's configured container trust policy**
+(`signature.DefaultPolicy` — `$CONTAINERS_POLICY_JSON`, `/etc/containers/policy.json`, …),
+not a hardcoded accept-anything policy: a host configured to require signatures rejects an
+unsigned or untrusted source, and an unsigned image is mirrored only when the host policy
+permits it. If the host has **no** trust policy configured at all, the build logs a loud
+warning and falls back to accepting any source (so an unconfigured host still builds); a
+malformed policy is a hard error. Digest-pinning additionally guarantees the content is
+immutable and content-addressed.
+
+An OCI image layout cannot store an image's signatures, so the signatures the source
+registry serves are **captured and staged beside the layout** (under
+`<ociLayoutPath>/signatures/`, keyed by manifest instance digest, each blob recorded with
+its size and sha256 in `digests.json`). When the node imports an image into
+containers-storage — which *can* store signatures — the staged bytes are verified against
+their recorded hashes and **re-attached**, so the installed store carries the same
+signatures the registry served. A missing, truncated, or hash-mismatched signature **fails
+the import** rather than silently dropping trust material.

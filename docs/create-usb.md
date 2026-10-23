@@ -171,7 +171,7 @@ image closure resolves locally with no registry and no network.
 
 ```console
 <p2 root>/
-  oci-<build-id>/      # OCI image layout (BuildImageLayout)
+  oci-<build-id>/      # OCI image layout + signatures/ subtree (BuildImageLayout)
   digests.json         # on-media digest manifest (BuildImageLayout)
   store/               # read-only containers/storage overlay store (this stage)
   storage.conf         # drop-in registering store/ as a read-only additional image store
@@ -421,6 +421,54 @@ destroyed, so a second destructive prepare can never re-wipe a finished install.
   than powering off, so the power-off success signal stays unambiguous and the node remains
   reachable for a technician. A successful prepare whose result record could not be committed
   also halts powered-on rather than signalling success via power-off.
+
+## Image trust and signature preservation
+
+Two independent trust mechanisms apply to the mirrored image set: the **build-time trust
+policy** that governs what may be mirrored, and the **preserved registry signatures** that
+let the installed node verify the images it runs.
+
+### Build-time trust policy
+
+Mirroring runs under the build host's **configured container trust policy**
+(`signature.DefaultPolicy` — `sysCtx.SignaturePolicyPath`, `$CONTAINERS_POLICY_JSON`, or
+`/etc/containers/policy.json`), not a hardcoded accept-anything policy. A host configured to
+require signatures for the source registries therefore rejects an unsigned or untrusted
+source, and an unsigned image is mirrored only when the host policy permits it. If the host
+has **no** trust policy configured at all, the build cannot enforce publisher trust: rather
+than fail every build on an unconfigured host, it logs a loud warning and falls back to
+accepting any source. A malformed/unreadable policy is a hard error. Digest-pinning is a
+separate, always-on guarantee of content-addressing and immutability — not publisher
+identity — so the two are complementary.
+
+### Preserved registry signatures
+
+An OCI image layout **cannot store an image's signatures** (`copy.Image` into an OCI layout
+fails outright on a signed source). So the build strips signatures from the layout copy and
+**captures them from the source registry out-of-band**, staging the raw bytes beside the
+layout:
+
+```console
+<ociLayoutPath>/signatures/<algo>/<encoded>/<n>   # the n-th signature of instance <algo>:<encoded>
+```
+
+Signatures are captured for the **top-level index digest and every signed per-platform
+instance** (OpenShift release content is typically signed per instance). Each blob's size
+and sha256 are recorded in `digests.json` (`images[].signatures`, schema version 3), the
+bundle is read back and verified at build time, and because it lives inside the build-unique
+layout directory it is sized, staged, committed, and garbage-collected atomically with the
+layout.
+
+On the node, disconnected prepare imports each image into **containers-storage, which *can*
+store signatures**. The staged bytes are verified against their recorded size and sha256 and
+**re-attached to the image as it is imported** (the import copy carries them through the
+containers/image copy pipeline), so the installed store holds exactly the signatures the
+registry served. A missing, truncated, or hash-mismatched signature **fails the import
+before any terminal action** rather than silently dropping trust material. The import copy
+itself reads from the local, physically-trusted media (see the threat model below), so it
+preserves the signatures rather than re-verifying them against the local OCI-layout
+reference; cryptographic verification against the node's policy happens at container runtime
+against the restored signatures.
 
 ## Threat model: physical possession is trusted
 

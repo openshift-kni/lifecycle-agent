@@ -596,13 +596,13 @@ type fakeMirrorer struct {
 	failOn map[string]bool
 }
 
-func (f fakeMirrorer) MirrorToLayout(_ context.Context, imageRef, destLayoutDir, ociTag, _ string) (string, error) {
+func (f fakeMirrorer) MirrorToLayout(_ context.Context, imageRef, destLayoutDir, ociTag, _ string) (mirrorResult, error) {
 	if f.failOn[imageRef] {
-		return "", assert.AnError
+		return mirrorResult{}, assert.AnError
 	}
 	dgst := fakeDigest(imageRef)
 	appendFakeLayoutEntry(destLayoutDir, ociTag, dgst)
-	return dgst, nil
+	return mirrorResult{digest: dgst}, nil
 }
 
 // appendFakeLayoutEntry records a descriptor (digest + ref.name annotation) into
@@ -787,7 +787,7 @@ func TestEmitDigestManifestSchema(t *testing.T) {
 	// guaranteeing producer/consumer schema parity.
 	parsed, err := localimages.ParseDigestManifest(manifestPath)
 	require.NoError(t, err)
-	assert.Equal(t, localimages.SourcesManifestVersion, parsed.Version)
+	assert.Equal(t, localimages.SignaturesManifestVersion, parsed.Version)
 	assert.NotEmpty(t, parsed.OCILayoutPath)
 	require.Len(t, parsed.Images, len(entries))
 	for i, e := range entries {
