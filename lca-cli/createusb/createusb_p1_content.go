@@ -28,10 +28,10 @@ package createusb
 //
 // BuildLiveISO is a standalone building block, mirroring BuildImageLayout in
 // createusb_images.go: it is unit-tested with fakes (no network, no root, no real
-// container image) and wired into the media-assembly pipeline by CNF-27171. The customized
-// ISO it returns is written into the reserved p1 region by writeLiveISOToP1
-// (createusb_p1.go); the extracted lca-cli binary it returns is placed onto p2 by that same
-// wiring story.
+// container image) and driven by the media-assembly pipeline (createusb_assemble.go). The
+// customized ISO it returns is written to the front of the media at LBA 0 by
+// writeLiveISOToFront (createusb_p1.go); the extracted lca-cli binary it returns is placed
+// onto p2 (common.LocalImagesLCABinaryPath) by that same media-assembly pipeline.
 //
 // # Config contract (self-contained pivot)
 //
@@ -297,11 +297,8 @@ func renderEmbeddedIgnition(m *Manifest) ([]byte, error) {
 		},
 		"systemd": map[string]any{
 			"units": []any{
-				map[string]any{
-					"name":     lcaIBIServiceName,
-					"enabled":  true,
-					"contents": lcaIBIUnitContents(),
-				},
+				ignitionUnit(ibiImagesMountUnitName(), ibiImagesMountUnitContents()),
+				ignitionUnit(lcaIBIServiceName, lcaIBIUnitContents()),
 			},
 		},
 	}
@@ -310,6 +307,16 @@ func renderEmbeddedIgnition(m *Manifest) ([]byte, error) {
 		return nil, fmt.Errorf("marshaling embedded ignition: %w", err)
 	}
 	return out, nil
+}
+
+// ignitionUnit builds a single ignition v3.2 systemd.units entry that is enabled with the given
+// name and unit contents.
+func ignitionUnit(name, contents string) map[string]any {
+	return map[string]any{
+		"name":     name,
+		"enabled":  true,
+		"contents": contents,
+	}
 }
 
 // ignitionFile builds a single ignition v3.2 storage.files entry whose contents are the
@@ -345,23 +352,87 @@ func gzipBase64DataURL(data []byte) (string, error) {
 }
 
 // lcaIBIUnitContents returns the oneshot systemd unit that auto-runs `lca-cli ibi` on boot,
-// modeled on installation-configuration.service. The lca-cli binary and the mirrored images
-// both live on the p2 (ibi-images) partition mounted at common.LocalImagesMountPath, so the
-// unit declares RequiresMountsFor on that path: systemd adds the Requires= and After= ordering
-// on the covering mount unit, ensuring the binary is present before ExecStart runs it.
+// modeled on installation-configuration.service. The lca-cli binary and the mirrored images both
+// live on the p2 (ibi-images) partition mounted at common.LocalImagesMountPath, so the unit is
+// ordered explicitly after the label-based .mount unit this ignition also carries
+// (ibiImagesMountUnitName), via Requires= + After=. RequiresMountsFor= alone only *orders*
+// lca-ibi.service against a covering mount unit that already exists -- it does not define the mount
+// -- so without the explicit .mount unit the ExecStart binary path could be absent when it runs.
 func lcaIBIUnitContents() string {
+	mountUnit := ibiImagesMountUnitName()
 	return fmt.Sprintf(`[Unit]
 Description=LCA USB-based image-based install preparation
-RequiresMountsFor=%s
+Requires=%[1]s
+After=%[1]s
 
 [Service]
 Type=oneshot
 RemainAfterExit=no
-ExecStart=%s ibi -f %s
+ExecStart=%[2]s ibi -f %[3]s
 
 [Install]
 WantedBy=multi-user.target
-`, common.LocalImagesMountPath, common.LocalImagesLCABinaryPath, embeddedIBIConfigPath)
+`, mountUnit, common.LocalImagesLCABinaryPath, embeddedIBIConfigPath)
+}
+
+// ibiImagesMountUnitName returns the systemd unit name of the label-based .mount unit for the
+// ibi-images partition. systemd derives a mount unit's name from its mount point, so the name must
+// be the systemd-escaped form of common.LocalImagesMountPath with a .mount suffix (e.g.
+// /var/mnt/ibi-images -> var-mnt-ibi\x2dimages.mount); a name that does not match Where= is
+// rejected by systemd.
+func ibiImagesMountUnitName() string {
+	return systemdEscapePath(common.LocalImagesMountPath) + ".mount"
+}
+
+// ibiImagesMountUnitContents returns the label-based systemd .mount unit the embedded ignition
+// carries so the ibi-images partition is mounted before lca-ibi.service execs the staged lca-cli
+// binary from it. It is addressed by filesystem label (What=/dev/disk/by-label/<label>), never by
+// partition number, matching the on-node discovery contract; Where= is the on-node mount point.
+//
+// It is mounted read-only (the on-media OCI layout, lca-cli binary, and durability store are all
+// read-only runtime inputs) but WITHOUT noexec, because init_t must exec the staged lca-cli binary
+// from it on boot. The concrete SELinux file context that lets init_t exec that binary and the
+// enforcing-mode boot verification are delivered as the deferred boot pass under CNF-27158 (a
+// static unit-content check alone does not prove execution works).
+func ibiImagesMountUnitContents() string {
+	return fmt.Sprintf(`[Unit]
+Description=LCA USB-based IBI images partition (%[1]s)
+
+[Mount]
+What=/dev/disk/by-label/%[1]s
+Where=%[2]s
+Type=auto
+Options=ro
+
+[Install]
+WantedBy=multi-user.target
+`, common.LocalImagesFSLabel, common.LocalImagesMountPath)
+}
+
+// systemdEscapePath returns the systemd path-escaped form of a mount path, matching
+// `systemd-escape --path`: leading/trailing slashes are stripped (the root path escapes to "-"),
+// remaining '/' become '-', and any byte outside [A-Za-z0-9_.] (plus a leading '.') is written as
+// a C-style \xNN escape. This is how systemd derives a .mount unit name from its mount point.
+func systemdEscapePath(path string) string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return "-"
+	}
+	var b strings.Builder
+	for i := 0; i < len(trimmed); i++ {
+		c := trimmed[i]
+		switch {
+		case c == '/':
+			b.WriteByte('-')
+		case c == '.' && i == 0:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		}
+	}
+	return b.String()
 }
 
 // ---- production seam implementations ----

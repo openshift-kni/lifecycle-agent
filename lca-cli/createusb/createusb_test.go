@@ -466,103 +466,103 @@ func TestResolvePullSecretAtFile(t *testing.T) {
 	})
 }
 
-// TestBuildRejectsWriteDevice covers public Build's behavior for --write-device: it is
-// rejected before any attach/write while assembly is incomplete, so a real block device is
-// never destructively overwritten. This needs no seam (no privileged op is reached).
+// TestBuildRejectsWriteDevice covers public Build's behavior for --write-device: it is rejected
+// before any ISO build or attach, so a real block device is never destructively overwritten. This
+// needs no seam (no privileged op is reached).
 func TestBuildRejectsWriteDevice(t *testing.T) {
 	err := Build(context.Background(), testLogger(), validInstallOnly(), BuildOptions{WriteDevice: "/dev/sdx"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--write-device is not yet supported")
-	assert.Contains(t, err.Error(), "CNF-27158")
 }
 
-func TestBuildPlaceholderPreservesOutput(t *testing.T) {
+// TestBuildInstallOnly covers the full build through the injected seams: the live ISO is built into
+// a scratch work directory, written to the front of the image, and the data partitions are
+// appended and formatted; the image is finalized (loop detached) and kept on disk.
+func TestBuildInstallOnly(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
-	// Public Build needs privileged loopback tooling; the injected build test below
-	// verifies the output lifecycle without requiring root.
-	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
+	fp := &fakePartitionOps{attachDev: "/dev/loop3", dataNodes: []string{"/dev/loop3p3", "/dev/loop3p4"}}
+	iso := &fakeISOBuilder{isoBytes: 4096}
+	images := &fakeImagePopulator{}
+
 	err := build(context.Background(), testLogger(), validInstallOnly(),
-		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+		BuildOptions{OutputPath: img, LCAImage: "quay.io/example/lca@sha256:abc"},
+		mediaBuildDeps{partition: fp, iso: iso, images: images})
 	require.NoError(t, err)
-	info, statErr := os.Stat(img)
-	require.NoError(t, statErr)
-	assert.Equal(t, containerSize(partitionPlan(ModeInstallOnly, defaultP1ReservationBytes)), info.Size())
-	assert.Equal(t, []string{"/dev/loop3"}, fp.detached)
+
+	assert.FileExists(t, img)
+	assert.Equal(t, []string{"/dev/loop3"}, fp.detached, "the loop is detached at finalize")
+	assert.NotEmpty(t, iso.gotOpts.WorkDir, "the ISO build gets a scratch work directory")
+	assert.Equal(t, "quay.io/example/lca@sha256:abc", iso.gotOpts.LCAImage, "the lca-image flows into the ISO build")
+	assert.Equal(t, []string{"buildLayout"}, images.calls, "install-only populates ibi-images (OCI layout) but builds no store")
 }
 
-// TestBuildPlaceholderLayout covers both modes through the injected partition seam.
-func TestBuildPlaceholderLayout(t *testing.T) {
+// TestBuildLayoutBothModes covers both modes through the injected seams: the data partitions are
+// appended once and formatted in creation order (self-contained adds cluster-config), and no
+// partition is mounted when no config tree is supplied.
+func TestBuildLayoutBothModes(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		manifest func() *Manifest
-		mode     Mode
-		loopDev  string
+		name       string
+		manifest   func() *Manifest
+		mode       Mode
+		loopDev    string
+		dataNodes  []string
+		wantLabels []string
 	}{
-		{"install-only is p1/p2/p4", validInstallOnly, ModeInstallOnly, "/dev/loop3"},
-		{"self-contained is p1/p3/p2/p4", validSelfContained, ModeSelfContained, "/dev/loop4"},
+		{"install-only appends ibi-images + ibi-status", validInstallOnly, ModeInstallOnly, "/dev/loop3",
+			[]string{"/dev/loop3p3", "/dev/loop3p4"}, []string{labelIBIImages, labelIBIStatus}},
+		{"self-contained appends ibi-images + cluster-config + ibi-status", validSelfContained, ModeSelfContained, "/dev/loop4",
+			[]string{"/dev/loop4p3", "/dev/loop4p5", "/dev/loop4p6"}, []string{labelIBIImages, labelClusterConfig, labelIBIStatus}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			img := filepath.Join(t.TempDir(), "out.img")
-			fp := &fakePartitionOps{attachDev: tc.loopDev}
+			fp := &fakePartitionOps{attachDev: tc.loopDev, dataNodes: tc.dataNodes}
+			iso := &fakeISOBuilder{isoBytes: 4096}
+			images := &fakeImagePopulator{}
 
 			err := build(context.Background(), testLogger(), tc.manifest(),
-				BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
-
+				BuildOptions{OutputPath: img, LCAImage: "lca"}, mediaBuildDeps{partition: fp, iso: iso, images: images})
 			require.NoError(t, err)
 
-			// Self-contained creates an empty p3 before p2 and p4; install-only omits p3.
-			wantCalls := []string{"attach", "create"}
-			if tc.mode == ModeSelfContained {
-				wantCalls = append(wantCalls, "createPart", "settle", "format") // p3
+			wantCalls := []string{"attach", "snapshot", "append", "dataNodes"}
+			for range tc.wantLabels {
+				wantCalls = append(wantCalls, "format")
 			}
-			wantCalls = append(wantCalls,
-				"createPart", "settle", "format", // p2
-				"createPart", "settle", "format", // p4
-				"detach")
+			// Populate ibi-images (resolve/mount/umount). Self-contained then also populates the
+			// rendered cluster-config partition (a second resolve/mount/umount).
+			wantCalls = append(wantCalls, "resolve", "mount", "umount")
+			if tc.mode == ModeSelfContained {
+				wantCalls = append(wantCalls, "resolve", "mount", "umount")
+			}
+			wantCalls = append(wantCalls, "detach")
 			assert.Equal(t, wantCalls, fp.calls)
-			assert.NotContains(t, fp.calls, "mount", "placeholder partitions are empty")
-
-			wantCount := 2
-			p2Index := 0
-			if tc.mode == ModeSelfContained {
-				wantCount = 3
-				p2Index = 1
-			}
-			require.Len(t, fp.createdParts, wantCount)
-			plan := partitionPlan(tc.mode, defaultP1ReservationBytes)
-			wantP2, ok := plannedPartition(plan, labelIBIImages)
-			require.True(t, ok)
-			wantP4, ok := plannedPartition(plan, labelIBIStatus)
-			require.True(t, ok)
-			assert.Equal(t, wantP2, fp.createdParts[p2Index], "p2 (ibi-images) is created")
-			assert.Equal(t, wantP4, fp.createdParts[p2Index+1], "p4 (ibi-status) is created")
-			// The last partition formatted was p4 (ibi-status), ext4-labeled ibi-status.
-			assert.Equal(t, ibiStatusFSType, fp.formatFSType, "p4 is formatted as the ibi-status filesystem type")
-			assert.Equal(t, labelIBIStatus, fp.formatLabel, "p4's FS label must be ibi-status")
-
-			// The loop is detached and the placeholder image remains on disk.
-			assert.Equal(t, []string{tc.loopDev}, fp.detached, "the attached loop device must be detached")
+			assert.Equal(t, tc.wantLabels, fp.formattedLabels)
 			assert.FileExists(t, img)
 		})
 	}
 }
 
-func TestBuildSelfContainedCreatesEmptyP3BeforeP2(t *testing.T) {
+// TestBuildISOBuildFailure covers the ISO-build failure path: build surfaces it and never creates
+// the output image or reaches a privileged op.
+func TestBuildISOBuildFailure(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
-	fp := &fakePartitionOps{attachDev: "/dev/loop4"}
-	err := build(context.Background(), testLogger(), validSelfContained(),
-		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
-	require.NoError(t, err)
-	require.Len(t, fp.createdParts, 3)
-	assert.Equal(t, labelClusterConfig, fp.createdParts[0].Label)
-	assert.FileExists(t, img)
+	fp := &fakePartitionOps{attachDev: "/dev/loop3"}
+	iso := &fakeISOBuilder{buildErr: fmt.Errorf("fetch boom")}
+
+	err := build(context.Background(), testLogger(), validInstallOnly(),
+		BuildOptions{OutputPath: img, LCAImage: "lca"}, mediaBuildDeps{partition: fp, iso: iso, images: &fakeImagePopulator{}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "fetch boom")
+	assert.Empty(t, fp.calls, "no privileged op runs when the ISO build fails")
+	_, statErr := os.Stat(img)
+	assert.True(t, os.IsNotExist(statErr), "no image is created when the ISO build fails")
 }
 
 func TestBuildFinalizeFailurePreservesImage(t *testing.T) {
 	img := filepath.Join(t.TempDir(), "out.img")
-	fp := &fakePartitionOps{attachDev: "/dev/loop5", detachErr: fmt.Errorf("detach boom")}
+	fp := &fakePartitionOps{attachDev: "/dev/loop5", dataNodes: []string{"/dev/loop5p3", "/dev/loop5p4"}, detachErr: fmt.Errorf("detach boom")}
+	iso := &fakeISOBuilder{isoBytes: 4096}
 	err := build(context.Background(), testLogger(), validInstallOnly(),
-		BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+		BuildOptions{OutputPath: img, LCAImage: "lca"}, mediaBuildDeps{partition: fp, iso: iso, images: &fakeImagePopulator{}})
 	require.ErrorContains(t, err, "detach boom")
 	assert.FileExists(t, img, "the image must remain available while its loop device is attached")
 }

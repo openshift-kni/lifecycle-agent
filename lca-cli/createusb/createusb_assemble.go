@@ -16,41 +16,57 @@ limitations under the License.
 
 package createusb
 
-// This file coordinates the create-usb media-assembly pipeline: allocate the sparse
-// image, attach a loop device, run the p1/p2/p3/p4 stages, and manage cleanup. The
-// placeholder p1 and base GPT creation live in createusb_p1.go; later work writes
-// the real live ISO into that reserved region.
+// This file coordinates the create-usb media-assembly pipeline. It implements the boot
+// model proven by the CNF-27197 testing-workflow spike (hack/usb-ibi-assemble-media.sh):
+// "append after the live ISO", using the ISO's own DOS/MBR table.
+//
+//   1. Build the customized RHCOS live ISO (createusb_p1_content.go: fetch+verify, embed
+//      the ignition that auto-runs `lca-cli ibi`, embed the shipping lca-cli binary).
+//   2. Copy that ISO byte-for-byte to the FRONT of the output image (LBA 0) and grow the
+//      image to the full media size (createusb_p1.go: writeLiveISOToFront). The byte-for-byte
+//      copy preserves the ISO's DOS/MBR table and the EFI entries that make it bootable.
+//   3. Attach the image to a loop device (--partscan) and snapshot the ISO's own partitions.
+//   4. Append the data partitions into the free MBR slots AFTER the ISO with `sfdisk --append`
+//      (the ISO's partitions are never touched), then re-read the table.
+//   5. Format each appended data partition and set its filesystem label to the on-node
+//      discovery contract (ibi-images / cluster-config / ibi-status). Self-contained then
+//      populates cluster-config from the rendered config tree.
+//
+// # Why MBR, not GPT (CNF-27197, Developer of Record)
+//
+// A real RHCOS isohybrid live ISO has a hybrid DOS/GPT layout on which
+// `sgdisk --move-second-header` fails ("Invalid partition data!"), so a GPT append path
+// cannot assemble media. The earlier "GPT-first, ISO dd'd into a reserved p1 offset" model
+// did not boot (the ISO's protective MBR/ESP never land at LBA 0). This pipeline uses the
+// ISO's existing DOS/MBR table and appends with sfdisk, which is the layout the CNF-27197
+// spike booted under Secure Boot.
+//
+// # Discovery is by filesystem label, never by partition number
+//
+// The on-node code discovers data partitions by filesystem label (prepare finds ibi-images;
+// post-pivot's waitForConfiguration scans for cluster-config; the runtime writer finds
+// ibi-status). The partition numbers sfdisk assigns after the ISO are an implementation
+// detail; everything downstream keys off the label set here.
 //
 // # Privileged-ops seam
 //
-// Partitioning needs privileged host ops (losetup, sgdisk) that unit tests cannot run.
-// They are hidden behind the partitionOps interface + mediaBuildDeps struct (mirroring
-// imageBuildDeps/defaultImageBuildDeps in createusb_images.go), so the pure logic
-// (size/offset/alignment math, mode→partition-set) is unit-testable with fakes and only
-// the real device path is exercised by a root-gated integration test.
+// Partitioning needs privileged host ops (losetup, sfdisk, mkfs, blkid) that unit tests
+// cannot run. They are hidden behind the partitionOps interface + mediaBuildDeps struct, so
+// the pure assembly logic (size math, plan, ordering, rollback) is unit-testable with fakes
+// and only the real device path is exercised by a root-gated integration test. The live-ISO
+// build is behind the liveISOBuilder seam for the same reason (no network/podman in unit tests).
 //
 // # --write-device is deferred
 //
-// Writing to a real block device is destructive and is rejected up front by Build while
-// the assembly pipeline is incomplete: the only target this story ever writes is a
-// sparse .img. ops.CreateExtraPartition (ops.go) is node-install-specific (sfdisk append,
-// xfs, grows root) and is a reference pattern only -- this seam owns its own GPT/offset
-// logic.
-//
-// # Placeholder output
-//
-// Build keeps the sparse .img with a GPT and all planned partition slots. p1 reserves
-// space for the live ISO; p2/p4 and, in self-contained mode, p3 are empty ext4
-// filesystems. The image is not bootable until ISO and payload population are wired in.
+// Writing to a real block device is destructive and is rejected up front by Build: the only
+// target this pipeline writes is a sparse .img.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -58,45 +74,42 @@ import (
 )
 
 const (
-	// sectorSize is the logical sector size assumed for the loopback-attached container.
-	// A loop device over a regular file exposes 512-byte logical sectors.
-	sectorSize = int64(512)
-
-	// alignmentBytes is the 1 MiB partition alignment used for every partition start, the
-	// conventional alignment sgdisk uses by default.
-	alignmentBytes = int64(1) << 20
-
-	// gptFrontReservedBytes is the space reserved at the front of the container for the
-	// protective MBR and the primary GPT (header + partition-entry array) before the first
-	// partition. 1 MiB comfortably covers it and keeps p1 1 MiB-aligned.
-	gptFrontReservedBytes = int64(1) << 20
-
-	// gptBackupReservedBytes is the space reserved at the tail of the container for the
-	// backup GPT header + partition-entry array. Allocating it up front means the backup
-	// GPT lands at the true device end at creation time -- no post-hoc relocation needed.
-	gptBackupReservedBytes = int64(1) << 20
-
-	// placeholderTypeCode is the GPT type code assigned to the reserved partitions
-	// (0x8300, Linux filesystem). It is a reservation marker; CNF-27168 and the p2/p3/p4
-	// stories set the final type/content when they populate their partitions.
-	placeholderTypeCode = "8300"
+	// mib is one mebibyte; partition sizes are expressed to sfdisk in whole MiB.
+	mib = int64(1) << 20
 )
 
-// Provisional reservation sizes. They are placeholders driven by the expected on-media
-// content, not measured artifacts; the exact values (notably the p1 live-ISO reservation)
-// are confirmed or changed by the CNF-27158 assembly-approach gate. The container is a
-// sparse .img, so reserving full size costs no real bytes until content is written.
+// Data-partition reservation sizes. The container is a sparse .img, so reserving full size
+// costs no real bytes until content is written. Content population (the OCI image layout into
+// ibi-images, the runtime records into ibi-status) is owned by the sibling runtime/populate
+// stories; this pipeline ships those partitions formatted, labelled, and empty.
 const (
-	// p2ReservationBytes reserves the ibi-images OCI layout region (CNF-28668).
+	// p2ReservationBytes reserves the ibi-images OCI layout region.
 	p2ReservationBytes = int64(8) << 30
-	// p3ReservationBytes reserves the self-contained cluster-config region (CNF-28669).
+	// p3ReservationBytes reserves the self-contained cluster-config region.
 	p3ReservationBytes = int64(256) << 20
-	// p4ReservationBytes reserves the ibi-status region (CNF-28670).
+	// p4ReservationBytes reserves the ibi-status region.
 	p4ReservationBytes = int64(64) << 20
+
+	// slackBytes pads the whole container so the appended partitions and their MBR/EBR
+	// alignment overhead fit after the ISO without landing on the very last sector.
+	slackBytes = int64(64) << 20
+	// extSlackBytes pads the self-contained MBR extended container so it holds both logical
+	// partitions plus their per-logical EBR + 1 MiB alignment overhead.
+	extSlackBytes = int64(16) << 20
 )
 
-// GPT partition names (labels) for the remaining reserved partitions. p1's label is
-// defined with its stage in createusb_p1.go.
+// GPT/MBR partition type codes used in the sfdisk append script.
+const (
+	// mbrTypeLinux (0x83) marks a Linux-filesystem data partition.
+	mbrTypeLinux = "83"
+	// mbrTypeExtended (0x05) marks the MBR extended container that holds the self-contained
+	// logical partitions (cluster-config, ibi-status). It is never formatted or labelled.
+	mbrTypeExtended = "5"
+)
+
+// GPT partition names (filesystem labels) for the data partitions. p1's live-ISO label is
+// defined with its stage in createusb_p1.go. These strings are the on-node discovery
+// contract and must not change.
 const (
 	labelIBIImages     = "ibi-images"
 	labelClusterConfig = "cluster-config"
@@ -110,153 +123,159 @@ const (
 	fsTypeXFS  = "xfs"
 )
 
-const (
-	// partitionNodePollInterval is how often waitForPartitionNode polls for the new partition
-	// device node to appear after refreshing the kernel partition table.
-	partitionNodePollInterval = 100 * time.Millisecond
-	// partitionNodeWaitTimeout bounds how long waitForPartitionNode waits for the partition
-	// device node to appear before giving up.
-	partitionNodeWaitTimeout = 5 * time.Second
-)
-
-// BuildOptions carries the resolved output target for a create-usb media build. Exactly
-// one of OutputPath / WriteDevice is set (enforced by the command's validateOutputTarget).
+// BuildOptions carries the resolved inputs for a create-usb media build. Exactly one of
+// OutputPath / WriteDevice is set (enforced by the command's validateOutputTarget).
 type BuildOptions struct {
-	// OutputPath is the path of the sparse .img to create (--output).
+	// OutputPath is the path of the .img to create (--output).
 	OutputPath string
 	// WriteDevice is the block device to write to (--write-device). It is deferred: Build
-	// rejects it while the assembly pipeline is incomplete.
+	// rejects it.
 	WriteDevice string
-	// P3Root is the rendered + digest-pinned self-contained config tree consumed read-only
-	// by the lower-level p3 stage. The public Build does not yet run that stage.
+	// LCAImage is the lca-cli pull-spec (--lca-image); the exact shipping binary is extracted
+	// from it and embedded in the live ISO. Required for assembly.
+	LCAImage string
+	// AuthFile is the workstation --auth-file used to pull the lca-cli image (build-time only;
+	// never written to the media).
+	AuthFile string
+	// RecertImage is the recert pull-spec mirrored into the on-media OCI image layout. Required
+	// for the image-layout population stage.
+	RecertImage string
+	// USBSizeBytes is the --usb-size budget in bytes. When > 0 the build fails if the resulting
+	// whole-stick (final apparent) image size exceeds it. Zero disables the check.
+	USBSizeBytes int64
+	// P3Root is a pre-rendered + digest-pinned self-contained config tree populated into the
+	// cluster-config partition. When empty, the image-layout stage renders the tree itself.
 	P3Root string
 }
 
-// PlannedPartition is one entry in the computed media layout: its GPT partition number,
-// label, 1 MiB-aligned byte offset within the container, and reserved byte size.
+// PlannedPartition is one data partition appended after the live ISO: its filesystem label,
+// filesystem type, and reserved byte size. The partition number sfdisk assigns is not
+// recorded here -- the media is addressed by filesystem label (see the package doc).
 type PlannedPartition struct {
-	Number int
 	Label  string
-	Offset int64
+	FSType string
 	Size   int64
 }
 
-// PartitionPlan is the ordered media layout for a mode. This story creates only the base
-// GPT + the placeholder p1 entry; the p2/p3/p4 entries are populated by the sibling
-// stories into the offsets reserved here.
+// PartitionPlan is the ordered set of data partitions a mode appends after the live ISO:
+// ibi-images + ibi-status for install-only, ibi-images + cluster-config + ibi-status for
+// self-contained. The order is the creation order the sfdisk append and the post-append
+// device-node mapping both rely on.
 type PartitionPlan struct {
 	Mode       Mode
 	Partitions []PlannedPartition
 }
 
-// PartitionEntry is a parsed on-disk GPT partition-table entry, returned by
-// ReadPartitionTable so tests can assert the actual table rather than match a string.
-type PartitionEntry struct {
-	Number int
-	// Start and End are the inclusive first/last logical sectors.
-	Start int64
-	End   int64
-	// Size is the entry's byte size, derived from the sector range.
-	Size int64
-	// Type is the GPT type code reported by sgdisk (e.g. "8300").
-	Type string
-	Name string
-}
-
-// partitionOps is the privileged host-ops seam the media build depends on. The p2, p3, and p4
-// stages (CNF-28668/CNF-28669/CNF-28670) share the same create/settle/format primitives; p3
-// adds mount/unmount on top for its populate step. p2 and p4 both create an empty, unmounted
-// filesystem and stop after formatting.
+// partitionOps is the privileged host-ops seam the media build depends on: attach/detach the
+// loopback, snapshot the ISO's own partitions, append the data partitions into the free MBR
+// slots after the ISO, re-read the table, map the appended partitions to device nodes, format
+// them, resolve them by filesystem label, and mount/unmount (self-contained populate only).
 type partitionOps interface {
-	// AttachLoopback attaches imgPath to a loop device (losetup --find --show -P) and
+	// AttachLoopback attaches imgPath to a loop device (losetup --find --show --partscan) and
 	// returns the device path (e.g. /dev/loop0).
 	AttachLoopback(imgPath string) (loopDev string, err error)
 	// DetachLoopback detaches loopDev (losetup -d). It is idempotent: an already-detached
 	// device is not an error.
 	DetachLoopback(loopDev string) error
-	// CreateBaseLayout initializes the GPT and placeholder p1; the p1 stage in
-	// createusb_p1.go owns this operation.
-	CreateBaseLayout(dev string, plan PartitionPlan) error
-	// ReadPartitionTable reads dev's GPT and returns the parsed entries.
-	ReadPartitionTable(dev string) ([]PartitionEntry, error)
 
-	// The create -> settle -> format primitives below are the single shared implementation
-	// every partition stage uses (the createAndFormatPartition helper composes them). p2
-	// (ibi-images), p3 (cluster-config), and p4 (ibi-status) all drive them so there is exactly
-	// one copy of the GPT-creation, partition-table-refresh, bounded device-node-resolution, and
-	// ext4-format command sequences.
-
-	// CreatePartition adds a single GPT entry to dev at the number, 1 MiB-aligned offset, and
-	// reserved size the plan carries for part (sgdisk --new/--change-name/--typecode),
-	// using the same GPT-entry operation as p1. It does not format the partition.
-	CreatePartition(dev string, part PlannedPartition) error
-	// SettlePartition makes the kernel partition node for partition number on dev available
-	// after its GPT entry was added (re-read the table + a bounded wait for the device node)
-	// and returns the partition device path (e.g. /dev/loop0p3).
-	SettlePartition(dev string, number int) (partDev string, err error)
+	// SnapshotPartitions returns the device nodes of every partition currently in dev's table.
+	// It is called after the ISO is written to the front and before the data partitions are
+	// appended, so it captures the ISO's own partitions -- which must never be formatted.
+	SnapshotPartitions(dev string) (nodes []string, err error)
+	// AppendDataPartitions appends plan's data partitions into the free MBR slots after the ISO
+	// (sfdisk --append) and re-reads the kernel partition table. The ISO's own partitions are
+	// left untouched.
+	AppendDataPartitions(dev string, plan PartitionPlan) error
+	// DataPartitionNodes returns the device nodes of the data partitions appended after the ISO,
+	// in creation order (ibi-images, [cluster-config,] ibi-status). It selects the Linux
+	// (type 83) partitions that are not part of isoParts and are not the extended container, so
+	// the mapping never depends on a fixed partition number and can never pick an ISO partition.
+	DataPartitionNodes(dev string, isoParts []string) (nodes []string, err error)
 	// FormatPartition creates a fsType filesystem on partDev and sets its FS label. fsType is
 	// validated (ext4/xfs) before mkfs runs.
 	FormatPartition(partDev, fsType, label string) error
+	// ResolvePartitionByFSLabel returns the device node on dev whose filesystem label matches
+	// label. It scans only dev's own partitions (not a global blkid -L) so it can never resolve
+	// a same-labelled partition on another attached disk.
+	ResolvePartitionByFSLabel(dev, label string) (partDev string, err error)
 
-	// WriteImageToPartition writes the raw image file at srcPath directly onto partDev (no
-	// filesystem). It backs the p1 live-ISO stage, which writes the customized bootable ISO
-	// into the reserved p1 region; p2/p3/p4 format filesystems instead and never call it.
-	WriteImageToPartition(partDev, srcPath string) error
-
-	// MountPartition and UnmountPartition back p3's populate step; p2 creates an empty
-	// partition and never mounts.
-
-	// MountPartition mounts partDev at mountpoint.
+	// MountPartition and UnmountPartition back the self-contained cluster-config populate step;
+	// ibi-images and ibi-status ship empty and are never mounted here.
 	MountPartition(partDev, mountpoint string) error
-	// UnmountPartition unmounts mountpoint.
 	UnmountPartition(mountpoint string) error
 }
 
-// createAndFormatPartition is the shared create -> settle -> format sequence every partition
-// stage runs: it creates part's GPT entry at its reserved offset on dev, settles its kernel
-// device node (partition-table refresh + a bounded wait), formats it as fsType with part.Label
-// as the FS label, and returns the partition device node. p2 (ibi-images) and p4 (ibi-status)
-// call it and are done; p3 (cluster-config) calls it and then mounts the returned node to
-// populate the partition.
-func createAndFormatPartition(p partitionOps, dev string, part PlannedPartition, fsType string) (string, error) {
-	if err := p.CreatePartition(dev, part); err != nil {
-		return "", fmt.Errorf("creating p%d (%s) entry on %s: %w", part.Number, part.Label, dev, err)
-	}
-	partDev, err := p.SettlePartition(dev, part.Number)
-	if err != nil {
-		return "", fmt.Errorf("settling p%d (%s) partition node: %w", part.Number, part.Label, err)
-	}
-	if err := p.FormatPartition(partDev, fsType, part.Label); err != nil {
-		return "", fmt.Errorf("formatting p%d (%s) as %s: %w", part.Number, part.Label, fsType, err)
-	}
-	return partDev, nil
+// liveISOBuilder is the seam that produces the customized bootable RHCOS live ISO. It is an
+// interface so unit tests inject a fake that writes a stand-in ISO file (no network, no podman,
+// no real RHCOS image); production wraps BuildLiveISO. The result carries both the customized
+// ISO (written to the front of the media) and the extracted shipping lca-cli binary (copied onto
+// the ibi-images partition so the embedded unit's ExecStart resolves on boot).
+type liveISOBuilder interface {
+	Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions) (ISOBuildResult, error)
 }
 
-// mediaBuildDeps bundles the injectable seam(s). It has a single field today; the
-// p2/p3/p4 stories add format/mount ops to partitionOps rather than new fields.
+// defaultLiveISOBuilder wraps the production BuildLiveISO.
+type defaultLiveISOBuilder struct{}
+
+func (defaultLiveISOBuilder) Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISOBuildOptions) (ISOBuildResult, error) {
+	return BuildLiveISO(ctx, log, m, opts)
+}
+
+// imagePopulator is the seam that populates the ibi-images partition with the OCI image layout +
+// digests.json (and renders the self-contained p3 config tree) and the read-only durability
+// store. It is an interface so the assembly orchestration is unit-testable with a fake (no
+// network, no podman, no seed image); production wraps BuildImageLayout / BuildDurabilityStore.
+type imagePopulator interface {
+	// BuildLayout mirrors the manifest's image set into a build-unique OCI layout + digests.json
+	// under p2Root, renders the self-contained p3 config tree under p3Root (install-only renders
+	// none), and writes the <output>.digests.json sidecar beside outputPath.
+	BuildLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root, p3Root string) (*LayoutBuildResult, error)
+	// BuildStore builds the read-only containers/storage durability store under p2Root for
+	// self-contained media. runtimeStorePath/targetArch are empty to use the build defaults.
+	BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error)
+}
+
+// defaultImagePopulator wraps the production BuildImageLayout / BuildDurabilityStore.
+type defaultImagePopulator struct{}
+
+func (defaultImagePopulator) BuildLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root, p3Root string) (*LayoutBuildResult, error) {
+	return BuildImageLayout(ctx, log, m, opts, outputPath, p2Root, p3Root)
+}
+
+func (defaultImagePopulator) BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error) {
+	return BuildDurabilityStore(ctx, log, m, p2Root, runtimeStorePath, targetArch)
+}
+
+// mediaBuildDeps bundles the injectable seams: the privileged partition ops, the live-ISO
+// builder, and the ibi-images content populator.
 type mediaBuildDeps struct {
 	partition partitionOps
+	iso       liveISOBuilder
+	images    imagePopulator
 }
 
-// defaultMediaBuildDeps returns the production seam backed by the host ops helpers,
-// exactly as defaultImageBuildDeps wires ops.NewOps in createusb_images.go.
+// defaultMediaBuildDeps returns the production seams backed by the host ops helpers, the real
+// live-ISO build, and the real OCI image-layout / durability-store population.
 func defaultMediaBuildDeps(log *logrus.Logger) mediaBuildDeps {
 	return mediaBuildDeps{
 		partition: &opsPartitionOps{
 			ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)),
 			log: log,
 		},
+		iso:    defaultLiveISOBuilder{},
+		images: defaultImagePopulator{},
 	}
 }
 
-// MediaHandle is the live media container the assembly pipeline threads through: the
-// image path, the attached loop device, the computed plan, and whether the target is an
-// image file. The sibling p2/p3/p4 stories receive it from assembleMedia and own
-// teardown; Close is the single teardown entry point.
+// MediaHandle is the live media container the assembly pipeline threads through: the image
+// path, the attached loop device, the computed plan, the snapshot of the ISO's own partitions
+// (never touched), and whether the target is an image file. Close is the single teardown
+// entry point.
 type MediaHandle struct {
 	ImagePath  string
 	LoopDevice string
 	Plan       PartitionPlan
+	ISOParts   []string
 	IsImage    bool
 
 	partition partitionOps
@@ -264,10 +283,10 @@ type MediaHandle struct {
 
 // Close discards a partial media image after detaching its loop device.
 //
-// If the detach fails, Close returns the error and leaves LoopDevice set and the backing
-// image in place: the loop device may still be attached to the image, so removing the
-// image would orphan an attachment and lose the only handle a caller has to retry the
-// detach. The caller can call Close again to retry once the underlying cause is cleared.
+// If the detach fails, Close returns the error and leaves LoopDevice set and the backing image
+// in place: the loop device may still be attached to the image, so removing the image would
+// orphan an attachment and lose the only handle a caller has to retry the detach. The caller
+// can call Close again to retry once the underlying cause is cleared.
 func (h *MediaHandle) Close() error {
 	if err := h.detach(); err != nil {
 		return err
@@ -281,8 +300,8 @@ func (h *MediaHandle) Close() error {
 	return nil
 }
 
-// Finalize releases the loop device and keeps the placeholder image for the caller.
-// A detach failure leaves both the loop and image available for recovery.
+// Finalize releases the loop device and keeps the assembled image for the caller. A detach
+// failure leaves both the loop and image available for recovery.
 func (h *MediaHandle) Finalize() error {
 	if err := h.detach(); err != nil {
 		return err
@@ -310,95 +329,126 @@ func (h *MediaHandle) detach() error {
 	return nil
 }
 
-// Build creates a placeholder .img with GPT and formatted partition slots. The image is
-// not bootable until ISO writing and content population are wired in.
+// Build assembles bootable USB-based IBI media: it builds the customized live ISO, writes it to
+// the front of the output image (LBA 0), and appends the formatted, labelled data partitions
+// after it following the CNF-27197-proven DOS/MBR layout.
 func Build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions) error {
 	return build(ctx, log, m, opts, defaultMediaBuildDeps(log))
 }
 
-// build is the dependency-injected core of Build (mirroring BuildImageLayout →
-// buildImageLayout). It is unexported so tests exercise the public behavior with a fake
-// seam while production Build injects defaultMediaBuildDeps.
+// build is the dependency-injected core of Build. It is unexported so tests exercise the public
+// behavior with fake seams while production Build injects defaultMediaBuildDeps.
 func build(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions, deps mediaBuildDeps) error {
-	// Reject the destructive device path before any attach/write while assembly is
-	// incomplete, so a real block device is never overwritten with incomplete media.
+	// Reject the destructive device path before any ISO build or attach: the only target this
+	// pipeline writes is a sparse .img, so a real block device is never overwritten.
 	if opts.WriteDevice != "" {
-		return fmt.Errorf("--write-device is not yet supported for placeholder media (CNF-27158)")
+		return fmt.Errorf("--write-device is not yet supported for create-usb media")
+	}
+	if opts.OutputPath == "" {
+		return fmt.Errorf("an output .img path is required")
 	}
 
-	handle, err := assembleMedia(ctx, log, m, opts, deps)
+	// Build the customized bootable live ISO under a scratch work directory. The ISO is copied
+	// into the output image during assembly, so the work directory is removed afterwards.
+	workDir, err := os.MkdirTemp("", "create-usb-iso-")
+	if err != nil {
+		return fmt.Errorf("creating live-ISO work directory: %w", err)
+	}
+	defer func() {
+		if rerr := os.RemoveAll(workDir); rerr != nil {
+			log.Warnf("create-usb: removing live-ISO work directory %s: %v", workDir, rerr)
+		}
+	}()
+
+	log.Infof("create-usb: building customized live ISO (mode=%s)", m.Mode)
+	isoResult, err := deps.iso.Build(ctx, log, m, ISOBuildOptions{
+		LCAImage: opts.LCAImage,
+		AuthFile: opts.AuthFile,
+		WorkDir:  workDir,
+	})
+	if err != nil {
+		return fmt.Errorf("building live ISO: %w", err)
+	}
+
+	handle, err := assembleMedia(ctx, log, m, isoResult, opts, deps)
 	if err != nil {
 		return err
 	}
 
-	// Add and format the empty p2 (ibi-images) partition into the region the base layout
-	// reserved. On failure, tear the handle down (detach loop + remove the partial .img)
-	// before returning so a failed build never leaks a loop device or partial image.
-	if perr := createP2Partition(log, handle, deps); perr != nil {
-		if cerr := handle.Close(); cerr != nil {
-			return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", perr, cerr)
-		}
-		return perr
-	}
-
-	// Add and format the empty p4 (ibi-status) partition into its reserved region (both modes).
-	// It uses the same shared create -> settle -> format sequence as p2 and ships empty and
-	// unmounted; the runtime writer (CNF-27163) populates it later. On failure, tear the handle
-	// down before returning, exactly as for p2.
-	if perr := createP4Partition(log, handle, deps); perr != nil {
-		if cerr := handle.Close(); cerr != nil {
-			return fmt.Errorf("%w; additionally failed to clean up the partial media: %w", perr, cerr)
-		}
-		return perr
-	}
-
 	if err := handle.Finalize(); err != nil {
-		return fmt.Errorf("finalizing placeholder media %s: %w", handle.ImagePath, err)
+		return fmt.Errorf("finalizing media %s: %w", handle.ImagePath, err)
 	}
-	log.Warnf("create-usb: created placeholder image %s; it has no live ISO or image payload and is not bootable", handle.ImagePath)
+	log.Infof("create-usb: assembled bootable %s media at %s (live ISO at LBA 0 + appended data partitions)",
+		m.Mode, handle.ImagePath)
 	return nil
 }
 
-// assembleMedia is the DI core that creates the media container, attaches the loopback,
-// establishes the base GPT + placeholder p1, and returns a live *MediaHandle for the
-// sibling stories to extend.
+// assembleMedia writes the customized live ISO to the front of the output image, attaches the
+// loopback, appends the data partitions into the free MBR slots after the ISO, formats and
+// labels them, and (self-contained) populates cluster-config. It returns a live *MediaHandle
+// with the loop still attached; the caller owns teardown via MediaHandle.Finalize/Close.
 //
-// It owns its own lifecycle on failure: on any internal error it detaches the loop device
-// (if attached) and removes the partial .img before returning (nil, err), via defer-based
-// rollback keyed on success. On success it returns a live handle with the loop still
-// attached; the caller owns teardown via MediaHandle.Close.
-func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts BuildOptions, deps mediaBuildDeps) (handle *MediaHandle, err error) {
+// It owns its own lifecycle on failure: on any internal error it detaches the loop device (if
+// attached) and removes the partial .img before returning (nil, err), via defer-based rollback
+// keyed on success. The one exception is a cluster-config unmount failure, where the filesystem
+// is still mounted over the loop device: the rollback preserves the image + loop handle instead
+// (see errP3Mounted).
+func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResult ISOBuildResult, opts BuildOptions, deps mediaBuildDeps) (handle *MediaHandle, err error) {
 	if cerr := ctx.Err(); cerr != nil {
 		return nil, fmt.Errorf("media assembly canceled: %w", cerr)
 	}
-	if opts.OutputPath == "" {
-		return nil, fmt.Errorf("an output .img path is required")
+
+	// Invariant guard: ibi-status is always ext4 (no operator input); fail loudly on a regression
+	// before touching the disk.
+	if verr := validateIBIStatusFSType(ibiStatusFSType); verr != nil {
+		return nil, verr
 	}
 
-	plan := partitionPlan(m.Mode, defaultP1ReservationBytes)
-	total := containerSize(plan)
+	plan := partitionPlan(m.Mode)
 	imgPath := opts.OutputPath
+	isoPath := isoResult.ISOPath
 
-	log.Infof("create-usb: establishing base media layout (mode=%s, container=%d bytes, partitions=%d)",
+	// Validate the ISO layout as a precondition before growing or modifying the image: inspect
+	// the ISO's actual MBR entries and confirm it leaves enough free primary slots for the mode.
+	if err = validateISOLayout(log, isoPath, plan); err != nil {
+		return nil, err
+	}
+
+	total, err := containerSize(isoPath, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Infof("create-usb: assembling media layout (mode=%s, container=%d bytes, data partitions=%d)",
 		m.Mode, total, len(plan.Partitions))
 
-	if err = allocateSparseImage(imgPath, total); err != nil {
-		return nil, fmt.Errorf("allocating media image %s: %w", imgPath, err)
+	// Enforce the USB-size budget against the final apparent image size (ISO + data partitions +
+	// extended-container/alignment overhead), before anything is written.
+	if err = validateUSBSizeBudget(opts.USBSizeBytes, total); err != nil {
+		return nil, err
 	}
 
-	// Roll back everything this call allocated unless it completes successfully. On
-	// success the caller owns teardown, so success clears the rollback.
+	// Copy the ISO byte-for-byte to the front of the image (preserving its DOS/MBR + EFI
+	// entries) and grow the image to the full media size. This refuses to overwrite an existing
+	// --output path (O_EXCL).
+	if err = writeLiveISOToFront(imgPath, isoPath, total); err != nil {
+		return nil, err
+	}
+
+	// Roll back everything this call allocated unless it completes successfully. On success the
+	// caller owns teardown, so success clears the rollback.
 	var loopDev string
 	success := false
 	defer func() {
 		if success {
 			return
 		}
-		// If p3 could not be unmounted, its filesystem is still mounted over the loop device.
-		// Detaching the loop and removing the backing image would discard the only path to
-		// recover or retry the unmount, so preserve both and surface where things stand.
-		if errors.Is(err, errP3Mounted) {
-			log.Warnf("create-usb: cluster-config (p3) partition is still mounted; preserving loop device %s "+
+		// If a populated partition (ibi-images or cluster-config) could not be unmounted, its
+		// filesystem is still mounted over the loop device. Detaching the loop and removing the
+		// backing image would discard the only path to recover or retry the unmount, so preserve
+		// both and surface where things stand.
+		if errors.Is(err, errP2Mounted) || errors.Is(err, errP3Mounted) {
+			log.Warnf("create-usb: a populated partition is still mounted; preserving loop device %s "+
 				"and media image %s for recovery (unmount it, then detach %s and remove the image)",
 				loopDev, imgPath, loopDev)
 			return
@@ -419,87 +469,125 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, opts Bu
 		return nil, fmt.Errorf("attaching loop device for %s: %w", imgPath, err)
 	}
 
-	if err = createP1Partition(log, plan, loopDev, deps); err != nil {
-		return nil, err
+	// Snapshot the ISO's own partitions before appending, so the data partitions can be
+	// identified by exclusion and the ISO's ISO9660/EFI partitions are never formatted.
+	isoParts, err := deps.partition.SnapshotPartitions(loopDev)
+	if err != nil {
+		return nil, fmt.Errorf("snapshotting the live ISO partitions on %s: %w", loopDev, err)
+	}
+	if len(isoParts) == 0 {
+		return nil, fmt.Errorf("no partitions found on %s after writing the live ISO; is the source a RHCOS isohybrid live ISO?", loopDev)
+	}
+
+	if err = deps.partition.AppendDataPartitions(loopDev, plan); err != nil {
+		return nil, fmt.Errorf("appending data partitions on %s: %w", loopDev, err)
 	}
 
 	handle = &MediaHandle{
 		ImagePath:  imgPath,
 		LoopDevice: loopDev,
 		Plan:       plan,
+		ISOParts:   isoParts,
 		IsImage:    true,
 		partition:  deps.partition,
 	}
 
-	// Self-contained: fill the reserved p3 cluster-config slot (create entry, mkfs.ext4,
-	// label, mount, populate). It runs after the base layout and before success, so a p3
-	// failure triggers the rollback above (p3 unmounts itself first, then the rollback
-	// detaches the loop and removes the partial image). install-only has no p3 entry in the
-	// plan, so the stage is a no-op there.
-	if err = createP3Partition(ctx, log, deps, handle, opts.P3Root); err != nil {
-		return nil, fmt.Errorf("creating cluster-config (p3) partition on %s: %w", loopDev, err)
+	if err = formatDataPartitions(log, deps, handle); err != nil {
+		return nil, err
+	}
+
+	// For self-contained media the image-layout stage renders the digest-pinned p3 config tree,
+	// which the cluster-config populate stage then copies onto its partition. Share one scratch
+	// render directory between the two stages. A pre-rendered opts.P3Root overrides it (used
+	// directly by populateClusterConfig). install-only renders no tree.
+	p3Root := opts.P3Root
+	if m.Mode == ModeSelfContained && p3Root == "" {
+		renderDir, derr := os.MkdirTemp("", "create-usb-p3-render-")
+		if derr != nil {
+			return nil, fmt.Errorf("creating p3 config-tree render directory: %w", derr)
+		}
+		defer func() {
+			if rerr := os.RemoveAll(renderDir); rerr != nil {
+				log.Warnf("create-usb: removing p3 config-tree render directory %s: %v", renderDir, rerr)
+			}
+		}()
+		p3Root = renderDir
+	}
+
+	// Populate the ibi-images partition: the OCI image layout + on-media digests.json, the staged
+	// lca-cli binary the embedded unit execs on boot, and (self-contained) the read-only
+	// durability store. Runs before success so any failure triggers the rollback above.
+	if err = populateIBIImages(ctx, log, deps, handle, m, isoResult, opts, p3Root); err != nil {
+		return nil, err
+	}
+
+	// Self-contained: populate the cluster-config partition from the rendered config tree. It
+	// runs before success, so a populate/unmount failure triggers the rollback above (an unmount
+	// failure preserves the image + loop handle). install-only has no cluster-config partition,
+	// so the stage is a no-op there.
+	if err = populateClusterConfig(ctx, log, deps, handle, p3Root); err != nil {
+		return nil, err
 	}
 
 	success = true
 	return handle, nil
 }
 
-// partitionPlan computes the ordered media layout for a mode, with every partition start
-// 1 MiB-aligned and offsets derived from the placeholder p1 size: p1+p2+p4 for
-// install-only, p1+p2+p3+p4 for self-contained. The p2/p3/p4 entries are populated by the
-// sibling stories into the offsets reserved here.
-//
-// Each role has a *fixed* GPT partition number so a partition keeps the same number across
-// modes: live-iso=1, ibi-images=2, cluster-config=3, ibi-status=4. In install-only mode
-// cluster-config (p3) is omitted, so ibi-status stays p4 (the layout is p1/p2/p4, not a
-// renumbered p1/p2/p3) -- the number is not derived from the slice position.
-func partitionPlan(mode Mode, p1Size int64) PartitionPlan {
-	specs := []struct {
-		number int
-		label  string
-		size   int64
-	}{
-		{1, labelLiveISO, p1Size},
-		{2, labelIBIImages, p2ReservationBytes},
+// formatDataPartitions maps the appended data partitions to their device nodes (by exclusion of
+// the ISO's own partitions) and formats each with its planned filesystem type and label, in the
+// plan's creation order. It copies no content; ibi-images and ibi-status ship empty, and
+// cluster-config is populated by populateClusterConfig.
+func formatDataPartitions(log *logrus.Logger, deps mediaBuildDeps, h *MediaHandle) error {
+	nodes, err := deps.partition.DataPartitionNodes(h.LoopDevice, h.ISOParts)
+	if err != nil {
+		return fmt.Errorf("resolving appended data partition nodes on %s: %w", h.LoopDevice, err)
+	}
+	if len(nodes) != len(h.Plan.Partitions) {
+		return fmt.Errorf("expected %d appended data partitions on %s, found %d: %v",
+			len(h.Plan.Partitions), h.LoopDevice, len(nodes), nodes)
+	}
+	for i, part := range h.Plan.Partitions {
+		log.Infof("create-usb: formatting %s (%s, %d bytes) as %s", nodes[i], part.Label, part.Size, part.FSType)
+		if err := deps.partition.FormatPartition(nodes[i], part.FSType, part.Label); err != nil {
+			return fmt.Errorf("formatting %s (%s) as %s: %w", nodes[i], part.Label, part.FSType, err)
+		}
+	}
+	return nil
+}
+
+// partitionPlan returns the ordered data partitions a mode appends after the live ISO:
+// ibi-images + ibi-status for install-only, ibi-images + cluster-config + ibi-status for
+// self-contained. The filesystem types come from the per-partition stage files (all three are
+// ext4: ibiImagesFSType / clusterConfigFSType / ibiStatusFSType). The order is the creation order
+// the sfdisk append and the device-node mapping rely on.
+func partitionPlan(mode Mode) PartitionPlan {
+	parts := []PlannedPartition{
+		{Label: labelIBIImages, FSType: ibiImagesFSType, Size: p2ReservationBytes},
 	}
 	if mode == ModeSelfContained {
-		specs = append(specs, struct {
-			number int
-			label  string
-			size   int64
-		}{3, labelClusterConfig, p3ReservationBytes})
+		parts = append(parts, PlannedPartition{Label: labelClusterConfig, FSType: clusterConfigFSType, Size: p3ReservationBytes})
 	}
-	specs = append(specs, struct {
-		number int
-		label  string
-		size   int64
-	}{4, labelIBIStatus, p4ReservationBytes})
-
-	parts := make([]PlannedPartition, 0, len(specs))
-	offset := gptFrontReservedBytes
-	for _, s := range specs {
-		offset = alignUp(offset, alignmentBytes)
-		parts = append(parts, PlannedPartition{
-			Number: s.number,
-			Label:  s.label,
-			Offset: offset,
-			Size:   s.size,
-		})
-		offset += s.size
-	}
+	parts = append(parts, PlannedPartition{Label: labelIBIStatus, FSType: ibiStatusFSType, Size: p4ReservationBytes})
 	return PartitionPlan{Mode: mode, Partitions: parts}
 }
 
-// containerSize is the total container size for a plan: the aligned end of the last
-// partition plus the tail backup-GPT reservation, so the backup GPT lands at the true
-// device end at creation time.
-func containerSize(plan PartitionPlan) int64 {
-	if len(plan.Partitions) == 0 {
-		return alignUp(gptFrontReservedBytes, alignmentBytes) + gptBackupReservedBytes
+// containerSize is the total image size: the live ISO (rounded up to a whole MiB so the first
+// appended partition starts MiB-aligned) plus every data partition, the self-contained extended
+// container overhead, and the whole-container slack. The result is MiB-aligned.
+func containerSize(isoPath string, plan PartitionPlan) (int64, error) {
+	info, err := os.Stat(isoPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat live ISO %s: %w", isoPath, err)
 	}
-	last := plan.Partitions[len(plan.Partitions)-1]
-	end := alignUp(last.Offset+last.Size, alignmentBytes)
-	return end + gptBackupReservedBytes
+	total := alignUp(info.Size(), mib)
+	for _, p := range plan.Partitions {
+		total += p.Size
+	}
+	if plan.Mode == ModeSelfContained {
+		total += extSlackBytes
+	}
+	total += slackBytes
+	return alignUp(total, mib), nil
 }
 
 // alignUp rounds v up to the next multiple of align (align must be > 0).
@@ -507,51 +595,47 @@ func alignUp(v, align int64) int64 {
 	return ((v + align - 1) / align) * align
 }
 
-// allocateSparseImage creates a new sparse file of exactly size bytes. The backing bytes
-// are not written, so a multi-GiB container costs no real disk until content is written
-// into it.
-//
-// It creates the file exclusively (O_EXCL): if the output path already exists it fails
-// without touching the existing file, rather than truncating it. This prevents a
-// placeholder build from destroying an existing image at a reused output path.
-func allocateSparseImage(path string, size int64) (err error) {
-	f, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // output path is supplied by the operator at build time
-	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("output path %s already exists; refusing to overwrite it (remove it or choose a different --output path): %w", path, err)
-		}
-		return fmt.Errorf("creating image file: %w", err)
+// validateUSBSizeBudget fails the build when the resulting whole-stick size exceeds the --usb-size
+// budget. total is the final apparent image size computed by containerSize -- the live ISO plus
+// every data partition and the extended-container/alignment overhead -- so the check reflects what
+// is actually written to the stick, not the staged-byte subtotal (SizeReport.StagedBytes, which
+// deliberately excludes that overhead). A zero/negative budget disables the check.
+func validateUSBSizeBudget(budgetBytes, total int64) error {
+	if budgetBytes <= 0 {
+		return nil
 	}
-	defer func() {
-		if err != nil {
-			if removeErr := os.Remove(path); removeErr != nil {
-				err = errors.Join(err, fmt.Errorf("removing incomplete image file %s: %w", path, removeErr))
-			}
-		}
-	}()
-	if terr := f.Truncate(size); terr != nil {
-		_ = f.Close()
-		return fmt.Errorf("truncating image file to %d bytes: %w", size, terr)
-	}
-	if cerr := f.Close(); cerr != nil {
-		return fmt.Errorf("closing image file: %w", cerr)
+	if total > budgetBytes {
+		return fmt.Errorf("assembled media is %d bytes, exceeding the --usb-size budget of %d bytes by %d bytes; use a larger USB stick (--usb-size) or reduce the on-media payload",
+			total, budgetBytes, total-budgetBytes)
 	}
 	return nil
 }
 
+// plannedPartition returns the planned data partition with the given label, and whether the plan
+// has such an entry. Callers that require the partition turn a false into an error; callers for
+// which it is optional (cluster-config, absent in install-only) skip.
+func plannedPartition(plan PartitionPlan, label string) (PlannedPartition, bool) {
+	for _, part := range plan.Partitions {
+		if part.Label == label {
+			return part, true
+		}
+	}
+	return PlannedPartition{}, false
+}
+
 // ---- production seam implementation ----
 
-// opsPartitionOps is the production partitionOps backed by the host podman/util ops
-// (losetup, sgdisk) run in the host namespace, as opsSeedClosureReader does in
-// createusb_images.go.
+// opsPartitionOps is the production partitionOps backed by the host util ops (losetup, sfdisk,
+// blockdev, udevadm, mkfs, blkid, lsblk) run in the host namespace.
 type opsPartitionOps struct {
 	ops ops.Ops
 	log *logrus.Logger
 }
 
-// AttachLoopback attaches imgPath to a loop device and returns the device path.
+// AttachLoopback attaches imgPath to a loop device (with --partscan so the ISO's own partitions
+// are exposed) and returns the device path.
 func (p *opsPartitionOps) AttachLoopback(imgPath string) (string, error) {
-	out, err := p.ops.RunInHostNamespace("losetup", "--find", "--show", "-P", imgPath)
+	out, err := p.ops.RunInHostNamespace("losetup", "--find", "--show", "--partscan", imgPath)
 	if err != nil {
 		return "", fmt.Errorf("running losetup for %s: %w", imgPath, err)
 	}
@@ -577,52 +661,95 @@ func (p *opsPartitionOps) DetachLoopback(loopDev string) error {
 	return nil
 }
 
-// ReadPartitionTable reads dev's GPT (sgdisk -p) and returns the parsed entries.
-func (p *opsPartitionOps) ReadPartitionTable(dev string) ([]PartitionEntry, error) {
-	out, err := p.ops.RunInHostNamespace("sgdisk", "-p", dev)
+// SnapshotPartitions returns every partition device node currently in dev's table (sfdisk
+// --dump), used to capture the ISO's own partitions before the data partitions are appended.
+func (p *opsPartitionOps) SnapshotPartitions(dev string) ([]string, error) {
+	out, err := p.ops.RunInHostNamespace("sfdisk", "--dump", dev)
 	if err != nil {
-		return nil, fmt.Errorf("reading partition table on %s: %w", dev, err)
+		return nil, fmt.Errorf("dumping partition table on %s: %w", dev, err)
 	}
-	return parseSgdiskTable(out), nil
+	nodes := make([]string, 0)
+	for _, e := range parseSfdiskDump(out) {
+		nodes = append(nodes, e.node)
+	}
+	return nodes, nil
 }
 
-// CreatePartition adds the single GPT entry part reserves to dev, using the same sector math
-// and sgdisk invocation as the p1 stage (--new/--change-name/--typecode).
-// The placeholder type code is kept: the cluster-config partition is located by FS label at
-// post-pivot, not by GPT type.
-func (p *opsPartitionOps) CreatePartition(dev string, part PlannedPartition) error {
-	startSector := part.Offset / sectorSize
-	endSector := (part.Offset+part.Size)/sectorSize - 1
-	if _, err := p.ops.RunInHostNamespace("sgdisk",
-		fmt.Sprintf("--new=%d:%d:%d", part.Number, startSector, endSector),
-		fmt.Sprintf("--change-name=%d:%s", part.Number, part.Label),
-		fmt.Sprintf("--typecode=%d:%s", part.Number, placeholderTypeCode),
-		dev); err != nil {
-		return fmt.Errorf("creating partition %d (%s) on %s: %w", part.Number, part.Label, dev, err)
+// AppendDataPartitions appends plan's data partitions into the free MBR slots after the ISO with
+// sfdisk --append, then re-reads the kernel partition table. For self-contained it adds an MBR
+// extended container to hold the cluster-config and ibi-status logical partitions (MBR allows
+// only 4 primaries and the ISO already uses two). The sfdisk script is fed via a temp file
+// redirected on stdin because the host-ops executor has no stdin channel.
+func (p *opsPartitionOps) AppendDataPartitions(dev string, plan PartitionPlan) error {
+	script, err := sfdiskAppendScript(plan)
+	if err != nil {
+		return err
+	}
+	scriptFile, err := os.CreateTemp("", "create-usb-sfdisk-")
+	if err != nil {
+		return fmt.Errorf("creating sfdisk append script: %w", err)
+	}
+	defer func() {
+		if rerr := os.Remove(scriptFile.Name()); rerr != nil && !os.IsNotExist(rerr) {
+			p.log.Warnf("create-usb: removing sfdisk append script %s: %v", scriptFile.Name(), rerr)
+		}
+	}()
+	if _, werr := scriptFile.WriteString(script); werr != nil {
+		_ = scriptFile.Close()
+		return fmt.Errorf("writing sfdisk append script: %w", werr)
+	}
+	if cerr := scriptFile.Close(); cerr != nil {
+		return fmt.Errorf("closing sfdisk append script: %w", cerr)
+	}
+
+	if _, err := p.ops.RunBashInHostNamespace("sfdisk", "--append", dev, "<", scriptFile.Name()); err != nil {
+		return fmt.Errorf("appending data partitions on %s: %w", dev, err)
+	}
+	return p.rereadPartitionTable(dev)
+}
+
+// rereadPartitionTable asks the kernel to re-read dev's partition table and waits for the new
+// device nodes to settle. partprobe is intentionally not used (it is absent on the RHCOS base
+// OS, per the CNF-27197 spike); the supported reread is `blockdev --rereadpt`.
+func (p *opsPartitionOps) rereadPartitionTable(dev string) error {
+	if _, err := p.ops.RunInHostNamespace("blockdev", "--rereadpt", dev); err != nil {
+		return fmt.Errorf("re-reading partition table on %s: %w", dev, err)
+	}
+	// udevadm settle is best effort: the node resolution below is the real guard.
+	if _, err := p.ops.RunInHostNamespace("udevadm", "settle"); err != nil {
+		p.log.Warnf("create-usb: udevadm settle after re-reading the partition table on %s failed: %v", dev, err)
 	}
 	return nil
 }
 
-// SettlePartition re-reads dev's partition table (partprobe) and waits for the new partition
-// node to be created under /dev, then returns its device path. Without this the <dev>pN node
-// may not exist yet when mkfs runs. The wait is bounded (see waitForPartitionNode) so a slow or
-// stuck udev cannot hang the settle indefinitely.
-func (p *opsPartitionOps) SettlePartition(dev string, number int) (string, error) {
-	if _, err := p.ops.RunInHostNamespace("partprobe", dev); err != nil {
-		return "", fmt.Errorf("re-reading partition table on %s: %w", dev, err)
+// DataPartitionNodes returns the appended data partition nodes in creation order: the Linux
+// (type 83) partitions in dev's table that are not part of isoParts (the ISO's own partitions)
+// and are not the extended container (type 5).
+func (p *opsPartitionOps) DataPartitionNodes(dev string, isoParts []string) ([]string, error) {
+	out, err := p.ops.RunInHostNamespace("sfdisk", "--dump", dev)
+	if err != nil {
+		return nil, fmt.Errorf("dumping partition table on %s: %w", dev, err)
 	}
-	partDev := partitionDevicePath(dev, number)
-	if err := p.waitForPartitionNode(partDev); err != nil {
-		return "", err
+	iso := make(map[string]struct{}, len(isoParts))
+	for _, n := range isoParts {
+		iso[n] = struct{}{}
 	}
-	return partDev, nil
+	nodes := make([]string, 0)
+	for _, e := range parseSfdiskDump(out) {
+		if e.typeCode != mbrTypeLinux {
+			continue
+		}
+		if _, ok := iso[e.node]; ok {
+			continue
+		}
+		nodes = append(nodes, e.node)
+	}
+	return nodes, nil
 }
 
 // FormatPartition creates a fsType filesystem on partDev with the given FS label. The formatter
 // and its force flag are selected per type by mkfsCommand (ext4 -F, xfs -f), and an unsupported
-// type fails before any mkfs runs. ext4 is the media default because it holds the 14-char
-// cluster-config label (vfat's 11-char limit could not) and post-pivot locates p3 by label with
-// kernel FS auto-detection, imposing no FS-type requirement.
+// type fails before any mkfs runs.
 func (p *opsPartitionOps) FormatPartition(partDev, fsType, label string) error {
 	mkfs, err := mkfsCommand(fsType, label, partDev)
 	if err != nil {
@@ -634,55 +761,113 @@ func (p *opsPartitionOps) FormatPartition(partDev, fsType, label string) error {
 	return nil
 }
 
-// WriteImageToPartition writes the raw image at srcPath onto partDev with dd, syncing before
-// it returns (conv=fsync) so the bytes are durable once the write completes. The partition
-// carries no filesystem: p1 holds the bootable ISO image as raw bytes, so this is a
-// block-level copy rather than a mkfs + file copy.
-func (p *opsPartitionOps) WriteImageToPartition(partDev, srcPath string) error {
-	if _, err := p.ops.RunInHostNamespace("dd",
-		fmt.Sprintf("if=%s", srcPath),
-		fmt.Sprintf("of=%s", partDev),
-		"bs=1M",
-		"conv=fsync",
-	); err != nil {
-		return fmt.Errorf("writing image %s to %s: %w", srcPath, partDev, err)
+// ResolvePartitionByFSLabel returns the device node on dev whose filesystem label matches label.
+// It enumerates only dev's own partitions (lsblk) and checks each one's filesystem label (blkid),
+// never a global `blkid -L`, so it cannot resolve a same-labelled partition on another disk.
+func (p *opsPartitionOps) ResolvePartitionByFSLabel(dev, label string) (string, error) {
+	out, err := p.ops.RunInHostNamespace("lsblk", "-rno", "NAME,TYPE", dev)
+	if err != nil {
+		return "", fmt.Errorf("listing partitions on %s: %w", dev, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "part" {
+			continue
+		}
+		node := "/dev/" + fields[0]
+		fsLabel, err := p.ops.RunInHostNamespace("blkid", "-s", "LABEL", "-o", "value", node)
+		if err != nil {
+			// blkid exits non-zero for a partition with no filesystem label; that is not the one
+			// we want, so skip it rather than failing the whole resolution.
+			continue
+		}
+		if strings.TrimSpace(fsLabel) == label {
+			return node, nil
+		}
+	}
+	return "", fmt.Errorf("could not resolve a partition by filesystem label %q on %s", label, dev)
+}
+
+// MountPartition mounts partDev at mountpoint (which must already exist).
+func (p *opsPartitionOps) MountPartition(partDev, mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("mount", partDev, mountpoint); err != nil {
+		return fmt.Errorf("mounting %s at %s: %w", partDev, mountpoint, err)
 	}
 	return nil
 }
 
-// waitForPartitionNode waits for node to appear after a partition-table refresh: it asks udev to
-// settle (best effort) and then polls for the node, returning a clear error if the node never
-// materializes.
+// UnmountPartition unmounts mountpoint. It must run before the loop device is detached.
+func (p *opsPartitionOps) UnmountPartition(mountpoint string) error {
+	if _, err := p.ops.RunInHostNamespace("umount", mountpoint); err != nil {
+		return fmt.Errorf("unmounting %s: %w", mountpoint, err)
+	}
+	return nil
+}
+
+// sfdiskDumpEntry is one parsed `sfdisk --dump` partition row: its device node and MBR type code.
+type sfdiskDumpEntry struct {
+	node     string
+	typeCode string
+}
+
+// parseSfdiskDump parses the partition rows of `sfdisk --dump` output. Each data row looks like
 //
-// A single deadline bounds the whole wait. udevadm settle is given an explicit timeout derived
-// from that deadline so a slow or stuck settle cannot push the overall wait past
-// partitionNodeWaitTimeout -- without it, the timer below would only start once settle returned,
-// so the method could block far longer than its reported limit.
-func (p *opsPartitionOps) waitForPartitionNode(node string) error {
-	deadline := time.Now().Add(partitionNodeWaitTimeout)
+//	/dev/loop0p3 : start=     2764800, size=  16777216, type=83
+//
+// The leading device node and the type= field are extracted; non-partition lines (the label/
+// label-id/device/unit header and blank lines) are skipped.
+func parseSfdiskDump(out string) []sfdiskDumpEntry {
+	var entries []sfdiskDumpEntry
+	for _, line := range strings.Split(out, "\n") {
+		node, _, ok := strings.Cut(line, " : ")
+		if !ok {
+			continue
+		}
+		node = strings.TrimSpace(node)
+		if !strings.HasPrefix(node, "/dev/") {
+			continue
+		}
+		typeCode := ""
+		for _, field := range strings.Split(line, ",") {
+			field = strings.TrimSpace(field)
+			if v, found := strings.CutPrefix(field, "type="); found {
+				typeCode = strings.TrimSpace(v)
+			}
+		}
+		entries = append(entries, sfdiskDumpEntry{node: node, typeCode: typeCode})
+	}
+	return entries
+}
 
-	// Bound settle by the remaining time to the shared deadline (rounded up to whole seconds,
-	// the granularity udevadm --timeout accepts). settle is best effort: a failure is non-fatal
-	// because the existence poll below is the real guard.
-	settleTimeout := int(time.Until(deadline).Seconds()) + 1
-	if _, err := p.ops.RunInHostNamespace("udevadm", "settle", fmt.Sprintf("--timeout=%d", settleTimeout)); err != nil {
-		p.log.Warnf("create-usb: udevadm settle before waiting for partition node %s failed: %v", node, err)
+// sfdiskAppendScript builds the `sfdisk --append` script for plan's data partitions. For
+// install-only it appends two primaries (ibi-images, ibi-status); for self-contained it appends
+// ibi-images as a primary, then an extended container sized to hold the cluster-config and
+// ibi-status logicals plus their EBR/alignment overhead.
+func sfdiskAppendScript(plan PartitionPlan) (string, error) {
+	images, ok := plannedPartition(plan, labelIBIImages)
+	if !ok {
+		return "", fmt.Errorf("media layout is missing the %q partition", labelIBIImages)
+	}
+	status, ok := plannedPartition(plan, labelIBIStatus)
+	if !ok {
+		return "", fmt.Errorf("media layout is missing the %q partition", labelIBIStatus)
 	}
 
-	for {
-		_, err := os.Stat(node)
-		if err == nil {
-			return nil
+	var b strings.Builder
+	fmt.Fprintf(&b, "size=%dM, type=%s\n", images.Size/mib, mbrTypeLinux)
+	if plan.Mode == ModeSelfContained {
+		config, ok := plannedPartition(plan, labelClusterConfig)
+		if !ok {
+			return "", fmt.Errorf("self-contained media layout is missing the %q partition", labelClusterConfig)
 		}
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("checking for partition node %s: %w", node, err)
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("partition node %s did not appear within %s after refreshing the partition table",
-				node, partitionNodeWaitTimeout)
-		}
-		time.Sleep(partitionNodePollInterval)
+		extMB := (config.Size + status.Size + extSlackBytes) / mib
+		fmt.Fprintf(&b, "size=%dM, type=%s\n", extMB, mbrTypeExtended)
+		fmt.Fprintf(&b, "size=%dM, type=%s\n", config.Size/mib, mbrTypeLinux)
+		fmt.Fprintf(&b, "size=%dM, type=%s\n", status.Size/mib, mbrTypeLinux)
+	} else {
+		fmt.Fprintf(&b, "size=%dM, type=%s\n", status.Size/mib, mbrTypeLinux)
 	}
+	return b.String(), nil
 }
 
 // mkfsCommand returns the argv that makes fsType on node with the given filesystem label.
@@ -700,88 +885,8 @@ func mkfsCommand(fsType, label, node string) ([]string, error) {
 	}
 }
 
-// plannedPartition returns the planned partition with the given label, and whether the plan has
-// such an entry. Callers that require the partition (p2, always present) turn a false into an
-// error; callers for which it is optional (p3 cluster-config, absent in install-only) skip.
-func plannedPartition(plan PartitionPlan, label string) (PlannedPartition, bool) {
-	for _, part := range plan.Partitions {
-		if part.Label == label {
-			return part, true
-		}
-	}
-	return PlannedPartition{}, false
-}
-
-// MountPartition mounts partDev at mountpoint (which must already exist).
-func (p *opsPartitionOps) MountPartition(partDev, mountpoint string) error {
-	if _, err := p.ops.RunInHostNamespace("mount", partDev, mountpoint); err != nil {
-		return fmt.Errorf("mounting %s at %s: %w", partDev, mountpoint, err)
-	}
-	return nil
-}
-
-// UnmountPartition unmounts mountpoint. It must run before the loop device is detached
-// (MediaHandle.Close detaches but does not unmount).
-func (p *opsPartitionOps) UnmountPartition(mountpoint string) error {
-	if _, err := p.ops.RunInHostNamespace("umount", mountpoint); err != nil {
-		return fmt.Errorf("unmounting %s: %w", mountpoint, err)
-	}
-	return nil
-}
-
-// partitionDevicePath returns the kernel device node for partition number on dev. Devices
-// whose name ends in a digit (loop0, nvme0n1, mmcblk0) use a "p" separator (loop0p3); others
-// (sda) append the number directly (sda3). create-usb always drives a loopback device, so the
-// "p" form is the one used in practice.
-func partitionDevicePath(dev string, number int) string {
-	sep := ""
-	if n := len(dev); n > 0 && dev[n-1] >= '0' && dev[n-1] <= '9' {
-		sep = "p"
-	}
-	return fmt.Sprintf("%s%s%d", dev, sep, number)
-}
-
-// parseSgdiskTable parses the partition rows of `sgdisk -p` output into structured
-// entries. Each data row is "Number Start End <Size value> <Size unit> Code Name...";
-// the byte Size is computed from the exact sector range rather than the human-readable
-// Size column. Non-data lines (header, totals) are skipped.
-func parseSgdiskTable(out string) []PartitionEntry {
-	var entries []PartitionEntry
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		// A data row has at least: Number Start End sizeValue sizeUnit Code [Name...].
-		if len(fields) < 6 {
-			continue
-		}
-		var number int
-		if _, err := fmt.Sscanf(fields[0], "%d", &number); err != nil {
-			continue
-		}
-		var start, end int64
-		if _, err := fmt.Sscanf(fields[1], "%d", &start); err != nil {
-			continue
-		}
-		if _, err := fmt.Sscanf(fields[2], "%d", &end); err != nil {
-			continue
-		}
-		name := ""
-		if len(fields) > 6 {
-			name = strings.Join(fields[6:], " ")
-		}
-		entries = append(entries, PartitionEntry{
-			Number: number,
-			Start:  start,
-			End:    end,
-			Size:   (end - start + 1) * sectorSize,
-			Type:   fields[5],
-			Name:   name,
-		})
-	}
-	return entries
-}
-
-// isAlreadyDetached reports whether err from `losetup -d` indicates the device was
-// already detached, which teardown treats as success.
+// isAlreadyDetached reports whether err from `losetup -d` indicates the device was already
+// detached, which teardown treats as success.
 func isAlreadyDetached(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "no such device") || strings.Contains(msg, "no such file")

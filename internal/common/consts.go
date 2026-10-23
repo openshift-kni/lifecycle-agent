@@ -185,6 +185,14 @@ const (
 	// and the staged file never diverge.
 	LocalImagesLCABinaryPath = LocalImagesMountPath + "/lca-cli"
 
+	// LocalImagesStorePath is where create-usb stages the read-only containers/storage durability
+	// store on the p2 (ibi-images) partition for self-contained media, mounted at
+	// LocalImagesMountPath on the node. It is the absolute path the rendered storage.conf drop-in
+	// registers as a read-only additional image store, and the path the prepare/persist stages
+	// (CNF-27165) read the store from once p2 is mounted; both sides must use this constant so the
+	// path never diverges.
+	LocalImagesStorePath = LocalImagesMountPath + "/store"
+
 	// IBIStatusFSLabel is the filesystem label of the writable USB "p4" partition
 	// that records per-phase machine-readable results for a USB-based IBI prepare.
 	// The prepare phase discovers the partition by this label, mounts it read-write,
