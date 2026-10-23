@@ -55,6 +55,15 @@ the target stick. The check validates the final apparent size rather than the st
 (`SizeReport.StagedBytes`), which deliberately excludes partition/alignment overhead. An empty
 `--usb-size` disables the check.
 
+The `ibi-images` partition is **sized to its actual payload**, not a fixed reservation: the OCI
+image layout, `digests.json`, the staged `lca-cli` binary, and (self-contained) the durability
+`store/` are built into scratch space first, the staged tree is measured, and the partition is set
+to the measured payload plus ext4 metadata and free-space headroom, rounded up to a whole MiB, with
+an **8 GiB minimum** floor. The `--usb-size` budget is then evaluated against this final plan and
+the staged tree is copied onto the formatted partition (with a free-space check). Because the
+partition is planned around the measured payload, an oversized payload fails `--usb-size` at
+planning time with a clear size error instead of overrunning a fixed partition during population.
+
 ## Media layout: the live ISO owns LBA 0
 
 The media follows the layout validated by the CNF-27197 USB-IBI testing-workflow spike and
@@ -120,6 +129,16 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    in and waits for that mount before running it. The media-assembly pipeline copies the
    extracted binary onto p2; `BuildLiveISO` extracts and returns it for that step. This keeps
    the ISO ignition tiny regardless of binary size.
+
+   **Mount ownership on boot.** The boot-time `.mount` unit owns the `ibi-images` mount. When the
+   disconnected prepare phase (`lca-cli ibi`) runs, it detects that `ibi-images` is already mounted
+   read-only from the uniquely label-discovered device — checking the **host** mount namespace, so a
+   container-local view cannot give a false answer — and **reuses** that mount, returning a no-op
+   cleanup so the systemd-owned mount is never torn down from under the unit. If the mount point is
+   instead occupied by a different device, or the expected device is mounted read-write, prepare
+   fails before touching the installation disk. When nothing is mounted there (the connected/online
+   path, or a manual invocation), prepare mounts the device read-only itself and unmounts it when
+   done, as before.
 
 ### Executing `lca-cli` from `ibi-images`: exec-capable mount and SELinux context
 

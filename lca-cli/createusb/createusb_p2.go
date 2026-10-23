@@ -22,15 +22,23 @@ package createusb
 // and formatted + labelled by the shared format stage (formatDataPartitions in
 // createusb_assemble.go); this file owns its filesystem type and the populate stage.
 //
-// # Populate stage (CNF-27171)
+// # Stage-then-copy (CNF-27171)
 //
-// populateIBIImages fills the formatted ibi-images partition: it resolves it by filesystem label,
-// mounts it, and stages (1) the build-unique OCI image layout + on-media digests.json via
-// BuildImageLayout (createusb_images.go, CNF-27167/CNF-27169), (2) the exact shipping lca-cli
-// binary the embedded ignition's lca-ibi.service execs on boot (common.LocalImagesLCABinaryPath),
-// and (3) for self-contained media, the read-only containers/storage durability store via
-// BuildDurabilityStore (createusb_p2_content.go, CNF-27170). It then unmounts before the caller
-// detaches the loop.
+// The ibi-images payload is staged into scratch first and copied onto the partition second, so the
+// partition can be sized to the measured payload rather than a fixed reservation (developer-of-record
+// directive):
+//
+//   - stageIBIImagesPayload builds the payload into a scratch directory: (1) the build-unique OCI
+//     image layout + on-media digests.json via BuildImageLayout (createusb_images.go,
+//     CNF-27167/CNF-27169), (2) the exact shipping lca-cli binary the embedded ignition's
+//     lca-ibi.service execs on boot (common.LocalImagesLCABinaryPath), and (3) for self-contained
+//     media the read-only containers/storage durability store via BuildDurabilityStore
+//     (createusb_p2_content.go, CNF-27170). It returns the measured byte size so assembleMedia can
+//     size the ibi-images partition (sizeIBIImagesPartition) before it is created.
+//   - copyStagedIBIImages resolves the formatted partition by filesystem label, mounts it, verifies
+//     the sized filesystem has room for the payload, copies the staged tree onto it (preserving file
+//     modes so the staged lca-cli binary stays executable), and unmounts before the caller detaches
+//     the loop.
 //
 // # Privileged-ops seam
 //
@@ -44,9 +52,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 
@@ -72,18 +82,72 @@ const lcaBinaryMode = 0o755
 // or retry the unmount.
 var errP2Mounted = errors.New("ibi-images (p2) partition is still mounted")
 
-// populateIBIImages fills the formatted ibi-images partition on the media handle: it resolves the
-// partition by filesystem label, mounts it, and stages the OCI image layout + digests.json, the
-// shipping lca-cli binary, and (self-contained) the read-only durability store, then unmounts.
+// stageIBIImagesPayload builds the ibi-images payload into a scratch directory (stagingRoot), not the
+// media partition, so the partition can be sized to the measured payload before it is created. It
+// stages the OCI image layout + digests.json (and, for self-contained, renders the digest-pinned p3
+// config tree under p3Root), the shipping lca-cli binary, and (self-contained) the read-only
+// durability store. It returns the measured on-media byte size of the staged tree. No partition op
+// runs here; the staged tree is copied onto the formatted partition by copyStagedIBIImages.
+func stageIBIImagesPayload(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, m *Manifest, isoResult ISOBuildResult, opts BuildOptions, stagingRoot, p3Root string) (int64, error) {
+	if cerr := ctx.Err(); cerr != nil {
+		return 0, fmt.Errorf("ibi-images staging canceled: %w", cerr)
+	}
+
+	// 1. Mirror the OCI image layout + commit digests.json into the staging root (and, for
+	//    self-contained, render the digest-pinned p3 config tree under p3Root), and write the
+	//    <output>.digests.json sidecar beside the output image.
+	layout, err := deps.images.BuildLayout(ctx, log, m, ImageSetOptions{
+		AuthFile:    opts.AuthFile,
+		RecertImage: opts.RecertImage,
+		LCAImage:    opts.LCAImage,
+	}, opts.OutputPath, stagingRoot, p3Root)
+	if err != nil {
+		return 0, fmt.Errorf("building the on-media OCI image layout for ibi-images: %w", err)
+	}
+	log.Infof("create-usb: staged %d images (%d bytes) and digests.json for ibi-images",
+		len(layout.Images), layout.Size.StagedBytes)
+
+	// 2. Stage the exact shipping lca-cli binary the embedded unit execs on boot.
+	if err := stageLCABinary(log, isoResult.LCABinaryPath, stagingRoot); err != nil {
+		return 0, err
+	}
+
+	// 3. Self-contained only: build the read-only durability store under <stagingRoot>/store from the
+	//    same digest-pinned closure. install-only is a no-op. The store's additionalimagestores point
+	//    at the on-node runtime path (common.LocalImagesStorePath), not the staging location, so
+	//    staging in scratch does not change the baked on-node reference.
+	//
+	//    The store is built for the build host's architecture (runtime.GOARCH): the manifest carries
+	//    no target-node architecture, so cross-architecture media (e.g. an amd64 workstation building
+	//    for an arm64 node) is not supported here — selecting an explicit target architecture is
+	//    follow-up work. Same-architecture builds (the common case) are correct.
+	if m.Mode == ModeSelfContained {
+		store, serr := deps.images.BuildStore(ctx, log, m, stagingRoot, common.LocalImagesStorePath, runtime.GOARCH)
+		if serr != nil {
+			return 0, fmt.Errorf("building the on-media durability store for ibi-images: %w", serr)
+		}
+		if store != nil {
+			log.Infof("create-usb: staged durability store (%d images, %d bytes) at %s",
+				store.ImportedImages, store.StoreBytes, store.StorePath)
+		}
+	}
+
+	payloadBytes, err := measureTree(stagingRoot)
+	if err != nil {
+		return 0, err
+	}
+	return payloadBytes, nil
+}
+
+// copyStagedIBIImages copies the staged ibi-images payload onto the formatted partition: it resolves
+// the partition by filesystem label, mounts it, verifies the sized filesystem has room for the
+// payload, copies the staged tree onto it (preserving file modes so the staged lca-cli binary stays
+// executable), and unmounts.
 //
 // It runs before assembleMedia marks success, so any error here triggers the caller's rollback. An
 // unmount failure is tagged errP2Mounted so the rollback preserves the still-mounted image + loop
 // handle instead of tearing them down (matching populateClusterConfig / errP3Mounted).
-func populateIBIImages(ctx context.Context, log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, m *Manifest, isoResult ISOBuildResult, opts BuildOptions, p3Root string) (err error) {
-	if cerr := ctx.Err(); cerr != nil {
-		return fmt.Errorf("ibi-images populate canceled: %w", cerr)
-	}
-
+func copyStagedIBIImages(log *logrus.Logger, deps mediaBuildDeps, media *MediaHandle, stagingRoot string, payloadBytes int64) (err error) {
 	partDev, err := deps.partition.ResolvePartitionByFSLabel(media.LoopDevice, labelIBIImages)
 	if err != nil {
 		return fmt.Errorf("resolving ibi-images partition by label: %w", err)
@@ -113,73 +177,52 @@ func populateIBIImages(ctx context.Context, log *logrus.Logger, deps mediaBuildD
 		}
 	}()
 
-	// 1. Mirror the OCI image layout + commit digests.json into the partition (and, for
-	//    self-contained, render the digest-pinned p3 config tree under p3Root), and write the
-	//    <output>.digests.json sidecar beside the output image.
-	layout, err := deps.images.BuildLayout(ctx, log, m, ImageSetOptions{
-		AuthFile:    opts.AuthFile,
-		RecertImage: opts.RecertImage,
-		LCAImage:    opts.LCAImage,
-	}, opts.OutputPath, mountpoint, p3Root)
+	// Verify the sized, formatted filesystem has room for the payload before copying, so an
+	// undersized partition fails with a clear size error rather than a mid-copy ENOSPC.
+	free, err := freeBytes(mountpoint)
 	if err != nil {
-		return fmt.Errorf("building the on-media OCI image layout on ibi-images: %w", err)
-	}
-	log.Infof("create-usb: staged %d images (%d bytes) and digests.json into ibi-images",
-		len(layout.Images), layout.Size.StagedBytes)
-
-	// 2. Stage the exact shipping lca-cli binary the embedded unit execs on boot.
-	if err := stageLCABinary(log, isoResult.LCABinaryPath, mountpoint); err != nil {
 		return err
 	}
-
-	// 3. Self-contained only: build the read-only durability store under <p2>/store from the same
-	//    digest-pinned closure. install-only is a no-op.
-	//
-	//    The store is built for the build host's architecture (runtime.GOARCH): the manifest carries
-	//    no target-node architecture, so cross-architecture media (e.g. an amd64 workstation building
-	//    for an arm64 node) is not supported here — selecting an explicit target architecture is
-	//    follow-up work. Same-architecture builds (the common case) are correct.
-	if m.Mode == ModeSelfContained {
-		store, serr := deps.images.BuildStore(ctx, log, m, mountpoint, common.LocalImagesStorePath, runtime.GOARCH)
-		if serr != nil {
-			return fmt.Errorf("building the on-media durability store on ibi-images: %w", serr)
-		}
-		if store != nil {
-			log.Infof("create-usb: staged durability store (%d images, %d bytes) at %s",
-				store.ImportedImages, store.StoreBytes, store.StorePath)
-		}
+	if free < payloadBytes {
+		return fmt.Errorf("ibi-images partition has %d bytes free but the staged payload is %d bytes; "+
+			"the partition is undersized for the payload", free, payloadBytes)
 	}
 
+	if err := copyTree(stagingRoot, mountpoint); err != nil {
+		return fmt.Errorf("copying the staged ibi-images payload onto %s: %w", partDev, err)
+	}
+	log.Infof("create-usb: copied the ibi-images payload (%d bytes) onto %s", payloadBytes, partDev)
 	return nil
 }
 
-// stageLCABinary copies the extracted shipping lca-cli binary onto the mounted ibi-images partition
-// at common.LocalImagesLCABinaryPath (i.e. <p2Root>/lca-cli) with an executable mode, so the
-// embedded lca-ibi.service's ExecStart resolves and runs on boot.
-func stageLCABinary(log *logrus.Logger, srcPath, p2Root string) error {
+// stageLCABinary copies the extracted shipping lca-cli binary into the ibi-images staging root at
+// common.LocalImagesLCABinaryPath's basename (i.e. <stagingRoot>/lca-cli) with an executable mode, so
+// that once the staged tree is copied onto the partition the embedded lca-ibi.service's ExecStart
+// resolves and runs on boot.
+func stageLCABinary(log *logrus.Logger, srcPath, stagingRoot string) error {
 	if srcPath == "" {
 		return errors.New("the live-ISO build did not return an extracted lca-cli binary to stage on ibi-images")
 	}
-	dst := filepath.Join(p2Root, filepath.Base(common.LocalImagesLCABinaryPath))
-	if err := copyFileExecutable(srcPath, dst); err != nil {
+	dst := filepath.Join(stagingRoot, filepath.Base(common.LocalImagesLCABinaryPath))
+	if err := copyFilePreservingMode(srcPath, dst, lcaBinaryMode); err != nil {
 		return fmt.Errorf("staging lca-cli binary onto ibi-images at %s: %w", dst, err)
 	}
 	log.Infof("create-usb: staged lca-cli binary at %s (mode %#o)", dst, lcaBinaryMode)
 	return nil
 }
 
-// copyFileExecutable streams src to dst with an executable mode (lcaBinaryMode). It streams rather
-// than ReadFile/WriteFile because the lca-cli binary is large (~90 MB), so loading it entirely into
-// memory would be wasteful.
-func copyFileExecutable(src, dst string) (err error) {
+// copyFilePreservingMode streams src to dst, creating dst with the given permission bits and syncing
+// it to disk. It streams rather than ReadFile/WriteFile because some staged files (the lca-cli binary
+// at ~90 MB, image-layout blobs) are large, so loading them entirely into memory would be wasteful.
+func copyFilePreservingMode(src, dst string, perm os.FileMode) (err error) {
 	in, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return fmt.Errorf("opening %q: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 
-	//nolint:gosec // dst is a tool-controlled mountpoint joined with a fixed basename; mode is required for exec on boot
-	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, lcaBinaryMode)
+	//nolint:gosec // dst is a tool-controlled mountpoint/staging path joined with a staged-tree-relative path
+	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return fmt.Errorf("creating %q: %w", dst, err)
 	}
@@ -187,10 +230,11 @@ func copyFileExecutable(src, dst string) (err error) {
 		_ = out.Close()
 		return fmt.Errorf("copying %q to %q: %w", src, dst, err)
 	}
-	// Ensure the executable mode survives any umask applied at create time.
-	if cerr := out.Chmod(lcaBinaryMode); cerr != nil {
+	// Ensure the mode survives any umask applied at create time (the lca-cli binary must stay
+	// executable so init_t can exec it on boot).
+	if cerr := out.Chmod(perm); cerr != nil {
 		_ = out.Close()
-		return fmt.Errorf("setting executable mode on %q: %w", dst, cerr)
+		return fmt.Errorf("setting mode on %q: %w", dst, cerr)
 	}
 	if serr := out.Sync(); serr != nil {
 		_ = out.Close()
@@ -200,4 +244,78 @@ func copyFileExecutable(src, dst string) (err error) {
 		return fmt.Errorf("closing %q: %w", dst, cerr)
 	}
 	return nil
+}
+
+// measureTree returns the total byte size of the regular files under root -- the apparent
+// (file-content) size of the staged payload. It is used to size the ibi-images partition to its
+// payload and to verify the formatted filesystem has room for the copy.
+func measureTree(root string) (int64, error) {
+	var total int64
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return fmt.Errorf("stating staged payload entry %q: %w", path, ierr)
+		}
+		total += info.Size()
+		return nil
+	})
+	if walkErr != nil {
+		return 0, fmt.Errorf("measuring staged payload under %s: %w", root, walkErr)
+	}
+	return total, nil
+}
+
+// copyTree recursively copies the directory tree under srcRoot into dstRoot, preserving each entry's
+// permission bits (so the staged lca-cli binary stays executable and the OCI layout / durability
+// store keep their modes). Unlike copyTreeContentVerbatim (createusb_p3.go), which normalizes modes,
+// this is mode-preserving because the ibi-images payload carries an executable. The staged payload is
+// regular files and directories only; any other file type is a hard error rather than a silent skip.
+func copyTree(srcRoot, dstRoot string) error {
+	walkErr := filepath.WalkDir(srcRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(srcRoot, path)
+		if rerr != nil {
+			return fmt.Errorf("computing relative path for %q under %q: %w", path, srcRoot, rerr)
+		}
+		target := filepath.Join(dstRoot, rel)
+		info, ierr := d.Info()
+		if ierr != nil {
+			return fmt.Errorf("stating staged payload entry %q: %w", path, ierr)
+		}
+		switch {
+		case d.IsDir():
+			if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("creating directory %q: %w", target, err)
+			}
+			return nil
+		case info.Mode().IsRegular():
+			return copyFilePreservingMode(path, target, info.Mode().Perm())
+		default:
+			return fmt.Errorf("staged ibi-images payload entry %q is not a regular file (mode %s); refusing to copy", path, info.Mode())
+		}
+	})
+	if walkErr != nil {
+		return fmt.Errorf("copying staged ibi-images payload %q to %q: %w", srcRoot, dstRoot, walkErr)
+	}
+	return nil
+}
+
+// freeBytes returns the number of bytes available on the filesystem that contains path (statfs
+// f_bavail * f_bsize). It is used to verify the formatted ibi-images partition has room for the
+// staged payload before copying, so an undersized partition fails with a clear size error.
+func freeBytes(path string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, fmt.Errorf("checking free space on %s: %w", path, err)
+	}
+	//nolint:gosec,unconvert // f_bavail/f_bsize are non-negative sizes; int64 keeps the product correct across arches
+	return int64(st.Bavail) * int64(st.Bsize), nil
 }

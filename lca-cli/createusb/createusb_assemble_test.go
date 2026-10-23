@@ -223,7 +223,7 @@ func (f *fakeISOBuilder) Build(_ context.Context, _ *logrus.Logger, _ *Manifest,
 }
 
 // fakeImagePopulator is an imagePopulator fake that records calls and returns injectable results,
-// so populateIBIImages is unit-testable without real image mirroring / overlay stores.
+// so the staging/copy stages are unit-testable without real image mirroring / overlay stores.
 type fakeImagePopulator struct {
 	layoutErr error
 	storeErr  error
@@ -304,7 +304,7 @@ func TestPartitionPlanPerMode(t *testing.T) {
 		images, ok := plannedPartition(plan, labelIBIImages)
 		require.True(t, ok)
 		assert.Equal(t, ibiImagesFSType, images.FSType)
-		assert.Equal(t, p2ReservationBytes, images.Size)
+		assert.Equal(t, p2MinReservationBytes, images.Size)
 		status, ok := plannedPartition(plan, labelIBIStatus)
 		require.True(t, ok)
 		assert.Equal(t, ibiStatusFSType, status.FSType)
@@ -337,7 +337,7 @@ func TestContainerSize(t *testing.T) {
 	installTotal, err := containerSize(iso, partitionPlan(ModeInstallOnly))
 	require.NoError(t, err)
 	assert.Zero(t, installTotal%mib, "container size must be MiB-aligned")
-	assert.GreaterOrEqual(t, installTotal, 2*mib+p2ReservationBytes+p4ReservationBytes+slackBytes,
+	assert.GreaterOrEqual(t, installTotal, 2*mib+p2MinReservationBytes+p4ReservationBytes+slackBytes,
 		"container must hold the ISO (rounded up), the data partitions, and the slack")
 
 	scTotal, err := containerSize(iso, partitionPlan(ModeSelfContained))
@@ -354,7 +354,7 @@ func TestSfdiskAppendScript(t *testing.T) {
 		script, err := sfdiskAppendScript(partitionPlan(ModeInstallOnly), startSector)
 		require.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("start=%d, size=%dM, type=83\nsize=%dM, type=83\n",
-			startSector, p2ReservationBytes/mib, p4ReservationBytes/mib), script)
+			startSector, p2MinReservationBytes/mib, p4ReservationBytes/mib), script)
 	})
 
 	t.Run("self-contained adds an extended container for the logicals", func(t *testing.T) {
@@ -363,7 +363,7 @@ func TestSfdiskAppendScript(t *testing.T) {
 		extMB := (p3ReservationBytes + p4ReservationBytes + extSlackBytes) / mib
 		assert.Equal(t, fmt.Sprintf(
 			"start=%d, size=%dM, type=83\nsize=%dM, type=5\nsize=%dM, type=83\nsize=%dM, type=83\n",
-			startSector, p2ReservationBytes/mib, extMB, p3ReservationBytes/mib, p4ReservationBytes/mib), script)
+			startSector, p2MinReservationBytes/mib, extMB, p3ReservationBytes/mib, p4ReservationBytes/mib), script)
 	})
 
 	t.Run("only the first partition carries an explicit start", func(t *testing.T) {
@@ -538,7 +538,7 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		fp := &fakePartitionOps{attachErr: fmt.Errorf("losetup boom")}
 
 		handle, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(), iso,
-			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp, images: &fakeImagePopulator{}})
 		require.Error(t, err)
 		assert.Nil(t, handle)
 		assert.Equal(t, []string{"attach"}, fp.calls, "no detach when nothing was attached")
@@ -552,7 +552,7 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		fp := &fakePartitionOps{attachDev: "/dev/loop5", appendErr: fmt.Errorf("sfdisk boom")}
 
 		handle, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(), iso,
-			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp, images: &fakeImagePopulator{}})
 		require.Error(t, err)
 		assert.Nil(t, handle)
 		assert.ErrorContains(t, err, "sfdisk boom")
@@ -567,7 +567,7 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		fp := &fakePartitionOps{attachDev: "/dev/loop5", snapshot: []string{}}
 
 		_, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(), iso,
-			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp, images: &fakeImagePopulator{}})
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "isohybrid live ISO")
 		assert.Equal(t, []string{"attach", "snapshot", "detach"}, fp.calls)
@@ -578,7 +578,7 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		fp := &fakePartitionOps{attachDev: "/dev/loop5", dataNodes: []string{"/dev/loop5p3"}} // only one, want two
 
 		_, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(), iso,
-			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp, images: &fakeImagePopulator{}})
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "expected 2 appended data partitions")
 		assert.Equal(t, []string{"attach", "snapshot", "append", "dataNodes", "detach"}, fp.calls)
@@ -589,7 +589,7 @@ func TestAssembleMediaCleanupOnError(t *testing.T) {
 		fp := &fakePartitionOps{attachDev: "/dev/loop5", appendErr: fmt.Errorf("sfdisk boom"), detachErr: fmt.Errorf("losetup -d boom")}
 
 		_, err := assembleMedia(context.Background(), testLogger(), validInstallOnly(), iso,
-			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp})
+			BuildOptions{OutputPath: img}, mediaBuildDeps{partition: fp, images: &fakeImagePopulator{}})
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "sfdisk boom")
 		assert.ErrorContains(t, err, "losetup -d boom")
@@ -753,45 +753,96 @@ func TestAssembleMediaFailsOverBudgetBeforeModification(t *testing.T) {
 	assert.Empty(t, fp.calls, "no privileged op runs when the budget is exceeded")
 }
 
-// TestPopulateIBIImagesStagesLayoutBinaryAndStore covers the ibi-images populate stage directly:
-// install-only builds the OCI layout and stages the binary (no store); self-contained also builds
-// the durability store with the build host architecture and the on-node store path.
-func TestPopulateIBIImagesStagesLayoutAndStore(t *testing.T) {
-	t.Run("install-only: layout + binary, no store", func(t *testing.T) {
-		fp := &fakePartitionOps{resolveDev: "/dev/loop0p3"}
-		images := &fakeImagePopulator{}
-		h := &MediaHandle{LoopDevice: "/dev/loop0", Plan: partitionPlan(ModeInstallOnly), partition: fp}
-		iso := writeTempISOResult(t, 4096)
+// TestSizeIBIImagesPartition covers deriving the ibi-images reservation from the measured payload:
+// a small payload is floored at the minimum, a payload above the floor drives the size up (MiB-aligned,
+// with headroom + metadata above the payload).
+func TestSizeIBIImagesPartition(t *testing.T) {
+	t.Run("a small payload is floored at the minimum reservation", func(t *testing.T) {
+		assert.Equal(t, p2MinReservationBytes, sizeIBIImagesPartition(0))
+		assert.Equal(t, p2MinReservationBytes, sizeIBIImagesPartition(1024))
+		assert.Equal(t, p2MinReservationBytes, sizeIBIImagesPartition(4<<30), "4 GiB is still under the 8 GiB floor")
+	})
 
-		err := populateIBIImages(context.Background(), testLogger(), mediaBuildDeps{partition: fp, images: images},
-			h, validInstallOnly(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, "")
+	t.Run("a payload above the floor drives the size up, MiB-aligned, with headroom", func(t *testing.T) {
+		payload := int64(20) << 30 // 20 GiB, well above the 8 GiB floor
+		got := sizeIBIImagesPartition(payload)
+		assert.Greater(t, got, payload, "the partition must exceed the payload (headroom + ext4 metadata)")
+		assert.Greater(t, got, p2MinReservationBytes, "a payload above the floor drives the size past the minimum")
+		assert.Zero(t, got%mib, "the reservation must be MiB-aligned")
+	})
+}
+
+// TestStageIBIImagesPayload covers the ibi-images staging stage directly (into scratch, no partition
+// op): install-only builds the OCI layout and stages the binary (no store); self-contained also builds
+// the durability store with the build host architecture. It measures the staged payload and a
+// BuildLayout failure is surfaced.
+func TestStageIBIImagesPayload(t *testing.T) {
+	t.Run("install-only: layout + binary, no store; measured payload includes the staged binary", func(t *testing.T) {
+		images := &fakeImagePopulator{}
+		iso := writeTempISOResult(t, 4096)
+		stagingRoot := t.TempDir()
+
+		got, err := stageIBIImagesPayload(context.Background(), testLogger(), mediaBuildDeps{images: images},
+			validInstallOnly(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, stagingRoot, "")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"buildLayout"}, images.calls)
-		assert.Equal(t, []string{"resolve", "mount", "umount"}, fp.calls)
+		assert.Equal(t, stagingRoot, images.gotP2Root, "the payload is staged into scratch, not a mounted partition")
+		assert.FileExists(t, filepath.Join(stagingRoot, "lca-cli"), "the shipping binary is staged under the staging root")
+		assert.Positive(t, got, "the measured payload includes the staged binary")
 	})
 
 	t.Run("self-contained: layout + binary + store", func(t *testing.T) {
-		fp := &fakePartitionOps{resolveDev: "/dev/loop0p3"}
 		images := &fakeImagePopulator{}
-		h := &MediaHandle{LoopDevice: "/dev/loop0", Plan: partitionPlan(ModeSelfContained), partition: fp}
 		iso := writeTempISOResult(t, 4096)
 
-		err := populateIBIImages(context.Background(), testLogger(), mediaBuildDeps{partition: fp, images: images},
-			h, validSelfContained(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, t.TempDir())
+		got, err := stageIBIImagesPayload(context.Background(), testLogger(), mediaBuildDeps{images: images},
+			validSelfContained(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, t.TempDir(), t.TempDir())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"buildLayout", "buildStore"}, images.calls)
 		assert.NotEmpty(t, images.gotArch, "the durability store is built for an explicit target architecture")
+		assert.Positive(t, got)
 	})
 
-	t.Run("a BuildLayout failure is surfaced and the partition is unmounted", func(t *testing.T) {
-		fp := &fakePartitionOps{resolveDev: "/dev/loop0p3"}
+	t.Run("a BuildLayout failure is surfaced", func(t *testing.T) {
 		images := &fakeImagePopulator{layoutErr: fmt.Errorf("mirror boom")}
-		h := &MediaHandle{LoopDevice: "/dev/loop0", Plan: partitionPlan(ModeInstallOnly), partition: fp}
 		iso := writeTempISOResult(t, 4096)
 
-		err := populateIBIImages(context.Background(), testLogger(), mediaBuildDeps{partition: fp, images: images},
-			h, validInstallOnly(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, "")
+		_, err := stageIBIImagesPayload(context.Background(), testLogger(), mediaBuildDeps{images: images},
+			validInstallOnly(), iso, BuildOptions{OutputPath: "/tmp/out.img"}, t.TempDir(), "")
 		require.ErrorContains(t, err, "mirror boom")
-		assert.Equal(t, []string{"resolve", "mount", "umount"}, fp.calls, "the partition is unmounted even on a populate failure")
+	})
+}
+
+// TestCopyStagedIBIImages covers copying the staged payload onto the formatted partition: it resolves
+// by label, mounts, copies the staged tree byte-for-byte, and unmounts. An unmount failure is tagged
+// errP2Mounted so the caller's rollback preserves the still-mounted image.
+func TestCopyStagedIBIImages(t *testing.T) {
+	t.Run("resolves, mounts, copies the staged tree, and unmounts", func(t *testing.T) {
+		fp := &fakePartitionOps{resolveDev: "/dev/loop0p3"}
+		h := &MediaHandle{LoopDevice: "/dev/loop0", Plan: partitionPlan(ModeInstallOnly), partition: fp}
+		stagingRoot := writeTree(t, t.TempDir(), map[string]string{
+			"lca-cli":      "binary-bytes",
+			"digests.json": `{"version":2}`,
+			filepath.Join("oci-layout", "index.json"): "{}",
+		})
+		payload, err := measureTree(stagingRoot)
+		require.NoError(t, err)
+
+		require.NoError(t, copyStagedIBIImages(testLogger(), mediaBuildDeps{partition: fp}, h, stagingRoot, payload))
+		assert.Equal(t, []string{"resolve", "mount", "umount"}, fp.calls)
+		assert.Equal(t, snapshotTree(stagingRoot), fp.mountSnapshot, "the staged tree is copied byte-for-byte onto the partition")
+	})
+
+	t.Run("an unmount failure is surfaced and tagged errP2Mounted", func(t *testing.T) {
+		fp := &fakePartitionOps{resolveDev: "/dev/loop0p3", umountErr: fmt.Errorf("umount boom")}
+		h := &MediaHandle{LoopDevice: "/dev/loop0", Plan: partitionPlan(ModeInstallOnly), partition: fp}
+		stagingRoot := writeTree(t, t.TempDir(), map[string]string{"lca-cli": "x"})
+		payload, err := measureTree(stagingRoot)
+		require.NoError(t, err)
+
+		err = copyStagedIBIImages(testLogger(), mediaBuildDeps{partition: fp}, h, stagingRoot, payload)
+		require.ErrorContains(t, err, "umount boom")
+		require.ErrorIs(t, err, errP2Mounted)
+		assert.Equal(t, []string{"resolve", "mount", "umount"}, fp.calls, "the partition is unmounted even when the copy succeeds")
 	})
 }

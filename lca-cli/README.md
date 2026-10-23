@@ -106,8 +106,12 @@ assembly. `--write-device` remains deferred: the only target is a sparse `.img`.
 `ibi-images` partition is populated with the OCI image layout, the on-media `digests.json`,
 and the staged `lca-cli` binary (self-contained media also carries the read-only durability
 `store/`); the `ibi-status` partition ships empty (its runtime records are written on-node).
-Assembly fails if the resulting whole-stick size exceeds `--usb-size`. End-to-end boot
-verification on reference hardware is tracked by CNF-27158.
+The `ibi-images` partition is **sized to its measured payload** (staged into scratch, measured,
+then set to that payload plus ext4 metadata and free-space headroom, with an 8 GiB minimum), so
+an oversized payload fails the `--usb-size` budget at planning time with a clear size error rather
+than overrunning a fixed reservation during population. Assembly fails if the resulting
+whole-stick size exceeds `--usb-size`. End-to-end boot verification on reference hardware is
+tracked by CNF-27158.
 
 The command reads a single YAML or JSON manifest and validates its schema and fields, then
 builds the live ISO: `BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its
@@ -134,13 +138,16 @@ sufficient privileges to create and format loopback partitions.
 The customized live ISO owns the front of the media (its own ISO9660/EFI partitions); the
 data partitions below are **appended after it** in the free MBR slots. On-node code discovers
 them **by filesystem label**, not by partition number, so the number each one receives is an
-implementation detail. Provisional reservation sizes (the sparse `.img` does not consume real
-bytes until content is written):
+implementation detail. Reservation sizes (the sparse `.img` does not consume real bytes until
+content is written). `ibi-images` is **sized to its measured payload** — the payload is staged
+into scratch first, measured, and the partition is set to that payload plus ext4 metadata and
+free-space headroom, rounded up, with an **8 GiB minimum** floor; the other partitions are
+fixed-size:
 
 | Role | Filesystem label | FS | Size | Modes | Content today |
 | --- | --- | --- | --- | --- | --- |
 | live ISO | — (ISO9660/EFI) | — | ISO size | both | The verified, ignition-customized bootable RHCOS live ISO at LBA 0 |
-| images | `ibi-images` | ext4 | 8 GiB | both | OCI image layout + `digests.json`, the staged `lca-cli` binary, and (self-contained) the read-only durability `store/` |
+| images | `ibi-images` | ext4 | payload-derived (≥ 8 GiB) | both | OCI image layout + `digests.json`, the staged `lca-cli` binary, and (self-contained) the read-only durability `store/` |
 | config | `cluster-config` | ext4 | 256 MiB | self-contained only | Rendered `/opt/openshift` config tree (empty if none supplied) |
 | status | `ibi-status` | ext4 | 64 MiB | both | Empty (runtime records written on-node by CNF-27163) |
 

@@ -79,16 +79,31 @@ const (
 )
 
 // Data-partition reservation sizes. The container is a sparse .img, so reserving full size
-// costs no real bytes until content is written. Content population (the OCI image layout into
-// ibi-images, the runtime records into ibi-status) is owned by the sibling runtime/populate
-// stories; this pipeline ships those partitions formatted, labelled, and empty.
+// costs no real bytes until content is written. ibi-images is sized to its measured payload
+// (see sizeIBIImagesPartition) with p2MinReservationBytes as the floor; ibi-status ships
+// formatted, labelled, and empty.
 const (
-	// p2ReservationBytes reserves the ibi-images OCI layout region.
-	p2ReservationBytes = int64(8) << 30
+	// p2MinReservationBytes is the floor for the ibi-images partition. The partition is sized
+	// to the measured on-media payload (OCI layout + digests.json + the staged lca-cli binary +
+	// the self-contained durability store) plus ext4 metadata and free-space headroom, but never
+	// below this minimum, so a small payload still gets a reasonable working size and the common
+	// case keeps the familiar 8 GiB reservation. Deriving the reservation from the measured
+	// payload (rather than fixing it at 8 GiB) is what lets validateUSBSizeBudget reflect an
+	// oversized payload and fail at planning time instead of during population.
+	p2MinReservationBytes = int64(8) << 30
 	// p3ReservationBytes reserves the self-contained cluster-config region.
 	p3ReservationBytes = int64(256) << 20
 	// p4ReservationBytes reserves the ibi-status region.
 	p4ReservationBytes = int64(64) << 20
+
+	// ibiImagesMetadataOverheadBytes is a fixed allowance added above the measured payload for the
+	// ext4 filesystem's own metadata (superblocks, inode tables, and the journal) on the
+	// ibi-images partition, which mkfs reserves before any file is written.
+	ibiImagesMetadataOverheadBytes = int64(256) << 20
+	// ibiImagesHeadroomNum / ibiImagesHeadroomDen express the free-space headroom kept above the
+	// measured payload (110% => 10% headroom) so the partition is not sized to exactly full.
+	ibiImagesHeadroomNum = int64(110)
+	ibiImagesHeadroomDen = int64(100)
 
 	// slackBytes pads the whole container so the appended partitions and their MBR/EBR
 	// alignment overhead fit after the ISO without landing on the very last sector.
@@ -410,11 +425,67 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResu
 	imgPath := opts.OutputPath
 	isoPath := isoResult.ISOPath
 
-	// Validate the ISO layout as a precondition before growing or modifying the image: inspect
-	// the ISO's actual MBR entries and confirm it leaves enough free primary slots for the mode.
+	// Fail fast if the output image already exists, before the expensive payload staging below.
+	// writeLiveISOToFront is the authoritative guard (O_EXCL); this early check only avoids staging
+	// the whole payload just to discard it when --output already exists.
+	if err = ensureOutputAbsent(imgPath); err != nil {
+		return nil, err
+	}
+
+	// Validate the ISO layout as a precondition before any expensive staging or image write:
+	// inspect the ISO's actual MBR entries and confirm it leaves enough free primary slots for the
+	// mode. The free-slot count depends only on the number of data partitions, not their sizes, so
+	// the provisional (floor-sized) plan is sufficient here and the check fails fast on a bad ISO
+	// before the payload is staged.
 	if err = validateISOLayout(log, isoPath, plan); err != nil {
 		return nil, err
 	}
+
+	// For self-contained media the image-layout stage renders the digest-pinned p3 config tree,
+	// which the cluster-config populate stage then copies onto its partition. Share one scratch
+	// render directory between the two stages. A pre-rendered opts.P3Root overrides it (used
+	// directly by populateClusterConfig). install-only renders no tree.
+	p3Root := opts.P3Root
+	if m.Mode == ModeSelfContained && p3Root == "" {
+		renderDir, derr := os.MkdirTemp("", "create-usb-p3-render-")
+		if derr != nil {
+			return nil, fmt.Errorf("creating p3 config-tree render directory: %w", derr)
+		}
+		defer func() {
+			if rerr := os.RemoveAll(renderDir); rerr != nil {
+				log.Warnf("create-usb: removing p3 config-tree render directory %s: %v", renderDir, rerr)
+			}
+		}()
+		p3Root = renderDir
+	}
+
+	// Stage the ibi-images payload into scratch BEFORE partition planning so the partition is sized
+	// to the actual payload (the OCI layout + digests.json + the staged lca-cli binary + the
+	// self-contained durability store), not a fixed reservation. The staged tree is copied onto the
+	// formatted partition later by copyStagedIBIImages.
+	stagingRoot, err := os.MkdirTemp("", "create-usb-ibi-images-staging-")
+	if err != nil {
+		return nil, fmt.Errorf("creating ibi-images staging directory: %w", err)
+	}
+	defer func() {
+		if rerr := os.RemoveAll(stagingRoot); rerr != nil {
+			log.Warnf("create-usb: removing ibi-images staging directory %s: %v", stagingRoot, rerr)
+		}
+	}()
+
+	payloadBytes, err := stageIBIImagesPayload(ctx, log, deps, m, isoResult, opts, stagingRoot, p3Root)
+	if err != nil {
+		return nil, err
+	}
+
+	// Size the ibi-images partition to the measured payload (floored at p2MinReservationBytes) and
+	// recompute the container size, then enforce the USB-size budget against the resulting final
+	// image size. An oversized payload fails here, at planning time, with a clear size error --
+	// before anything is written to the stick.
+	ibiImagesSize := sizeIBIImagesPartition(payloadBytes)
+	setIBIImagesSize(plan, ibiImagesSize)
+	log.Infof("create-usb: ibi-images payload is %d bytes; sized the ibi-images partition to %d bytes (minimum %d)",
+		payloadBytes, ibiImagesSize, p2MinReservationBytes)
 
 	total, err := containerSize(isoPath, plan)
 	if err != nil {
@@ -508,28 +579,12 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResu
 		return nil, err
 	}
 
-	// For self-contained media the image-layout stage renders the digest-pinned p3 config tree,
-	// which the cluster-config populate stage then copies onto its partition. Share one scratch
-	// render directory between the two stages. A pre-rendered opts.P3Root overrides it (used
-	// directly by populateClusterConfig). install-only renders no tree.
-	p3Root := opts.P3Root
-	if m.Mode == ModeSelfContained && p3Root == "" {
-		renderDir, derr := os.MkdirTemp("", "create-usb-p3-render-")
-		if derr != nil {
-			return nil, fmt.Errorf("creating p3 config-tree render directory: %w", derr)
-		}
-		defer func() {
-			if rerr := os.RemoveAll(renderDir); rerr != nil {
-				log.Warnf("create-usb: removing p3 config-tree render directory %s: %v", renderDir, rerr)
-			}
-		}()
-		p3Root = renderDir
-	}
-
-	// Populate the ibi-images partition: the OCI image layout + on-media digests.json, the staged
-	// lca-cli binary the embedded unit execs on boot, and (self-contained) the read-only
-	// durability store. Runs before success so any failure triggers the rollback above.
-	if err = populateIBIImages(ctx, log, deps, handle, m, isoResult, opts, p3Root); err != nil {
+	// Copy the staged ibi-images payload (OCI image layout + on-media digests.json, the staged
+	// lca-cli binary the embedded unit execs on boot, and the self-contained durability store) onto
+	// the formatted partition, verifying it fits the sized filesystem. Runs before success so any
+	// failure triggers the rollback above; an unmount failure is tagged errP2Mounted so the rollback
+	// preserves the still-mounted image + loop handle.
+	if err = copyStagedIBIImages(log, deps, handle, stagingRoot, payloadBytes); err != nil {
 		return nil, err
 	}
 
@@ -543,6 +598,20 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResu
 
 	success = true
 	return handle, nil
+}
+
+// ensureOutputAbsent fails if imgPath already exists, so a build fails fast before staging the
+// payload rather than discarding the staged work when writeLiveISOToFront's O_EXCL later refuses to
+// overwrite. A stat error other than not-exist is surfaced too.
+func ensureOutputAbsent(imgPath string) error {
+	_, statErr := os.Stat(imgPath)
+	if statErr == nil {
+		return fmt.Errorf("output image %s already exists; refusing to overwrite", imgPath)
+	}
+	if !os.IsNotExist(statErr) {
+		return fmt.Errorf("checking output image %s: %w", imgPath, statErr)
+	}
+	return nil
 }
 
 // formatDataPartitions maps the appended data partitions to their device nodes (by exclusion of
@@ -574,13 +643,38 @@ func formatDataPartitions(log *logrus.Logger, deps mediaBuildDeps, h *MediaHandl
 // the sfdisk append and the device-node mapping rely on.
 func partitionPlan(mode Mode) PartitionPlan {
 	parts := []PlannedPartition{
-		{Label: labelIBIImages, FSType: ibiImagesFSType, Size: p2ReservationBytes},
+		{Label: labelIBIImages, FSType: ibiImagesFSType, Size: p2MinReservationBytes},
 	}
 	if mode == ModeSelfContained {
 		parts = append(parts, PlannedPartition{Label: labelClusterConfig, FSType: clusterConfigFSType, Size: p3ReservationBytes})
 	}
 	parts = append(parts, PlannedPartition{Label: labelIBIStatus, FSType: ibiStatusFSType, Size: p4ReservationBytes})
 	return PartitionPlan{Mode: mode, Partitions: parts}
+}
+
+// sizeIBIImagesPartition derives the ibi-images partition reservation from the measured on-media
+// payload: the payload plus free-space headroom and a fixed ext4-metadata allowance, rounded up to
+// a whole MiB, floored at p2MinReservationBytes. Sizing the partition to the payload (rather than
+// a fixed 8 GiB) is what makes an oversized payload fail the --usb-size budget at planning time
+// with a clear size error instead of overrunning a fixed partition during population.
+func sizeIBIImagesPartition(payloadBytes int64) int64 {
+	sized := alignUpToMiB(payloadBytes*ibiImagesHeadroomNum/ibiImagesHeadroomDen + ibiImagesMetadataOverheadBytes)
+	if sized < p2MinReservationBytes {
+		return p2MinReservationBytes
+	}
+	return sized
+}
+
+// setIBIImagesSize resizes the ibi-images partition in plan to sizeBytes (the payload-derived
+// reservation). partitionPlan returns a freshly-allocated slice each call, so mutating it in place
+// is safe. The other partitions are fixed-size and left unchanged.
+func setIBIImagesSize(plan PartitionPlan, sizeBytes int64) {
+	for i := range plan.Partitions {
+		if plan.Partitions[i].Label == labelIBIImages {
+			plan.Partitions[i].Size = sizeBytes
+			return
+		}
+	}
 }
 
 // containerSize is the total image size: the live ISO (rounded up to a whole MiB so the first
