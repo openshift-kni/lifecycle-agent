@@ -86,59 +86,115 @@ func NewIBIPrepare(log *logrus.Logger, ops ops.Ops, rpmostreeClient rpmostreecli
 func (i *IBIPrepare) Run() error {
 	ctx := context.Background()
 
-	// Disconnected (offline) prepare sources every image from the on-media OCI layout
-	// on the USB "p2" partition instead of the network. The two hard preconditions --
-	// p2 discovery/mount and manifest/seed validation -- run first, before
-	// diskPreparation touches the installation disk, so a missing/ambiguous device or a
-	// missing/malformed/seed-mismatched manifest fails while the disk is still intact
-	// (there is no network fallback). The connected flow is left byte-for-byte unchanged.
-	var (
-		manifest  *localimages.DigestManifest
-		seedEntry localimages.ImageEntry
-		unmountP2 func() error
-	)
-	if i.config.Disconnected {
-		// Preflight precondition 1: discover p2 by label and mount it read-only.
-		unmount, err := i.mountLocalImages()
-		if err != nil {
-			return fmt.Errorf("failed to mount local images partition: %w", err)
+	// Connected (online) prepare sources images from the network; it has no ibi-status
+	// partition and no result write-back, and its terminal behaviour (power-off on success)
+	// is left byte-for-byte unchanged.
+	if !i.config.Disconnected {
+		if err := i.runPreparation(ctx, nil, localimages.ImageEntry{}, nil, nil); err != nil {
+			return err
 		}
-		unmountP2 = unmount
-		// Keep p2 mounted through the entire import; this deferred unmount covers the
-		// error paths (its result is intentionally discarded -- it is best-effort
-		// cleanup while Run is already failing, and also acts as the retry of a failed
-		// explicit final unmount). On the happy path p2 is unmounted explicitly as the
-		// last p2 action after the final sync (the installed store handoff reads it
-		// after precache), and this deferred call then becomes a no-op (unmount is
-		// idempotent).
-		defer func() { _ = unmountP2() }()
-
-		// Preflight precondition 2: parse the manifest and resolve the seed entry,
-		// before any disk write.
-		m, e, err := i.preflightValidateManifest()
-		if err != nil {
-			return fmt.Errorf("failed to validate local images manifest: %w", err)
-		}
-		manifest, seedEntry = m, e
+		return i.shutdownNode()
 	}
 
-	// In a disconnected prepare there is no operator-provided pull secret, but Run() still
-	// passes common.IBIPullSecretFilePath to the precache, so a synthetic empty
-	// authfile must exist. Provision it non-destructively and remove it on completion (including
-	// the error path via defer). The connected flow is untouched.
-	var removeAuthFile func()
-	if i.config.Disconnected {
-		cleanup, err := setupPrepareAuthFile(common.PathOutsideChroot(common.IBIPullSecretFilePath))
-		if err != nil {
-			return fmt.Errorf("failed to set up prepare auth file: %w", err)
-		}
-		removeAuthFile = cleanup
-		// Covers the error paths. On the success path the authfile is removed explicitly
-		// before the final sync below (so the removal is flushed to disk before shutdown);
-		// cleanup is idempotent, so this deferred call then becomes a no-op.
-		defer removeAuthFile()
+	// Disconnected (USB) prepare: establish the writable ibi-status (p4) partition and run
+	// the re-entry guard FIRST -- before the p2 mount, manifest validation, and auth-file
+	// setup -- so that every failure after this point (not only a core-prepare failure) is
+	// recorded to prepare.json and takes the promised powered-on terminal action. p4 is a
+	// mandatory precondition in both profiles: exactly one writable ibi-status device,
+	// mountable and writable. The guard refuses to wipe over a completed install. Every
+	// uncertain p4 state fails closed (halt powered-on without wiping); the partition stays
+	// mounted so the result write-back at the end of the run reuses it.
+	sp, err := i.mountStatusPartition()
+	if err != nil {
+		// Cannot establish exactly one writable p4 -> do not wipe, halt powered-on. There is
+		// no usable partition to record a result on, so this is the single disconnected
+		// failure path with no prepare.json.
+		return i.haltPoweredOn(fmt.Errorf("ibi-status partition precondition failed: %w", err))
+	}
+	// Idempotent backup unmount for the error paths; finalizeDisconnected unmounts
+	// explicitly before the terminal action on the normal paths.
+	defer func() { _ = sp.unmount() }()
+
+	blocked, guardErr := i.guardReentry(sp)
+	if guardErr != nil {
+		// An unreadable/malformed existing marker is never treated as safe to wipe.
+		// Unmount p4 before the halt: isolating emergency.target may stop this prepare
+		// service before the deferred unmount runs, and finalizeDisconnected already
+		// unmounts explicitly before its terminal action.
+		_ = sp.unmount()
+		return i.haltPoweredOn(fmt.Errorf("ibi-status re-entry guard failed: %w", guardErr))
+	}
+	if blocked {
+		// Completed install preserved and re-entry recorded: halt powered-on, no wipe.
+		// Unmount p4 before the halt for the same reason as the guard-error path above.
+		_ = sp.unmount()
+		return i.haltPoweredOn(errReentryBlocked)
 	}
 
+	// With p4 mounted and the guard passed, every subsequent failure (p2 mount, manifest
+	// validation, auth-file setup, or the core prepare) is finalized: prepare.json is written
+	// and the node is halted powered-on.
+	imagesExpected, prepErr := i.runDisconnectedPreparation(ctx)
+	return i.finalizeDisconnected(sp, imagesExpected, prepErr)
+}
+
+// runDisconnectedPreparation runs the disconnected preflight -- p2 discovery/mount, manifest
+// and seed validation, and the synthetic authfile -- and then the shared core prepare. It is
+// invoked only after the ibi-status (p4) partition is mounted and the re-entry guard has
+// passed, so every error it returns is routed through finalizeDisconnected (recorded to
+// prepare.json, followed by the powered-on terminal action) rather than aborting Run bare.
+// The two hard preconditions (p2 discovery/mount and manifest/seed validation) still run
+// before diskPreparation touches the installation disk, so a missing/ambiguous device or a
+// missing/malformed/seed-mismatched manifest fails while the disk is still intact. It returns
+// the number of images the on-media manifest expects (0 until the manifest is parsed; used
+// only to populate the success counts) and the first error encountered.
+func (i *IBIPrepare) runDisconnectedPreparation(ctx context.Context) (imagesExpected int, err error) {
+	// Preflight precondition 1: discover p2 by label and mount it read-only.
+	unmountP2, err := i.mountLocalImages()
+	if err != nil {
+		return 0, fmt.Errorf("failed to mount local images partition: %w", err)
+	}
+	// Keep p2 mounted through the entire import; this deferred unmount covers the error paths
+	// (best-effort cleanup while the run is already failing, and the retry of a failed
+	// explicit final unmount). On the happy path p2 is unmounted explicitly as the last p2
+	// action in runPreparation and this deferred call then becomes a no-op (unmount is
+	// idempotent).
+	defer func() { _ = unmountP2() }()
+
+	// Preflight precondition 2: parse the manifest and resolve the seed entry, before any
+	// disk write.
+	manifest, seedEntry, err := i.preflightValidateManifest()
+	if err != nil {
+		return 0, fmt.Errorf("failed to validate local images manifest: %w", err)
+	}
+
+	// In a disconnected prepare there is no operator-provided pull secret, but the precache is
+	// still passed common.IBIPullSecretFilePath, so a synthetic empty authfile must exist.
+	// Provision it non-destructively and remove it on completion (including the error path via
+	// defer).
+	removeAuthFile, err := setupPrepareAuthFile(common.PathOutsideChroot(common.IBIPullSecretFilePath))
+	if err != nil {
+		return len(manifest.Images), fmt.Errorf("failed to set up prepare auth file: %w", err)
+	}
+	// Covers the error paths. On the success path the authfile is removed explicitly before
+	// the final sync in runPreparation (so the removal is flushed to disk before shutdown);
+	// cleanup is idempotent, so this deferred call then becomes a no-op.
+	defer removeAuthFile()
+
+	if err := i.runPreparation(ctx, manifest, seedEntry, unmountP2, removeAuthFile); err != nil {
+		return len(manifest.Images), err
+	}
+	return len(manifest.Images), nil
+}
+
+// runPreparation performs the core prepare work shared by the connected and disconnected
+// flows: it writes the image to disk, acquires and deploys the seed, precaches, runs the
+// post-deployment hooks, flushes to disk, and (disconnected) unmounts the p2 local-images
+// partition last. It returns the first error encountered without taking any terminal
+// action; the caller decides the terminal action (and, for the disconnected flow, records
+// the result on the ibi-status partition first).
+func (i *IBIPrepare) runPreparation(ctx context.Context, manifest *localimages.DigestManifest,
+	seedEntry localimages.ImageEntry, unmountP2 func() error, removeAuthFile func()) error {
 	if err := i.diskPreparation(); err != nil {
 		return fmt.Errorf("failed to prepare disk: %w", err)
 	}
@@ -232,7 +288,7 @@ func (i *IBIPrepare) Run() error {
 		}
 	}
 
-	return i.shutdownNode()
+	return nil
 }
 
 // mountLocalImages discovers the p2 installer-media partition by its filesystem

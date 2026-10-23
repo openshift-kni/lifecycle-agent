@@ -2,6 +2,7 @@ package ibi_preparation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -493,11 +494,96 @@ func (ff *importerFactory) new(_ *logrus.Logger, cfg localimages.StoreConfig) (i
 func saveSeams(t *testing.T) {
 	t.Helper()
 	origParse, origNew, origSetup := parseDigestManifest, newImageImporter, setupStateroot
+	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
 		setupStateroot = origSetup
+		statusPartitionMountDir = origMount
+		collectStatusLogs = origCollect
 	})
+}
+
+// useTempStatusPartition points the ibi-status (p4) result write-back and re-entry guard
+// at a real temporary directory and stubs out best-effort log collection, so disconnected
+// Run tests exercise the real atomic result write without a real mount or journalctl.
+// saveSeams(t) must have been called first so the seams are restored. It returns the
+// directory, into which the caller may pre-seed a prepare.json to exercise the guard.
+func useTempStatusPartition(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	statusPartitionMountDir = dir
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	return dir
+}
+
+// statusDevices returns the block-device list a disconnected Run discovers: the p2
+// local-images device and the p4 ibi-status device (both label-matched by Run). The p4
+// device is reported as ext4, the only filesystem mountStatusPartition accepts.
+func statusDevices(p2, p4 string) []ops.BlockDevice {
+	return []ops.BlockDevice{
+		{Name: p2, Label: common.LocalImagesFSLabel},
+		{Name: p4, Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
+	}
+}
+
+// readPrepareResult reads and parses the prepare.json written at the root of the ibi-status
+// partition directory.
+func readPrepareResult(t *testing.T, dir string) PrepareResult {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, common.PrepareResultFileName)) //nolint:gosec // test path
+	assert.NoError(t, err)
+	var result PrepareResult
+	assert.NoError(t, json.Unmarshal(data, &result))
+	return result
+}
+
+// stubDisconnectedSeams snapshots the package seams and installs the stubs a disconnected
+// Run needs to reach the p4 (ibi-status) precondition and guard: a valid parsed manifest, a
+// no-op stateroot setup, a fake importer factory, and a temp cwd for the synthetic
+// authfile. The caller still wires the ops mock and the ibi-status mount dir per scenario.
+func stubDisconnectedSeams(t *testing.T) {
+	t.Helper()
+	saveSeams(t)
+	t.Chdir(t.TempDir())
+	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
+	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
+		return nil
+	}
+	newImageImporter = (&importerFactory{}).new
+}
+
+// disconnectedCfg returns a minimal valid disconnected IBIPrepareConfig for the given
+// media profile.
+func disconnectedCfg(profile string) *ibiconfig.IBIPrepareConfig {
+	return &ibiconfig.IBIPrepareConfig{
+		Disconnected:        true,
+		Profile:             profile,
+		LocalImagesPath:     "/var/mnt/ibi",
+		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
+		SeedImage:           testSeedImageRef(),
+		SeedVersion:         "4.15.0",
+		InstallationDisk:    "/dev/sda",
+		UseContainersFolder: true,
+		PrecacheDisabled:    true,
+	}
+}
+
+// seedSuccessMarker writes a completed-install prepare.json (result: success) at the root
+// of the ibi-status partition directory, simulating a prior successful prepare.
+func seedSuccessMarker(t *testing.T, dir string) {
+	t.Helper()
+	r := &PrepareResult{
+		Phase:       prepareResultPhase,
+		Profile:     ibiconfig.ProfileInstallOnly,
+		Result:      resultSuccess,
+		Timestamp:   nowRFC3339(),
+		SeedVersion: "4.15.0",
+		Reentry:     reentryNone,
+	}
+	data, err := json.MarshalIndent(r, "", "  ")
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, common.PrepareResultFileName), append(data, '\n'), 0o600))
 }
 
 func idxOf(events []string, name string) int {
@@ -587,27 +673,37 @@ func TestMountLocalImages(t *testing.T) {
 }
 
 // TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite proves that a failed p2
-// discovery (0 or >1 devices) fails Run() before any disk write: no mount, no disk
-// cleanup, no image write.
+// discovery (0 or >1 devices) fails Run() before any disk write: no p2 mount, no disk
+// cleanup, no image write. Because p4 (ibi-status) is mounted and the guard passes first,
+// the failure is now finalized -- a failure prepare.json is recorded and the node is halted
+// powered-on (never powered off) -- rather than aborting Run bare.
 func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
 	cases := []struct {
 		name    string
 		devices []ops.BlockDevice
 	}{
-		{"zero devices", []ops.BlockDevice{{Name: "sda", Label: "root"}}},
-		{"multiple devices", []ops.BlockDevice{
+		{"zero p2 devices", []ops.BlockDevice{
+			{Name: "sda", Label: "root"},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
+		}},
+		{"multiple p2 devices", []ops.BlockDevice{
 			{Name: "sdb1", Label: common.LocalImagesFSLabel},
 			{Name: "sdc1", Label: common.LocalImagesFSLabel},
+			{Name: "sdp4", Label: common.IBIStatusFSLabel, FSType: fsTypeExt4},
 		}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			saveSeams(t)
+			statusDir := useTempStatusPartition(t)
+
 			ctrl := gomock.NewController(t)
 			mockOps := ops.NewMockOps(ctrl)
 			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 			cfg := &ibiconfig.IBIPrepareConfig{
 				Disconnected:     true,
+				Profile:          ibiconfig.ProfileInstallOnly,
 				LocalImagesPath:  "/var/mnt/ibi",
 				SeedImage:        testSeedImageRef(),
 				SeedVersion:      "4.15.0",
@@ -615,20 +711,33 @@ func TestLocalImagesDiscoveryPreconditionFailsBeforeDiskWrite(t *testing.T) {
 			}
 			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(1)
-			// Fail-fast before any disk write: no mount, no cleanup of the install disk.
+			// The same block-device list serves p4 discovery (first) and p2 discovery (second).
+			mockOps.EXPECT().ListBlockDevices().Return(tc.devices, nil).Times(2)
+			mockOps.EXPECT().Mount("sdp4", statusDir).Return(nil).Times(1)
+			// Fail-fast before any disk write: no p2 mount, no cleanup of the install disk.
 			mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+			// Failure is finalized: result write-back syncs, p4 is unmounted, node halts powered-on.
+			mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+			mockOps.EXPECT().Umount("sdp4").Return(nil).Times(1)
+			mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 			err := ibi.Run()
 			assert.Error(t, err)
+
+			// A failure result is recorded on p4 so a later boot can read how prepare ended.
+			result := readPrepareResult(t, statusDir)
+			assert.Equal(t, resultFailure, result.Result)
 		})
 	}
 }
 
 // TestManifestValidatedBeforeDiskWrite proves that a missing/malformed manifest or a
 // manifest lacking the seed entry fails Run() in preflight -- after the p2 mount but
-// before any disk write -- and that p2 is unmounted on the way out.
+// before any disk write -- that p2 is unmounted on the way out, and that (because p4 is
+// mounted and the guard passes first) the failure is finalized: a failure prepare.json is
+// recorded and the node is halted powered-on rather than aborting Run bare.
 func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -665,6 +774,7 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			saveSeams(t)
+			statusDir := useTempStatusPartition(t)
 			parseDigestManifest = tc.parse
 			newImageImporter = func(*logrus.Logger, localimages.StoreConfig) (imageImporter, error) {
 				t.Fatal("importer must not be created before manifest validation")
@@ -676,6 +786,7 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 			cfg := &ibiconfig.IBIPrepareConfig{
 				Disconnected:        true,
+				Profile:             ibiconfig.ProfileInstallOnly,
 				LocalImagesPath:     "/var/mnt/ibi",
 				ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
 				SeedImage:           testSeedImageRef(),
@@ -684,16 +795,27 @@ func TestManifestValidatedBeforeDiskWrite(t *testing.T) {
 			}
 			ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
+			// The same block-device list serves p4 discovery (first) and p2 discovery (second).
 			mockOps.EXPECT().ListBlockDevices().
-				Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+				Return(statusDevices("sdb1", "sdp4"), nil).Times(2)
+			mockOps.EXPECT().Mount("sdp4", statusDir).Return(nil).Times(1)
 			mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 			// No disk write.
 			cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
-			// p2 is unmounted on the error path (deferred unmount).
+			// p2 is unmounted on the error path (deferred unmount); the failure is finalized:
+			// sync, p4 unmount, and halt powered-on (never power off).
 			mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+			mockOps.EXPECT().Umount("sdp4").Return(nil).Times(1)
+			mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+			mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 			err := ibi.Run()
 			assert.Error(t, err)
+
+			// A failure result is recorded on p4 so a later boot can read how prepare ended.
+			result := readPrepareResult(t, statusDir)
+			assert.Equal(t, resultFailure, result.Result)
 		})
 	}
 }
@@ -868,6 +990,7 @@ func TestClosureImportRunsOutsideChroot(t *testing.T) {
 func TestClosureImportRunsBeforePrecache(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())
+	useTempStatusPartition(t)
 	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
 	ff := &importerFactory{}
 	newImageImporter = ff.new
@@ -880,6 +1003,7 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 	cfg := &ibiconfig.IBIPrepareConfig{
 		Disconnected:        true,
+		Profile:             ibiconfig.ProfileInstallOnly,
 		LocalImagesPath:     "/var/mnt/ibi",
 		ExpectedDigestsPath: "/m.json",
 		SeedImage:           testSeedImageRef(),
@@ -890,9 +1014,10 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	// p2 and p4 are discovered from the same block-device list (two label matches).
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusPartitionMountDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
@@ -900,8 +1025,13 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 	expectPodmanInfo(mockOps)
 	// precache fails reading the seed info file before chrooting or pulling.
 	mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
-	// p2 is unmounted on the error path.
+	// Failure path: result write-back syncs, both partitions are unmounted, and the node is
+	// halted powered-on (never powered off).
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
 	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()
 	assert.Error(t, err)
@@ -911,13 +1041,16 @@ func TestClosureImportRunsBeforePrecache(t *testing.T) {
 }
 
 // TestRunDisconnectedOrderingAndUnmountLast drives the full disconnected happy path
-// (precache disabled) and asserts the end-to-end ordering: discovery and manifest
-// validation run before the disk write; the seed imports before SetupStateroot; the
-// closure imports after SetupStateroot and before the final sync; no podman pull
-// happens; and p2 is unmounted last, after sync.
+// (precache disabled) and asserts the end-to-end ordering: p2 discovery, manifest
+// validation, and the mandatory p4 (ibi-status) mount all run before the disk write; the
+// seed imports before SetupStateroot; the closure imports after SetupStateroot and before
+// the core sync; no podman pull happens; p2 is unmounted after the core sync; and the p4
+// result write-back + p4 unmount happen last, after p2 is released. The written
+// prepare.json records success.
 func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir()) // the synthetic authfile writes to a relative var/tmp path
+	statusDir := useTempStatusPartition(t)
 
 	var events []string
 	parseDigestManifest = func(string) (*localimages.DigestManifest, error) {
@@ -937,6 +1070,7 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 	cfg := &ibiconfig.IBIPrepareConfig{
 		Disconnected:        true,
+		Profile:             ibiconfig.ProfileInstallOnly,
 		LocalImagesPath:     "/var/mnt/ibi",
 		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
 		SeedImage:           testSeedImageRef(),
@@ -947,12 +1081,17 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
+	// p2 and p4 are discovered from the same block-device list (two label matches).
 	mockOps.EXPECT().ListBlockDevices().DoAndReturn(func() ([]ops.BlockDevice, error) {
 		events = append(events, "listBlockDevices")
-		return []ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil
-	}).Times(1)
+		return statusDevices("sdb1", "sdb2"), nil
+	}).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).DoAndReturn(func(_, _ string) error {
-		events = append(events, "mountReadOnly")
+		events = append(events, "mountReadOnlyP2")
+		return nil
+	}).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).DoAndReturn(func(_, _ string) error {
+		events = append(events, "mountP4")
 		return nil
 	}).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).DoAndReturn(func(string) error {
@@ -974,12 +1113,17 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 		events = append(events, "undeploy")
 		return nil
 	}).Times(1)
+	// The core flow syncs once; the result write-back syncs again before the terminal action.
 	mockOps.EXPECT().RunInHostNamespace("sync").DoAndReturn(func(string, ...string) (string, error) {
 		events = append(events, "sync")
 		return "", nil
-	}).Times(1)
+	}).Times(2)
 	mockOps.EXPECT().Umount("sdb1").DoAndReturn(func(string) error {
-		events = append(events, "umount")
+		events = append(events, "umountP2")
+		return nil
+	}).Times(1)
+	mockOps.EXPECT().Umount("sdb2").DoAndReturn(func(string) error {
+		events = append(events, "umountP4")
 		return nil
 	}).Times(1)
 
@@ -990,23 +1134,38 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	// unexpected call on the strict mock controller and fail the test. Assert the
 	// relative ordering of the recorded events.
 	for _, name := range []string{
-		"listBlockDevices", "mountReadOnly", "parseManifest", "cleanupInstallDevice",
-		"importSeed", "setupStateroot", "importClosure", "verifyClosure", "sync", "umount",
+		"listBlockDevices", "mountReadOnlyP2", "parseManifest", "mountP4", "cleanupInstallDevice",
+		"importSeed", "setupStateroot", "importClosure", "verifyClosure", "sync", "umountP2", "umountP4",
 	} {
 		assert.GreaterOrEqual(t, idxOf(events, name), 0, "missing event %q", name)
 	}
-	// Preconditions (discovery + manifest) run before the disk write.
-	assert.Less(t, idxOf(events, "mountReadOnly"), idxOf(events, "cleanupInstallDevice"))
+	// Preconditions (p2 discovery + manifest + mandatory p4 mount) run before the disk write.
+	assert.Less(t, idxOf(events, "mountReadOnlyP2"), idxOf(events, "cleanupInstallDevice"))
 	assert.Less(t, idxOf(events, "parseManifest"), idxOf(events, "cleanupInstallDevice"))
+	assert.Less(t, idxOf(events, "mountP4"), idxOf(events, "cleanupInstallDevice"))
 	// Seed imports before stateroot; closure imports after stateroot.
 	assert.Less(t, idxOf(events, "importSeed"), idxOf(events, "setupStateroot"))
 	assert.Less(t, idxOf(events, "setupStateroot"), idxOf(events, "importClosure"))
 	// Self-check runs after the closure import (precache precedes it, disabled here)
-	// and before the final sync; p2 is unmounted last, after sync.
+	// and before the core sync; p2 is unmounted after the sync; the p4 result
+	// write-back and p4 unmount are the last actions.
 	assert.Less(t, idxOf(events, "importClosure"), idxOf(events, "verifyClosure"))
 	assert.Less(t, idxOf(events, "verifyClosure"), idxOf(events, "sync"))
-	assert.Less(t, idxOf(events, "sync"), idxOf(events, "umount"))
-	assert.Equal(t, "umount", events[len(events)-1], "p2 unmount must be the last action")
+	assert.Less(t, idxOf(events, "sync"), idxOf(events, "umountP2"))
+	assert.Less(t, idxOf(events, "umountP2"), idxOf(events, "umountP4"))
+	assert.Equal(t, "umountP4", events[len(events)-1], "p4 unmount must be the last action")
+
+	// The result write-back recorded a successful prepare at the p4 root.
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, prepareResultPhase, result.Phase)
+	assert.Equal(t, ibiconfig.ProfileInstallOnly, result.Profile)
+	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, reentryNone, result.Reentry)
+	assert.Nil(t, result.Error)
+	if assert.NotNil(t, result.Checks) {
+		assert.Equal(t, len(testManifest().Images), result.Checks.ImagesExpected)
+		assert.Equal(t, result.Checks.ImagesExpected, result.Checks.ImagesPresent)
+	}
 
 	// Closure import and self-check both targeted the installed stateroot graphroot
 	// under /mnt (the same store, opened once each).
@@ -1023,11 +1182,13 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 
 // TestRunReturnsErrorOnFailedFinalUnmount proves that when the final p2 unmount
 // keeps failing, Run surfaces the failure as its result (regardless of Shutdown)
-// rather than reporting success with p2 still mounted, and that the deferred cleanup
-// retries the unmount on the way out.
+// rather than reporting success with p2 still mounted, the deferred cleanup retries
+// the unmount on the way out, and the node is halted powered-on (never powered off)
+// with a failure result recorded on p4.
 func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())
+	statusDir := useTempStatusPartition(t)
 
 	parseDigestManifest = func(string) (*localimages.DigestManifest, error) { return testManifest(), nil }
 	newImageImporter = (&importerFactory{}).new
@@ -1041,6 +1202,7 @@ func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
 	cfg := &ibiconfig.IBIPrepareConfig{
 		Disconnected:        true,
+		Profile:             ibiconfig.ProfileSelfContained,
 		LocalImagesPath:     "/var/mnt/ibi",
 		ExpectedDigestsPath: "/var/mnt/ibi/manifest.json",
 		SeedImage:           testSeedImageRef(),
@@ -1048,28 +1210,41 @@ func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 		InstallationDisk:    "/dev/sda",
 		UseContainersFolder: true,
 		PrecacheDisabled:    true,
-		Shutdown:            false, // the unmount error must surface regardless of Shutdown
+		Shutdown:            true, // even with Shutdown set, a failure must halt powered-on, not power off
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb2", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	// p2 ("sdb2") and p4 ("sdb3") are discovered from the same block-device list.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb2", "sdb3"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb2", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb3", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 	// seed import resolves the host store from podman info.
 	expectPodmanInfo(mockOps)
 	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
-	// Explicit final unmount fails; the deferred cleanup then retries it (also fails),
-	// so Umount is attempted twice. shutdown must never be invoked.
+	// The core flow syncs once; the failure result write-back syncs again.
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(2)
+	// Explicit final p2 unmount fails; the deferred cleanup then retries it (also fails),
+	// so p2 Umount is attempted twice. p4 is unmounted once in the result write-back.
 	mockOps.EXPECT().Umount("sdb2").Return(fmt.Errorf("device busy")).Times(2)
+	mockOps.EXPECT().Umount("sdb3").Return(nil).Times(1)
+	// Failure halts powered-on; shutdown/power-off must never be invoked.
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unmount local images")
+
+	// A failure result is recorded on p4 (so a later boot can read how prepare ended).
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultFailure, result.Result)
+	assert.Equal(t, reentryNone, result.Reentry)
+	if assert.NotNil(t, result.Error) {
+		assert.Contains(t, *result.Error, "unmount local images")
+	}
 }
 
 // TestConnectedFlowUnchanged proves the connected flow is untouched: no p2
@@ -1318,16 +1493,20 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	statusDir := useTempStatusPartition(t)
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 	expectPodmanInfo(mockOps)
 	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	// The core flow syncs once; the result write-back syncs again before the terminal action.
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(2)
 	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", "now").Return("", nil).Times(1)
 
 	err := ibi.Run()
@@ -1335,14 +1514,18 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
 		assert.Equal(t, 1, ff.verify.verifiedAll, "the self-check must verify the manifest exactly once")
 	}
+	// The disconnected flow records a successful prepare on the p4 partition.
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultSuccess, result.Result)
 }
 
-// TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before any
-// terminal action: when VerifyAll reports a missing image, Run() returns that error
-// and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the final
-// sync or shutdown. The deferred best-effort cleanup still runs, so p2 is unmounted
-// on the way out ("no terminal action on verification failure", not "p2 stays
-// mounted").
+// TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before the
+// success terminal action: when VerifyAll reports a missing image, Run() returns that
+// error and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the
+// core sync, or a power-off shutdown. The failure is still finalized on the ibi-status
+// (p4) partition -- a failure result is written, the finalize sync runs, p2 and p4 are
+// unmounted -- and the node is halted powered-on (never powered off) even though
+// Shutdown is set.
 func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())
@@ -1370,18 +1553,24 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().
-		Return([]ops.BlockDevice{{Name: "sdb1", Label: common.LocalImagesFSLabel}}, nil).Times(1)
+	statusDir := useTempStatusPartition(t)
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
 	expectPodmanInfo(mockOps)
-	// Deferred best-effort cleanup still unmounts p2 on the error path.
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
-	// No terminal action: no ostree undeploy, no final sync, no shutdown.
+	// The gate fails before postDeployment / cleanupRhcosSysroot, so there is no ostree
+	// undeploy and no core sync. The failure is still finalized on p4: the failure result is
+	// written, the finalize sync runs, p2 and p4 are unmounted, and the node is halted
+	// powered-on (never powered off) despite Shutdown being set.
 	ostreeMock.EXPECT().Undeploy(gomock.Any()).Times(0)
-	mockOps.EXPECT().RunInHostNamespace("sync").Times(0)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err := ibi.Run()
@@ -1390,4 +1579,7 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	if assert.NotNil(t, ff.verify, "the self-check must open the installed stateroot store") {
 		assert.Equal(t, 1, ff.verify.verifiedAll)
 	}
+	// A failure result is recorded on p4 so a later boot can read how prepare ended.
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultFailure, result.Result)
 }

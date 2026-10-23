@@ -260,3 +260,65 @@ already suspect; these rules bound what is permitted when one is present.
 A mirror resource wrapped in a `List` (`items[]`) is unwrapped and scanned as well, matching
 how post-pivot applies each list member verbatim, so a resource cannot bypass these rules by
 being nested in a `List`.
+
+## The ibi-status (p4) partition and per-phase results
+
+Both profiles' media carry a small **writable** partition labelled `ibi-status` (the "p4"
+partition), formatted `ext4`. It is created, formatted, and labelled empty by create-usb
+(see CNF-28670); the prepare phase consumes it to record a machine-readable per-phase result
+that a technician can read off-box without a serial console.
+
+**On-partition layout.** The machine-readable result files are written at the **root** of
+p4; the compact diagnostic log bundle is written under a `logs/` directory, keeping results
+and human diagnostics separated:
+
+```console
+<p4 root>/
+  prepare.json             # prepare phase result (both success and failure)
+  logs/
+    prepare-logs.txt.gz    # best-effort, size-capped journal capture
+```
+
+`prepare.json` is written by the prepare phase on **both** the success and failure paths,
+using an atomic, durable sequence (temp file → `fsync` → `rename` → directory `fsync` →
+whole-filesystem `sync`) **before** the terminal action, so the record survives a power loss
+rather than being lost in the buffer cache. Its schema:
+
+```json
+{
+  "phase": "prepare",
+  "profile": "install-only",
+  "result": "success",
+  "timestamp": "2026-09-02T12:00:00Z",
+  "seedVersion": "4.18.3",
+  "checks": { "imagesExpected": 188, "imagesPresent": 188 },
+  "error": null,
+  "reentry": "none"
+}
+```
+
+`ext4` is required: the atomic write contract above only holds on a journaled filesystem, so
+create-usb rejects `vfat` for this partition at build time.
+
+### Mandatory p4 and the re-entry guard
+
+Before the prepare phase performs any destructive disk operation (disk cleanup /
+`coreos-installer install`), it enforces a hard precondition in **both** profiles: there must
+be **exactly one** writable `ibi-status` device. Zero or more than one device, a mount
+failure, a read-only partition, or an unreadable/malformed `prepare.json` all **fail closed**
+— the node halts powered-on without wiping the installation disk.
+
+If a `prepare.json` with `result: success` is already present, the current boot is a
+**re-entry over a completed install**. The prepare phase refuses to wipe: it preserves the
+existing `result: success` (it never rewrites it), records `reentry: blocked`, and halts the
+node powered-on. Repeated re-entries remain safe — the completed-install marker is never
+destroyed, so a second destructive prepare can never re-wipe a finished install.
+
+### Terminal action: power-off vs halt powered-on
+
+- On **success**, the node powers off (install-only). This power-off is the install-only
+  success signal; the self-contained success/reboot-pivot split is handled separately.
+- On **failure**, the node **halts powered-on** (it isolates the emergency target) rather
+  than powering off, so the power-off success signal stays unambiguous and the node remains
+  reachable for a technician. A successful prepare whose result record could not be committed
+  also halts powered-on rather than signalling success via power-off.

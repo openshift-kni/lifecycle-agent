@@ -185,6 +185,26 @@ const (
 	// and the staged file never diverge.
 	LocalImagesLCABinaryPath = LocalImagesMountPath + "/lca-cli"
 
+	// IBIStatusFSLabel is the filesystem label of the writable USB "p4" partition
+	// that records per-phase machine-readable results for a USB-based IBI prepare.
+	// The prepare phase discovers the partition by this label, mounts it read-write,
+	// writes the result file at its root, and writes a diagnostic log bundle under
+	// the logs directory. The partition itself (empty, writable, ext4, labelled) is
+	// created by create-usb (CNF-28670); this story consumes it.
+	IBIStatusFSLabel = "ibi-status"
+
+	// IBIStatusMountPath is the mount point for the writable ibi-status (p4)
+	// partition during a disconnected IBI prepare.
+	IBIStatusMountPath = "/var/mnt/ibi-status"
+
+	// PrepareResultFileName is the machine-readable per-phase result file written at
+	// the root of the ibi-status (p4) partition on both the success and failure paths.
+	PrepareResultFileName = "prepare.json"
+
+	// IBIStatusLogsDir is the directory, relative to the ibi-status (p4) root, under
+	// which the compact diagnostic log bundle is written.
+	IBIStatusLogsDir = "logs"
+
 	ContainerStoragePath = "/var/lib/containers"
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"

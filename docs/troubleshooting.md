@@ -1,5 +1,48 @@
 # Troubleshooting Guide
 
+## Reading USB-based IBI prepare results off-box (ibi-status / p4)
+
+USB-based image-based-install (IBI) media carries a small writable `ext4` partition labelled
+`ibi-status` (the "p4" partition). The prepare phase records a machine-readable per-phase
+result there, so you can learn how a prepare ended without a serial console — just move the
+USB stick (or the node's p4 partition) to a workstation.
+
+1. Identify the partition by its filesystem label and mount it read-only:
+
+   ```console
+   lsblk -o NAME,LABEL,FSTYPE | grep ibi-status
+   sudo mount -o ro /dev/disk/by-label/ibi-status /mnt/ibi-status
+   ```
+
+2. Read the prepare result at the partition **root**:
+
+   ```console
+   cat /mnt/ibi-status/prepare.json
+   ```
+
+   - `result: "success"` — the prepare phase completed. On install-only media a completed
+     prepare powers the node off.
+   - `result: "failure"` — the prepare phase failed; `error` carries the message. On a
+     failure the node **halts powered-on** (emergency target) rather than powering off, so it
+     stays reachable for inspection.
+   - `reentry: "blocked"` — a later boot re-entered a **completed** install and the prepare
+     phase refused to re-wipe the disk. The original `result: "success"` is preserved. This is
+     expected and protective: pull the stick (or stop selecting USB as the boot device) so the
+     installed node boots from disk.
+
+3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
+
+   ```console
+   zcat /mnt/ibi-status/logs/prepare-logs.txt.gz | less
+   ```
+
+> If `prepare.json` is **absent**, the prepare phase never reached the result write-back —
+> check whether p4 could be mounted writable at all (a missing, duplicated, or read-only
+> `ibi-status` partition makes prepare halt powered-on *before* any disk wipe, by design).
+
+See [create-usb.md](./create-usb.md#the-ibi-status-p4-partition-and-per-phase-results) for
+the full p4 contract and schema.
+
 ## Manual cleanup
 
 During Abort/Finalize LCA performs a cleanup. This includes:

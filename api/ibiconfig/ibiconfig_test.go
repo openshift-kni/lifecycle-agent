@@ -92,6 +92,7 @@ func TestValidateDisconnectedAllowsEmptyPullSecret(t *testing.T) {
 	cfg.Disconnected = true
 	cfg.LocalImagesPath = testLocalImagesPath
 	cfg.ExpectedDigestsPath = testDigestsPath
+	cfg.Profile = ProfileInstallOnly
 
 	assert.NoError(t, cfg.Validate())
 }
@@ -102,6 +103,7 @@ func TestValidateDisconnectedWithSyntheticPullSecretIsValid(t *testing.T) {
 	cfg.Disconnected = true
 	cfg.LocalImagesPath = testLocalImagesPath
 	cfg.ExpectedDigestsPath = testDigestsPath
+	cfg.Profile = ProfileSelfContained
 
 	assert.NoError(t, cfg.Validate())
 
@@ -142,4 +144,40 @@ func TestValidateConnectedIgnoresLocalImageFields(t *testing.T) {
 	cfg.ExpectedDigestsPath = ""
 
 	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidateConnectedIgnoresProfile(t *testing.T) {
+	// The profile is a USB (disconnected) concern; a connected config needs none and an
+	// empty value must not be rejected.
+	cfg := baseInstallConfig()
+	cfg.Disconnected = false
+	cfg.Profile = ""
+
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidateDisconnectedRequiresProfile(t *testing.T) {
+	// A disconnected prepare records its media profile and selects the ibi-status (p4)
+	// re-entry guard behaviour from it, so an empty profile is rejected rather than
+	// defaulting silently.
+	cfg := baseInstallConfig()
+	cfg.PullSecret = ""
+	cfg.Disconnected = true
+	cfg.LocalImagesPath = testLocalImagesPath
+	cfg.ExpectedDigestsPath = testDigestsPath
+	cfg.Profile = ""
+
+	assert.EqualError(t, cfg.Validate(), "profile is required when disconnected is set")
+}
+
+func TestValidateDisconnectedRejectsUnknownProfile(t *testing.T) {
+	cfg := baseInstallConfig()
+	cfg.PullSecret = ""
+	cfg.Disconnected = true
+	cfg.LocalImagesPath = testLocalImagesPath
+	cfg.ExpectedDigestsPath = testDigestsPath
+	cfg.Profile = "bogus"
+
+	assert.EqualError(t, cfg.Validate(),
+		`profile must be "install-only" or "self-contained", got "bogus"`)
 }

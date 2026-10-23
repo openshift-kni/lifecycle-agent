@@ -17,6 +17,14 @@ import (
 const ImageBasedInstallConfigVersion = "v1beta1"
 
 const (
+	// ProfileInstallOnly media installs the seed and powers the node off on success.
+	ProfileInstallOnly = "install-only"
+	// ProfileSelfContained media installs the seed and then reconfigures the node from
+	// an on-media site configuration without contacting the network.
+	ProfileSelfContained = "self-contained"
+)
+
+const (
 	defaultExtraPartitionLabel = "var-lib-containers"
 	sshPublicKeyRegex          = "^(ssh-rsa AAAAB3NzaC1yc2|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNT|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzOD|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1Mj|ssh-ed25519 AAAAC3NzaC1lZDI1NTE5|ssh-dss AAAAB3NzaC1kc3)[0-9A-Za-z+/]+[=]{0,3}( .*)?$"
 )
@@ -155,6 +163,14 @@ type IBIPrepareConfig struct {
 	// Enforcement of this field is profile-dependent and is deferred to CNF-27162.
 	// +optional
 	ExpectedDigestsPath string `json:"expectedDigestsPath,omitempty"`
+
+	// Profile selects the USB-based IBI media profile that produced this config:
+	// ProfileInstallOnly or ProfileSelfContained. It is consumed by the prepare phase's
+	// writable ibi-status (p4) result write-back and re-entry guard, and is recorded in
+	// the per-phase result file. create-usb sets it from its build Mode. It is required
+	// for a disconnected prepare and ignored (not enforced) for a connected prepare.
+	// +optional
+	Profile string `json:"profile,omitempty"`
 }
 
 type ImageDigestSource struct {
@@ -274,6 +290,28 @@ func (c *IBIPrepareConfig) Validate() error {
 		}
 		if c.ExpectedDigestsPath == "" {
 			return fmt.Errorf("expectedDigestsPath is required when disconnected is set")
+		}
+		// A USB-based (disconnected) prepare must know its media profile: the profile is
+		// recorded in the per-phase result and selects the ibi-status (p4) re-entry guard
+		// behaviour, so an empty or unsupported value is rejected now rather than defaulting
+		// silently. When connected the field is ignored.
+		//
+		// Compatibility boundary: this Validate() runs in ReadIBIConfigFile at the cmd layer
+		// (lca-cli/cmd/ibi.go: runIBI), which log.Fatals before IBIPrepare.Run() mounts the
+		// ibi-status (p4) partition. A disconnected config that reaches this point without a
+		// profile -- notably pre-Profile media that already carries p4 but no profile field --
+		// therefore exits here and never writes prepare.json nor takes the promised powered-on
+		// halt. That boundary is accepted rather than closed: the USB-based disconnected
+		// prepare (p4/Profile) is unreleased, and its sole producer -- create-usb -- always
+		// emits a profile, so "p4 present but no profile" only exists as pre-release dev media.
+		// Routing this validation failure through the p4 finalize path is tracked for
+		// evaluation on CNF-27171.
+		switch c.Profile {
+		case ProfileInstallOnly, ProfileSelfContained:
+		case "":
+			return fmt.Errorf("profile is required when disconnected is set")
+		default:
+			return fmt.Errorf("profile must be %q or %q, got %q", ProfileInstallOnly, ProfileSelfContained, c.Profile)
 		}
 	}
 

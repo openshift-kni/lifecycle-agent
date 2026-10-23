@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
 
@@ -250,9 +251,10 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 		name         string
 		manifest     func() *Manifest
 		wantShutdown bool
+		wantProfile  string
 	}{
-		{"install-only ends in shutdown", validInstallOnly, true},
-		{"self-contained pivots (no shutdown)", validSelfContained, false},
+		{"install-only ends in shutdown", validInstallOnly, true, ibiconfig.ProfileInstallOnly},
+		{"self-contained pivots (no shutdown)", validSelfContained, false, ibiconfig.ProfileSelfContained},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,6 +279,12 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 			assert.Equal(t, filepath.Join(common.LocalImagesMountPath, digestManifestFileName), cfg["expectedDigestsPath"])
 			assert.Equal(t, testSeedImage, cfg["seedImage"])
 			assert.Equal(t, testInstallDisk, cfg["installationDisk"])
+			// The embedded disconnected config must carry a profile, otherwise the prepare
+			// phase's Validate() rejects it at boot before any prepare runs (CNF-27163).
+			assert.Equal(t, tc.wantProfile, cfg["profile"], "disconnected config must carry the profile")
+			derived := deriveIBIPrepareConfig(tc.manifest())
+			require.NoError(t, derived.Validate(),
+				"derived embedded config must pass the prepare-phase Validate()")
 			if tc.wantShutdown {
 				assert.Equal(t, true, cfg["shutdown"], "install-only must shut down")
 			} else {
