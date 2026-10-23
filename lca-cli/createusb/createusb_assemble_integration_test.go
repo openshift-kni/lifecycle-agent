@@ -227,8 +227,11 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 				dev := resolveLabel(t, realOps, loopDev, labelClusterConfig)
 				mnt := t.TempDir()
 				require.NoError(t, exec.Command("mount", dev, mnt).Run()) //nolint:gosec // fixed node + temp mountpoint
-				defer func() { _ = exec.Command("umount", mnt).Run() }()  //nolint:gosec // fixed temp mountpoint
 				assert.Equal(t, snapshotTree(p3Root), snapshotTree(mnt))
+				// Unmount before Close: a loop device with a mounted partition is not released by
+				// losetup -d (autoclear keeps it attached until the last unmount), so a lingering
+				// mount here would make assertLoopDetached below fail.
+				require.NoError(t, exec.Command("umount", mnt).Run()) //nolint:gosec // fixed temp mountpoint
 			}
 
 			// Read-back: the live ISO at the front of the image is byte-for-byte unchanged (its own
