@@ -112,6 +112,7 @@ func TestFailureHaltsPoweredOn(t *testing.T) {
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
 
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
@@ -367,6 +368,7 @@ func TestReentryOverFailureMarkerProceeds(t *testing.T) {
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
 	// The retry proceeds: the disk is cleaned up and written.
