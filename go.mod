@@ -27,7 +27,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/vmware-tanzu/velero v1.18.4
 	go.podman.io/image/v5 v5.41.2
-	go.podman.io/storage v1.64.2
+	go.podman.io/storage v1.65.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -57,7 +57,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
-	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
+	github.com/containerd/stargz-snapshotter/estargz v0.19.0 // indirect
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/ocicrypt v1.3.2 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
@@ -89,8 +89,8 @@ require (
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
-	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/klauspost/pgzip v1.2.7 // indirect
 	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/mattn/go-sqlite3 v1.14.48 // indirect
 	github.com/miekg/pkcs11 v1.1.2 // indirect
@@ -113,7 +113,8 @@ require (
 	github.com/stefanberger/go-pkcs11uri v0.0.0-20230803200340-78284954bff6 // indirect
 	github.com/stolostron/kubernetes-dependency-watches v0.10.2 // indirect
 	github.com/tchap/go-patricia/v2 v2.3.3 // indirect
-	github.com/ulikunitz/xz v0.5.16 // indirect
+	github.com/ulikunitz/xz v0.5.17 // indirect
+	github.com/varlink/go v0.4.1-0.20261015173642-c935be0c53f7 // indirect
 	github.com/vbatts/tar-split v0.12.3 // indirect
 	github.com/vbauerster/cupwriter v0.0.4 // indirect
 	github.com/vbauerster/mpb/v8 v8.14.0 // indirect
