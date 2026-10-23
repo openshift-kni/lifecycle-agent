@@ -2,7 +2,8 @@
 
 `lca-cli` creates OCI seed images for image-based upgrades and provides commands for
 image-based install, post-pivot configuration, and IP configuration. Its `create-usb`
-command currently creates a partitioned placeholder image for USB-based installation.
+command assembles bootable USB-based IBI media (the live ISO at LBA 0 with the data
+partitions appended after it).
 
 ## Motivation
 
@@ -97,61 +98,66 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 
 ## Creating USB media
 
-With `--output`, `create-usb` creates a sparse `.img` containing the planned GPT
-partition slots. p1 reserves space for the live ISO; p2 and p4 are empty ext4
-filesystems, and self-contained mode also gets an empty ext4 p3. The command does
-not download the ISO, populate images or site configuration, or verify bootability.
-**The output is not bootable installation media.** `--write-device` remains deferred.
+With `--output`, `create-usb` assembles bootable media following the CNF-27197-proven
+DOS/MBR layout: it builds the customized RHCOS live ISO, writes it to the **front of the
+image (LBA 0)** so the ISO's own DOS/MBR table and EFI boot entries are preserved, and
+appends the formatted, labelled data partitions after it. `--lca-image` is **required** for
+assembly. `--write-device` remains deferred: the only target is a sparse `.img`. The
+`ibi-images` partition is populated with the OCI image layout, the on-media `digests.json`,
+and the staged `lca-cli` binary (self-contained media also carries the read-only durability
+`store/`); the `ibi-status` partition ships empty (its runtime records are written on-node).
+Assembly fails if the resulting whole-stick size exceeds `--usb-size`. End-to-end boot
+verification on reference hardware is tracked by CNF-27158.
 
-The command reads a single YAML or JSON manifest and validates its schema and fields
-before creating the placeholder image. The p1 live-ISO build (`BuildLiveISO`), image
-mirroring (`BuildImageLayout`), and p3 content rendering (`RenderP3Tree`) are
-implemented as separate building blocks but are not yet called by `create-usb`.
-`BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its sha256 before
-use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the build),
-embeds a small ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
-customized ISO that is written into p1 once wired. The exact shipping `lca-cli` binary is
-extracted from `--lca-image` and **staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather
-than embedded in the ISO ignition, because at ~90 MB it far exceeds the fixed ISO ignition
-embed area; the embedded unit execs it from there once p2 is mounted. For the verified-ISO
-contract and the embedded-ignition details, and for the self-contained p3 config tree,
-digest pinning, and offline mirror-resource rules, see
-[docs/create-usb.md](../docs/create-usb.md).
+The command reads a single YAML or JSON manifest and validates its schema and fields, then
+builds the live ISO: `BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its
+sha256 before use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the
+build), embeds an ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
+customized ISO. The exact shipping `lca-cli` binary is extracted from `--lca-image` and
+**staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather than embedded in the ISO ignition,
+because at ~90 MB it far exceeds the fixed ISO ignition embed area; a label-based `.mount`
+unit in the embedded ignition mounts `ibi-images` and the embedded unit execs `lca-cli` from
+there. For the media layout rationale (why DOS/MBR, not GPT), the verified-ISO contract and
+embedded-ignition details, and the self-contained p3 config tree, digest pinning, and offline
+mirror-resource rules, see [docs/create-usb.md](../docs/create-usb.md).
 
-Creating the partition table requires a Linux host with loop-device access and
-`losetup`, `sgdisk`, `partprobe`, `udevadm`, and `mkfs.ext4` available. Run with
+Assembling the media requires a Linux host with loop-device access and `losetup`, `sfdisk`,
+`blockdev`, `udevadm`, `mkfs.ext4`, `mkfs.xfs`, `blkid`, and `lsblk` available. Run with
 sufficient privileges to create and format loopback partitions.
 
 ```bash
-./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
+./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img --lca-image <lca-cli-pullspec>
 ```
 
 ### Partition layout
 
-Provisional reservation sizes (the sparse `.img` does not consume real bytes until
-content is written). Labels are GPT names and, for p2–p4, also the ext4 filesystem
-labels:
+The customized live ISO owns the front of the media (its own ISO9660/EFI partitions); the
+data partitions below are **appended after it** in the free MBR slots. On-node code discovers
+them **by filesystem label**, not by partition number, so the number each one receives is an
+implementation detail. Provisional reservation sizes (the sparse `.img` does not consume real
+bytes until content is written):
 
-| Partition | Label | Size | Modes | Content today |
-| --- | --- | --- | --- | --- |
-| p1 | `live-iso` | 2 GiB | both | GPT reservation only today; the verified, ignition-customized bootable live ISO (`BuildLiveISO`) is written here once wired (CNF-27171) |
-| p2 | `ibi-images` | 8 GiB | both | Empty ext4 |
-| p3 | `cluster-config` | 256 MiB | self-contained only | Empty ext4 |
-| p4 | `ibi-status` | 64 MiB | both | Empty ext4 |
+| Role | Filesystem label | FS | Size | Modes | Content today |
+| --- | --- | --- | --- | --- | --- |
+| live ISO | — (ISO9660/EFI) | — | ISO size | both | The verified, ignition-customized bootable RHCOS live ISO at LBA 0 |
+| images | `ibi-images` | ext4 | 8 GiB | both | Empty (OCI image layout + `digests.json` populated by CNF-27171) |
+| config | `cluster-config` | ext4 | 256 MiB | self-contained only | Rendered `/opt/openshift` config tree (empty if none supplied) |
+| status | `ibi-status` | ext4 | 64 MiB | both | Empty (runtime records written on-node by CNF-27163) |
 
-install-only media is **p1 / p2 / p4**: the status partition keeps fixed number **4**
-even when p3 is omitted (it is not renumbered to p3).
+For **self-contained** media, MBR's four-primary limit (the ISO already uses two) means
+`ibi-images` is appended as a primary and `cluster-config` + `ibi-status` are logical
+partitions inside an MBR extended container.
 
 ### Flags
 
 | Flag | Description |
 | --- | --- |
 | `--manifest`, `-f` | Path to the USB-based IBI YAML/JSON manifest (required). |
-| `--auth-file` | Reserved for workstation mirror-registry credentials. Explicit use fails until image mirroring is wired into the command. |
-| `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use currently fails. |
-| `--lca-image` | Reserved for the lca-cli image in the on-media image set. Explicit use currently fails. |
+| `--auth-file` | Workstation credentials used at build time to pull `--lca-image` (never written to the media). |
+| `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use fails until image mirroring is wired in (CNF-27171). |
+| `--lca-image` | lca-cli image pull-spec. The exact shipping `lca-cli` binary is extracted from it and embedded in the live ISO. Required for media assembly. |
 | `--output` | Path of the `.img` file to write. The path must not already exist — the command refuses to overwrite an existing file. Mutually exclusive with `--write-device`; exactly one is required. |
-| `--write-device` | Reserved block-device target. The command rejects it while media assembly is incomplete. Mutually exclusive with `--output`; exactly one target is required. |
+| `--write-device` | Reserved block-device target. The command rejects it (the only supported target is a sparse `.img`). Mutually exclusive with `--output`; exactly one target is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
 | `--rhcos-live-iso-sha256` | Override the manifest `rhcosLiveIso.sha256`. Must be set together with `--rhcos-live-iso`. |
 

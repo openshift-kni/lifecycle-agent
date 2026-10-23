@@ -8,26 +8,88 @@ manifest. Two profiles are supported:
 - **self-contained** — media that installs the seed and then reconfigures the node from an
   on-media site configuration, without contacting the network.
 
-Today the CLI `lca-cli create-usb --output` path only scaffolds the GPT placeholder image
-(empty formatted partitions). The p1 live-ISO build (`BuildLiveISO`) and the p3 render /
-digest-pin / mirror-scan behavior below (`RenderP3Tree`, run from the separate
-`BuildImageLayout` stage) are implemented as standalone building blocks; they are not yet
-wired into the CLI (CNF-27171 wires them). See
-[lca-cli/README.md](../lca-cli/README.md#creating-usb-media) for the current CLI behavior and
-manifest schema.
+The CLI `lca-cli create-usb --output` path assembles bootable media: it builds the customized
+live ISO, writes it to the front of the image, appends the formatted, labelled data partitions
+after it (the layout below), and populates the `ibi-images` partition with the OCI image layout,
+the on-media `digests.json`, and the staged `lca-cli` binary (self-contained media also carries
+the read-only durability `store/`). The p3 render / digest-pin / mirror-scan behavior
+(`RenderP3Tree`, run from the `BuildImageLayout` stage) and the OCI image mirroring into
+`ibi-images` are wired into the command. See
+[lca-cli/README.md](../lca-cli/README.md#creating-usb-media) for the CLI behavior and manifest
+schema.
 
 This document describes the self-contained **p3 config tree**: how it is rendered from the
 manifest, how image references in the shipped manifests are pinned to digests, and which
-mirror resources are rejected. It also describes the **p1 live ISO** build block, which
-applies to both profiles, and the self-contained **p2 durability store** built from the
-image closure. (Apart from the p1 live ISO, install-only media is unaffected by everything
-below.)
+mirror resources are rejected. It also describes the **media layout**, the **live ISO** build
+block (both apply to both profiles), and the self-contained **p2 durability store** built from
+the image closure. (Apart from the media layout and live ISO, install-only media is unaffected
+by everything below.)
 
-## The p1 live ISO: verified source and embedded prepare
+## Creating USB media
 
-The p1 partition carries the bootable RHCOS live ISO, customized so the node runs
-`lca-cli ibi` automatically on boot. `BuildLiveISO` builds it as a standalone block (like
-`BuildImageLayout` and `RenderP3Tree`, it is wired into the CLI by CNF-27171):
+`create-usb` reads one YAML/JSON manifest, validates it, and assembles a bootable `.img` with
+`--output`. `--lca-image` is required (its `lca-cli` binary is extracted and staged on the media).
+`--write-device` is deferred — the only target today is a sparse `.img` that can be `dd`-ed to a
+stick later.
+
+```bash
+# install-only media
+lca-cli create-usb --manifest manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> --usb-size 14Gi
+
+# self-contained media (same command; the manifest's mode selects the profile)
+lca-cli create-usb --manifest manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> --auth-file ./auth.json --usb-size 32Gi
+```
+
+Both profiles use the same command; the manifest `mode` selects `install-only` vs
+`self-contained`. `--auth-file` supplies workstation registry credentials used at build time only
+(to pull `--lca-image` and mirror the image set); it is never written to the media.
+
+### Size budget (`--usb-size`)
+
+`--usb-size` is the whole-stick size budget (e.g. `14Gi`, `32G`). When set, the build fails if the
+**final apparent image size** — the live ISO plus every data partition and the MBR
+extended-container/alignment overhead — exceeds it, so the resulting `.img` is guaranteed to fit
+the target stick. The check validates the final apparent size rather than the staged-byte subtotal
+(`SizeReport.StagedBytes`), which deliberately excludes partition/alignment overhead. An empty
+`--usb-size` disables the check.
+
+## Media layout: the live ISO owns LBA 0
+
+The media follows the layout validated by the CNF-27197 USB-IBI testing-workflow spike and
+chosen by the Developer of Record: **the customized RHCOS live ISO owns the front of the media
+(LBA 0)**, and the data partitions are appended after it using the ISO's own **DOS/MBR**
+partition table.
+
+- The customized ISO is copied **byte-for-byte** to the front of the image, so its own DOS/MBR
+  table and the EFI entries that make it bootable under UEFI/Secure Boot stay at sector 0. The
+  image is then grown to the full media size.
+- The data partitions are appended into the free MBR slots **after** the ISO with
+  `sfdisk --append`; the ISO's own partitions are snapshotted first and never touched. MBR
+  allows only four primaries and the ISO uses two, so **install-only** appends two primaries
+  (`ibi-images`, `ibi-status`) and **self-contained** appends `ibi-images` as a primary plus an
+  MBR extended container holding the `cluster-config` and `ibi-status` logical partitions.
+- Partitions are discovered on-node **by filesystem label** (`ibi-images`, `cluster-config`,
+  `ibi-status`), never by partition number, so the number sfdisk assigns is an implementation
+  detail.
+
+Before the image is grown or appended to, the build **inspects the ISO's actual MBR table**
+(its occupied primary slots and the first safe append offset) and fails with a clear,
+actionable error if the ISO does not leave enough free primary slots for the selected mode —
+the layout is verified, not assumed.
+
+GPT was ruled out: a real RHCOS isohybrid live ISO has a hybrid DOS/GPT layout on which
+`sgdisk --move-second-header` fails (*"Invalid partition data!"*), so a GPT append path cannot
+assemble media. Writing the ISO as raw bytes into a GPT partition offset does not boot either,
+because the ISO's protective MBR/ESP never land at LBA 0. The DOS/MBR "append after the ISO"
+layout is the one the spike booted under Secure Boot. End-to-end boot verification on reference
+hardware is tracked by CNF-27158.
+
+## The live ISO: verified source and embedded prepare
+
+The live ISO at the front of the media is the bootable RHCOS live ISO, customized so the node
+runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
 
 1. **Verified ISO source (HTTPS + sha256).** The RHCOS live ISO is fetched from
    `rhcosLiveIso.url` **over HTTPS only** and its SHA-256 is verified against
@@ -36,31 +98,28 @@ The p1 partition carries the bootable RHCOS live ISO, customized so the node run
    refused), a download error (missing or unreachable source), or a checksum mismatch. The
    ISO host must therefore serve the ISO over HTTPS. The RHCOS live ISO on
    `mirror.openshift.com` is public and needs no pull secret; only the container images
-   mirrored into p2 need `--auth-file`.
-2. **Embedded ignition (config + unit only).** The build embeds a small ignition config
-   (version 3.2.0) that writes two things into the live environment: the rendered
-   `IBIPrepareConfig` at `/etc/lca-cli/ibi-config.json`, and a oneshot systemd unit
-   (`lca-ibi.service`) that runs `lca-cli ibi -f /etc/lca-cli/ibi-config.json` on boot. The
-   embedded config sets `disconnected: true`, `localImagesPath` to the on-node p2
-   (`ibi-images`) mount point, and `expectedDigestsPath` to the on-media `digests.json`.
-   `shutdown` is carried from the manifest: install-only ends in shutdown, self-contained sets
-   `shutdown: false` so `lca-cli` performs the pivot reboot (the pivot / pivot-failure logic
-   and its end-to-end verification are owned by CNF-27164).
+   mirrored into `ibi-images` need `--auth-file`.
+2. **Embedded ignition (config + units only).** The build embeds a small ignition config
+   (version 3.2.0) that writes into the live environment: the rendered `IBIPrepareConfig` at
+   `/etc/lca-cli/ibi-config.json`, a label-based systemd `.mount` unit for the `ibi-images`
+   partition (`Where=/var/mnt/ibi-images`, `What=/dev/disk/by-label/ibi-images`), and a oneshot
+   systemd unit (`lca-ibi.service`) that runs `lca-cli ibi -f /etc/lca-cli/ibi-config.json` on
+   boot, ordered after the `.mount`. The embedded config sets `disconnected: true`,
+   `localImagesPath` to the on-node `ibi-images` mount point, and `expectedDigestsPath` to the
+   on-media `digests.json`. `shutdown` is carried from the manifest: install-only ends in
+   shutdown, self-contained sets `shutdown: false` so `lca-cli` performs the pivot reboot (the
+   pivot / pivot-failure logic and its end-to-end verification are owned by CNF-27164).
 3. **Exact shipping binary, staged on p2 (not embedded in ignition).** The stock RHCOS live
    ISO ships no `lca-cli`, so the binary is extracted from the `--lca-image` container at build
    time. It is **not** embedded in the ISO ignition: at ~90 MB uncompressed it far exceeds the
    fixed RHCOS ISO ignition embed area (~256 KB) and embedding it would fail the build. Instead
-   the extracted binary is delivered on the p2 (`ibi-images`) partition at
+   the extracted binary is delivered on the `ibi-images` partition at
    `/var/mnt/ibi-images/lca-cli`, byte-identical to the binary that lives alongside the
-   mirrored images. The `lca-ibi.service` unit's `ExecStart` points at that path and declares
-   `RequiresMountsFor=/var/mnt/ibi-images`, so systemd waits for the p2 mount before running
-   it. The media-assembly wiring (CNF-27171) is what copies the extracted binary onto p2;
-   `BuildLiveISO` extracts and returns it for that step. This keeps the ISO ignition tiny
-   regardless of binary size.
-
-The customized ISO is written into the reserved p1 region with a **reservation-size guard**:
-if the customized ISO is larger than the p1 reservation, the build fails loudly rather than
-truncating the ISO.
+   mirrored images. The `lca-ibi.service` unit's `ExecStart` points at that path and is ordered
+   after the label-based `ibi-images` `.mount` unit (via `Requires=`/`After=`), so systemd pulls
+   in and waits for that mount before running it. The media-assembly pipeline copies the
+   extracted binary onto p2; `BuildLiveISO` extracts and returns it for that step. This keeps
+   the ISO ignition tiny regardless of binary size.
 
 ## The self-contained durability store (p2)
 
@@ -322,3 +381,28 @@ destroyed, so a second destructive prepare can never re-wipe a finished install.
   than powering off, so the power-off success signal stays unambiguous and the node remains
   reachable for a technician. A successful prepare whose result record could not be committed
   also halts powered-on rather than signalling success via power-off.
+
+## Threat model: physical possession is trusted
+
+USB-based IBI media is a **physical-possession-trusted** artifact: whoever holds the stick can
+read everything on it. The data partitions are **unencrypted**, so anyone with the media can read:
+
+- the on-media OCI image layout and `digests.json` (`ibi-images`), and the read-only durability
+  `store/` on self-contained media;
+- the **self-contained `cluster-config` tree**, which contains the site configuration — including
+  the **pull secret** it ships for the node. On self-contained media the pull secret is therefore
+  present on the stick in the clear.
+
+Protect the media accordingly: treat a self-contained stick as a secret-bearing credential, build
+it on a trusted workstation, hand it off over a trusted channel, and destroy or wipe it when the
+install is done. install-only media carries no site configuration or pull secret, so its exposure
+is limited to the mirrored image set.
+
+## Media signing (deferred)
+
+Requirement-driven, verifiable **media signing** (so a node can cryptographically verify the media
+it booted before trusting its contents) is **not implemented in this story**. The ISO source is
+fetched over HTTPS and verified by SHA-256 at build time, and the on-media image set is
+digest-pinned, but there is no end-to-end signature over the assembled media itself. Signing is
+tracked as deferred follow-up work; until it lands, media integrity rests on the
+physical-possession trust model above and the build-time digest/sha256 verification.
