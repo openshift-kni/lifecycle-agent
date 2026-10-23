@@ -18,6 +18,7 @@ package createusb
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,7 +91,8 @@ func TestWriteLiveISOToFrontMissingISO(t *testing.T) {
 }
 
 // writeMBRISO writes a stand-in ISO with a valid MBR carrying `used` non-empty primary partition
-// entries (and, when sig is false, no boot signature) and returns its path.
+// entries (and, when sig is false, no boot signature) and returns its path. The entries carry only
+// a type byte (zero start/length), so they occupy slots without reaching into the append region.
 func writeMBRISO(t *testing.T, used int, sig bool) string {
 	t.Helper()
 	b := make([]byte, mbrSectorSize)
@@ -104,28 +106,55 @@ func writeMBRISO(t *testing.T, used int, sig bool) string {
 	return writeISOWithContent(t, b)
 }
 
-// TestCountISOPrimaryPartitions covers MBR parsing: the used primary count and the boot-signature
-// and short-read guards.
-func TestCountISOPrimaryPartitions(t *testing.T) {
+// writeMBRISOExtent writes a stand-in ISO of fileSize bytes whose single occupied primary declares
+// the given start LBA and sector count, so its extent (start+length) can be driven past the first
+// safe append offset to exercise the overlap guard.
+func writeMBRISOExtent(t *testing.T, fileSize int, startLBA, sectorCount uint32) string {
+	t.Helper()
+	if fileSize < mbrSectorSize {
+		fileSize = mbrSectorSize
+	}
+	b := make([]byte, fileSize)
+	entry := b[mbrPartitionTableOffset:]
+	entry[mbrPartitionTypeOffset] = 0x83
+	binary.LittleEndian.PutUint32(entry[mbrPartitionStartLBAOffset:], startLBA)
+	binary.LittleEndian.PutUint32(entry[mbrPartitionSectorCountOffset:], sectorCount)
+	b[mbrSignatureOffset] = 0x55
+	b[mbrSignatureOffset+1] = 0xAA
+	return writeISOWithContent(t, b)
+}
+
+// TestInspectISOMBR covers MBR parsing: the used-primary count, the furthest partition extent, and
+// the boot-signature and short-read guards.
+func TestInspectISOMBR(t *testing.T) {
 	t.Run("counts used primaries", func(t *testing.T) {
-		n, err := countISOPrimaryPartitions(writeMBRISO(t, 2, true))
+		layout, err := inspectISOMBR(writeMBRISO(t, 2, true))
 		require.NoError(t, err)
-		assert.Equal(t, 2, n)
+		assert.Equal(t, 2, layout.usedPrimaries)
+		assert.Zero(t, layout.maxEndByte, "type-only entries reach no extent")
+	})
+	t.Run("reports the furthest partition extent", func(t *testing.T) {
+		// start=1 sector, length=10 sectors -> the partition ends at (1+10)*512 bytes.
+		layout, err := inspectISOMBR(writeMBRISOExtent(t, mbrSectorSize, 1, 10))
+		require.NoError(t, err)
+		assert.Equal(t, 1, layout.usedPrimaries)
+		assert.Equal(t, int64(11*mbrSectorSize), layout.maxEndByte)
 	})
 	t.Run("missing boot signature is rejected", func(t *testing.T) {
-		_, err := countISOPrimaryPartitions(writeMBRISO(t, 2, false))
+		_, err := inspectISOMBR(writeMBRISO(t, 2, false))
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "no MBR boot signature")
 	})
 	t.Run("short file is rejected", func(t *testing.T) {
-		_, err := countISOPrimaryPartitions(writeISOWithContent(t, []byte("tiny")))
+		_, err := inspectISOMBR(writeISOWithContent(t, []byte("tiny")))
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "MBR sector")
 	})
 }
 
 // TestValidateISOLayout is the ISO-layout precondition: an ISO that leaves enough free primary
-// slots passes, and one that does not fails with a clear error before any modification.
+// slots and whose partitions stay before the append offset passes, and one that violates either
+// invariant fails with a clear error before any modification.
 func TestValidateISOLayout(t *testing.T) {
 	t.Run("two used primaries leaves enough for either mode", func(t *testing.T) {
 		iso := writeMBRISO(t, 2, true)
@@ -143,5 +172,14 @@ func TestValidateISOLayout(t *testing.T) {
 		err := validateISOLayout(testLogger(), iso, partitionPlan(ModeSelfContained))
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "does not leave enough free primary slots")
+	})
+	t.Run("a partition extending past the append offset fails", func(t *testing.T) {
+		// A 512-byte ISO rounds up to a 1 MiB first-append offset; a partition spanning 2 MiB
+		// (4096 sectors) reaches into the append region and must be rejected even though it
+		// occupies only one slot.
+		iso := writeMBRISOExtent(t, mbrSectorSize, 0, 4096)
+		err := validateISOLayout(testLogger(), iso, partitionPlan(ModeInstallOnly))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "append region")
 	})
 }

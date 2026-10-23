@@ -32,8 +32,10 @@ package createusb
 // createusb_images_integration_test.go and is reused here.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +123,45 @@ func makeSyntheticISO(t *testing.T) string {
 	return p
 }
 
+// assertISOPreservedAfterAppend is the required partition-table read-back: it proves the live ISO at
+// the front of the assembled image is byte-for-byte identical to the original ISO after the data
+// partitions were appended with `sfdisk --append`. The append legitimately fills the previously-free
+// MBR primary slots with the new partition entries, so those slots are expected to differ; the ISO's
+// boot code, its own (occupied) partition entries, its boot signature, and every byte after the MBR
+// sector must be unchanged.
+func assertISOPreservedAfterAppend(t *testing.T, origISO []byte, imagePath string) {
+	t.Helper()
+	require.GreaterOrEqual(t, len(origISO), mbrSectorSize, "the original ISO must carry an MBR sector")
+
+	f, err := os.Open(imagePath) //nolint:gosec // test-only path under a temp dir
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	front := make([]byte, len(origISO))
+	_, err = io.ReadFull(f, front)
+	require.NoError(t, err, "reading the live ISO back from the front of the assembled image")
+
+	assert.Equal(t, origISO[:mbrPartitionTableOffset], front[:mbrPartitionTableOffset],
+		"MBR boot code must be unchanged by sfdisk --append")
+	assert.Equal(t, origISO[mbrSignatureOffset:mbrSectorSize], front[mbrSignatureOffset:mbrSectorSize],
+		"MBR boot signature must be unchanged by sfdisk --append")
+
+	appended := 0
+	for i := 0; i < mbrPartitionEntryCount; i++ {
+		off := mbrPartitionTableOffset + i*mbrPartitionEntrySize
+		origEntry := origISO[off : off+mbrPartitionEntrySize]
+		newEntry := front[off : off+mbrPartitionEntrySize]
+		if origEntry[mbrPartitionTypeOffset] != 0x00 {
+			assert.Equal(t, origEntry, newEntry, "the ISO's own MBR entry %d must be unchanged by the append", i)
+		} else if !bytes.Equal(origEntry, newEntry) {
+			appended++
+		}
+	}
+	assert.Positive(t, appended, "sfdisk --append must add the data-partition entries into the ISO's free MBR slots")
+
+	assert.Equal(t, origISO[mbrSectorSize:], front[mbrSectorSize:],
+		"every ISO byte after the MBR sector must be byte-for-byte unchanged by the append")
+}
+
 // resolveLabel returns the loop-device partition node whose filesystem label matches label.
 func resolveLabel(t *testing.T, realOps *opsPartitionOps, loopDev, label string) string {
 	t.Helper()
@@ -148,6 +189,10 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			realOps, deps := newRealMediaDeps()
 			iso := makeSyntheticISO(t)
+			// Snapshot the original ISO bytes (and thus its MBR) before assembly, for the
+			// read-back that proves the append never touched the ISO's own bytes or entries.
+			origISO, err := os.ReadFile(iso)
+			require.NoError(t, err)
 			img := filepath.Join(t.TempDir(), "media.img")
 
 			opts := BuildOptions{OutputPath: img}
@@ -185,6 +230,10 @@ func TestAssembleMediaRealLoopback(t *testing.T) {
 				defer func() { _ = exec.Command("umount", mnt).Run() }()  //nolint:gosec // fixed temp mountpoint
 				assert.Equal(t, snapshotTree(p3Root), snapshotTree(mnt))
 			}
+
+			// Read-back: the live ISO at the front of the image is byte-for-byte unchanged (its own
+			// MBR entries included) after the data partitions were appended with sfdisk --append.
+			assertISOPreservedAfterAppend(t, origISO, handle.ImagePath)
 
 			// Success teardown: Close detaches the loop device and removes the image.
 			require.NoError(t, handle.Close())

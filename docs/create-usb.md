@@ -121,6 +121,27 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    extracted binary onto p2; `BuildLiveISO` extracts and returns it for that step. This keeps
    the ISO ignition tiny regardless of binary size.
 
+### Executing `lca-cli` from `ibi-images`: exec-capable mount and SELinux context
+
+The `ibi-images` partition is mounted **read-only but without `noexec`**, because the boot-time
+`lca-ibi.service` execs the staged `lca-cli` binary directly from it. Dropping `noexec` is
+necessary but not sufficient under SELinux **enforcing**: the `ibi-images` ext4 filesystem is
+authored on the build host, so its on-disk labels are not the node's policy labels, and the staged
+binary would otherwise present the generic mount default (e.g. `unlabeled_t`/`mnt_t`), which the
+service domain is not permitted to execute.
+
+The concrete context and policy path is therefore to give the staged binary an **executable
+type**. LCA already establishes this pattern for a staged executable:
+`ops.prepareSELinuxTar` relabels a copied `tar` to **`install_exec_t`** (`chcon -t
+install_exec_t`) before running it. For a read-only mounted filesystem the equivalent is to assign
+an executable type to the mount via a `context=` mount option — the standard executable type is
+**`bin_t`**, i.e. `Options=ro,context=system_u:object_r:bin_t:s0` on the `.mount` unit — or to
+relabel the staged binary on first boot. Which of those two the node adopts, and the end-to-end
+**enforcing-mode boot verification** that the service domain can exec the binary under the chosen
+context, are delivered by the reference-hardware boot pass tracked in **CNF-27158** (a static
+unit-content check alone cannot prove execution works). This story keeps the mount exec-capable so
+that work can land the context without reworking the mount.
+
 ## The self-contained durability store (p2)
 
 For **self-contained** media the build stages a read-only durability store on the `p2`

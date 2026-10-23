@@ -390,10 +390,21 @@ func ibiImagesMountUnitName() string {
 // partition number, matching the on-node discovery contract; Where= is the on-node mount point.
 //
 // It is mounted read-only (the on-media OCI layout, lca-cli binary, and durability store are all
-// read-only runtime inputs) but WITHOUT noexec, because init_t must exec the staged lca-cli binary
-// from it on boot. The concrete SELinux file context that lets init_t exec that binary and the
-// enforcing-mode boot verification are delivered as the deferred boot pass under CNF-27158 (a
-// static unit-content check alone does not prove execution works).
+// read-only runtime inputs) but WITHOUT noexec, because the lca-ibi.service domain must exec the
+// staged lca-cli binary from it on boot.
+//
+// SELinux file context (identified here; enforcing-mode boot verification deferred to CNF-27158):
+// the ibi-images ext4 filesystem is authored on the build host, so its on-disk labels are not the
+// node's policy labels and the staged binary would otherwise mount as the generic mount default
+// (e.g. unlabeled_t / mnt_t), which the service domain may not execute. The concrete fix is to give
+// the binary an executable type. LCA already establishes this pattern for a staged executable:
+// ops.prepareSELinuxTar relabels a copied tar to install_exec_t via `chcon -t install_exec_t`
+// before executing it. For a read-only mounted filesystem the equivalent is to assign an executable
+// type to the mount with a `context=` mount option (the standard executable type is bin_t, i.e.
+// Options=ro,context=system_u:object_r:bin_t:s0), or to relabel the staged binary on first boot.
+// Which of those two the enforcing boot pass adopts is confirmed under CNF-27158, because a static
+// unit-content check alone cannot prove execution works; this unit leaves exec permitted (no noexec)
+// so that work can land the context without reworking the mount.
 func ibiImagesMountUnitContents() string {
 	return fmt.Sprintf(`[Unit]
 Description=LCA USB-based IBI images partition (%[1]s)

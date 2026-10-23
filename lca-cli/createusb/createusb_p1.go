@@ -26,6 +26,7 @@ package createusb
 // by createusb_p1_content.go.
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -41,15 +42,18 @@ const labelLiveISO = "live-iso"
 
 // MBR (DOS) partition-table geometry used to inspect the ISO's layout as a precondition. An MBR
 // lives in the first 512-byte sector: the partition table is four 16-byte entries at offset 446,
-// each carrying its partition type at byte 4 (0x00 = unused), and the sector ends with the
-// 0x55AA boot signature at offset 510.
+// each carrying its partition type at byte 4 (0x00 = unused), its absolute start sector (LBA) as a
+// little-endian uint32 at byte 8, and its length in sectors as a little-endian uint32 at byte 12.
+// The sector ends with the 0x55AA boot signature at offset 510.
 const (
-	mbrSectorSize           = 512
-	mbrPartitionTableOffset = 446
-	mbrPartitionEntrySize   = 16
-	mbrPartitionEntryCount  = 4
-	mbrPartitionTypeOffset  = 4
-	mbrSignatureOffset      = 510
+	mbrSectorSize                 = 512
+	mbrPartitionTableOffset       = 446
+	mbrPartitionEntrySize         = 16
+	mbrPartitionEntryCount        = 4
+	mbrPartitionTypeOffset        = 4
+	mbrPartitionStartLBAOffset    = 8
+	mbrPartitionSectorCountOffset = 12
+	mbrSignatureOffset            = 510
 )
 
 // requiredFreePrimarySlots is the number of top-level MBR slots assembleMedia appends after the
@@ -58,52 +62,86 @@ const (
 // ibi-status logicals). Both modes therefore need two free primary slots.
 const requiredFreePrimarySlots = 2
 
+// isoMBRLayout summarizes the ISO's MBR primary table: how many slots are occupied and the highest
+// byte offset any occupied partition reaches (start sector + length, in bytes). The precondition
+// needs both: the free-slot count, and whether any ISO partition extends into the region after the
+// ISO where the data partitions are appended.
+type isoMBRLayout struct {
+	// usedPrimaries is the number of non-empty primary entries (type byte != 0).
+	usedPrimaries int
+	// maxEndByte is the highest (start + length) offset, in bytes, across the occupied entries.
+	maxEndByte int64
+}
+
 // validateISOLayout inspects the customized live ISO's actual MBR partition table before the image
-// is grown or appended to, and fails with a clear, actionable error when the ISO does not leave
-// enough free primary slots for the selected mode. MBR has only four primary slots; a real RHCOS
-// isohybrid live ISO uses two (ISO9660 + ESP), leaving the two the append needs. This is verified,
-// not assumed: the append after the ISO would otherwise fail opaquely mid-build.
+// is grown or appended to, and fails with a clear, actionable error when the ISO cannot host the
+// append. MBR has only four primary slots; a real RHCOS isohybrid live ISO uses two (ISO9660 + ESP),
+// leaving the two the append needs. Two things are verified, not assumed, because either would
+// otherwise fail opaquely mid-build:
+//
+//  1. Enough free primary slots remain for the selected mode.
+//  2. No occupied ISO partition extends past the first safe append offset — the MiB-aligned end of
+//     the ISO's bytes, which is exactly where containerSize plans the first data partition and where
+//     `sfdisk --append` (which places new partitions after the last occupied sector) will land them.
+//     An ISO whose own partition table claims space in that region would push the appended
+//     partitions beyond the sized image, so it is rejected up front.
 func validateISOLayout(log *logrus.Logger, isoPath string, plan PartitionPlan) error {
-	used, err := countISOPrimaryPartitions(isoPath)
+	info, err := os.Stat(isoPath)
+	if err != nil {
+		return fmt.Errorf("stat live ISO %s: %w", isoPath, err)
+	}
+	layout, err := inspectISOMBR(isoPath)
 	if err != nil {
 		return err
 	}
-	free := mbrPartitionEntryCount - used
-	log.Infof("create-usb: live ISO MBR layout: %d of %d primary slots used, %d free (mode=%s needs %d free)",
-		used, mbrPartitionEntryCount, free, plan.Mode, requiredFreePrimarySlots)
+	free := mbrPartitionEntryCount - layout.usedPrimaries
+	log.Infof("create-usb: live ISO MBR layout: %d of %d primary slots used, %d free, partitions reach byte %d (mode=%s needs %d free)",
+		layout.usedPrimaries, mbrPartitionEntryCount, free, layout.maxEndByte, plan.Mode, requiredFreePrimarySlots)
 	if free < requiredFreePrimarySlots {
 		return fmt.Errorf("live ISO uses %d of %d MBR primary slots, leaving only %d free, but %s media must append %d partitions after the ISO; the ISO does not leave enough free primary slots to assemble %s media",
-			used, mbrPartitionEntryCount, free, plan.Mode, requiredFreePrimarySlots, plan.Mode)
+			layout.usedPrimaries, mbrPartitionEntryCount, free, plan.Mode, requiredFreePrimarySlots, plan.Mode)
+	}
+
+	appendOffset := alignUp(info.Size(), mib)
+	if layout.maxEndByte > appendOffset {
+		return fmt.Errorf("live ISO has a partition reaching byte %d, past the %d-byte first safe append offset where %s media appends its data partitions; the ISO's own partition table claims space in the append region, so create-usb cannot safely append after it",
+			layout.maxEndByte, appendOffset, plan.Mode)
 	}
 	return nil
 }
 
-// countISOPrimaryPartitions reads the ISO's MBR (first sector), validates the 0x55AA boot
-// signature, and returns the number of non-empty primary partition entries (type byte != 0). A
-// missing signature means the source is not a bootable DOS/MBR (isohybrid) image and is rejected.
-func countISOPrimaryPartitions(isoPath string) (int, error) {
+// inspectISOMBR reads the ISO's MBR (first sector), validates the 0x55AA boot signature, and returns
+// the occupied-primary count and the furthest byte offset any occupied partition reaches. A missing
+// signature means the source is not a bootable DOS/MBR (isohybrid) image and is rejected.
+func inspectISOMBR(isoPath string) (isoMBRLayout, error) {
 	f, err := os.Open(filepath.Clean(isoPath))
 	if err != nil {
-		return 0, fmt.Errorf("opening live ISO %s: %w", isoPath, err)
+		return isoMBRLayout{}, fmt.Errorf("opening live ISO %s: %w", isoPath, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	sector := make([]byte, mbrSectorSize)
 	if _, err := io.ReadFull(f, sector); err != nil {
-		return 0, fmt.Errorf("reading the live ISO %s MBR sector: %w", isoPath, err)
+		return isoMBRLayout{}, fmt.Errorf("reading the live ISO %s MBR sector: %w", isoPath, err)
 	}
 	if sector[mbrSignatureOffset] != 0x55 || sector[mbrSignatureOffset+1] != 0xAA {
-		return 0, fmt.Errorf("live ISO %s has no MBR boot signature (0x55AA); is the source a RHCOS isohybrid live ISO?", isoPath)
+		return isoMBRLayout{}, fmt.Errorf("live ISO %s has no MBR boot signature (0x55AA); is the source a RHCOS isohybrid live ISO?", isoPath)
 	}
 
-	used := 0
+	var layout isoMBRLayout
 	for i := 0; i < mbrPartitionEntryCount; i++ {
-		typeByte := sector[mbrPartitionTableOffset+i*mbrPartitionEntrySize+mbrPartitionTypeOffset]
-		if typeByte != 0x00 {
-			used++
+		entry := sector[mbrPartitionTableOffset+i*mbrPartitionEntrySize:]
+		if entry[mbrPartitionTypeOffset] == 0x00 {
+			continue
+		}
+		layout.usedPrimaries++
+		start := binary.LittleEndian.Uint32(entry[mbrPartitionStartLBAOffset:])
+		count := binary.LittleEndian.Uint32(entry[mbrPartitionSectorCountOffset:])
+		if end := (int64(start) + int64(count)) * mbrSectorSize; end > layout.maxEndByte {
+			layout.maxEndByte = end
 		}
 	}
-	return used, nil
+	return layout, nil
 }
 
 // WriteLiveISOToFront copies a built live ISO to the front of the media image at imgPath and
