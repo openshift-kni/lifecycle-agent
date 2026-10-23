@@ -258,7 +258,7 @@ func (f *failAppendOps) AttachLoopback(imgPath string) (string, error) {
 	return dev, err
 }
 
-func (f *failAppendOps) AppendDataPartitions(string, PartitionPlan) error {
+func (f *failAppendOps) AppendDataPartitions(string, PartitionPlan, int64) error {
 	return fmt.Errorf("injected append failure")
 }
 

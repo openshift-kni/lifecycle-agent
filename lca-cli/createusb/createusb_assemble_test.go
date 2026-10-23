@@ -73,10 +73,11 @@ type fakePartitionOps struct {
 	// can perturb the mountpoint (e.g. force a populate failure) deterministically.
 	onMount func(mountpoint string)
 
-	calls         []string
-	attached      []string
-	detached      []string
-	appendedPlans []PartitionPlan
+	calls               []string
+	attached            []string
+	detached            []string
+	appendedPlans       []PartitionPlan
+	appendedStartSector []int64
 
 	// format recording: every formatted node, in order, with its fs type and label.
 	formattedDevs    []string
@@ -122,9 +123,10 @@ func (f *fakePartitionOps) SnapshotPartitions(dev string) ([]string, error) {
 	return []string{dev + "p1", dev + "p2"}, nil
 }
 
-func (f *fakePartitionOps) AppendDataPartitions(dev string, plan PartitionPlan) error {
+func (f *fakePartitionOps) AppendDataPartitions(dev string, plan PartitionPlan, startSector int64) error {
 	f.calls = append(f.calls, "append")
 	f.appendedPlans = append(f.appendedPlans, plan)
+	f.appendedStartSector = append(f.appendedStartSector, startSector)
 	return f.appendErr
 }
 
@@ -345,20 +347,40 @@ func TestContainerSize(t *testing.T) {
 }
 
 func TestSfdiskAppendScript(t *testing.T) {
-	t.Run("install-only is two primaries", func(t *testing.T) {
-		script, err := sfdiskAppendScript(partitionPlan(ModeInstallOnly))
+	// A representative first-safe-append offset: 512 MiB expressed in 512-byte sectors.
+	const startSector = int64(512) * mib / mbrSectorSize
+
+	t.Run("install-only is two primaries with the first pinned to the append offset", func(t *testing.T) {
+		script, err := sfdiskAppendScript(partitionPlan(ModeInstallOnly), startSector)
 		require.NoError(t, err)
-		assert.Equal(t, fmt.Sprintf("size=%dM, type=83\nsize=%dM, type=83\n",
-			p2ReservationBytes/mib, p4ReservationBytes/mib), script)
+		assert.Equal(t, fmt.Sprintf("start=%d, size=%dM, type=83\nsize=%dM, type=83\n",
+			startSector, p2ReservationBytes/mib, p4ReservationBytes/mib), script)
 	})
 
 	t.Run("self-contained adds an extended container for the logicals", func(t *testing.T) {
-		script, err := sfdiskAppendScript(partitionPlan(ModeSelfContained))
+		script, err := sfdiskAppendScript(partitionPlan(ModeSelfContained), startSector)
 		require.NoError(t, err)
 		extMB := (p3ReservationBytes + p4ReservationBytes + extSlackBytes) / mib
 		assert.Equal(t, fmt.Sprintf(
-			"size=%dM, type=83\nsize=%dM, type=5\nsize=%dM, type=83\nsize=%dM, type=83\n",
-			p2ReservationBytes/mib, extMB, p3ReservationBytes/mib, p4ReservationBytes/mib), script)
+			"start=%d, size=%dM, type=83\nsize=%dM, type=5\nsize=%dM, type=83\nsize=%dM, type=83\n",
+			startSector, p2ReservationBytes/mib, extMB, p3ReservationBytes/mib, p4ReservationBytes/mib), script)
+	})
+
+	t.Run("only the first partition carries an explicit start", func(t *testing.T) {
+		// The remaining partitions must have no start= so sfdisk lays them out contiguously after
+		// the pinned first one; exactly one start= line proves the data partitions stay packed.
+		script, err := sfdiskAppendScript(partitionPlan(ModeSelfContained), startSector)
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(script, "start="),
+			"only the first appended partition is pinned; the rest follow contiguously")
+	})
+
+	t.Run("a non-positive start sector is rejected", func(t *testing.T) {
+		// A zero/negative start would place the first data partition at or before the ISO's own
+		// bytes, so the script builder refuses it rather than emitting a clobbering layout.
+		_, err := sfdiskAppendScript(partitionPlan(ModeInstallOnly), 0)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid append start sector")
 	})
 }
 
@@ -443,6 +465,14 @@ func TestAssembleMediaInstallOnly(t *testing.T) {
 	assert.Equal(t, []string{"/dev/loop9p3", "/dev/loop9p4"}, fp.formattedDevs)
 	assert.Equal(t, []string{labelIBIImages, labelIBIStatus}, fp.formattedLabels)
 	assert.Equal(t, []PartitionPlan{wantPlan}, fp.appendedPlans)
+
+	// The data partitions are appended starting at the first safe append offset (the MiB-aligned
+	// end of the ISO, in 512-byte sectors), never at sfdisk's first-unassigned sector, so a data
+	// partition can never land inside the copied ISO bytes.
+	isoFI, statErr := os.Stat(iso.ISOPath)
+	require.NoError(t, statErr)
+	wantStart := alignUpToMiB(isoFI.Size()) / mbrSectorSize
+	assert.Equal(t, []int64{wantStart}, fp.appendedStartSector)
 
 	// The image was created at the full container size, and success leaves it with the loop still
 	// attached (the caller owns teardown).

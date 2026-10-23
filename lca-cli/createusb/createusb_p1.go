@@ -105,7 +105,7 @@ func validateISOLayout(log *logrus.Logger, isoPath string, plan PartitionPlan) e
 			layout.usedPrimaries, mbrPartitionEntryCount, free, plan.Mode, requiredFreePrimarySlots, plan.Mode)
 	}
 
-	appendOffset := alignUp(info.Size(), mib)
+	appendOffset := alignUpToMiB(info.Size())
 	if layout.maxEndByte > appendOffset {
 		return fmt.Errorf("live ISO has a partition reaching byte %d, past the %d-byte first safe append offset where %s media appends its data partitions; the ISO's own partition table claims space in the append region, so create-usb cannot safely append after it",
 			layout.maxEndByte, appendOffset, plan.Mode)

@@ -184,8 +184,10 @@ type partitionOps interface {
 	SnapshotPartitions(dev string) (nodes []string, err error)
 	// AppendDataPartitions appends plan's data partitions into the free MBR slots after the ISO
 	// (sfdisk --append) and re-reads the kernel partition table. The ISO's own partitions are
-	// left untouched.
-	AppendDataPartitions(dev string, plan PartitionPlan) error
+	// left untouched. startSector pins the first appended partition's start to the first safe
+	// append offset (the MiB-aligned end of the ISO) so a data partition can never land inside the
+	// copied ISO bytes, regardless of where the ISO's own partitions end.
+	AppendDataPartitions(dev string, plan PartitionPlan, startSector int64) error
 	// DataPartitionNodes returns the device nodes of the data partitions appended after the ISO,
 	// in creation order (ibi-images, [cluster-config,] ibi-status). It selects the Linux
 	// (type 83) partitions that are not part of isoParts and are not the extended container, so
@@ -479,7 +481,17 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResu
 		return nil, fmt.Errorf("no partitions found on %s after writing the live ISO; is the source a RHCOS isohybrid live ISO?", loopDev)
 	}
 
-	if err = deps.partition.AppendDataPartitions(loopDev, plan); err != nil {
+	// Pin the first appended partition to the first safe append offset (the MiB-aligned end of the
+	// ISO), the same boundary containerSize sizes the image around. Without an explicit start,
+	// `sfdisk --append` uses the first unassigned sector, which for an ISO whose last occupied
+	// partition ends before that offset would land the data partition inside the copied ISO bytes
+	// and let mkfs overwrite them.
+	isoInfo, serr := os.Stat(isoPath)
+	if serr != nil {
+		return nil, fmt.Errorf("stat live ISO %s: %w", isoPath, serr)
+	}
+	appendStartSector := alignUpToMiB(isoInfo.Size()) / mbrSectorSize
+	if err = deps.partition.AppendDataPartitions(loopDev, plan, appendStartSector); err != nil {
 		return nil, fmt.Errorf("appending data partitions on %s: %w", loopDev, err)
 	}
 
@@ -579,7 +591,7 @@ func containerSize(isoPath string, plan PartitionPlan) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("stat live ISO %s: %w", isoPath, err)
 	}
-	total := alignUp(info.Size(), mib)
+	total := alignUpToMiB(info.Size())
 	for _, p := range plan.Partitions {
 		total += p.Size
 	}
@@ -587,12 +599,13 @@ func containerSize(isoPath string, plan PartitionPlan) (int64, error) {
 		total += extSlackBytes
 	}
 	total += slackBytes
-	return alignUp(total, mib), nil
+	return alignUpToMiB(total), nil
 }
 
-// alignUp rounds v up to the next multiple of align (align must be > 0).
-func alignUp(v, align int64) int64 {
-	return ((v + align - 1) / align) * align
+// alignUpToMiB rounds v up to the next whole mebibyte -- the alignment the media layout uses for
+// the ISO end and every appended partition boundary.
+func alignUpToMiB(v int64) int64 {
+	return ((v + mib - 1) / mib) * mib
 }
 
 // validateUSBSizeBudget fails the build when the resulting whole-stick size exceeds the --usb-size
@@ -680,8 +693,8 @@ func (p *opsPartitionOps) SnapshotPartitions(dev string) ([]string, error) {
 // extended container to hold the cluster-config and ibi-status logical partitions (MBR allows
 // only 4 primaries and the ISO already uses two). The sfdisk script is fed via a temp file
 // redirected on stdin because the host-ops executor has no stdin channel.
-func (p *opsPartitionOps) AppendDataPartitions(dev string, plan PartitionPlan) error {
-	script, err := sfdiskAppendScript(plan)
+func (p *opsPartitionOps) AppendDataPartitions(dev string, plan PartitionPlan, startSector int64) error {
+	script, err := sfdiskAppendScript(plan, startSector)
 	if err != nil {
 		return err
 	}
@@ -843,7 +856,16 @@ func parseSfdiskDump(out string) []sfdiskDumpEntry {
 // install-only it appends two primaries (ibi-images, ibi-status); for self-contained it appends
 // ibi-images as a primary, then an extended container sized to hold the cluster-config and
 // ibi-status logicals plus their EBR/alignment overhead.
-func sfdiskAppendScript(plan PartitionPlan) (string, error) {
+//
+// The first (ibi-images) partition is pinned to startSector -- the first safe append offset, the
+// MiB-aligned end of the ISO. sfdisk otherwise places an appended partition at the first
+// unassigned sector, which for an ISO whose last occupied partition ends before that offset would
+// start the data partition inside the copied ISO bytes and let mkfs overwrite them. The remaining
+// partitions carry no explicit start, so sfdisk lays them out contiguously after the first.
+func sfdiskAppendScript(plan PartitionPlan, startSector int64) (string, error) {
+	if startSector <= 0 {
+		return "", fmt.Errorf("invalid append start sector %d: the first data partition must start after the ISO", startSector)
+	}
 	images, ok := plannedPartition(plan, labelIBIImages)
 	if !ok {
 		return "", fmt.Errorf("media layout is missing the %q partition", labelIBIImages)
@@ -854,7 +876,7 @@ func sfdiskAppendScript(plan PartitionPlan) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "size=%dM, type=%s\n", images.Size/mib, mbrTypeLinux)
+	fmt.Fprintf(&b, "start=%d, size=%dM, type=%s\n", startSector, images.Size/mib, mbrTypeLinux)
 	if plan.Mode == ModeSelfContained {
 		config, ok := plannedPartition(plan, labelClusterConfig)
 		if !ok {
