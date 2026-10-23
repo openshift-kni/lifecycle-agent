@@ -50,6 +50,17 @@ import (
 	"go.podman.io/image/v5/types"
 )
 
+// gpgSimpleSigningFixture returns bytes that go.podman.io/image's signature.FromBlob accepts as a
+// "simple signing" signature. The leading 0x88 is an old-format OpenPGP signature-packet tag, which
+// is how a real detached GPG signature (the simple-signing format) begins; signature.FromBlob keys
+// off that first byte. The trailing bytes are opaque: ImportImage copies under an
+// insecureAcceptAnything policy, so no GPG verification runs, and containers-storage round-trips the
+// blob verbatim -- letting the test assert exact signature bytes. A plain-text payload would be
+// rejected on read-back with "unrecognized signature format".
+func gpgSimpleSigningFixture(payload string) []byte {
+	return append([]byte{0x88}, []byte(payload)...)
+}
+
 // platformInstanceDigest reads the multi-arch index blob at indexDigest from the OCI layout and
 // returns the manifest instance digest for arch.
 func platformInstanceDigest(t *testing.T, layoutDir string, indexDigest digest.Digest, arch string) digest.Digest {
@@ -88,8 +99,14 @@ func TestSignatureRestorationByDigestIntegration(t *testing.T) {
 	platformDigest := platformInstanceDigest(t, layoutDir, indexDigest, runtime.GOARCH)
 
 	// Stage index-level and per-platform signatures on the media, as the capture side does.
-	indexSig := []byte("index-level-signature-bytes")
-	platformSig := []byte("platform-instance-signature-bytes")
+	// The fixtures must be well-formed "simple signing" blobs: containers/storage parses every
+	// stored signature with signature.FromBlob on read-back (storage_src.go), which rejects a blob
+	// whose first byte is neither an OpenPGP packet tag nor the self-describing 0x00 prefix with
+	// "unrecognized signature format". A plain-text payload is therefore rejected before the
+	// restoration assertions run. gpgSimpleSigningFixture gives the bytes a leading OpenPGP
+	// signature-packet tag so they round-trip verbatim under the insecureAcceptAnything policy.
+	indexSig := gpgSimpleSigningFixture("index-level-signature-bytes")
+	platformSig := gpgSimpleSigningFixture("platform-instance-signature-bytes")
 	entry.Signatures = []InstanceSignatures{
 		{InstanceDigest: indexDigest.String(), Blobs: []SignatureBlob{stageTestSignature(t, layoutDir, indexDigest, 0, indexSig)}},
 		{InstanceDigest: platformDigest.String(), Blobs: []SignatureBlob{stageTestSignature(t, layoutDir, platformDigest, 0, platformSig)}},
