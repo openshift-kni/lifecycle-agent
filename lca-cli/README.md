@@ -327,7 +327,7 @@ and 2, which carry no `sources` / `signatures` respectively):
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
 | `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2+ only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
-| `images[].signatures` | list | Source-registry signatures keyed by manifest instance digest (index digest and each signed per-platform instance); each blob records `size`+`sha256`. Version 3 only; bytes live under `<ociLayoutPath>/signatures/`, re-attached on import. Omitted in v1/v2. |
+| `images[].signatures` | list | Source signatures keyed by manifest instance digest (top-level manifest/index digest and each signed per-platform instance); each blob records `size`+`sha256`. Version 3 only; bytes live under `<ociLayoutPath>/signatures/`, re-attached on import. Omitted in v1/v2. |
 
 **Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
 mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
@@ -356,9 +356,13 @@ which layout is live rather than trusting the just-written name. Builds against 
 are serialized by an advisory file lock, so concurrent builds cannot interleave their commit/GC
 steps and collect a layout the other build just made live.
 
-The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
-subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
-excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
+The image stage also emits an informational resulting-size estimate (the OCI-layout subtotal and
+the image-stage subtotal — the layout plus the on-media `digests.json`). This subtotal is reported
+for visibility only; it does not determine the `--usb-size` budget and omits content staged by the
+later media-assembly step and the final filesystem/ISO overhead. The budget is enforced separately
+by `validateUSBSizeBudget` against the final assembled image's apparent size (`containerSize`: the
+ISO plus every data partition, including the measured `ibi-images` payload and assembly/alignment
+overhead).
 
 ### Image trust and signature preservation
 

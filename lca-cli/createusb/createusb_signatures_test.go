@@ -150,3 +150,75 @@ func TestCaptureAndStageSignaturesUnsigned(t *testing.T) {
 	assert.Empty(t, out)
 	assert.NoDirExists(t, filepath.Join(layoutDir, localimages.SignaturesDirName))
 }
+
+// TestCaptureAndStageSignaturesConvertedTopLevelRejected covers the case where copy.Image
+// converted the source manifest (so the layout/top digest no longer matches the source digest
+// the registry signed) and the top-level manifest carries a signature: staging must fail closed
+// rather than key the signature to a digest it does not sign.
+func TestCaptureAndStageSignaturesConvertedTopLevelRejected(t *testing.T) {
+	layoutDir := t.TempDir()
+	manifestBlob := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`)
+	// topDigest is the post-conversion layout digest, deliberately different from the source digest.
+	topDigest := digest.FromBytes([]byte("converted-oci-manifest"))
+
+	src := &fakeSigSource{
+		manifestBlob: manifestBlob,
+		manifestType: imgspecv1.MediaTypeImageManifest,
+		sigs:         map[string][][]byte{"": {[]byte("the-signature")}},
+	}
+
+	out, err := captureAndStageSignatures(context.Background(), src, layoutDir, topDigest)
+	require.Error(t, err)
+	assert.Nil(t, out)
+	assert.Contains(t, err.Error(), "converted")
+	// Nothing is staged once staging is rejected.
+	assert.NoDirExists(t, filepath.Join(layoutDir, localimages.SignaturesDirName))
+}
+
+// TestCaptureAndStageSignaturesConvertedPlatformRejected covers a converted multi-arch index
+// whose top-level index is unsigned but a platform instance is signed: the guard must keep
+// checking past the unsigned index and still reject the signed platform instance.
+func TestCaptureAndStageSignaturesConvertedPlatformRejected(t *testing.T) {
+	layoutDir := t.TempDir()
+	instA := digest.FromBytes([]byte("amd64"))
+
+	index := imgspecv1.Index{
+		Versioned: specs.Versioned{SchemaVersion: 2},
+		MediaType: imgspecv1.MediaTypeImageIndex,
+		Manifests: []imgspecv1.Descriptor{
+			{Digest: instA, Size: 1, MediaType: imgspecv1.MediaTypeImageManifest},
+		},
+	}
+	blob, err := json.Marshal(index)
+	require.NoError(t, err)
+	// Converted: the layout/top digest differs from the source index digest.
+	topDigest := digest.FromBytes([]byte("converted-index"))
+
+	src := &fakeSigSource{
+		manifestBlob: blob,
+		manifestType: imgspecv1.MediaTypeImageIndex,
+		// The index itself is unsigned; only the amd64 instance carries a signature.
+		sigs: map[string][][]byte{instA.String(): {[]byte("amd64-sig")}},
+	}
+
+	out, err := captureAndStageSignatures(context.Background(), src, layoutDir, topDigest)
+	require.Error(t, err)
+	assert.Nil(t, out)
+	assert.Contains(t, err.Error(), "converted")
+}
+
+// TestCaptureAndStageSignaturesConvertedUnsignedAllowed confirms the conversion guard fires only
+// when signatures actually exist: converting an unsigned image is harmless, so staging succeeds.
+func TestCaptureAndStageSignaturesConvertedUnsignedAllowed(t *testing.T) {
+	layoutDir := t.TempDir()
+	manifestBlob := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`)
+	// Converted (top digest differs from the source digest), but the source has no signatures.
+	topDigest := digest.FromBytes([]byte("converted-but-unsigned"))
+
+	src := &fakeSigSource{manifestBlob: manifestBlob, manifestType: imgspecv1.MediaTypeImageManifest}
+
+	out, err := captureAndStageSignatures(context.Background(), src, layoutDir, topDigest)
+	require.NoError(t, err)
+	assert.Empty(t, out)
+	assert.NoDirExists(t, filepath.Join(layoutDir, localimages.SignaturesDirName))
+}

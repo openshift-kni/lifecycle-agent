@@ -452,8 +452,9 @@ layout:
 <ociLayoutPath>/signatures/<algo>/<encoded>/<n>   # the n-th signature of instance <algo>:<encoded>
 ```
 
-Signatures are captured for the **top-level index digest and every signed per-platform
-instance** (OpenShift release content is typically signed per instance). Each blob's size
+Signatures are captured for the **top-level manifest/index digest and every signed per-platform
+instance** (a single-arch image carries a manifest rather than an index; OpenShift release
+content is typically signed per instance). Each blob's size
 and sha256 are recorded in `digests.json` (`images[].signatures`, schema version 3), the
 bundle is read back and verified at build time, and because it lives inside the build-unique
 layout directory it is sized, staged, committed, and garbage-collected atomically with the

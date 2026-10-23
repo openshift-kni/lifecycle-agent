@@ -61,6 +61,18 @@ func captureAndStageSignatures(ctx context.Context, imgSrc types.ImageSource, la
 	if err != nil {
 		return nil, fmt.Errorf("reading source manifest: %w", err)
 	}
+	// If copy.Image converted the source's manifest media type (e.g. a Docker schema2 manifest
+	// copied into an OCI layout, which only accepts OCI manifests/indexes), the layout digest
+	// (topDigest) no longer matches the source digest the registry signed. An unpinned source is
+	// not restored to its original manifest (preservePinnedDockerManifest runs only for a
+	// digest-pinned source), so its captured signatures -- which sign srcDigest -- would be staged
+	// under topDigest, a digest they do not cover, and fail verification on the node. Detect the
+	// conversion here and fail closed below for any instance that actually carries signatures.
+	srcDigest, err := manifest.Digest(manifestBlob)
+	if err != nil {
+		return nil, fmt.Errorf("computing source manifest digest: %w", err)
+	}
+	converted := srcDigest != topDigest
 	if manifest.MIMETypeIsMultiImage(manifestType) {
 		list, err := manifest.ListFromBlob(manifestBlob, manifestType)
 		if err != nil {
@@ -77,6 +89,13 @@ func captureAndStageSignatures(ctx context.Context, imgSrc types.ImageSource, la
 		}
 		if len(sigs) == 0 {
 			continue
+		}
+		// A converted top-level manifest means the staged signatures would be keyed to a digest they
+		// do not sign. Keep checking every instance even when the top-level index is unsigned (a
+		// platform instance can still carry signatures), and reject only once signatures are found.
+		if converted {
+			return nil, fmt.Errorf("source manifest %s was converted to %s when copied into the OCI layout; "+
+				"its captured signatures cannot be preserved -- pin the image reference by digest", srcDigest, topDigest)
 		}
 		meta, err := stageInstanceSignatures(layoutDir, inst, sigs)
 		if err != nil {

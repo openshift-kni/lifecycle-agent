@@ -66,6 +66,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -463,7 +464,12 @@ func assembleMedia(ctx context.Context, log *logrus.Logger, m *Manifest, isoResu
 	// to the actual payload (the OCI layout + digests.json + the staged lca-cli binary + the
 	// self-contained durability store), not a fixed reservation. The staged tree is copied onto the
 	// formatted partition later by copyStagedIBIImages.
-	stagingRoot, err := os.MkdirTemp("", "create-usb-ibi-images-staging-")
+	//
+	// Stage beside the output image rather than in os.TempDir(): the payload is multiple GiB (the
+	// partition floor alone is 8 GiB), and on hosts where /tmp is a RAM-backed tmpfs (the Fedora
+	// default) staging there can fail with ENOSPC or pressure memory. The output volume is where the
+	// user already expects the large (sparse) image to be written.
+	stagingRoot, err := os.MkdirTemp(filepath.Dir(imgPath), "create-usb-ibi-images-staging-")
 	if err != nil {
 		return nil, fmt.Errorf("creating ibi-images staging directory: %w", err)
 	}
