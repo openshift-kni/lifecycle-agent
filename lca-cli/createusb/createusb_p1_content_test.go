@@ -310,6 +310,11 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 			assert.Contains(t, mountUnit.Contents,
 				fmt.Sprintf("Where=%s", common.LocalImagesMountPath))
 			assert.NotContains(t, mountUnit.Contents, "noexec", "ibi-images must be exec-capable so init_t can exec lca-cli")
+			// The build-host ext4 labels are not the node's policy labels, so the mount assigns bin_t
+			// via a context= option; without it the staged lca-cli mounts as unlabeled_t and the
+			// service domain cannot exec it under SELinux Enforcing (status=203/EXEC).
+			assert.Contains(t, mountUnit.Contents, "Options=ro,context=system_u:object_r:bin_t:s0",
+				"ibi-images must carry an executable SELinux context so init_t can exec lca-cli under Enforcing")
 
 			// The oneshot unit runs the staged p2 binary against the embedded config and is ordered
 			// after the .mount unit (Requires=/After=) so the binary is present before ExecStart.

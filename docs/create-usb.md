@@ -153,13 +153,14 @@ The concrete context and policy path is therefore to give the staged binary an *
 type**. LCA already establishes this pattern for a staged executable:
 `ops.prepareSELinuxTar` relabels a copied `tar` to **`install_exec_t`** (`chcon -t
 install_exec_t`) before running it. For a read-only mounted filesystem the equivalent is to assign
-an executable type to the mount via a `context=` mount option — the standard executable type is
-**`bin_t`**, i.e. `Options=ro,context=system_u:object_r:bin_t:s0` on the `.mount` unit — or to
-relabel the staged binary on first boot. Which of those two the node adopts, and the end-to-end
-**enforcing-mode boot verification** that the service domain can exec the binary under the chosen
-context, are delivered by the reference-hardware boot pass tracked in **CNF-27158** (a static
-unit-content check alone cannot prove execution works). This story keeps the mount exec-capable so
-that work can land the context without reworking the mount.
+an executable type to the whole mount via a `context=` mount option — the standard executable type
+is **`bin_t`**. The `.mount` unit therefore carries
+**`Options=ro,context=system_u:object_r:bin_t:s0`**: a single change that needs no first-boot
+relabel and works on the read-only filesystem, so the staged `lca-cli` presents `bin_t` and the
+service domain can exec it under enforcing. The end-to-end **enforcing-mode boot verification** of
+the IBI flow on reference hardware remains tracked under **CNF-27158** (a static unit-content check
+alone cannot prove execution works); a real USB boot has confirmed that, without this context, the
+service fails with `status=203/EXEC` because the binary mounts as `unlabeled_t`.
 
 ## The self-contained durability store (p2)
 
