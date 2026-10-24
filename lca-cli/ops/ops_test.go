@@ -1,10 +1,12 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -176,4 +178,102 @@ func TestWaitForEtcd_ResponseBodyDrained(t *testing.T) {
 	err := o.waitForEtcd(srv.URL)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, count.Load(), int32(3))
+}
+
+const (
+	crictlStopCmd = "crictl ps -q | xargs --no-run-if-empty --max-args 1 --max-procs 10 crictl stop --timeout 5"
+	crictlRmpCmd  = "crictl pods -q | xargs --no-run-if-empty crictl rmp -f"
+)
+
+// exitError returns a real *exec.ExitError with the given exit code.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %v", err)
+	}
+	return exitErr
+}
+
+func TestStopClusterServices(t *testing.T) {
+	errCrictl := errors.New("crictl stop failed")
+
+	testCases := []struct {
+		name           string
+		crioInactive   bool
+		setupCrictl    func(m *MockExecute)
+		crioStopErr    error
+		expectCrioStop bool
+		expectErr      string
+	}{
+		{
+			name: "containers stop on first attempt",
+			setupCrictl: func(m *MockExecute) {
+				m.EXPECT().Execute("bash", "-c", crictlStopCmd).Return("", nil).Times(1)
+			},
+			expectCrioStop: true,
+		},
+		{
+			name: "containers stop after a failed attempt",
+			setupCrictl: func(m *MockExecute) {
+				gomock.InOrder(
+					m.EXPECT().Execute("bash", "-c", crictlStopCmd).Return("", errCrictl),
+					m.EXPECT().Execute("bash", "-c", crictlStopCmd).Return("", nil),
+				)
+			},
+			expectCrioStop: true,
+		},
+		{
+			name: "containers never stop, falls back to sandbox removal",
+			setupCrictl: func(m *MockExecute) {
+				m.EXPECT().Execute("bash", "-c", crictlStopCmd).Return("", errCrictl).MinTimes(2)
+			},
+			expectCrioStop: true,
+		},
+		{
+			name:         "crio already inactive",
+			crioInactive: true,
+			setupCrictl: func(m *MockExecute) {
+				m.EXPECT().Execute("bash", "-c", crictlStopCmd).Times(0)
+			},
+		},
+		{
+			name: "crio stop fails",
+			setupCrictl: func(m *MockExecute) {
+				m.EXPECT().Execute("bash", "-c", crictlStopCmd).Return("", nil)
+			},
+			crioStopErr:    errors.New("stop failed"),
+			expectCrioStop: true,
+			expectErr:      "failed to stop crio engine",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockExec := NewMockExecute(ctrl)
+
+			mockExec.EXPECT().Execute("systemctl", "stop", "kubelet.service").Return("", nil)
+			mockExec.EXPECT().Execute("systemctl", "disable", "kubelet.service").Return("", nil)
+			if tc.crioInactive {
+				mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("inactive", exitError(t, 3))
+			} else {
+				mockExec.EXPECT().Execute("systemctl", "is-active", "crio").Return("active", nil)
+			}
+			tc.setupCrictl(mockExec)
+			if tc.expectCrioStop {
+				mockExec.EXPECT().Execute("bash", "-c", crictlRmpCmd).Return("", nil)
+				mockExec.EXPECT().Execute("systemctl", "stop", "crio.service").Return("", tc.crioStopErr)
+			}
+
+			o := &ops{log: logrus.New(), hostCommandsExecutor: mockExec, containerStopTimeout: 2 * time.Second}
+			err := o.StopClusterServices()
+			if tc.expectErr != "" {
+				assert.ErrorContains(t, err, tc.expectErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
