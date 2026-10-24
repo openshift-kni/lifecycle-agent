@@ -196,6 +196,26 @@ func (in BuildSpec) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in CRIOCredentialProviderConfig) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.CRIOCredentialProviderConfig"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in CRIOCredentialProviderConfigList) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.CRIOCredentialProviderConfigList"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in CRIOCredentialProviderConfigSpec) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.CRIOCredentialProviderConfigSpec"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in CRIOCredentialProviderConfigStatus) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.CRIOCredentialProviderConfigStatus"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in CertInfo) OpenAPIModelName() string {
 	return "com.github.openshift.api.config.v1.CertInfo"
 }
@@ -851,6 +871,11 @@ func (in KMSPluginConfig) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in KMSPluginConfigReference) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.KMSPluginConfigReference"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in KeystoneIdentityProvider) OpenAPIModelName() string {
 	return "com.github.openshift.api.config.v1.KeystoneIdentityProvider"
 }
@@ -1433,6 +1458,21 @@ func (in TokenRequiredClaim) OpenAPIModelName() string {
 // OpenAPIModelName returns the OpenAPI model name for this type.
 func (in TokenUserValidationRule) OpenAPIModelName() string {
 	return "com.github.openshift.api.config.v1.TokenUserValidationRule"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in TopologyState) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.TopologyState"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in TopologyTransition) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.TopologyTransition"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in TopologyTransitionStatus) OpenAPIModelName() string {
+	return "com.github.openshift.api.config.v1.TopologyTransitionStatus"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.

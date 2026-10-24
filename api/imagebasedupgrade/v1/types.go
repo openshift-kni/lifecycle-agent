@@ -171,7 +171,3 @@ type ImageBasedUpgradeList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ImageBasedUpgrade `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&ImageBasedUpgrade{}, &ImageBasedUpgradeList{})
-}
