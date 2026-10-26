@@ -62,6 +62,11 @@ var (
 	dnsServers                    []string
 	vlanID                        int
 	pullSecretRefName             string
+
+	// prePivotFlagsFile is the controller-written config file that replaces the
+	// command-line flags when present. It is a variable so the read can be
+	// redirected without a node workspace.
+	prePivotFlagsFile = common.IPConfigPrePivotFlagsFile
 )
 
 const (
@@ -146,7 +151,7 @@ func runIPConfigPrePivot() (retErr error) {
 		retErr = fmt.Errorf("ip config pre-pivot failed: %w", retErr)
 	}()
 
-	if data, err := os.ReadFile(common.IPConfigPrePivotFlagsFile); err == nil && len(data) > 0 {
+	if data, err := os.ReadFile(prePivotFlagsFile); err == nil && len(data) > 0 { //nolint:gosec // fixed controller-written path, redirected only in tests
 		var cfg common.IPConfigPrePivotConfig
 		if jsonErr := json.Unmarshal(data, &cfg); jsonErr == nil {
 			newStaterootName = cfg.NewStaterootName
@@ -518,7 +523,7 @@ func validateIPFamilyConfigArgs() error {
 // InferPrimaryStack determines the primary IP family by reading the node's current primary IP
 // and returns a pointer to "IPv4" or "IPv6".
 func inferPrimaryStack() (*string, error) {
-	data, err := os.ReadFile(PrimaryIPPath)
+	data, err := os.ReadFile(primaryIPFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read primary IP: %w", err)
 	}
