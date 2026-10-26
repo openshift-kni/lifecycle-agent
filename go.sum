@@ -285,8 +285,8 @@ github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9 h1:LKGy8
 github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9/go.mod h1:u6gMQe0iFj1Q9umceqAh28aEbovECBWZtwnk0uthGj0=
 github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3 h1:zTCUh4flIv7+4cVLWKXbcm9pKiR9V9k1uGRtrH5IjV8=
 github.com/openshift/machine-config-operator v0.0.1-0.20260605162018-a250b82705e3/go.mod h1:ThSzAlUNL+GIVhI3i7b3IukYxyhmUI2/aPNpTupI5vw=
-github.com/operator-framework/api v0.43.0 h1:ZMXghGPe3+h9dV964eVe+iBARgcxQIOLw+I1aMRwGHg=
-github.com/operator-framework/api v0.43.0/go.mod h1:psXOO7iwROhoer/I+v1FXPYAhuDqYuTgVJgFiL3z1sQ=
+github.com/operator-framework/api v0.45.0 h1:hkROwtsLH3oszp4IW+WsXEFSDgveSahHI7DKStOtrUI=
+github.com/operator-framework/api v0.45.0/go.mod h1:IQ4uuISTiIhV09oAurJSGD4KabayhY5nV6k1XmA235M=
 github.com/otiai10/copy v1.14.0 h1:dCI/t1iTdYGtkvCuBG2BgR6KZa83PTclw4U5n2wAllU=
 github.com/otiai10/copy v1.14.0/go.mod h1:ECfuL02W+/FkTWZWgQqXPWZgW9oeKCSQ5qVfSc4qc4w=
 github.com/otiai10/mint v1.5.1 h1:XaPLeE+9vGbuyEHem1JNk3bYc7KKqyI/na0/mLd/Kks=
@@ -590,8 +590,8 @@ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 h1:jVkFFVfXdXP74B/zbO3hM3hpSFD0x
 k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3/go.mod h1:M2s5JB1lIYP3jzZdorPLHXIPJzt9vv2muW5a6L9DtNM=
 open-cluster-management.io/api v1.4.0 h1:pHcuT0dljNVWqiMmwo7OjJ+CW8lZODBzAFJ5u4cgiqg=
 open-cluster-management.io/api v1.4.0/go.mod h1:/qLKuMbMS1+MpirTjaw4BoS3INKG8jV3s5J7iju48tg=
-open-cluster-management.io/config-policy-controller v0.19.0 h1:N0/rf3HEzVLT/Fj7evtNe2r1zPFyIW5Cn4LS7PKQpGc=
-open-cluster-management.io/config-policy-controller v0.19.0/go.mod h1:s90HOIy0pvI7hRB8TTtCVUj9YgaUJN9ROdPtkdZVlfc=
+open-cluster-management.io/config-policy-controller v0.20.1 h1:7McdnsXBTUdgGeIMLPDKdoWxvxy11IqKWN9EER8CqIE=
+open-cluster-management.io/config-policy-controller v0.20.1/go.mod h1:GJ6XIrNj2N79h5DjBjEpWVHs+2Yp+1RzweJMTGlReso=
 open-cluster-management.io/governance-policy-propagator v0.20.1 h1:J1yy43xU+U5sey8djnpltXU5GLxQAhNX1JJkDuOthv0=
 open-cluster-management.io/governance-policy-propagator v0.20.1/go.mod h1:RsdTN1UJoF8Hvd4KVktETcu79JKbbkZfOhnrZ9RqjOE=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 h1:/YpDJ4vReG7ZmzSpBGxduXgywWkJU9zHubgJG03MT+Y=
