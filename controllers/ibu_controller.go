@@ -221,6 +221,15 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Update status
 	if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {
 		r.Log.Error(err, "failed to update IBU CR status")
+	} else if inProgressStage == ibuv1.Stages.Upgrade && utils.IsStageCompleted(ibu, ibuv1.Stages.Upgrade) {
+		// The Upgrade completed and its status has now been persisted, so the local
+		// backup is no longer needed. Removing it here (rather than in PostPivot)
+		// ensures the backup survives if the completion-status update fails, so a
+		// re-entered PostPivot can still re-run the restore. A cleanup failure must
+		// not fail the upgrade; the idle handler cleans up as a fallback.
+		if cleanupErr := r.BackupRestore.CleanupBackups(ctx); cleanupErr != nil {
+			r.Log.Error(cleanupErr, "Failed to remove local backup files")
+		}
 	}
 
 	return

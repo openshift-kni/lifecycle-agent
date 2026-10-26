@@ -416,14 +416,12 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		return requeueWithHealthCheckInterval(), nil
 	}
 
-	// The restore is complete and the system is healthy, so the local backup is no
-	// longer needed. Remove it here (not in HandleRestore) so that a requeue after a
-	// transient health-check delay can still re-run the restore. A cleanup failure
-	// must not fail the upgrade; the idle handler cleans up as a fallback.
-	if err := u.BackupRestore.CleanupBackups(ctx); err != nil {
-		u.Log.Error(err, "Failed to remove local backup files")
-	}
-
+	// Note: the local backup is intentionally NOT removed here. PostPivot runs
+	// before Reconcile persists the completed Upgrade status; if that status update
+	// fails, a later reconcile can re-enter PostPivot and re-run the restore, which
+	// hard-fails if the backup was already deleted. Cleanup is therefore deferred to
+	// the Reconcile status-update path, once completion has been persisted, with the
+	// idle handler's CleanupBackups as a fallback.
 	if err := u.RebootClient.DisableInitMonitor(); err != nil {
 		// Don't fail the upgrade on failure here, just log it
 		u.Log.Error(err, "Unable to disable LCA init monitor")
@@ -488,8 +486,8 @@ func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMa
 	// can re-enter and call HandleRestore again (e.g. when a deferred health check
 	// requeues after a successful restore), and StartRestore hard-fails if the
 	// backup content is configured but missing on disk. The backup is cleaned up by
-	// PostPivot only after the deferred health checks pass, with the idle handler's
-	// CleanupBackups as a fallback.
+	// Reconcile once the completed Upgrade status has been persisted, with the idle
+	// handler's CleanupBackups as a fallback.
 
 	return doNotRequeue(), nil
 }
