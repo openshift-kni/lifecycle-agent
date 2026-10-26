@@ -91,15 +91,20 @@ func (p *Policy) InstallPolicies(cfg *rest.Config) (string, error) {
 		return "", fmt.Errorf("failed to create direct client: %w", err)
 	}
 
-	p0, err0 := parsePolicy(controllerTmpl, p.Namespace, parsePort(p.MetricAddr))
-	p1, err1 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, p.Namespace)
-	p2, err2 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, p.Namespace)
+	return installPolicies(c, p.Namespace, p.MetricAddr)
+}
+
+// installPolicies renders and creates the NetworkPolicies for namespace using c.
+func installPolicies(c client.Client, namespace, metricAddr string) (string, error) {
+	p0, err0 := parsePolicy(controllerTmpl, namespace, parsePort(metricAddr))
+	p1, err1 := parsePolicy(jobTmpl, prep.StaterootSetupJobName, namespace)
+	p2, err2 := parsePolicy(jobTmpl, precache.LcaPrecacheResourceName, namespace)
 	if err := cmp.Or(err0, err1, err2); err != nil {
 		return "", fmt.Errorf("failed to create NetworkPolicy from template: %w", err)
 	}
 	policies := []*networkingv1.NetworkPolicy{p0, p1, p2}
 
-	ownerRefs := getOwnerReference(c, p.Namespace)
+	ownerRefs := getOwnerReference(c, namespace)
 
 	result := []string{}
 	for _, p := range policies {
@@ -119,6 +124,11 @@ func Check(cfg *rest.Config, ns string) string {
 		return fmt.Sprintf("failed to create k8s client: %v", err)
 	}
 
+	return checkPolicies(c, ns)
+}
+
+// checkPolicies reports any NetworkPolicies present in ns using c.
+func checkPolicies(c client.Client, ns string) string {
 	policies := &networkingv1.NetworkPolicyList{}
 	if err := c.List(context.Background(), policies, client.InNamespace(ns)); err != nil {
 		return fmt.Sprintf("failed to list network policies in namespace %s: %v", ns, err)
