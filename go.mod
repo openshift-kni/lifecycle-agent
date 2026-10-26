@@ -18,7 +18,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20261021093739-9467096e1b0d
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9
-	github.com/operator-framework/api v0.43.0
+	github.com/operator-framework/api v0.45.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.53.0
@@ -37,7 +37,7 @@ require (
 	k8s.io/client-go v0.37.1
 	k8s.io/code-generator v0.37.1
 	open-cluster-management.io/api v1.4.0
-	open-cluster-management.io/config-policy-controller v0.19.0
+	open-cluster-management.io/config-policy-controller v0.20.1
 	open-cluster-management.io/governance-policy-propagator v0.20.1
 	sigs.k8s.io/controller-runtime v0.25.1
 	sigs.k8s.io/yaml v1.6.0

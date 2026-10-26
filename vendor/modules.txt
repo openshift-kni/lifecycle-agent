@@ -793,7 +793,7 @@ github.com/openshift/machine-config-operator/pkg/controller/common
 github.com/openshift/machine-config-operator/pkg/daemon/constants
 github.com/openshift/machine-config-operator/pkg/secrets
 github.com/openshift/machine-config-operator/pkg/version
-# github.com/operator-framework/api v0.43.0
+# github.com/operator-framework/api v0.45.0
 ## explicit; go 1.26.3
 github.com/operator-framework/api/pkg/lib/release
 github.com/operator-framework/api/pkg/lib/version
@@ -2012,8 +2012,8 @@ k8s.io/utils/trace
 # open-cluster-management.io/api v1.4.0
 ## explicit; go 1.26.0
 open-cluster-management.io/api/cluster/v1
-# open-cluster-management.io/config-policy-controller v0.19.0
-## explicit; go 1.25.7
+# open-cluster-management.io/config-policy-controller v0.20.1
+## explicit; go 1.26.3
 open-cluster-management.io/config-policy-controller/api/v1
 # open-cluster-management.io/governance-policy-propagator v0.20.1
 ## explicit; go 1.26.0
