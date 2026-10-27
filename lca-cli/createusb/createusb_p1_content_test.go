@@ -260,6 +260,9 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := renderEmbeddedIgnition(tc.manifest())
 			require.NoError(t, err)
+			var rawIgn map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &rawIgn))
+			assert.NotContains(t, rawIgn, "passwd", "no SSH authorization should be embedded without a key")
 
 			var ign parsedIgnition
 			require.NoError(t, json.Unmarshal(out, &ign))
@@ -328,6 +331,26 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 			assert.Contains(t, serviceUnit.Contents, "WantedBy=multi-user.target")
 		})
 	}
+}
+
+func TestRenderEmbeddedIgnitionSSHAccess(t *testing.T) {
+	m := validSelfContained()
+	m.SiteConfig.SSHKey = "ssh-ed25519 AAAAtest live-access"
+
+	out, err := renderEmbeddedIgnition(m)
+	require.NoError(t, err)
+	var ign struct {
+		Passwd struct {
+			Users []struct {
+				Name              string   `json:"name"`
+				SSHAuthorizedKeys []string `json:"sshAuthorizedKeys"`
+			} `json:"users"`
+		} `json:"passwd"`
+	}
+	require.NoError(t, json.Unmarshal(out, &ign))
+	require.Len(t, ign.Passwd.Users, 1)
+	assert.Equal(t, "core", ign.Passwd.Users[0].Name)
+	assert.Equal(t, []string{m.SiteConfig.SSHKey}, ign.Passwd.Users[0].SSHAuthorizedKeys)
 }
 
 // TestEmbeddedIgnitionStaysUnderEmbedArea is the size regression for the option-A packaging:
