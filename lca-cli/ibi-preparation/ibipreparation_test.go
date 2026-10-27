@@ -498,6 +498,7 @@ func saveSeams(t *testing.T) {
 	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
 	origExchange := exchangeStoreDirs
 	origPivotTimeout := pivotRebootTimeout
+	origSelectBoot, origUEFI, origESPMount := selectPivotBootTarget, isUEFIBooted, espMountDir
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
@@ -509,6 +510,9 @@ func saveSeams(t *testing.T) {
 		verifyPersistedStore = origVerify
 		exchangeStoreDirs = origExchange
 		pivotRebootTimeout = origPivotTimeout
+		selectPivotBootTarget = origSelectBoot
+		isUEFIBooted = origUEFI
+		espMountDir = origESPMount
 	})
 }
 
@@ -1606,7 +1610,8 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 func TestSelfContainedPivotIssuedAfterSuccessFlush(t *testing.T) {
 	stubDisconnectedSeams(t)
 	statusDir := useTempStatusPartition(t)
-	pivotRebootTimeout = 0 // do not block on the real reboot grace period
+	selectPivotBootTarget = func(*IBIPrepare) error { return nil } // boot-target selection is covered separately
+	pivotRebootTimeout = 0                                         // do not block on the real reboot grace period
 
 	var events []string
 	record := func(name string) func(string, ...string) (string, error) {

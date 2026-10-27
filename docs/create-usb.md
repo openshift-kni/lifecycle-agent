@@ -428,8 +428,10 @@ rather than being lost in the buffer cache. Its schema:
 
 `pivot` is the self-contained pivot sub-status, distinct from `reentry`. It is `none` on
 every result and is amended to `failed` only when a self-contained prepare's on-USB pivot into
-the installed disk does not take (see the terminal action below). install-only media never
-pivots, so it stays `none` there.
+the installed disk does not take (see the terminal action below) — whether because the installed
+disk could not be selected as the next boot target, the reboot command errored, or the node was
+still in the live ISO after the grace period. install-only media never pivots, so it stays
+`none` there.
 
 `ext4` is required: the atomic write contract above only holds on a journaled filesystem, so
 create-usb rejects `vfat` for this partition at build time.
@@ -460,10 +462,28 @@ The terminal action on a **successful** prepare is mutually exclusive per profil
   `ibi-status` partition, so the success record is already durable when the node reboots. The
   reboot is issued through a transient systemd unit so it survives the prepare service being
   torn down as the node goes down.
-  - If the pivot does not take — the reboot command errors, or it is issued but the node is
-    still in the live ISO after a grace period — the prepare phase amends `prepare.json` with
-    `pivot: failed` (distinct from `reentry: blocked`, preserving `result: success`) and
-    **halts the node powered-on** rather than leaving it idling in the live ISO.
+  - **Selecting the installed disk as the next boot target.** A plain reboot does not change the
+    boot device, and the self-contained USB stays inserted (p3 is consumed by on-USB reconfigure
+    *after* the pivot), so if the firmware still prioritizes the removable device the node would
+    re-boot the live ISO and the re-entry guard would block the destructive prepare. Before
+    issuing the reboot the prepare phase therefore points the firmware at the installed disk:
+    - On **UEFI** it sets a one-time `efibootmgr` **BootNext** to the installed disk's EFI System
+      Partition (reusing an existing boot entry that points at that ESP, or creating one for the
+      ESP's verified bootloader), and **verifies** the setting before rebooting. A one-time
+      override is used so the persistent `BootOrder` is left untouched. If the target cannot be
+      selected or verified — no ESP, no verified bootloader, or an unverifiable `BootNext` — the
+      pivot is treated as failed (see below) rather than issuing a reboot that could land back in
+      the live ISO.
+    - On **legacy BIOS** there is no `BootNext` equivalent, so the pivot cannot *guarantee* the
+      firmware boots the installed disk. Booting the disk then relies on a **documented,
+      hardware-tested boot-order arrangement** (the installed disk ordered ahead of the USB, or
+      the USB removed); the prepare phase logs this dependency and proceeds with the reboot.
+  - If the pivot does not take — the installed disk could not be selected as the next boot target,
+    the reboot command errors, or it is issued but the node is still in the live ISO after a grace
+    period — the prepare phase amends `prepare.json` with `pivot: failed` (distinct from
+    `reentry: blocked`, preserving `result: success`), **refreshes the diagnostic log bundle** so
+    it covers the pivot attempt, and **halts the node powered-on** rather than leaving it idling
+    in the live ISO.
 
 On **failure**, the node **halts powered-on** (it isolates the emergency target) rather than
 powering off, so the power-off success signal stays unambiguous and the node remains reachable
