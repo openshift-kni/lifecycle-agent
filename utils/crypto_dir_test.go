@@ -179,7 +179,7 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir(t *testing.T) {
 	}
 }
 
-func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_CreatesDirectory(t *testing.T) {
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_EmptyDoesNotCreateDirectory(t *testing.T) {
 	dir := t.TempDir()
 	cryptoDir := path.Join(dir, "nested", "crypto")
 
@@ -187,7 +187,16 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_CreatesDirectory(t *t
 	err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention)
 	assert.NoError(t, err)
 
-	info, err := os.Stat(cryptoDir)
-	assert.NoError(t, err)
-	assert.True(t, info.IsDir())
+	_, err = os.Stat(cryptoDir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_RejectsPartial(t *testing.T) {
+	cryptoDir := path.Join(t.TempDir(), "crypto")
+	retention := &seedreconfig.KubeConfigCryptoRetention{}
+	retention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey = "key"
+	err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention)
+	assert.ErrorContains(t, err, "admin_ca_certificate")
+	_, statErr := os.Stat(cryptoDir)
+	assert.True(t, os.IsNotExist(statErr))
 }

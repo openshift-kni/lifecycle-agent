@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -17,6 +18,12 @@ const (
 )
 
 func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) error {
+	if kubeconfigCryptoRetention == nil || *kubeconfigCryptoRetention == (seedreconfig.KubeConfigCryptoRetention{}) {
+		return nil
+	}
+	if err := validateKubeconfigCryptoRetention(kubeconfigCryptoRetention); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(cryptoDir, 0700); err != nil {
 		return fmt.Errorf("error creating %s: %w", cryptoDir, err)
 	}
@@ -46,6 +53,30 @@ func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubecon
 		return fmt.Errorf("error writing ingresskey-ingress-operator.key: %w", err)
 	}
 
+	return nil
+}
+
+// validateKubeconfigCryptoRetention rejects partial retention before recert is
+// configured to reuse the supplied keys.
+func validateKubeconfigCryptoRetention(retention *seedreconfig.KubeConfigCryptoRetention) error {
+	if retention == nil {
+		return fmt.Errorf("crypto retention is missing")
+	}
+	fields := []struct {
+		name  string
+		value seedreconfig.PEM
+	}{
+		{"admin_ca_certificate", retention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate},
+		{"loadbalancer_external_signer_private_key", retention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey},
+		{"localhost_signer_private_key", retention.KubeAPICrypto.ServingCrypto.LocalhostSignerPrivateKey},
+		{"service_network_signer_private_key", retention.KubeAPICrypto.ServingCrypto.ServiceNetworkSignerPrivateKey},
+		{"ingress_ca", retention.IngresssCrypto.IngressCAPrivateKey},
+	}
+	for _, field := range fields {
+		if strings.TrimSpace(string(field.value)) == "" {
+			return fmt.Errorf("%s is missing from kubeconfig crypto retention", field.name)
+		}
+	}
 	return nil
 }
 
