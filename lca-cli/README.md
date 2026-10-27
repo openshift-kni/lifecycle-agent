@@ -215,7 +215,7 @@ Fields common to both profiles (all required):
 | `nodeIPs` | list of string | Node IP addresses (optional; each entry must be a valid IP). |
 | `machineNetworks` | list of string | Machine network CIDRs (optional; each entry must be a valid CIDR). |
 | `rawNMStateConfig` | string | NMState configuration YAML, provided as a string. |
-| `sshKey` | string | Optional public SSH key for the live ISO's `core` user and the installed node. Omit it if SSH access is not needed; the installer still runs normally. When set, it enables remote monitoring or troubleshooting during USB prepare if the live environment has network connectivity. Never provide a private key. |
+| `sshKey` | string | Optional OpenSSH public authorized key(s) for the live ISO's `core` user and the installed node. One key per line when authorizing multiple operators. Omit it if SSH access is not needed; the installer still runs normally. When set, it enables remote monitoring or troubleshooting during USB prepare if the live environment has network connectivity. Never provide a private key. |
 | `pullSecret` | string | Pull secret, as literal JSON or an `@file` reference (see below). Required. |
 
 The manifest is parsed strictly: unknown fields and duplicate keys are rejected.

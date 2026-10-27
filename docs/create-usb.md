@@ -148,14 +148,16 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
 
 `siteConfig.sshKey` is optional. Omit it when live ISO SSH access is not needed; the USB
 image still builds and the automatic installation proceeds normally. To monitor or
-troubleshoot prepare remotely, set it to a **public** SSH key in a self-contained manifest.
-For example, obtain the public half of a local private key with
-`ssh-keygen -y -f ~/.ssh/id_ed25519`, then
-place the resulting single line in the manifest:
+troubleshoot prepare remotely, set it to one or more **public** OpenSSH authorized keys
+in a self-contained manifest (one key per line). For example, obtain the public half of a
+local private key with `ssh-keygen -y -f ~/.ssh/id_ed25519`, then place the resulting
+line(s) in the manifest:
 
 ```yaml
 siteConfig:
-  sshKey: "ssh-ed25519 AAAA... operator@example"
+  sshKey: |
+    ssh-ed25519 AAAA... operator@example
+    ssh-ed25519 AAAA... operator2@example
 ```
 
 After the USB boots and the live environment has network connectivity, connect with

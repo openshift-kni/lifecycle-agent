@@ -30,7 +30,6 @@ limitations under the License.
 package createusb
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -92,9 +91,11 @@ type SiteConfig struct {
 	Hostname         string   `json:"hostname,omitempty"`
 	NodeIPs          []string `json:"nodeIPs,omitempty"`
 	MachineNetworks  []string `json:"machineNetworks,omitempty"`
-	RawNMStateConfig string   `json:"rawNMStateConfig,omitempty"`
-	SSHKey           string   `json:"sshKey,omitempty"`
-	PullSecret       string   `json:"pullSecret,omitempty"`
+	RawNMStateConfig string `json:"rawNMStateConfig,omitempty"`
+	// SSHKey is one or more OpenSSH public authorized keys (newline-separated) for the
+	// live ISO core user and the installed node. Never provide a private key.
+	SSHKey     string `json:"sshKey,omitempty"`
+	PullSecret string `json:"pullSecret,omitempty"`
 }
 
 // Manifest is the §6.3 single-manifest schema for `lca-cli create-usb`.
@@ -362,25 +363,41 @@ func (m *Manifest) validateSiteConfigNetworkFields() error {
 	return nil
 }
 
-// validateSiteConfigSSHKey validates the optional siteConfig.sshKey: when set it must be
-// exactly one parseable OpenSSH public authorized key. Private-key PEM material and
-// multi-key / trailing junk values are rejected so they cannot be embedded in the image.
+// validateSiteConfigSSHKey validates the optional siteConfig.sshKey: when set it must
+// contain one or more parseable OpenSSH public authorized keys. Private-key PEM material
+// and malformed lines are rejected so they cannot be embedded in the image.
 func (m *Manifest) validateSiteConfigSSHKey() error {
-	raw := strings.TrimSpace(m.SiteConfig.SSHKey)
+	_, err := parseSSHAuthorizedKeys(m.SiteConfig.SSHKey)
+	return err
+}
+
+// parseSSHAuthorizedKeys returns the non-empty, non-comment public authorized key lines
+// from sshKey. An empty/whitespace value yields a nil slice (the field is optional).
+// Private-key PEM material and any non-empty line that is not a valid authorized key are
+// rejected.
+func parseSSHAuthorizedKeys(sshKey string) ([]string, error) {
+	raw := strings.TrimSpace(sshKey)
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	if strings.Contains(raw, "PRIVATE KEY") {
-		return fmt.Errorf("siteConfig.sshKey must be a public authorized key, not private-key material")
+		return nil, fmt.Errorf("siteConfig.sshKey must be public authorized key(s), not private-key material")
 	}
-	_, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(raw))
-	if err != nil {
-		return fmt.Errorf("siteConfig.sshKey is not a valid public authorized key: %w", err)
+	var keys []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line)); err != nil {
+			return nil, fmt.Errorf("siteConfig.sshKey contains a malformed public authorized key: %w", err)
+		}
+		keys = append(keys, line)
 	}
-	if len(bytes.TrimSpace(rest)) > 0 {
-		return fmt.Errorf("siteConfig.sshKey must contain exactly one public authorized key")
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("siteConfig.sshKey must contain at least one public authorized key")
 	}
-	return nil
+	return keys, nil
 }
 
 // validateManifestSources rejects a manifest source with an empty path: each entry must

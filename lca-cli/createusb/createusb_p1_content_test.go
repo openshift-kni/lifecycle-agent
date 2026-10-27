@@ -334,23 +334,42 @@ func TestRenderEmbeddedIgnition(t *testing.T) {
 }
 
 func TestRenderEmbeddedIgnitionSSHAccess(t *testing.T) {
-	m := validSelfContained()
-	m.SiteConfig.SSHKey = "ssh-ed25519 AAAAtest live-access"
+	t.Run("single key", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey
 
-	out, err := renderEmbeddedIgnition(m)
-	require.NoError(t, err)
-	var ign struct {
-		Passwd struct {
-			Users []struct {
-				Name              string   `json:"name"`
-				SSHAuthorizedKeys []string `json:"sshAuthorizedKeys"`
-			} `json:"users"`
-		} `json:"passwd"`
-	}
-	require.NoError(t, json.Unmarshal(out, &ign))
-	require.Len(t, ign.Passwd.Users, 1)
-	assert.Equal(t, "core", ign.Passwd.Users[0].Name)
-	assert.Equal(t, []string{m.SiteConfig.SSHKey}, ign.Passwd.Users[0].SSHAuthorizedKeys)
+		out, err := renderEmbeddedIgnition(m)
+		require.NoError(t, err)
+		var ign struct {
+			Passwd struct {
+				Users []struct {
+					Name              string   `json:"name"`
+					SSHAuthorizedKeys []string `json:"sshAuthorizedKeys"`
+				} `json:"users"`
+			} `json:"passwd"`
+		}
+		require.NoError(t, json.Unmarshal(out, &ign))
+		require.Len(t, ign.Passwd.Users, 1)
+		assert.Equal(t, "core", ign.Passwd.Users[0].Name)
+		assert.Equal(t, []string{validSSHPublicKey}, ign.Passwd.Users[0].SSHAuthorizedKeys)
+	})
+	t.Run("multiple keys become separate authorized key entries", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey + "\n# operator B\n" + validSSHPublicKey2
+
+		out, err := renderEmbeddedIgnition(m)
+		require.NoError(t, err)
+		var ign struct {
+			Passwd struct {
+				Users []struct {
+					SSHAuthorizedKeys []string `json:"sshAuthorizedKeys"`
+				} `json:"users"`
+			} `json:"passwd"`
+		}
+		require.NoError(t, json.Unmarshal(out, &ign))
+		require.Len(t, ign.Passwd.Users, 1)
+		assert.Equal(t, []string{validSSHPublicKey, validSSHPublicKey2}, ign.Passwd.Users[0].SSHAuthorizedKeys)
+	})
 }
 
 // TestEmbeddedIgnitionStaysUnderEmbedArea is the size regression for the option-A packaging:
