@@ -497,6 +497,7 @@ func saveSeams(t *testing.T) {
 	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
 	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
 	origExchange := exchangeStoreDirs
+	origPivotTimeout := pivotRebootTimeout
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
@@ -507,6 +508,7 @@ func saveSeams(t *testing.T) {
 		copyReadOnlyStore = origCopy
 		verifyPersistedStore = origVerify
 		exchangeStoreDirs = origExchange
+		pivotRebootTimeout = origPivotTimeout
 	})
 }
 
@@ -1591,6 +1593,80 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	// The disconnected flow records a successful prepare on the p4 partition.
 	result := readPrepareResult(t, statusDir)
 	assert.Equal(t, resultSuccess, result.Result)
+}
+
+// TestSelfContainedPivotIssuedAfterSuccessFlush drives the full disconnected happy path for
+// the self-contained profile (precache disabled) and proves the end-to-end terminal action:
+// prepare.json: success is written and flushed (the finalize sync) to p4 and p4 is unmounted
+// BEFORE the pivot reboot is issued, so the pivot is necessarily issued after the success
+// record is durable. The node is never powered off (no shutdown now). Because a reboot never
+// returns control in a unit test, the grace period (set to zero) elapses and the pivot is
+// detected as not-taken: p4 is re-mounted, the result is amended with pivot: failed
+// (preserving result: success), and the node halts powered-on via the emergency target.
+func TestSelfContainedPivotIssuedAfterSuccessFlush(t *testing.T) {
+	stubDisconnectedSeams(t)
+	statusDir := useTempStatusPartition(t)
+	pivotRebootTimeout = 0 // do not block on the real reboot grace period
+
+	var events []string
+	record := func(name string) func(string, ...string) (string, error) {
+		return func(string, ...string) (string, error) { events = append(events, name); return "", nil }
+	}
+	// lastIdxOf returns the index of the last occurrence of name, so the ordering assertion
+	// below keys off the finalize success-flush sync (the second sync) rather than the earlier
+	// core-flow sync.
+	lastIdxOf := func(name string) int {
+		idx := -1
+		for i, e := range events {
+			if e == name {
+				idx = i
+			}
+		}
+		return idx
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := disconnectedCfg(ibiconfig.ProfileSelfContained)
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list;
+	// p4 is mounted for the write-back and re-mounted once more by the pivot-failure amend.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(2)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	expectPodmanInfo(mockOps)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	// Record the two commands whose ordering proves "flush before pivot": the finalize sync
+	// (the success flush) and the pivot reboot. The core flow also syncs once.
+	mockOps.EXPECT().RunInHostNamespace("sync").DoAndReturn(record("sync")).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", gomock.Any(), "systemctl", "reboot").DoAndReturn(record("pivotReboot")).Times(1)
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(2)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "did not reboot into the installed disk")
+
+	// The pivot was issued only after the success record was flushed to p4: the finalize
+	// success-flush sync (the last sync) must precede the pivot reboot.
+	assert.GreaterOrEqual(t, idxOf(events, "pivotReboot"), 0, "the pivot reboot must be issued")
+	assert.Less(t, lastIdxOf("sync"), idxOf(events, "pivotReboot"),
+		"prepare.json: success must be flushed (finalize sync) before the pivot is issued")
+
+	// The record is a successful prepare amended with pivot: failed (result preserved).
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, pivotFailed, result.Pivot)
 }
 
 // TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before the

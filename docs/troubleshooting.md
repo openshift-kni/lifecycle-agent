@@ -21,7 +21,8 @@ USB stick (or the node's p4 partition) to a workstation.
    ```
 
    - `result: "success"` — the prepare phase completed. On install-only media a completed
-     prepare powers the node off.
+     prepare powers the node off; on self-contained media it pivots (reboots into the installed
+     disk) instead.
    - `result: "failure"` — the prepare phase failed; `error` carries the message. On a
      failure the node **halts powered-on** (emergency target) rather than powering off, so it
      stays reachable for inspection.
@@ -29,6 +30,12 @@ USB stick (or the node's p4 partition) to a workstation.
      phase refused to re-wipe the disk. The original `result: "success"` is preserved. This is
      expected and protective: pull the stick (or stop selecting USB as the boot device) so the
      installed node boots from disk.
+   - `pivot: "failed"` — a self-contained prepare succeeded (`result: "success"` is preserved)
+     but the pivot into the installed disk did not take: the reboot command errored, or the
+     node was still in the live ISO after the grace period. The node **halts powered-on**
+     (emergency target) rather than idling in the live ISO. `error` stays `null` (the prepare
+     itself succeeded); the pivot cause is in the log bundle under `logs/` — read it, then
+     reboot the node into the installed disk manually.
 
 3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
 

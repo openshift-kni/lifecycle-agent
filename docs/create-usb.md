@@ -115,9 +115,11 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    systemd unit (`lca-ibi.service`) that runs `lca-cli ibi -f /etc/lca-cli/ibi-config.json` on
    boot, ordered after the `.mount`. The embedded config sets `disconnected: true`,
    `localImagesPath` to the on-node `ibi-images` mount point, and `expectedDigestsPath` to the
-   on-media `digests.json`. `shutdown` is carried from the manifest: install-only ends in
-   shutdown, self-contained sets `shutdown: false` so `lca-cli` performs the pivot reboot (the
-   pivot / pivot-failure logic and its end-to-end verification are owned by CNF-27164).
+   on-media `digests.json`. `shutdown` is carried from the manifest, and `profile` records the
+   media profile (`install-only` / `self-contained`): install-only ends in shutdown;
+   self-contained sets `shutdown: false` so `lca-cli` performs the pivot reboot into the
+   installed disk as its terminal action (see "Terminal action" below; the pivot /
+   pivot-failure logic and its end-to-end verification are owned by CNF-27164).
    For self-contained media, an optional, non-empty `siteConfig.sshKey` is also authorized
    for the live ISO's `core` user. If the field is omitted or empty, the builder omits
    the entire Ignition `passwd` section; it embeds no SSH authorization. The private
@@ -419,9 +421,15 @@ rather than being lost in the buffer cache. Its schema:
   "seedVersion": "4.18.3",
   "checks": { "imagesExpected": 188, "imagesPresent": 188 },
   "error": null,
-  "reentry": "none"
+  "reentry": "none",
+  "pivot": "none"
 }
 ```
+
+`pivot` is the self-contained pivot sub-status, distinct from `reentry`. It is `none` on
+every result and is amended to `failed` only when a self-contained prepare's on-USB pivot into
+the installed disk does not take (see the terminal action below). install-only media never
+pivots, so it stays `none` there.
 
 `ext4` is required: the atomic write contract above only holds on a journaled filesystem, so
 create-usb rejects `vfat` for this partition at build time.
@@ -440,14 +448,29 @@ existing `result: success` (it never rewrites it), records `reentry: blocked`, a
 node powered-on. Repeated re-entries remain safe — the completed-install marker is never
 destroyed, so a second destructive prepare can never re-wipe a finished install.
 
-### Terminal action: power-off vs halt powered-on
+### Terminal action: power-off vs pivot vs halt powered-on
 
-- On **success**, the node powers off (install-only). This power-off is the install-only
-  success signal; the self-contained success/reboot-pivot split is handled separately.
-- On **failure**, the node **halts powered-on** (it isolates the emergency target) rather
-  than powering off, so the power-off success signal stays unambiguous and the node remains
-  reachable for a technician. A successful prepare whose result record could not be committed
-  also halts powered-on rather than signalling success via power-off.
+The terminal action on a **successful** prepare is mutually exclusive per profile:
+
+- **install-only** (`shutdown: true`) — the node **powers off**. This power-off is the
+  install-only success signal.
+- **self-contained** (`shutdown: false`) — the node **pivots**: it reboots off the live ISO
+  into the freshly installed disk so the on-USB reconfigure (post-pivot) can run. The pivot is
+  issued only **after** `prepare.json: success` has been written and flushed to the
+  `ibi-status` partition, so the success record is already durable when the node reboots. The
+  reboot is issued through a transient systemd unit so it survives the prepare service being
+  torn down as the node goes down.
+  - If the pivot does not take — the reboot command errors, or it is issued but the node is
+    still in the live ISO after a grace period — the prepare phase amends `prepare.json` with
+    `pivot: failed` (distinct from `reentry: blocked`, preserving `result: success`) and
+    **halts the node powered-on** rather than leaving it idling in the live ISO.
+
+On **failure**, the node **halts powered-on** (it isolates the emergency target) rather than
+powering off, so the power-off success signal stays unambiguous and the node remains reachable
+for a technician. A successful prepare whose result record could not be committed, whose
+durability sync failed, whose `ibi-status` partition could not be unmounted, or whose
+self-contained pivot did not take also halts powered-on rather than signalling success via
+power-off.
 
 ## Image trust and signature preservation
 

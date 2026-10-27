@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 )
@@ -23,6 +24,12 @@ const (
 
 	reentryNone    = "none"
 	reentryBlocked = "blocked"
+
+	// pivotNone / pivotFailed record the self-contained profile's pivot outcome, distinct
+	// from the re-entry sub-status: pivotNone is the default, pivotFailed is amended onto the
+	// result when the on-USB pivot into the installed disk did not take (see pivotReboot).
+	pivotNone   = "none"
+	pivotFailed = "failed"
 
 	// prepareLogBundleName is the compact diagnostic log bundle written under the
 	// ibi-status logs directory (a gzip-compressed journal capture).
@@ -74,6 +81,11 @@ type PrepareResult struct {
 	Checks      *PrepareChecks `json:"checks,omitempty"`
 	Error       *string        `json:"error"`
 	Reentry     string         `json:"reentry"`
+	// Pivot is the self-contained pivot sub-status (pivotNone / pivotFailed). It is
+	// pivotNone on every result and amended to pivotFailed only when the on-USB pivot into
+	// the installed disk does not take; install-only media never pivots, so it stays
+	// pivotNone there.
+	Pivot string `json:"pivot"`
 }
 
 // PrepareChecks records the image-coverage counts observed during a successful prepare.
@@ -273,8 +285,14 @@ func (i *IBIPrepare) finalizeDisconnected(sp *statusPartition, imagesExpected in
 		// status filesystem still mounted; halt powered-on instead.
 		return i.haltPoweredOn(fmt.Errorf("prepare succeeded but unmounting the ibi-status partition failed: %w", unmountErr))
 	default:
-		// Success: existing terminal behaviour (install-only powers off on success; the
-		// self-contained shutdown/pivot split remains CNF-27164's scope).
+		// Success: take the profile's mutually-exclusive terminal action. install-only powers
+		// the node off (the warehouse-shutdown success signal); self-contained reboots off the
+		// live ISO into the freshly installed disk (the pivot) so on-USB reconfigure can run.
+		// The success record was already written and flushed to p4 above, so the pivot is
+		// necessarily issued after prepare.json: success is durable.
+		if i.config.Profile == ibiconfig.ProfileSelfContained {
+			return i.pivotReboot(sp)
+		}
 		return i.shutdownNode()
 	}
 }
@@ -290,6 +308,84 @@ func (i *IBIPrepare) haltPoweredOn(cause error) error {
 	return cause
 }
 
+// pivotRebootTimeout bounds how long pivotReboot waits for a successfully-issued reboot to
+// take the node down before concluding the pivot did not take. A real reboot never returns
+// control, so this only elapses when the reboot silently failed to proceed; it is a package
+// var (not a const) so unit tests can set it to 0 and not block on the real wait.
+var pivotRebootTimeout = 5 * time.Minute
+
+// pivotReboot is the self-contained profile's success terminal action: instead of powering
+// the node off, it reboots it off the live ISO into the freshly installed disk so the on-USB
+// reconfigure (post-pivot) can run. It is reached from finalizeDisconnected only after
+// prepare.json has been written with result: success and flushed to the ibi-status partition,
+// so the pivot is necessarily issued after the success record is durable on p4.
+//
+// A successful reboot never returns control to this process. So if the reboot command errors,
+// or it is issued but the grace period elapses with the process still alive, the pivot did not
+// take -- the node is still in the live ISO -- and handlePivotFailure records pivot: failed
+// and halts the node powered-on rather than leaving it idling in the live ISO. This keeps the
+// coarse power-state signal honest: off = install-only success; still powered on = a failure or
+// a pivot that did not take. The reboot is issued via a transient systemd unit (systemd-run),
+// mirroring internal/reboot, so it survives this prepare service being torn down as the node
+// goes down.
+func (i *IBIPrepare) pivotReboot(sp *statusPartition) error {
+	i.log.Info("Self-contained prepare succeeded; rebooting into the installed disk (pivot)")
+	if _, err := i.ops.RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", "\"lifecycle-agent: pivot into the installed disk\"",
+		"systemctl", "reboot"); err != nil {
+		return i.handlePivotFailure(sp, fmt.Errorf("failed to issue pivot reboot into the installed disk: %w", err))
+	}
+
+	// A successful reboot never returns; wait for the kernel to take the node down. If this
+	// grace period elapses the process is still alive, so the reboot did not take.
+	i.log.Infof("Pivot reboot issued; waiting up to %s for the node to go down", pivotRebootTimeout)
+	time.Sleep(pivotRebootTimeout)
+
+	return i.handlePivotFailure(sp, fmt.Errorf(
+		"node did not reboot into the installed disk within %s of issuing the pivot", pivotRebootTimeout))
+}
+
+// handlePivotFailure is the terminal path when the self-contained pivot did not take. It
+// records a pivot: failed sub-status on the ibi-status partition -- distinct from
+// reentry: blocked -- and halts the node powered-on (never powered off) so the still-running
+// node is itself the failure signal. Recording the marker is best-effort: a failure to write
+// it never prevents the powered-on halt.
+func (i *IBIPrepare) handlePivotFailure(sp *statusPartition, cause error) error {
+	i.log.Errorf("pivot into the installed disk did not take: %v", cause)
+	if err := i.markPivotFailed(sp); err != nil {
+		i.log.Errorf("failed to record pivot: failed on the ibi-status partition (halting powered-on regardless): %v", err)
+	}
+	return i.haltPoweredOn(cause)
+}
+
+// markPivotFailed amends the prepare result on the ibi-status partition with pivot: failed,
+// preserving the existing result: success exactly as guardReentry preserves it when it records
+// reentry: blocked. finalizeDisconnected unmounts p4 before the terminal action (so the
+// removable status filesystem is clean when the node reboots or powers off), so the partition
+// is re-mounted on its known device for this amend and unmounted again afterwards. The write
+// is atomic and durable (writeResult -> writeFileDurable), so the marker survives a power loss
+// without a separate whole-filesystem sync.
+func (i *IBIPrepare) markPivotFailed(sp *statusPartition) error {
+	if err := i.ops.Mount(sp.deviceName, sp.mountDir); err != nil {
+		return fmt.Errorf("failed to re-mount ibi-status device %s to record pivot failure: %w", sp.deviceName, err)
+	}
+	defer func() {
+		if err := i.ops.Umount(sp.deviceName); err != nil {
+			i.log.Warnf("failed to unmount ibi-status device %s after recording pivot failure: %v", sp.deviceName, err)
+		}
+	}()
+
+	existing, err := i.readResult(sp)
+	if err != nil {
+		return fmt.Errorf("failed to read prepare result to amend pivot failure: %w", err)
+	}
+	existing.Pivot = pivotFailed
+	if err := i.writeResult(sp, existing); err != nil {
+		return fmt.Errorf("failed to write pivot failure marker: %w", err)
+	}
+	return nil
+}
+
 // buildResult assembles the per-phase result from the config and the core prepare
 // outcome. On success the full on-media closure is imported and precache-verified, so the
 // imagesExpected images are reported as fully present; the counts are omitted on failure
@@ -301,6 +397,7 @@ func (i *IBIPrepare) buildResult(imagesExpected int, prepErr error) *PrepareResu
 		Timestamp:   nowRFC3339(),
 		SeedVersion: i.config.SeedVersion,
 		Reentry:     reentryNone,
+		Pivot:       pivotNone,
 	}
 	if prepErr != nil {
 		r.Result = resultFailure

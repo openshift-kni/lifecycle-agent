@@ -71,6 +71,7 @@ func TestBuildResultSuccessContent(t *testing.T) {
 	assert.Equal(t, resultSuccess, r.Result)
 	assert.Equal(t, "4.18.3", r.SeedVersion)
 	assert.Equal(t, reentryNone, r.Reentry)
+	assert.Equal(t, pivotNone, r.Pivot)
 	assert.Nil(t, r.Error)
 	if assert.NotNil(t, r.Checks) {
 		assert.Equal(t, 188, r.Checks.ImagesExpected)
@@ -242,6 +243,111 @@ func TestInstallOnlySuccessPowersOff(t *testing.T) {
 
 	result := readPrepareResult(t, dir)
 	assert.Equal(t, resultSuccess, result.Result, "result must be recorded despite best-effort log failure")
+}
+
+// TestSelfContainedSuccessPivotsNotPowerOff proves the terminal-action selection for the
+// self-contained profile: a successful prepare issues the on-USB pivot reboot into the
+// installed disk (systemd-run ... reboot) instead of powering the node off (no shutdown now).
+// A reboot never returns control in a unit test, so with the grace period set to zero the
+// pivot is correctly detected as not-taken: the result is amended with pivot: failed
+// (preserving result: success) and the node halts powered-on via the emergency target.
+func TestSelfContainedSuccessPivotsNotPowerOff(t *testing.T) {
+	saveSeams(t)
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	pivotRebootTimeout = 0 // do not block on the real reboot grace period
+	dir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileSelfContained, SeedVersion: "4.15.0"}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { return nil }}
+
+	// The success record is flushed (sync) and p4 unmounted before the terminal action; the
+	// terminal action is the pivot reboot, never a power-off. The reboot "returns" (the mock
+	// cannot truly reboot), so the pivot-failure path re-mounts p4 to amend pivot: failed and
+	// halts powered-on.
+	gomock.InOrder(
+		mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1),
+		mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+			"--description", gomock.Any(), "systemctl", "reboot").Return("", nil).Times(1),
+		mockOps.EXPECT().Mount("sdb3", dir).Return(nil).Times(1),
+		mockOps.EXPECT().Umount("sdb3").Return(nil).Times(1),
+		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1),
+	)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.finalizeDisconnected(sp, 5, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not reboot into the installed disk")
+
+	// The success result is preserved and amended with pivot: failed.
+	result := readPrepareResult(t, dir)
+	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, pivotFailed, result.Pivot)
+}
+
+// TestSelfContainedPivotRebootErrorMarksAndHalts proves the pivot-failure path when the
+// reboot command itself errors (as opposed to silently not taking): the node is not powered
+// off, prepare.json is amended with pivot: failed (preserving result: success), and the node
+// halts powered-on via the emergency target with a non-nil error.
+func TestSelfContainedPivotRebootErrorMarksAndHalts(t *testing.T) {
+	saveSeams(t)
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	pivotRebootTimeout = 0
+	dir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileSelfContained, SeedVersion: "4.15.0"}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { return nil }}
+
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", gomock.Any(), "systemctl", "reboot").Return("", fmt.Errorf("systemd-run failed")).Times(1)
+	// The pivot-failure path re-mounts p4 to amend the marker, then halts powered-on.
+	mockOps.EXPECT().Mount("sdb3", dir).Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb3").Return(nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.finalizeDisconnected(sp, 5, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to issue pivot reboot")
+
+	result := readPrepareResult(t, dir)
+	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, pivotFailed, result.Pivot)
+}
+
+// TestSelfContainedPivotFailureMarkerBestEffort proves recording pivot: failed is best-effort:
+// if p4 cannot be re-mounted to amend the marker, the node still halts powered-on (the
+// still-running node is itself the failure signal) rather than powering off.
+func TestSelfContainedPivotFailureMarkerBestEffort(t *testing.T) {
+	saveSeams(t)
+	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
+	pivotRebootTimeout = 0
+	dir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileSelfContained, SeedVersion: "4.15.0"}
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
+	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { return nil }}
+
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", gomock.Any(), "systemctl", "reboot").Return("", nil).Times(1)
+	// Re-mount fails, so the marker cannot be written; the halt must still happen.
+	mockOps.EXPECT().Mount("sdb3", dir).Return(fmt.Errorf("remount failed")).Times(1)
+	mockOps.EXPECT().Umount("sdb3").Times(0)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.finalizeDisconnected(sp, 5, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not reboot into the installed disk")
 }
 
 // TestFailureWriterPreservesExistingSuccessMarker proves the result writer's
