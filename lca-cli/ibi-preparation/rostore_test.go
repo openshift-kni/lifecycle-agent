@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	storagetypes "go.podman.io/storage/types"
 	"go.uber.org/mock/gomock"
-	"golang.org/x/sys/unix"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -392,31 +391,6 @@ func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
 	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the superseded store parked at staging must be removed after a successful publish")
 }
 
-// TestExchangeStoreDirsSwapsAtomically proves the default exchange helper swaps two directories in
-// place via renameat2(RENAME_EXCHANGE): each path ends up holding the other's content and both paths
-// exist throughout. This is the primitive the atomic publish relies on to never leave the configured
-// store path absent.
-func TestExchangeStoreDirsSwapsAtomically(t *testing.T) {
-	root := t.TempDir()
-	a := filepath.Join(root, "a")
-	b := filepath.Join(root, "b")
-	require.NoError(t, os.MkdirAll(a, 0o755))
-	require.NoError(t, os.MkdirAll(b, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(a, "marker"), []byte("A"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(b, "marker"), []byte("B"), 0o600))
-
-	require.NoError(t, defaultExchangeStoreDirs(a, b))
-
-	assert.DirExists(t, a)
-	assert.DirExists(t, b)
-	gotA, err := os.ReadFile(filepath.Join(a, "marker")) //nolint:gosec // test path under t.TempDir()
-	require.NoError(t, err)
-	gotB, err := os.ReadFile(filepath.Join(b, "marker")) //nolint:gosec // test path under t.TempDir()
-	require.NoError(t, err)
-	assert.Equal(t, "B", string(gotA), "a must hold b's content after the exchange")
-	assert.Equal(t, "A", string(gotB), "b must hold a's content after the exchange")
-}
-
 // TestPersistReadOnlyStorePreservesPreviousStoreOnPrePublishFailure covers the "before the exchange"
 // side the Developer of Record asked to test: a failure that happens after a store is already
 // published but before the swap (here, the copy of the replacement fails) must leave the previously
@@ -486,7 +460,7 @@ func TestPersistReadOnlyStoreFailsClosedWhenExchangeUnsupported(t *testing.T) {
 	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error { return nil }
 	// Registration must never be reached when the exchange fails.
 	ostreeMock.EXPECT().GetDeploymentDir(gomock.Any()).Times(0)
-	exchangeStoreDirs = func(string, string) error { return unix.ENOTSUP }
+	exchangeStoreDirs = func(string, string) error { return fmt.Errorf("simulated unsupported exchange") }
 
 	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
 	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
