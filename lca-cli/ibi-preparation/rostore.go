@@ -322,6 +322,18 @@ func defaultCopyReadOnlyStore(srcRoot, dstRoot string) error {
 	if err := archive.NewDefaultArchiver().CopyWithTar(srcRoot, dstRoot); err != nil {
 		return fmt.Errorf("metadata-preserving copy of %q to %q: %w", srcRoot, dstRoot, err)
 	}
+	// CopyWithTar preserves the modes of the tree's *contents* but tars them into a dstRoot it
+	// creates itself with a default 0o755 -- the source root's own mode is not carried across. The
+	// media store root is 0o700, so without this the copy would silently broaden the store root's
+	// permissions, contradicting the "no blanket mode rewrite" guarantee. Restore the source root's
+	// mode explicitly so the store root round-trips bit-for-bit like the rest of the tree.
+	srcInfo, err := os.Stat(srcRoot)
+	if err != nil {
+		return fmt.Errorf("stat source store root %q: %w", srcRoot, err)
+	}
+	if err := os.Chmod(dstRoot, srcInfo.Mode().Perm()); err != nil {
+		return fmt.Errorf("restoring source store root mode on %q: %w", dstRoot, err)
+	}
 	return nil
 }
 
