@@ -31,17 +31,17 @@ USB stick (or the node's p4 partition) to a workstation.
      expected and protective: pull the stick (or stop selecting USB as the boot device) so the
      installed node boots from disk.
    - `pivot: "failed"` — a self-contained prepare succeeded (`result: "success"` is preserved)
-     but the pivot into the installed disk did not take: the installed disk could not be selected
-     as the next boot target (e.g. on UEFI a one-time `BootNext` to the installed disk's ESP could
-     not be set or verified; on legacy BIOS the pivot cannot force a boot device at all — see the
-     boot-order note below), the reboot command errored, or the node was still in the live ISO
-     after the grace period. The node **halts powered-on** (emergency target) rather than idling
-     in the live ISO. `error` stays `null` (the prepare itself succeeded); the pivot cause is in
-     the log bundle under `logs/` (refreshed on the pivot-failure path so it covers the pivot
-     attempt) — read it, then reboot the node into the installed disk manually. On **legacy BIOS**
-     systems, booting the installed disk relies on a documented, hardware-tested boot-order
-     arrangement (the installed disk ordered ahead of the USB, or the USB removed); confirm that
-     arrangement before retrying.
+     but the pivot into the installed disk did not take: the reboot command errored, or the
+     node was still in the live ISO after the grace period — typically because the firmware
+     booted the USB again instead of the installed disk. The pivot is a plain reboot that
+     follows the firmware's normal boot path, so it relies on the required one-time USB boot
+     procedure (boot the USB via the firmware's **one-time** boot menu for the initial boot
+     only — not a persistent USB-first boot order — and leave the USB inserted). The node
+     **halts powered-on** (emergency target) rather than idling in the live ISO. `error` stays
+     `null` (the prepare itself succeeded); the pivot cause is in the log bundle under `logs/`
+     (refreshed on the pivot-failure path so it covers the pivot attempt) — read it, confirm
+     the firmware is not configured to boot the USB ahead of the installed disk, then reboot
+     the node into the installed disk manually.
 
 3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
 

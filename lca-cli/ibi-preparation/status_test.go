@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -255,8 +254,7 @@ func TestInstallOnlySuccessPowersOff(t *testing.T) {
 func TestSelfContainedSuccessPivotsNotPowerOff(t *testing.T) {
 	saveSeams(t)
 	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
-	selectPivotBootTarget = func(*IBIPrepare) error { return nil } // boot-target selection is covered separately
-	pivotRebootTimeout = 0                                         // do not block on the real reboot grace period
+	pivotRebootTimeout = 0 // do not block on the real reboot grace period
 	dir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -296,7 +294,6 @@ func TestSelfContainedSuccessPivotsNotPowerOff(t *testing.T) {
 func TestSelfContainedPivotRebootErrorMarksAndHalts(t *testing.T) {
 	saveSeams(t)
 	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
-	selectPivotBootTarget = func(*IBIPrepare) error { return nil } // boot-target selection is covered separately
 	pivotRebootTimeout = 0
 	dir := t.TempDir()
 
@@ -330,7 +327,6 @@ func TestSelfContainedPivotRebootErrorMarksAndHalts(t *testing.T) {
 func TestSelfContainedPivotFailureMarkerBestEffort(t *testing.T) {
 	saveSeams(t)
 	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
-	selectPivotBootTarget = func(*IBIPrepare) error { return nil } // boot-target selection is covered separately
 	pivotRebootTimeout = 0
 	dir := t.TempDir()
 
@@ -760,234 +756,6 @@ func TestWriteLogBundleJournalFailure(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "no bundle must be written when journal collection fails")
 }
 
-// espPartUUID is the GPT partition UUID of the installed disk's EFI System Partition used across
-// the boot-target tests; it is the value matched between the ESP (from lsblk) and an efibootmgr
-// entry's device path.
-const espPartUUID = "1234abcd-0000-0000-0000-000000000001"
-
-// lsblkESPOutput is a representative `lsblk --pairs --paths` listing for an installation disk
-// whose partition 2 is the EFI System Partition.
-func lsblkESPOutput() string {
-	return strings.Join([]string{
-		`NAME="/dev/sda" PARTTYPE="" PARTUUID="" PARTN="" PKNAME=""`,
-		`NAME="/dev/sda1" PARTTYPE="21686148-6449-6e6f-744e-656564454649" PARTUUID="aaaaaaaa-0000-0000-0000-000000000001" PARTN="1" PKNAME="sda"`,
-		`NAME="/dev/sda2" PARTTYPE="` + efiSystemPartType + `" PARTUUID="` + espPartUUID + `" PARTN="2" PKNAME="sda"`,
-		`NAME="/dev/sda3" PARTTYPE="0fc63daf-8483-4772-8e79-3d69d8477de4" PARTUUID="cccccccc-0000-0000-0000-000000000003" PARTN="3" PKNAME="sda"`,
-	}, "\n")
-}
-
-// newSelfContainedBootIBI builds a self-contained IBIPrepare wired to mockOps with a UEFI node,
-// for the boot-target selection tests.
-func newSelfContainedBootIBI(mockOps *ops.MockOps) *IBIPrepare {
-	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileSelfContained, SeedVersion: "4.15.0", InstallationDisk: "/dev/sda"}
-	return NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
-}
-
-// TestSelectBootTargetLegacyBIOSProceeds proves that on a non-UEFI (legacy BIOS) node the pivot
-// boot-target selection makes no firmware change (no efibootmgr) and does not fail: there is no
-// BootNext equivalent, so the pivot proceeds relying on a documented, hardware-tested boot order.
-func TestSelectBootTargetLegacyBIOSProceeds(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return false }
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	// No efibootmgr / lsblk calls are made on legacy BIOS.
-	mockOps.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any()).Times(0)
-
-	assert.NoError(t, ibi.selectInstalledDiskBootTarget())
-}
-
-// TestSetBootNextWithExistingEntry proves the UEFI happy path when the installed disk's ESP
-// already has an efibootmgr entry: the entry is matched by the ESP's PARTUUID, set as a one-time
-// BootNext, and verified -- no new entry is created and the ESP is never mounted.
-func TestSetBootNextWithExistingEntry(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return true }
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	bootEntries := strings.Join([]string{
-		"BootCurrent: 0003",
-		"BootOrder: 0003,0001",
-		"Boot0001* Red Hat Enterprise Linux\tHD(2,GPT," + espPartUUID + ",0x800,0x12c000)/File(\\EFI\\redhat\\shimx64.efi)",
-		"Boot0003* UEFI USB\tPciRoot(0x0)/Pci(0x14,0x0)/USB(0x1,0x0)",
-	}, "\n")
-	afterSet := strings.Join([]string{"BootNext: 0001", "BootCurrent: 0003", "BootOrder: 0003,0001"}, "\n")
-
-	gomock.InOrder(
-		mockOps.EXPECT().RunInHostNamespace("lsblk", "--pairs", "--paths", "--output", "NAME,PARTTYPE,PARTUUID,PARTN,PKNAME", "/dev/sda").Return(lsblkESPOutput(), nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "-v").Return(bootEntries, nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "--bootnext", "0001").Return("", nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr").Return(afterSet, nil).Times(1),
-	)
-	// No entry is created and the ESP is never mounted when a matching entry already exists.
-	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
-
-	assert.NoError(t, ibi.selectInstalledDiskBootTarget())
-}
-
-// TestSetBootNextCreatesEntryWhenAbsent proves the UEFI path when no existing entry points at
-// the installed disk's ESP: the ESP is mounted read-only to verify it carries a bootloader, a
-// boot entry is created for that verified loader, then that entry is set as BootNext and verified.
-func TestSetBootNextCreatesEntryWhenAbsent(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return true }
-	espMountDir = t.TempDir()
-	// Place a shim bootloader on the (stubbed) mounted ESP so verification finds it.
-	shim := filepath.Join(espMountDir, "EFI", "redhat", "shimx64.efi")
-	assert.NoError(t, os.MkdirAll(filepath.Dir(shim), 0o755))
-	assert.NoError(t, os.WriteFile(shim, []byte("shim"), 0o600))
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	noMatch := strings.Join([]string{
-		"BootCurrent: 0003",
-		"BootOrder: 0003",
-		"Boot0003* UEFI USB\tPciRoot(0x0)/Pci(0x14,0x0)/USB(0x1,0x0)",
-	}, "\n")
-	afterCreate := strings.Join([]string{
-		"BootCurrent: 0003",
-		"BootOrder: 0007,0003",
-		"Boot0003* UEFI USB\tPciRoot(0x0)/Pci(0x14,0x0)/USB(0x1,0x0)",
-		"Boot0007* " + installedDiskBootLabel + "\tHD(2,GPT," + espPartUUID + ",0x800,0x12c000)/File(\\EFI\\redhat\\shimx64.efi)",
-	}, "\n")
-	afterSet := "BootNext: 0007\nBootCurrent: 0003\nBootOrder: 0007,0003"
-
-	gomock.InOrder(
-		mockOps.EXPECT().RunInHostNamespace("lsblk", "--pairs", "--paths", "--output", "NAME,PARTTYPE,PARTUUID,PARTN,PKNAME", "/dev/sda").Return(lsblkESPOutput(), nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "-v").Return(noMatch, nil).Times(1),
-		mockOps.EXPECT().MountReadOnly("sda2", espMountDir).Return(nil).Times(1),
-		mockOps.EXPECT().Umount("sda2").Return(nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "--create", "--disk", "/dev/sda", "--part", "2",
-			"--label", installedDiskBootLabel, "--loader", `\EFI\redhat\shimx64.efi`).Return("", nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "-v").Return(afterCreate, nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "--bootnext", "0007").Return("", nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr").Return(afterSet, nil).Times(1),
-	)
-
-	assert.NoError(t, ibi.selectInstalledDiskBootTarget())
-}
-
-// TestSetBootNextNoESPFails proves that a UEFI node whose installation disk has no EFI System
-// Partition (e.g. a BIOS-only layout) is an unselectable boot target: selection errors so the
-// caller records a pivot failure rather than issuing a reboot that would land back in the live ISO.
-func TestSetBootNextNoESPFails(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return true }
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	noESP := strings.Join([]string{
-		`NAME="/dev/sda" PARTTYPE="" PARTUUID="" PARTN="" PKNAME=""`,
-		`NAME="/dev/sda1" PARTTYPE="0fc63daf-8483-4772-8e79-3d69d8477de4" PARTUUID="dddddddd-0000-0000-0000-000000000001" PARTN="1" PKNAME="sda"`,
-	}, "\n")
-	mockOps.EXPECT().RunInHostNamespace("lsblk", "--pairs", "--paths", "--output", "NAME,PARTTYPE,PARTUUID,PARTN,PKNAME", "/dev/sda").Return(noESP, nil).Times(1)
-	// No efibootmgr call is made when there is no ESP to point at.
-	mockOps.EXPECT().RunInHostNamespace("efibootmgr", gomock.Any()).Times(0)
-
-	err := ibi.selectInstalledDiskBootTarget()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no EFI System Partition")
-}
-
-// TestSetBootNextCreateNoBootloaderFails proves that when a new entry must be created but the
-// ESP carries none of the known bootloaders, selection fails (an unverifiable target) rather
-// than creating an entry for a loader that is not present.
-func TestSetBootNextCreateNoBootloaderFails(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return true }
-	espMountDir = t.TempDir() // empty: no bootloader present
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	noMatch := "BootCurrent: 0003\nBootOrder: 0003\nBoot0003* UEFI USB\tUSB(0x1,0x0)"
-	gomock.InOrder(
-		mockOps.EXPECT().RunInHostNamespace("lsblk", "--pairs", "--paths", "--output", "NAME,PARTTYPE,PARTUUID,PARTN,PKNAME", "/dev/sda").Return(lsblkESPOutput(), nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "-v").Return(noMatch, nil).Times(1),
-		mockOps.EXPECT().MountReadOnly("sda2", espMountDir).Return(nil).Times(1),
-		mockOps.EXPECT().Umount("sda2").Return(nil).Times(1),
-	)
-	// No entry is created when no bootloader is verified on the ESP.
-	mockOps.EXPECT().RunInHostNamespace("efibootmgr", "--create", gomock.Any()).Times(0)
-
-	err := ibi.selectInstalledDiskBootTarget()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no known bootloader")
-}
-
-// TestVerifyBootNextMismatchFails proves selection fails when BootNext does not read back as the
-// entry we set (the firmware silently rejected the override): an unverifiable target is a pivot
-// failure, so the node never issues a reboot that could land back in the live ISO.
-func TestVerifyBootNextMismatchFails(t *testing.T) {
-	saveSeams(t)
-	isUEFIBooted = func() bool { return true }
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	ibi := newSelfContainedBootIBI(mockOps)
-
-	bootEntries := "BootOrder: 0001\nBoot0001* RHEL\tHD(2,GPT," + espPartUUID + ",0x800,0x12c000)/File(\\EFI\\redhat\\shimx64.efi)"
-	// Verification reads back a *different* BootNext than the one we set.
-	mismatch := "BootNext: 0003\nBootOrder: 0001"
-
-	gomock.InOrder(
-		mockOps.EXPECT().RunInHostNamespace("lsblk", "--pairs", "--paths", "--output", "NAME,PARTTYPE,PARTUUID,PARTN,PKNAME", "/dev/sda").Return(lsblkESPOutput(), nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "-v").Return(bootEntries, nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr", "--bootnext", "0001").Return("", nil).Times(1),
-		mockOps.EXPECT().RunInHostNamespace("efibootmgr").Return(mismatch, nil).Times(1),
-	)
-
-	err := ibi.selectInstalledDiskBootTarget()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "BootNext verification failed")
-}
-
-// TestPivotBootTargetSelectionFailureHaltsWithoutReboot proves that when the installed disk
-// cannot be selected as the next boot target, the pivot reboot is never issued: the result is
-// amended with pivot: failed (preserving result: success) and the node halts powered-on, so it
-// cannot silently re-boot the live ISO and re-enter prepare.
-func TestPivotBootTargetSelectionFailureHaltsWithoutReboot(t *testing.T) {
-	saveSeams(t)
-	collectStatusLogs = func(*IBIPrepare, *statusPartition) error { return nil }
-	selectPivotBootTarget = func(*IBIPrepare) error { return fmt.Errorf("bootnext rejected") }
-	pivotRebootTimeout = 0
-	dir := t.TempDir()
-
-	ctrl := gomock.NewController(t)
-	mockOps := ops.NewMockOps(ctrl)
-	cfg := &ibiconfig.IBIPrepareConfig{Profile: ibiconfig.ProfileSelfContained, SeedVersion: "4.15.0"}
-	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil, cfg)
-	sp := &statusPartition{deviceName: "sdb3", mountDir: dir, unmount: func() error { return nil }}
-
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
-	// The reboot is NEVER issued when the boot target cannot be selected.
-	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
-		"--description", gomock.Any(), "systemctl", "reboot").Times(0)
-	mockOps.EXPECT().Mount("sdb3", dir).Return(nil).Times(1)
-	mockOps.EXPECT().Umount("sdb3").Return(nil).Times(1)
-	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
-
-	err := ibi.finalizeDisconnected(sp, 5, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to select the installed disk as the next boot target")
-
-	result := readPrepareResult(t, dir)
-	assert.Equal(t, resultSuccess, result.Result)
-	assert.Equal(t, pivotFailed, result.Pivot)
-}
-
 // TestPivotFailureRefreshesLogBundle proves the pivot-failure path refreshes the diagnostic log
 // bundle while p4 is re-mounted, so the bundle covers the pivot attempt (not just the pre-pivot
 // capture) -- the cause the troubleshooting guide points technicians to.
@@ -1036,19 +804,4 @@ func TestPivotFailureLogRefreshBestEffort(t *testing.T) {
 
 	assert.NoError(t, ibi.markPivotFailed(sp), "a log-capture failure must not fail the pivot-failure marker")
 	assert.Equal(t, pivotFailed, readPrepareResult(t, dir).Pivot)
-}
-
-// TestParseLsblkPairs proves the pairs parser tolerates empty quoted values (which collapse in
-// raw/column output) so the ESP row's fields are extracted correctly.
-func TestParseLsblkPairs(t *testing.T) {
-	fields := parseLsblkPairs(`NAME="/dev/sda2" PARTTYPE="` + efiSystemPartType + `" PARTUUID="` + espPartUUID + `" PARTN="2" PKNAME="sda"`)
-	assert.Equal(t, "/dev/sda2", fields["NAME"])
-	assert.Equal(t, efiSystemPartType, fields["PARTTYPE"])
-	assert.Equal(t, espPartUUID, fields["PARTUUID"])
-	assert.Equal(t, "2", fields["PARTN"])
-	assert.Equal(t, "sda", fields["PKNAME"])
-
-	empty := parseLsblkPairs(`NAME="/dev/sda" PARTTYPE="" PARTUUID="" PARTN="" PKNAME=""`)
-	assert.Equal(t, "/dev/sda", empty["NAME"])
-	assert.Equal(t, "", empty["PARTTYPE"])
 }
