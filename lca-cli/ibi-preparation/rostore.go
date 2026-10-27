@@ -91,22 +91,25 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 	// tracks LocalImagesPath (equal to common.LocalImagesStorePath in production).
 	srcStore := filepath.Join(i.config.LocalImagesPath, common.LocalImagesStoreDirName)
 
-	// Fail closed: self-contained media must carry a complete overlay durability store. A
-	// missing/malformed store is worse than none, so reject it rather than degrade silently.
-	if err := validateSourceStore(srcStore); err != nil {
-		return fmt.Errorf("self-contained durability store on media is missing or incomplete: %w", err)
-	}
-
 	osname := common.GetStaterootName(i.config.SeedVersion)
 	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
 	staging := destStore + roStoreStagingSuffix
 	backup := destStore + roStoreBackupSuffix
 
-	// Reconcile a store backup left by an earlier run interrupted mid-swap, before publishing a
-	// new store, so a crash in the small window between moving the old store aside and landing its
-	// replacement never loses the only valid copy.
+	// Reconcile a store backup left by an earlier run interrupted mid-swap before any validation
+	// can fail: recovery depends only on destStore/backup (both derived from config, not the
+	// source), and must run even when the media source is now missing or malformed. Otherwise a
+	// crash in the small window between moving the old store aside and landing its replacement,
+	// followed by a retry against a bad source, would leave destStore absent, the backup
+	// unreconciled, and the drop-in dangling at an empty path -- losing the only valid copy.
 	if err := recoverInterruptedSwap(destStore, backup); err != nil {
 		return err
+	}
+
+	// Fail closed: self-contained media must carry a complete overlay durability store. A
+	// missing/malformed store is worse than none, so reject it rather than degrade silently.
+	if err := validateSourceStore(srcStore); err != nil {
+		return fmt.Errorf("self-contained durability store on media is missing or incomplete: %w", err)
 	}
 
 	// Clear any leftover staging/partial tree from an interrupted earlier run so the

@@ -424,6 +424,45 @@ func TestRecoverInterruptedSwap(t *testing.T) {
 	})
 }
 
+// TestPersistReadOnlyStoreRecoversInterruptedSwapWhenSourceInvalid proves recovery of an
+// interrupted mid-swap runs before source validation: a prior run that moved the installed store
+// aside to the backup and crashed before landing the replacement must be reconciled -- restoring
+// the previous valid store -- even on a retry whose media source is now missing or malformed.
+// Were validation to run first, the retry would fail closed with the backup left unreconciled,
+// destStore absent, and the drop-in dangling at an empty path -- losing the only valid copy.
+func TestPersistReadOnlyStoreRecoversInterruptedSwapWhenSourceInvalid(t *testing.T) {
+	saveSeams(t)
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	// No ops or ostree calls: recovery runs, then source validation fails before any copy/label/register.
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	media := t.TempDir() // no <media>/store -- the retry's source is missing/invalid
+	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error {
+		t.Fatal("verify must not run when the source store is missing")
+		return nil
+	}
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	// Simulate an interrupted swap: the previous store sits in the backup and destStore is absent.
+	backup := destStore + roStoreBackupSuffix
+	require.NoError(t, os.MkdirAll(backup, 0o755))
+	sentinel := filepath.Join(backup, "previous-store-marker")
+	require.NoError(t, os.WriteFile(sentinel, []byte("keep me"), 0o600))
+
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
+	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
+	assert.ErrorContains(t, err, "missing or incomplete")
+
+	// The previous store is restored from the backup despite the fail-closed source error.
+	assert.FileExists(t, filepath.Join(destStore, "previous-store-marker"),
+		"the interrupted swap must be recovered before source validation fails")
+	assert.NoDirExists(t, backup, "the backup must be reconciled, not left behind")
+}
+
 // TestPersistReadOnlyStoreSELinuxFailureLeavesNothing proves a labelling failure aborts the
 // handoff before the store is sealed or registered.
 func TestPersistReadOnlyStoreSELinuxFailureLeavesNothing(t *testing.T) {
