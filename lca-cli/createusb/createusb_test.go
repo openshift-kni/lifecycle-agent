@@ -366,6 +366,38 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 	})
 }
 
+// validSSHPublicKey is a throwaway ed25519 authorized_keys line for sshKey validation tests,
+// generated with: ssh-keygen -t ed25519 -C "test@example.com" -N "" (private key discarded).
+const validSSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICRIY/su3X3EirySD0+UmBF5LwDgbgp8TeIZ9oxyrK0a test@example.com"
+
+func TestValidateSiteConfigSSHKey(t *testing.T) {
+	t.Run("omitted sshKey passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = ""
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("valid public key passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("malformed key fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "ssh-ed25519 not-a-key"
+		assert.ErrorContains(t, m.Validate(), "not a valid public authorized key")
+	})
+	t.Run("private-key material fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----"
+		assert.ErrorContains(t, m.Validate(), "not private-key material")
+	})
+	t.Run("multiple keys fail", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey + "\n" + validSSHPublicKey
+		assert.ErrorContains(t, m.Validate(), "exactly one public authorized key")
+	})
+}
+
 func TestValidateUnknownOrEmptyMode(t *testing.T) {
 	for _, mode := range []Mode{"", "bogus"} {
 		m := validInstallOnly()

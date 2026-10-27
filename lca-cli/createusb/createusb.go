@@ -30,6 +30,7 @@ limitations under the License.
 package createusb
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -39,6 +40,7 @@ import (
 	"regexp"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
 	"sigs.k8s.io/yaml"
 )
 
@@ -319,6 +321,11 @@ func (m *Manifest) validateSelfContained() error {
 	if err := m.validateSiteConfigNetworkFields(); err != nil {
 		return err
 	}
+	// Optional sshKey is embedded in the live ISO ignition and the on-media seed
+	// reconfiguration, so reject malformed values and private-key material at build time.
+	if err := m.validateSiteConfigSSHKey(); err != nil {
+		return err
+	}
 
 	// The self-contained media carries the cluster's configuration on-media.
 	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
@@ -351,6 +358,27 @@ func (m *Manifest) validateSiteConfigNetworkFields() error {
 		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
 			return fmt.Errorf("siteConfig.machineNetworks[%d] %q is not a valid CIDR: %w", i, cidr, err)
 		}
+	}
+	return nil
+}
+
+// validateSiteConfigSSHKey validates the optional siteConfig.sshKey: when set it must be
+// exactly one parseable OpenSSH public authorized key. Private-key PEM material and
+// multi-key / trailing junk values are rejected so they cannot be embedded in the image.
+func (m *Manifest) validateSiteConfigSSHKey() error {
+	raw := strings.TrimSpace(m.SiteConfig.SSHKey)
+	if raw == "" {
+		return nil
+	}
+	if strings.Contains(raw, "PRIVATE KEY") {
+		return fmt.Errorf("siteConfig.sshKey must be a public authorized key, not private-key material")
+	}
+	_, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("siteConfig.sshKey is not a valid public authorized key: %w", err)
+	}
+	if len(bytes.TrimSpace(rest)) > 0 {
+		return fmt.Errorf("siteConfig.sshKey must contain exactly one public authorized key")
 	}
 	return nil
 }
