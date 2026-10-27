@@ -1438,6 +1438,48 @@ func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
 	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
 }
 
+// TestDisconnectedPrecacheSkipsHostPodmanCheck proves a disconnected prepare's precache step
+// keeps the seed-to-manifest coverage check but does NOT run the live-ISO podman presence
+// check or chroot into /host. Image residency is verified directly in the installed stateroot
+// store by the mandatory self-check (verifyImportedClosure) instead, so a disconnected prepare
+// does not depend on /host existing at all (a live ISO without /host). The strict mock
+// controller fails the test on any unexpected host-namespace call, so the absence of a podman
+// presence check is asserted by there being no such expectation.
+func TestDisconnectedPrecacheSkipsHostPodmanCheck(t *testing.T) {
+	manifest := testManifest()
+
+	t.Run("covered seed list: coverage check passes, no chroot, no podman check", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		// A disconnected precache must not chroot into /host; the live-ISO podman presence
+		// check (and the host-namespace commands it needs) are gone.
+		mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, PrecacheDisabled: false})
+		// containers.list references the seed, which is an exact source on a manifest entry.
+		listFile := writeContainersList(t, testSeedImageRef())
+
+		assert.NoError(t, ibi.precacheFlow(listFile, "", defaultRegistriesConfFile, manifest))
+	})
+
+	t.Run("uncovered seed list: the coverage check still fails the prepare", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, PrecacheDisabled: false})
+		// An image the manifest does not cover must still fail prepare at the retained
+		// seed-to-manifest coverage check, before any residency verification.
+		missing := "quay.io/openshift-release-dev/extra@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+		listFile := writeContainersList(t, testSeedImageRef(), missing)
+
+		err := ibi.precacheFlow(listFile, "", defaultRegistriesConfFile, manifest)
+		assert.ErrorContains(t, err, "does not cover")
+	})
+}
+
 // TestVerifyManifestCoversSeed exercises exact source-reference matching: a seed
 // reference is covered only when it equals a source listed on exactly one manifest
 // entry (whose digest the fail-fast closure import necessarily imported). A
@@ -1733,4 +1775,50 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	// A failure result is recorded on p4 so a later boot can read how prepare ended.
 	result := readPrepareResult(t, statusDir)
 	assert.Equal(t, resultFailure, result.Result)
+}
+
+// TestVerifyImportedClosureInstalledStore proves the mandatory image self-check verifies
+// residency directly in the installed stateroot store (not the live ISO's /host store): it
+// opens the installed graphroot (under the ostree deploy prefix) with an overlay driver and a
+// temporary runroot that is cleaned up afterwards, calls VerifyAll on the manifest exactly
+// once, and closes the importer. A VerifyAll error (a missing/unresolvable image) is surfaced
+// to the caller.
+func TestVerifyImportedClosureInstalledStore(t *testing.T) {
+	common.OstreeDeployPathPrefix = "/mnt/"
+	osname := common.GetStaterootName("4.15.0")
+	wantGraphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
+
+	t.Run("all images resident: verifies once in the installed store", func(t *testing.T) {
+		saveSeams(t)
+		ff := &importerFactory{}
+		newImageImporter = ff.new
+		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, SeedVersion: "4.15.0"})
+
+		assert.NoError(t, ibi.verifyImportedClosure(context.Background(), testManifest()))
+
+		// Called standalone, the single installed-store open lands in the factory's first
+		// ostree-deploy slot (closure); it is the importer the self-check verified against.
+		if assert.NotNil(t, ff.closure, "the self-check must open the installed stateroot store") {
+			assert.Equal(t, "overlay", ff.closure.cfg.GraphDriverName)
+			assert.Equal(t, wantGraphRoot, ff.closure.cfg.GraphRoot,
+				"the self-check must read the installed stateroot graphroot, not the host store")
+			assert.NotEmpty(t, ff.closure.cfg.RunRoot, "a writable temp runroot is required for the store open")
+			assert.Equal(t, 1, ff.closure.verifiedAll, "the manifest must be verified exactly once")
+			assert.True(t, ff.closure.closed, "the self-check importer must be closed")
+			_, statErr := os.Stat(ff.closure.cfg.RunRoot)
+			assert.True(t, os.IsNotExist(statErr), "the temporary runroot must be removed after the self-check")
+		}
+	})
+
+	t.Run("missing image: VerifyAll error fails the self-check", func(t *testing.T) {
+		saveSeams(t)
+		ff := &importerFactory{verifyErr: fmt.Errorf("image quay.io/x@sha256:dead missing from the store")}
+		newImageImporter = ff.new
+		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, SeedVersion: "4.15.0"})
+
+		err := ibi.verifyImportedClosure(context.Background(), testManifest())
+		assert.ErrorContains(t, err, "verifying imported closure")
+	})
 }

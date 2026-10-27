@@ -53,10 +53,12 @@ const (
 	fsTypeExt4 = "ext4"
 )
 
-// errReentryBlocked is the terminal outcome when a boot re-enters a completed install:
-// the destructive prepare is deliberately refused rather than wiping the disk.
+// errReentryBlocked is the terminal outcome when a boot re-enters a partition that already
+// records a terminal prepare result (a completed install or a prior failed prepare): the
+// destructive prepare is deliberately refused rather than wiping the disk. An explicit
+// operator reset (clearing prepare.json) is required before a retry.
 var errReentryBlocked = errors.New(
-	"destructive prepare refused: ibi-status records a completed install (re-entry blocked)")
+	"destructive prepare refused: ibi-status already records a prior prepare result; an explicit operator reset is required before retrying (re-entry blocked)")
 
 // statusPartitionMountDir is the mount point for the writable ibi-status (p4) partition.
 // It is a package var (not a const) so unit tests can redirect the writability probe,
@@ -183,11 +185,17 @@ func probeWritable(dir string) error {
 
 // guardReentry inspects an existing prepare result on the ibi-status partition before any
 // destructive disk operation. On a first boot (no result file) it returns blocked=false
-// and the prepare proceeds. If a completed install is found (result: success) this boot is
-// a re-entry over that install: it records reentry: blocked while preserving the success
-// result (never rewriting it), returns blocked=true, and the caller halts the node
-// powered-on without wiping. A result file that exists but cannot be read or parsed fails
-// closed (returns an error): an unreadable marker is never treated as "safe to wipe".
+// and the prepare proceeds. If any terminal prepare result is already recorded -- a
+// completed install (result: success) OR a prior failed prepare (result: failure) -- this
+// boot is a re-entry: it records reentry: blocked while preserving the existing result
+// (never rewriting it), returns blocked=true, and the caller halts the node powered-on
+// without wiping. A prior failure is deliberately treated the same as a success here:
+// an automatic retry could wipe the disk again, and a prior prepare that failed after
+// cleanupDisk / coreos-installer may already have removed the installation disk's partition
+// table (e.g. a second wipefs run), so the retry is refused until an operator explicitly
+// resets the status by clearing prepare.json. A result file that exists but cannot be read
+// or parsed fails closed (returns an error): an unreadable marker is never treated as "safe
+// to wipe".
 func (i *IBIPrepare) guardReentry(sp *statusPartition) (blocked bool, err error) {
 	resultPath := filepath.Join(sp.mountDir, common.PrepareResultFileName)
 	data, err := os.ReadFile(resultPath) //nolint:gosec // resultPath is the fixed result file under the mounted p4 root
@@ -205,11 +213,10 @@ func (i *IBIPrepare) guardReentry(sp *statusPartition) (blocked bool, err error)
 	}
 
 	switch existing.Result {
-	case resultSuccess:
-		// Re-entry over a completed install: handled below.
-	case resultFailure:
-		// A previous prepare explicitly failed; a retry may wipe and reinstall.
-		return false, nil
+	case resultSuccess, resultFailure:
+		// A terminal prepare result is already recorded -- a completed install, or a prior
+		// prepare that failed and may already have wiped the disk. Either way an automatic
+		// destructive retry is refused; handled below.
 	default:
 		// A parseable marker with an empty or unrecognized result is never treated as safe
 		// to wipe: fail closed, exactly like a malformed marker.
@@ -217,16 +224,18 @@ func (i *IBIPrepare) guardReentry(sp *statusPartition) (blocked bool, err error)
 			resultPath, existing.Result)
 	}
 
-	// Re-entry over a completed install: refuse to wipe. Amend only the re-entry marker,
-	// preserving result: success so every subsequent boot still refuses to wipe. This path
-	// never flows through the generic failure writer, which could otherwise overwrite the
-	// success marker and reopen the re-wipe hole.
-	i.log.Warnf("ibi-status records a completed install (result: %s); refusing to re-run destructive prepare", existing.Result)
+	// Re-entry over a recorded terminal result: refuse to wipe. Amend only the re-entry
+	// marker, preserving the existing result (success or failure) so every subsequent boot
+	// still refuses to wipe until an operator explicitly resets the status. This path never
+	// flows through the generic failure writer, which could otherwise rewrite the marker and
+	// reopen the re-wipe hole.
+	i.log.Warnf("ibi-status records a prior prepare result (result: %s); refusing to re-run destructive prepare without an explicit operator reset", existing.Result)
 	existing.Reentry = reentryBlocked
 	if err := i.writeResult(sp, &existing); err != nil {
-		// Even if the blocked re-entry cannot be recorded, a completed install must never
-		// be wiped: report blocked and let the caller halt powered-on.
-		i.log.Errorf("failed to record blocked re-entry (completed install preserved, not wiping): %v", err)
+		// Even if the blocked re-entry cannot be recorded, a disk a prior prepare already
+		// touched must never be wiped automatically: report blocked and let the caller halt
+		// powered-on.
+		i.log.Errorf("failed to record blocked re-entry (prior result preserved, not wiping): %v", err)
 	}
 	return true, nil
 }
@@ -403,8 +412,9 @@ func (i *IBIPrepare) markPivotFailed(sp *statusPartition) error {
 }
 
 // buildResult assembles the per-phase result from the config and the core prepare
-// outcome. On success the full on-media closure is imported and precache-verified, so the
-// imagesExpected images are reported as fully present; the counts are omitted on failure
+// outcome. On success the full on-media closure is imported and verified resident in the
+// installed stateroot store (the mandatory self-check), so the imagesExpected images are
+// reported as fully present; the counts are omitted on failure
 // (presence is unknown) and richer per-image self-check counts are owned by CNF-27162.
 func (i *IBIPrepare) buildResult(imagesExpected int, prepErr error) *PrepareResult {
 	r := &PrepareResult{

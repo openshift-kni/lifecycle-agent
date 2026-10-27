@@ -442,11 +442,16 @@ be **exactly one** writable `ibi-status` device. Zero or more than one device, a
 failure, a read-only partition, or an unreadable/malformed `prepare.json` all **fail closed**
 — the node halts powered-on without wiping the installation disk.
 
-If a `prepare.json` with `result: success` is already present, the current boot is a
-**re-entry over a completed install**. The prepare phase refuses to wipe: it preserves the
-existing `result: success` (it never rewrites it), records `reentry: blocked`, and halts the
-node powered-on. Repeated re-entries remain safe — the completed-install marker is never
-destroyed, so a second destructive prepare can never re-wipe a finished install.
+If a `prepare.json` recording **any** terminal result is already present — a completed install
+(`result: success`) **or** a prior failed prepare (`result: failure`) — the current boot is a
+**re-entry** and the prepare phase refuses to wipe: it preserves the existing result (it never
+rewrites it), records `reentry: blocked`, and halts the node powered-on. A prior *failure* is
+treated the same as a success on purpose: a failed prepare may already have wiped the disk
+(e.g. `wipefs` ran before the failure), so an automatic retry could destroy an installation
+already in progress or re-wipe a disk whose partition table is gone. A retry therefore
+requires an **explicit operator reset** — clear `prepare.json` from the `ibi-status` partition
+— before the next boot will wipe again. Repeated re-entries remain safe: the marker is never
+destroyed, so a second destructive prepare can never re-wipe automatically.
 
 ### Terminal action: power-off vs pivot vs halt powered-on
 

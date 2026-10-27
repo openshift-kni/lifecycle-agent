@@ -453,9 +453,13 @@ func TestRepeatedReentryPreservesSuccessMarker(t *testing.T) {
 	}
 }
 
-// TestReentryOverFailureMarkerProceeds proves a prior failed prepare (result: failure) does
-// not block a retry: the guard allows the wipe to proceed.
-func TestReentryOverFailureMarkerProceeds(t *testing.T) {
+// TestReentryOverFailureMarkerBlocksWipe proves a prior failed prepare (result: failure)
+// blocks an automatic destructive retry: the guard refuses to wipe, preserves the failure
+// marker and its error, records reentry: blocked, and halts the node powered-on. A failed
+// prepare may already have wiped the disk (e.g. wipefs removed the partition table), so a
+// retry requires an explicit operator reset (clearing prepare.json) rather than an automatic
+// re-wipe on the next boot.
+func TestReentryOverFailureMarkerBlocksWipe(t *testing.T) {
 	stubDisconnectedSeams(t)
 	statusDir := useTempStatusPartition(t)
 	// Seed a prior *failure* marker.
@@ -473,28 +477,66 @@ func TestReentryOverFailureMarkerProceeds(t *testing.T) {
 	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
-	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
-	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
-	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	// p4 mount + guard are the first preconditions, so a blocked re-entry halts before p2.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+	mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
 	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
-	// The retry proceeds: the disk is cleaned up and written.
-	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
-	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
-	expectPodmanInfo(mockOps)
-	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
-	// Success terminal path: core sync + result sync, p2 and p4 unmount, no halt.
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(2)
-	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
-	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
-	mockOps.EXPECT().SystemctlAction(gomock.Any(), gomock.Any()).Times(0)
+	// No wipe: the installation disk is never cleaned up or written on the blocked retry.
+	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", gomock.Any()).Times(0)
+	// p4 unmounts before the halt; the node halts powered-on, never powers off; p2 is never mounted.
+	gomock.InOrder(
+		mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1),
+		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1),
+	)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
 
 	err = ibi.Run()
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, errReentryBlocked)
 
 	result := readPrepareResult(t, statusDir)
-	assert.Equal(t, resultSuccess, result.Result, "a fresh successful prepare overwrites the prior failure marker")
-	assert.Equal(t, reentryNone, result.Reentry)
+	assert.Equal(t, resultFailure, result.Result, "the prior failure marker must be preserved, not overwritten")
+	assert.Equal(t, reentryBlocked, result.Reentry, "a re-entry over a failure marker must record reentry: blocked")
+	if assert.NotNil(t, result.Error) {
+		assert.Equal(t, failMsg, *result.Error, "the original failure message must be preserved")
+	}
+}
+
+// TestRepeatedReentryPreservesFailureMarker proves repeated re-entries over a failure marker
+// each refuse to wipe and leave result: failure intact, so the guard never degrades into an
+// automatic wipe on a later boot without an operator reset.
+func TestRepeatedReentryPreservesFailureMarker(t *testing.T) {
+	stubDisconnectedSeams(t)
+	statusDir := useTempStatusPartition(t)
+	failMsg := "earlier failure"
+	r := &PrepareResult{Phase: prepareResultPhase, Profile: ibiconfig.ProfileInstallOnly,
+		Result: resultFailure, Timestamp: nowRFC3339(), SeedVersion: "4.15.0", Error: &failMsg, Reentry: reentryNone}
+	data, err := json.MarshalIndent(r, "", "  ")
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(statusDir, common.PrepareResultFileName), append(data, '\n'), 0o600))
+
+	for boot := 1; boot <= 2; boot++ {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+		cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(1)
+		mockOps.EXPECT().MountReadOnly(gomock.Any(), gomock.Any()).Times(0)
+		mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
+		cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+		mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
+		mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+		mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+		err := ibi.Run()
+		assert.ErrorIsf(t, err, errReentryBlocked, "boot %d must block the wipe", boot)
+
+		result := readPrepareResult(t, statusDir)
+		assert.Equalf(t, resultFailure, result.Result, "boot %d must preserve the failure marker", boot)
+		assert.Equalf(t, reentryBlocked, result.Reentry, "boot %d must record a blocked re-entry", boot)
+	}
 }
 
 // TestZeroOrMultipleP4HaltsWithoutWipe proves both profiles require exactly one writable

@@ -658,7 +658,23 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return err
 	}
 
-	// Change root directory to /host
+	// Disconnected: the full closure was imported into the installed stateroot store up front,
+	// and its residency is verified directly in that store by the mandatory self-check
+	// (verifyImportedClosure) immediately after this step. The seed-to-manifest coverage check
+	// has already run above while precacheImageList built the set. The live-ISO podman presence
+	// check (workload.Precache) inspects the live ISO's /host containers store, not the
+	// installed stateroot store, so for a disconnected prepare it is both redundant with the
+	// self-check and misleading -- it can report present against the live store while the
+	// installed store is short an image. Skip it, and the /host chroot it requires, so
+	// disconnected prepare verifies residency only where it matters (the installed store) and
+	// does not depend on /host existing at all.
+	if i.config.Disconnected {
+		i.log.Infof("Disconnected: skipping the live-ISO podman precache presence check; %d image(s) will be verified directly in the installed stateroot store", len(imageList))
+		return nil
+	}
+
+	// Connected: run the precache presence/pull check in the host namespace. Change root
+	// directory to /host.
 	unchroot, err := i.chrootIfPathExists(common.Host)
 	if err != nil {
 		return fmt.Errorf("failed to chroot to %s, err: %w", common.Host, err)
@@ -678,8 +694,6 @@ func (i *IBIPrepare) precacheFlow(imageListFile, seedInfoFile, registriesConfFil
 		return fmt.Errorf("failed to create status file dir, err %w", err)
 	}
 
-	// Disconnected: the image closure was imported into the installed stateroot store
-	// up front, so precache must verify local presence rather than pull from the network.
 	if err := workload.Precache(imageList, common.IBIPullSecretFilePath, i.config.PrecacheBestEffort, i.config.Disconnected); err != nil {
 		return fmt.Errorf("failed to start precache: %w", err)
 	}
