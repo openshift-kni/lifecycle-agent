@@ -264,6 +264,19 @@ func (i *IBIPrepare) runPreparation(ctx context.Context, manifest *localimages.D
 		return fmt.Errorf("failed to cleanup rhcos sysroot: %w", err)
 	}
 
+	// Self-contained disconnected media carries a pre-built read-only containers/storage
+	// durability store on p2. Copy it onto the installed disk, seal it read-only, and register it
+	// as a read-only additional image store -- while the stateroot is still mounted and before the
+	// final sync and p2 unmount (the handoff the unmount-p2 comment below reserves), so the node
+	// recovers GC-evicted/corrupted images locally with no registry and no network. install-only
+	// and the connected flow carry no such artifact and are a clean no-op.
+	if i.config.Disconnected && i.config.Profile == ibiconfig.ProfileSelfContained {
+		i.log.Info("Persisting read-only additional image store into the installed stateroot")
+		if err := persistReadOnlyStoreFn(i, ctx, manifest); err != nil {
+			return fmt.Errorf("failed to persist read-only image store: %w", err)
+		}
+	}
+
 	// Remove the synthetic authfile before the final sync so its removal is persisted to disk.
 	// shutdownNode may terminate the process before the deferred cleanup runs, and even if the
 	// defer does run it would execute after this final sync, leaving the removal unflushed.

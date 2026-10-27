@@ -191,7 +191,13 @@ const (
 	// registers as a read-only additional image store, and the path the prepare/persist stages
 	// (CNF-27165) read the store from once p2 is mounted; both sides must use this constant so the
 	// path never diverges.
-	LocalImagesStorePath = LocalImagesMountPath + "/store"
+	LocalImagesStorePath = LocalImagesMountPath + "/" + LocalImagesStoreDirName
+
+	// LocalImagesStoreDirName is the directory name, relative to the p2 (ibi-images) mount point,
+	// of the read-only containers/storage durability store create-usb stages for self-contained
+	// media. The prepare/persist stage (CNF-27165) reads the store from this subdirectory of the
+	// configured LocalImagesPath.
+	LocalImagesStoreDirName = "store"
 
 	// IBIStatusFSLabel is the filesystem label of the writable USB "p4" partition
 	// that records per-phase machine-readable results for a USB-based IBI prepare.
@@ -214,6 +220,26 @@ const (
 	IBIStatusLogsDir = "logs"
 
 	ContainerStoragePath = "/var/lib/containers"
+
+	// RODurabilityStoreDirName is the directory name, under ContainerStoragePath on the installed
+	// node, where the self-contained prepare persists the read-only containers/storage durability
+	// store copied from the p2 media (LocalImagesStorePath). Post-pivot it is the additional image
+	// store CRI-O resolves the digest-pinned image closure from (CNF-27165).
+	RODurabilityStoreDirName = "ro-store"
+
+	// RODurabilityStorePath is the post-pivot absolute path of the persisted read-only additional
+	// image store. It is the value the storage.conf drop-in registers in additionalimagestores
+	// (not the prepare-time /mnt path, not the USB mount), so CRI-O finds the store after pivot.
+	RODurabilityStorePath = ContainerStoragePath + "/" + RODurabilityStoreDirName
+
+	// StorageConfDropInDir is the containers/storage drop-in config directory the vendored
+	// go.podman.io/storage conf.d loader reads (*.conf). The self-contained prepare writes the
+	// additional-image-store registration here, on the installed deployment's /etc.
+	StorageConfDropInDir = "/etc/containers/storage.conf.d"
+
+	// RODurabilityStoreDropInName is the storage.conf.d drop-in filename the self-contained
+	// prepare writes to register the persisted read-only additional image store.
+	RODurabilityStoreDropInName = "50-lca-ro-store.conf"
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
 
