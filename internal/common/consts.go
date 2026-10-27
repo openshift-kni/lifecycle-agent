@@ -171,9 +171,10 @@ const (
 	// embedded IBIPrepareConfig.LocalImagesPath and that the prepare phase mounts the
 	// p2 (ibi-images) partition at. It is the cross-story contract between create-usb's
 	// embedded-config rendering and the prepare mount stages (CNF-27161/CNF-27162);
-	// both sides must use this constant so the path never diverges. /var/mnt is the
-	// writable mount area in the RHCOS live environment.
-	LocalImagesMountPath = "/var/mnt/ibi-images"
+	// both sides must use this constant so the path never diverges. /mnt resolves
+	// to /var/mnt in the RHCOS live environment; installing the target root at
+	// /mnt would hide any USB mount beneath it. Keep this mount under /run.
+	LocalImagesMountPath = "/run/ibi-images"
 
 	// LocalImagesLCABinaryPath is where create-usb stages the exact shipping lca-cli binary
 	// on the p2 (ibi-images) partition, mounted at LocalImagesMountPath on the node. The
@@ -203,7 +204,9 @@ const (
 
 	// IBIStatusMountPath is the mount point for the writable ibi-status (p4)
 	// partition during a disconnected IBI prepare.
-	IBIStatusMountPath = "/var/mnt/ibi-status"
+	// /mnt resolves to /var/mnt on the live ISO. The target root is mounted there
+	// during preparation, so the result partition must live outside that tree.
+	IBIStatusMountPath = "/run/ibi-status"
 
 	// PrepareResultFileName is the machine-readable per-phase result file written at
 	// the root of the ibi-status (p4) partition on both the success and failure paths.
