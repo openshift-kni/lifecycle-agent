@@ -27,6 +27,12 @@ const (
 	// atomically moved into place, so an interrupted copy never leaves a partial ro-store.
 	roStoreStagingSuffix = ".staging"
 
+	// roStoreBackupSuffix names the directory an existing store is moved aside to while its
+	// replacement is published. Moving the old store aside (rather than deleting it up front)
+	// keeps a previously valid store -- and its still-current registration -- recoverable if
+	// publishing or registering the replacement fails on a re-run.
+	roStoreBackupSuffix = ".backup"
+
 	// Overlay-store on-disk markers used to validate the copied store is in the overlay layer
 	// format CRI-O reads (the §6.6 compatibility gate, re-checked prepare-side).
 	roStoreOverlayGraphDir   = "overlay"
@@ -94,6 +100,14 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 	osname := common.GetStaterootName(i.config.SeedVersion)
 	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
 	staging := destStore + roStoreStagingSuffix
+	backup := destStore + roStoreBackupSuffix
+
+	// Reconcile a store backup left by an earlier run interrupted mid-swap, before publishing a
+	// new store, so a crash in the small window between moving the old store aside and landing its
+	// replacement never loses the only valid copy.
+	if err := recoverInterruptedSwap(destStore, backup); err != nil {
+		return err
+	}
 
 	// Clear any leftover staging/partial tree from an interrupted earlier run so the
 	// stage -> move is clean. staging and destStore share a parent dir (same filesystem), so
@@ -135,12 +149,25 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 		return fmt.Errorf("failed to apply SELinux label to read-only store %q: %w", staging, err)
 	}
 
-	// Atomic publish: move the verified, labelled store into place. Remove any pre-existing store
-	// first so a re-run is idempotent; the rename within the same filesystem is atomic.
-	if err := os.RemoveAll(destStore); err != nil {
-		return fmt.Errorf("failed to remove existing read-only store %q: %w", destStore, err)
+	// Atomic publish with a recoverable rollback. Move any existing store aside to a backup rather
+	// than deleting it up front: the drop-in always targets the fixed RODurabilityStorePath, so a
+	// re-run that removed the store but then failed the rename below -- or the deployment lookup in
+	// registerReadOnlyStore that follows -- would leave a dangling registration pointing at an empty
+	// path and destroy a previously valid store. Keeping the old store until the replacement is in
+	// place and registered lets every failure restore it (and its still-current registration) intact.
+	movedAside := false
+	if _, err := os.Stat(destStore); err == nil {
+		if err := os.Rename(destStore, backup); err != nil {
+			return fmt.Errorf("failed to move existing read-only store %q aside to %q: %w", destStore, backup, err)
+		}
+		movedAside = true
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat existing read-only store %q: %w", destStore, err)
 	}
+	// The rename within the same filesystem is atomic; on failure restore the previous store so the
+	// retry leaves it (and its registration) intact.
 	if err := os.Rename(staging, destStore); err != nil {
+		i.restorePreviousStore(movedAside, destStore, backup)
 		return fmt.Errorf("failed to move read-only store into place at %q: %w", destStore, err)
 	}
 	committed = true
@@ -148,12 +175,61 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 
 	// Register the store only after it is in place and verified, so an interrupted prepare never
 	// leaves a storage.conf entry pointing at an incomplete/absent store. If the drop-in write
-	// fails, roll the store back so the (store, config) pair stays all-or-nothing.
+	// fails, undo the swap -- drop the freshly published store and restore the previous one -- so
+	// the (store, config) pair stays all-or-nothing and the retry never destroys a valid store.
 	if err := i.registerReadOnlyStore(osname); err != nil {
 		if rmErr := os.RemoveAll(destStore); rmErr != nil {
-			i.log.Warnf("failed to roll back read-only store %q after drop-in write failure: %v", destStore, rmErr)
+			i.log.Warnf("failed to remove read-only store %q while rolling back to the previous one: %v", destStore, rmErr)
+		} else {
+			i.restorePreviousStore(movedAside, destStore, backup)
 		}
 		return fmt.Errorf("failed to register read-only store: %w", err)
+	}
+
+	// The replacement is published and registered; drop the now-superseded previous store.
+	if movedAside {
+		if err := os.RemoveAll(backup); err != nil {
+			i.log.Warnf("failed to remove superseded read-only store backup %q: %v", backup, err)
+		}
+	}
+	return nil
+}
+
+// restorePreviousStore moves a backed-up store back into place after a failed publish/register, so
+// the previous valid store and its still-current registration survive a failed re-run. It is
+// best-effort: a restore failure is logged, not returned, because the caller is already returning
+// the original publish/register error.
+func (i *IBIPrepare) restorePreviousStore(movedAside bool, destStore, backup string) {
+	if !movedAside {
+		return
+	}
+	if err := os.Rename(backup, destStore); err != nil {
+		i.log.Warnf("failed to restore previous read-only store %q from backup %q: %v", destStore, backup, err)
+	}
+}
+
+// recoverInterruptedSwap reconciles a store backup left by an earlier run interrupted mid-swap. The
+// backup exists only transiently, between moving the previous store aside and publishing its
+// replacement: if the live store is present the backup is stale and is removed; if the live store
+// is absent the swap was interrupted after the old store was moved aside but before the replacement
+// landed, so the backup is restored rather than losing the only valid store.
+func recoverInterruptedSwap(destStore, backup string) error {
+	if _, err := os.Stat(backup); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat read-only store backup %q: %w", backup, err)
+	}
+	if _, err := os.Stat(destStore); err == nil {
+		if err := os.RemoveAll(backup); err != nil {
+			return fmt.Errorf("failed to remove stale read-only store backup %q: %w", backup, err)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat read-only store %q: %w", destStore, err)
+	}
+	if err := os.Rename(backup, destStore); err != nil {
+		return fmt.Errorf("failed to restore read-only store from backup %q: %w", backup, err)
 	}
 	return nil
 }
@@ -179,11 +255,10 @@ func (i *IBIPrepare) registerReadOnlyStore(osname string) error {
 		return fmt.Errorf("failed to create storage.conf.d dir %q: %w", dropInDir, err)
 	}
 	dropInPath := filepath.Join(dropInDir, common.RODurabilityStoreDropInName)
-	// Remove any stale drop-in from an earlier interrupted run first, so a failure writing the new
-	// one never leaves an outdated registration pointing at a store this run is about to roll back.
-	if err := os.Remove(dropInPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove stale storage.conf drop-in %q: %w", dropInPath, err)
-	}
+	// The drop-in content is deterministic (it registers the fixed RODurabilityStorePath), and
+	// writeFileAtomic replaces it in place via a rename. Do not remove any existing drop-in first:
+	// leaving it until the new one atomically replaces it keeps the previous registration intact if
+	// the write fails, so a store rolled back to its previous copy keeps its matching registration.
 	content := fmt.Sprintf(roStoreStorageConfDropIn, common.RODurabilityStorePath)
 	if err := writeFileAtomic(dropInPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to write storage.conf drop-in %q: %w", dropInPath, err)

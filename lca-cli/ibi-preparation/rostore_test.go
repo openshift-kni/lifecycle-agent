@@ -317,6 +317,113 @@ func TestPersistReadOnlyStoreRollsBackOnDropInFailure(t *testing.T) {
 	assert.NoDirExists(t, destStore, "the sealed store must be rolled back when registration fails")
 }
 
+// TestPersistReadOnlyStoreRollbackPreservesPreviousStore proves a re-run never destroys a
+// previously valid store: when publishing the replacement gets as far as registration and that
+// fails, the store is rolled back to the previous copy (restored from the backup), not left empty
+// with a dangling registration.
+func TestPersistReadOnlyStoreRollbackPreservesPreviousStore(t *testing.T) {
+	saveSeams(t)
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	media := t.TempDir()
+	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
+	copyReadOnlyStore = plainCopyTree
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	// A previously published, valid store carrying a sentinel the media store does not have.
+	require.NoError(t, os.MkdirAll(destStore, 0o755))
+	sentinel := filepath.Join(destStore, "previous-store-marker")
+	require.NoError(t, os.WriteFile(sentinel, []byte("keep me"), 0o600))
+
+	// Registration fails: point the deployment dir at a regular file so the dir creation under it fails.
+	badDeploymentDir := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(badDeploymentDir, []byte("x"), 0o600))
+	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(badDeploymentDir, nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chcon", "-R", "-t", roStoreSELinuxType, destStore+roStoreStagingSuffix).Return("", nil).Times(1)
+	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error { return nil }
+
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
+	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
+	assert.ErrorContains(t, err, "failed to register read-only store")
+
+	// The previous store is restored intact; no backup or staging is left behind.
+	assert.FileExists(t, sentinel, "the previously valid store must be restored when registration fails")
+	assert.NoDirExists(t, destStore+roStoreBackupSuffix, "the backup must not be left behind")
+	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the staging dir must be cleaned up")
+}
+
+// TestPersistReadOnlyStoreReplacesExistingStore proves an idempotent re-run replaces a previously
+// published store with the freshly copied one and leaves no backup or staging behind.
+func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
+	saveSeams(t)
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	media := t.TempDir()
+	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
+	copyReadOnlyStore = plainCopyTree
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	require.NoError(t, os.MkdirAll(destStore, 0o755))
+	staleMarker := filepath.Join(destStore, "stale-marker")
+	require.NoError(t, os.WriteFile(staleMarker, []byte("old"), 0o600))
+
+	deploymentDir := filepath.Join(common.GetStaterootPath(osname), "deploy", "abc123.0")
+	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(deploymentDir, nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chcon", "-R", "-t", roStoreSELinuxType, destStore+roStoreStagingSuffix).Return("", nil).Times(1)
+	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error { return nil }
+
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
+	require.NoError(t, ibi.persistReadOnlyStore(context.Background(), testManifest()))
+
+	// The stale store is replaced by the freshly copied one; no backup or staging remains.
+	assert.NoFileExists(t, staleMarker, "the previous store must be replaced on a successful re-run")
+	assert.FileExists(t, filepath.Join(destStore, roStoreOverlayImagesJSON), "the new store must be in place")
+	assert.NoDirExists(t, destStore+roStoreBackupSuffix, "the backup must be removed after a successful publish")
+	assert.NoDirExists(t, destStore+roStoreStagingSuffix)
+}
+
+// TestRecoverInterruptedSwap proves the mid-swap recovery: a stale backup is dropped when the live
+// store is present, and the backup is restored when a crash left no live store.
+func TestRecoverInterruptedSwap(t *testing.T) {
+	t.Run("stale backup removed when live store present", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ro-store")
+		backup := dest + roStoreBackupSuffix
+		require.NoError(t, os.MkdirAll(dest, 0o755))
+		require.NoError(t, os.MkdirAll(backup, 0o755))
+
+		require.NoError(t, recoverInterruptedSwap(dest, backup))
+		assert.DirExists(t, dest)
+		assert.NoDirExists(t, backup, "a stale backup must be removed when the live store is present")
+	})
+
+	t.Run("backup restored when live store absent", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ro-store")
+		backup := dest + roStoreBackupSuffix
+		require.NoError(t, os.MkdirAll(backup, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(backup, "marker"), []byte("x"), 0o600))
+
+		require.NoError(t, recoverInterruptedSwap(dest, backup))
+		assert.NoDirExists(t, backup)
+		assert.FileExists(t, filepath.Join(dest, "marker"), "the backup must be restored when no live store exists")
+	})
+
+	t.Run("no backup is a no-op", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ro-store")
+		require.NoError(t, recoverInterruptedSwap(dest, dest+roStoreBackupSuffix))
+		assert.NoDirExists(t, dest)
+	})
+}
+
 // TestPersistReadOnlyStoreSELinuxFailureLeavesNothing proves a labelling failure aborts the
 // handoff before the store is sealed or registered.
 func TestPersistReadOnlyStoreSELinuxFailureLeavesNothing(t *testing.T) {
