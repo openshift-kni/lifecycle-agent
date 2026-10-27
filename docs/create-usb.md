@@ -472,12 +472,14 @@ The terminal action on a **successful** prepare is mutually exclusive per profil
     work never starts. This one-time-USB-boot workflow must be validated on the target hardware
     before self-contained media is relied on; support for a persistent USB-first boot order
     without operator intervention is a separate design decision (not handled here).
-  - If the pivot does not take — the reboot command errors, or it is issued but the node is
-    still in the live ISO after a grace period (e.g. the firmware booted the USB again rather
-    than the installed disk) — the prepare phase amends `prepare.json` with `pivot: failed`
-    (distinct from `reentry: blocked`, preserving `result: success`), **refreshes the
-    diagnostic log bundle** so it covers the pivot attempt, and **halts the node powered-on**
-    rather than leaving it idling in the live ISO.
+  - If the pivot does not take — the reboot command errors, or it is issued but the node has
+    not gone down after a grace period (the original prepare process is still running) — the
+    prepare phase amends `prepare.json` with `pivot: failed` (distinct from `reentry: blocked`,
+    preserving `result: success`), **refreshes the diagnostic log bundle** so it covers the
+    pivot attempt, and **halts the node powered-on** rather than leaving it idling in the live
+    ISO. A reboot that *does* proceed but lands back in the live ISO because the firmware
+    re-selected the USB is instead caught on that next boot by the re-entry guard and recorded
+    as `reentry: blocked` (not `pivot: failed`).
 
 On **failure**, the node **halts powered-on** (it isolates the emergency target) rather than
 powering off, so the power-off success signal stays unambiguous and the node remains reachable

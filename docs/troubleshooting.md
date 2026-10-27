@@ -31,17 +31,17 @@ USB stick (or the node's p4 partition) to a workstation.
      expected and protective: pull the stick (or stop selecting USB as the boot device) so the
      installed node boots from disk.
    - `pivot: "failed"` — a self-contained prepare succeeded (`result: "success"` is preserved)
-     but the pivot into the installed disk did not take: the reboot command errored, or the
-     node was still in the live ISO after the grace period — typically because the firmware
-     booted the USB again instead of the installed disk. The pivot is a plain reboot that
-     follows the firmware's normal boot path, so it relies on the required one-time USB boot
-     procedure (boot the USB via the firmware's **one-time** boot menu for the initial boot
-     only — not a persistent USB-first boot order — and leave the USB inserted). The node
-     **halts powered-on** (emergency target) rather than idling in the live ISO. `error` stays
-     `null` (the prepare itself succeeded); the pivot cause is in the log bundle under `logs/`
-     (refreshed on the pivot-failure path so it covers the pivot attempt) — read it, confirm
-     the firmware is not configured to boot the USB ahead of the installed disk, then reboot
-     the node into the installed disk manually.
+     but the on-USB pivot into the installed disk did not take: the reboot command errored, or
+     the reboot was issued but the node had not gone down after the grace period (the original
+     prepare process was still running). This is recorded only by that original process, so it
+     means the reboot itself did not proceed — not that the firmware re-selected the USB. A
+     second boot that lands back in the live ISO (because the firmware booted the USB again) is
+     instead caught on that next boot by the re-entry guard and recorded as `reentry: "blocked"`
+     (above), so check the boot order there. The node **halts powered-on** (emergency target)
+     rather than idling in the live ISO. `error` stays `null` (the prepare itself succeeded);
+     the reboot error or timeout is in the log bundle under `logs/` (refreshed on the
+     pivot-failure path so it covers the pivot attempt) — read it to find why the reboot did
+     not take, then reboot the node into the installed disk manually.
 
 3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
 
