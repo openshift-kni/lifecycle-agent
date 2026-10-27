@@ -395,6 +395,13 @@ func TestValidateSiteConfigSSHKey(t *testing.T) {
 		m.SiteConfig.SSHKey = "ssh-ed25519 not-a-key"
 		assert.ErrorContains(t, m.Validate(), "malformed public authorized key")
 	})
+	// Regression: ParseAuthorizedKey ignores invalid lines when given a multi-line blob.
+	// Per-line validation must still reject a bad line even when a later line is valid.
+	t.Run("malformed content before a valid key fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "ssh-ed25519 not-a-key\n" + validSSHPublicKey
+		assert.ErrorContains(t, m.Validate(), "malformed public authorized key")
+	})
 	t.Run("private-key material fails", func(t *testing.T) {
 		m := validSelfContained()
 		m.SiteConfig.SSHKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----"
