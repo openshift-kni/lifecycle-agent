@@ -325,6 +325,8 @@ func TestCleanupRhcosSysroot(t *testing.T) {
 	ibiConfig := &ibiconfig.IBIPrepareConfig{}
 	ibi := NewIBIPrepare(log, mockOps, nil, ostreeClientMock, nil, ibiConfig)
 	tmpDir := t.TempDir()
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = tmpDir
 
 	// Test case when rhcosOstreePath doesn't exists, we still should succeed
@@ -1007,6 +1009,8 @@ func TestClosureImportedIntoInstalledGraphroot(t *testing.T) {
 	saveSeams(t)
 	ff := &importerFactory{}
 	newImageImporter = ff.new
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = "/mnt/"
 
 	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedVersion: "4.15.0"}
@@ -1039,6 +1043,8 @@ func TestClosureImportRunsOutsideChroot(t *testing.T) {
 	saveSeams(t)
 	ff := &importerFactory{}
 	newImageImporter = ff.new
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = "/mnt/"
 
 	ctrl := gomock.NewController(t)
@@ -1784,6 +1790,8 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 // once, and closes the importer. A VerifyAll error (a missing/unresolvable image) is surfaced
 // to the caller.
 func TestVerifyImportedClosureInstalledStore(t *testing.T) {
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = "/mnt/"
 	osname := common.GetStaterootName("4.15.0")
 	wantGraphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
