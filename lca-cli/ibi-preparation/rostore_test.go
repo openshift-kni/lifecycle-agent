@@ -79,6 +79,25 @@ func plainCopyTree(src, dst string) error {
 	})
 }
 
+// swapDirsForTest swaps directories a and b the way the production
+// renameat2(RENAME_EXCHANGE) does, using a portable three-step rename so the orchestration tests
+// that exercise the swap-into-place path run on every platform -- the Linux-only production helper
+// (defaultExchangeStoreDirs) fails closed on non-Linux, which would otherwise break the package test
+// run on e.g. macOS developer machines. It is not atomic, but these tests assert only the resulting
+// swap, not atomicity; the real atomic primitive is covered by the Linux-only
+// TestExchangeStoreDirsSwapsAtomically. Both paths must exist when this is called, matching the
+// RENAME_EXCHANGE contract.
+func swapDirsForTest(a, b string) error {
+	tmp := a + ".swap-tmp"
+	if err := os.Rename(a, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(b, a); err != nil {
+		return err
+	}
+	return os.Rename(tmp, b)
+}
+
 // withDeployRoot points common.OstreeDeployPathPrefix (the ostree deploy path prefix) at a temp
 // directory for the duration of the test, so GetStaterootPath resolves to a writable location.
 func withDeployRoot(t *testing.T) {
@@ -332,6 +351,9 @@ func TestPersistReadOnlyStoreRollbackPreservesPreviousStore(t *testing.T) {
 	media := t.TempDir()
 	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
 	copyReadOnlyStore = plainCopyTree
+	// Exercise the real swap orchestration on every platform (the Linux-only production exchange
+	// fails closed off Linux); the atomic primitive itself is covered by TestExchangeStoreDirsSwapsAtomically.
+	exchangeStoreDirs = swapDirsForTest
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
@@ -369,6 +391,9 @@ func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
 	media := t.TempDir()
 	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
 	copyReadOnlyStore = plainCopyTree
+	// Exercise the real swap orchestration on every platform (the Linux-only production exchange
+	// fails closed off Linux); the atomic primitive itself is covered by TestExchangeStoreDirsSwapsAtomically.
+	exchangeStoreDirs = swapDirsForTest
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
@@ -486,6 +511,9 @@ func TestPersistReadOnlyStoreRecoversLeftoverStagingFromInterruptedSwap(t *testi
 	media := t.TempDir()
 	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
 	copyReadOnlyStore = plainCopyTree
+	// Exercise the real swap orchestration on every platform (the Linux-only production exchange
+	// fails closed off Linux); the atomic primitive itself is covered by TestExchangeStoreDirsSwapsAtomically.
+	exchangeStoreDirs = swapDirsForTest
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
