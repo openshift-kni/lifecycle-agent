@@ -496,6 +496,7 @@ func saveSeams(t *testing.T) {
 	origParse, origNew, origSetup := parseDigestManifest, newImageImporter, setupStateroot
 	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
 	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
+	origExchange := exchangeStoreDirs
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
@@ -505,6 +506,7 @@ func saveSeams(t *testing.T) {
 		persistReadOnlyStoreFn = origPersist
 		copyReadOnlyStore = origCopy
 		verifyPersistedStore = origVerify
+		exchangeStoreDirs = origExchange
 	})
 }
 

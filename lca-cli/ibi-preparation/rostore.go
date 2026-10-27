@@ -9,6 +9,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"go.podman.io/storage/pkg/archive"
+	"golang.org/x/sys/unix"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
@@ -23,15 +24,12 @@ const (
 	// moment offline recovery needs it; it is verified after pivot by the e2e recovery test.
 	roStoreSELinuxType = "container_ro_file_t"
 
-	// roStoreStagingSuffix names the staging directory the store is copied into before it is
-	// atomically moved into place, so an interrupted copy never leaves a partial ro-store.
+	// roStoreStagingSuffix names the directory the replacement store is staged in before it is
+	// published. The verified staging tree is swapped with the live store in a single atomic
+	// renameat2(RENAME_EXCHANGE), so an interrupted copy never leaves a partial ro-store and the
+	// live path is never momentarily absent; after a swap the superseded store is parked here for
+	// rollback (on a failed registration) or cleanup (on success).
 	roStoreStagingSuffix = ".staging"
-
-	// roStoreBackupSuffix names the directory an existing store is moved aside to while its
-	// replacement is published. Moving the old store aside (rather than deleting it up front)
-	// keeps a previously valid store -- and its still-current registration -- recoverable if
-	// publishing or registering the replacement fails on a re-run.
-	roStoreBackupSuffix = ".backup"
 
 	// Overlay-store on-disk markers used to validate the copied store is in the overlay layer
 	// format CRI-O reads (the §6.6 compatibility gate, re-checked prepare-side).
@@ -71,6 +69,9 @@ var (
 	// verifyPersistedStore confirms every manifest image resolves through the copied store
 	// opened as a read-only additional image store (needs a real overlay store + root).
 	verifyPersistedStore = defaultVerifyPersistedStore
+	// exchangeStoreDirs atomically swaps the staging tree with the live store; tests override it to
+	// simulate a filesystem that does not support RENAME_EXCHANGE.
+	exchangeStoreDirs = defaultExchangeStoreDirs
 )
 
 // persistReadOnlyStore copies the pre-built read-only containers/storage durability store staged
@@ -83,9 +84,12 @@ var (
 // never a silent install-only-style no-op.
 //
 // The store copy and its config registration are atomic as a pair: the store is copied to a
-// staging dir, verified, labelled, then atomically moved into place, and only then is the drop-in
-// written. An interrupted copy leaves no ro-store and no storage.conf entry; a failure writing the
-// drop-in rolls the store back.
+// staging dir, verified, labelled, then swapped into place with the live store in a single
+// renameat2(RENAME_EXCHANGE) (a plain rename on a first publish, where no live store exists yet),
+// and only then is the drop-in written. The exchange never leaves the configured path momentarily
+// absent, so a crash mid-swap cannot leave a dangling registration pointing at a missing store. An
+// interrupted copy leaves no ro-store and no storage.conf entry; a failure writing the drop-in rolls
+// the store back to the previous copy.
 func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localimages.DigestManifest) error {
 	// The store is staged at <p2 mount>/store; read it from the configured mount path so it
 	// tracks LocalImagesPath (equal to common.LocalImagesStorePath in production).
@@ -94,17 +98,6 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 	osname := common.GetStaterootName(i.config.SeedVersion)
 	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
 	staging := destStore + roStoreStagingSuffix
-	backup := destStore + roStoreBackupSuffix
-
-	// Reconcile a store backup left by an earlier run interrupted mid-swap before any validation
-	// can fail: recovery depends only on destStore/backup (both derived from config, not the
-	// source), and must run even when the media source is now missing or malformed. Otherwise a
-	// crash in the small window between moving the old store aside and landing its replacement,
-	// followed by a retry against a bad source, would leave destStore absent, the backup
-	// unreconciled, and the drop-in dangling at an empty path -- losing the only valid copy.
-	if err := recoverInterruptedSwap(destStore, backup); err != nil {
-		return err
-	}
 
 	// Fail closed: self-contained media must carry a complete overlay durability store. A
 	// missing/malformed store is worse than none, so reject it rather than degrade silently.
@@ -112,9 +105,12 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 		return fmt.Errorf("self-contained durability store on media is missing or incomplete: %w", err)
 	}
 
-	// Clear any leftover staging/partial tree from an interrupted earlier run so the
-	// stage -> move is clean. staging and destStore share a parent dir (same filesystem), so
-	// the move below is an atomic rename.
+	// Clear any leftover staging tree from an interrupted earlier run so the stage -> swap is clean.
+	// The atomic exchange below never leaves destStore absent, so whatever is parked at staging after
+	// an interrupted run -- a half-copied replacement, or the superseded previous store from a crash
+	// after the exchange -- is safe to discard: the configured destStore still holds a valid,
+	// registered store. staging and destStore share a parent dir (same filesystem), a prerequisite
+	// for the atomic rename/exchange below.
 	if err := os.RemoveAll(staging); err != nil {
 		return fmt.Errorf("failed to clear read-only store staging dir %q: %w", staging, err)
 	}
@@ -152,87 +148,92 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 		return fmt.Errorf("failed to apply SELinux label to read-only store %q: %w", staging, err)
 	}
 
-	// Atomic publish with a recoverable rollback. Move any existing store aside to a backup rather
-	// than deleting it up front: the drop-in always targets the fixed RODurabilityStorePath, so a
-	// re-run that removed the store but then failed the rename below -- or the deployment lookup in
-	// registerReadOnlyStore that follows -- would leave a dangling registration pointing at an empty
-	// path and destroy a previously valid store. Keeping the old store until the replacement is in
-	// place and registered lets every failure restore it (and its still-current registration) intact.
-	movedAside := false
-	if _, err := os.Stat(destStore); err == nil {
-		if err := os.Rename(destStore, backup); err != nil {
-			return fmt.Errorf("failed to move existing read-only store %q aside to %q: %w", destStore, backup, err)
-		}
-		movedAside = true
-	} else if !os.IsNotExist(err) {
+	// Publish atomically. When a store already exists, swap the verified staging tree with it in a
+	// single renameat2(RENAME_EXCHANGE): both paths exist throughout, so the configured destStore is
+	// never momentarily absent. This matters because CRI-O's overlay driver os.Stat()s every
+	// configured additional image store and fails storage initialization if one is missing -- a
+	// move-aside-then-rename sequence would leave a crash window where destStore is absent while its
+	// drop-in still registers it. After the exchange the superseded store sits at staging for rollback
+	// or cleanup. If the filesystem does not support RENAME_EXCHANGE, fail the prepare with the
+	// previous store untouched rather than fall back to a non-atomic sequence that reopens that
+	// window. On a first publish destStore does not exist yet -- there is nothing to lose and
+	// RENAME_EXCHANGE requires both operands -- so a plain atomic rename is used.
+	existed, err := pathExists(destStore)
+	if err != nil {
 		return fmt.Errorf("failed to stat existing read-only store %q: %w", destStore, err)
 	}
-	// The rename within the same filesystem is atomic; on failure restore the previous store so the
-	// retry leaves it (and its registration) intact.
-	if err := os.Rename(staging, destStore); err != nil {
-		i.restorePreviousStore(movedAside, destStore, backup)
+	if existed {
+		if err := exchangeStoreDirs(staging, destStore); err != nil {
+			return fmt.Errorf("failed to atomically swap read-only store into place at %q "+
+				"(the target filesystem may not support RENAME_EXCHANGE): %w", destStore, err)
+		}
+	} else if err := os.Rename(staging, destStore); err != nil {
 		return fmt.Errorf("failed to move read-only store into place at %q: %w", destStore, err)
 	}
 	committed = true
 	i.log.Infof("Sealed read-only durability store at %s", destStore)
 
 	// Register the store only after it is in place and verified, so an interrupted prepare never
-	// leaves a storage.conf entry pointing at an incomplete/absent store. If the drop-in write
-	// fails, undo the swap -- drop the freshly published store and restore the previous one -- so
-	// the (store, config) pair stays all-or-nothing and the retry never destroys a valid store.
+	// leaves a storage.conf entry pointing at an incomplete/absent store. If registration fails, undo
+	// the publish so the (store, config) pair stays all-or-nothing and the retry never destroys a
+	// valid store.
 	if err := i.registerReadOnlyStore(osname); err != nil {
-		if rmErr := os.RemoveAll(destStore); rmErr != nil {
-			i.log.Warnf("failed to remove read-only store %q while rolling back to the previous one: %v", destStore, rmErr)
-		} else {
-			i.restorePreviousStore(movedAside, destStore, backup)
-		}
+		i.rollbackPublish(existed, destStore, staging)
 		return fmt.Errorf("failed to register read-only store: %w", err)
 	}
 
-	// The replacement is published and registered; drop the now-superseded previous store.
-	if movedAside {
-		if err := os.RemoveAll(backup); err != nil {
-			i.log.Warnf("failed to remove superseded read-only store backup %q: %v", backup, err)
+	// The replacement is published and registered; drop the now-superseded previous store parked at
+	// staging (a no-op on a first publish, where the rename already consumed staging).
+	if existed {
+		if err := os.RemoveAll(staging); err != nil {
+			i.log.Warnf("failed to remove superseded read-only store %q: %v", staging, err)
 		}
 	}
 	return nil
 }
 
-// restorePreviousStore moves a backed-up store back into place after a failed publish/register, so
-// the previous valid store and its still-current registration survive a failed re-run. It is
-// best-effort: a restore failure is logged, not returned, because the caller is already returning
-// the original publish/register error.
-func (i *IBIPrepare) restorePreviousStore(movedAside bool, destStore, backup string) {
-	if !movedAside {
+// rollbackPublish undoes a published-but-unregistered store so a failed registration never leaves a
+// store without its matching config or destroys a previously valid store. On a swap (existed) it
+// exchanges the previous store -- parked at staging by the publish -- back into destStore and drops
+// the freshly published copy that returns to staging; on a first publish it removes the freshly
+// published store outright (there is no previous one to restore). It is best-effort: failures are
+// logged, not returned, because the caller is already returning the original registration error.
+func (i *IBIPrepare) rollbackPublish(existed bool, destStore, staging string) {
+	if !existed {
+		if err := os.RemoveAll(destStore); err != nil {
+			i.log.Warnf("failed to remove read-only store %q while rolling back a failed registration: %v", destStore, err)
+		}
 		return
 	}
-	if err := os.Rename(backup, destStore); err != nil {
-		i.log.Warnf("failed to restore previous read-only store %q from backup %q: %v", destStore, backup, err)
+	if err := exchangeStoreDirs(staging, destStore); err != nil {
+		i.log.Warnf("failed to restore previous read-only store at %q after a failed registration: %v", destStore, err)
+		return
+	}
+	if err := os.RemoveAll(staging); err != nil {
+		i.log.Warnf("failed to remove superseded read-only store %q while rolling back: %v", staging, err)
 	}
 }
 
-// recoverInterruptedSwap reconciles a store backup left by an earlier run interrupted mid-swap. The
-// backup exists only transiently, between moving the previous store aside and publishing its
-// replacement: if the live store is present the backup is stale and is removed; if the live store
-// is absent the swap was interrupted after the old store was moved aside but before the replacement
-// landed, so the backup is restored rather than losing the only valid store.
-func recoverInterruptedSwap(destStore, backup string) error {
-	if _, err := os.Stat(backup); err != nil {
+// pathExists reports whether path exists. A nil error with false means the path is absent; a non-nil
+// error means existence could not be determined.
+func pathExists(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("failed to stat read-only store backup %q: %w", backup, err)
+		return false, fmt.Errorf("stat %q: %w", path, err)
 	}
-	if _, err := os.Stat(destStore); err == nil {
-		if err := os.RemoveAll(backup); err != nil {
-			return fmt.Errorf("failed to remove stale read-only store backup %q: %w", backup, err)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat read-only store %q: %w", destStore, err)
-	}
-	if err := os.Rename(backup, destStore); err != nil {
-		return fmt.Errorf("failed to restore read-only store from backup %q: %w", backup, err)
+	return true, nil
+}
+
+// defaultExchangeStoreDirs atomically swaps directories a and b in a single
+// renameat2(RENAME_EXCHANGE) syscall: both paths exist throughout the call and afterwards point at
+// each other's trees. It returns an error -- having swapped nothing -- when the kernel or target
+// filesystem does not support RENAME_EXCHANGE, so the caller can fail closed rather than fall back to
+// a non-atomic move.
+func defaultExchangeStoreDirs(a, b string) error {
+	if err := unix.Renameat2(unix.AT_FDCWD, a, unix.AT_FDCWD, b, unix.RENAME_EXCHANGE); err != nil {
+		return fmt.Errorf("renameat2(RENAME_EXCHANGE) %q <-> %q: %w", a, b, err)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	storagetypes "go.podman.io/storage/types"
 	"go.uber.org/mock/gomock"
+	"golang.org/x/sys/unix"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
@@ -319,8 +320,9 @@ func TestPersistReadOnlyStoreRollsBackOnDropInFailure(t *testing.T) {
 
 // TestPersistReadOnlyStoreRollbackPreservesPreviousStore proves a re-run never destroys a
 // previously valid store: when publishing the replacement gets as far as registration and that
-// fails, the store is rolled back to the previous copy (restored from the backup), not left empty
-// with a dangling registration.
+// fails, the store is rolled back to the previous copy (swapped back into place with a second
+// RENAME_EXCHANGE), not left empty with a dangling registration. This is the "registration failure"
+// side of the atomic swap the Developer of Record asked to cover.
 func TestPersistReadOnlyStoreRollbackPreservesPreviousStore(t *testing.T) {
 	saveSeams(t)
 	withDeployRoot(t)
@@ -351,14 +353,13 @@ func TestPersistReadOnlyStoreRollbackPreservesPreviousStore(t *testing.T) {
 	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
 	assert.ErrorContains(t, err, "failed to register read-only store")
 
-	// The previous store is restored intact; no backup or staging is left behind.
+	// The previous store is restored intact; no staging is left behind.
 	assert.FileExists(t, sentinel, "the previously valid store must be restored when registration fails")
-	assert.NoDirExists(t, destStore+roStoreBackupSuffix, "the backup must not be left behind")
 	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the staging dir must be cleaned up")
 }
 
 // TestPersistReadOnlyStoreReplacesExistingStore proves an idempotent re-run replaces a previously
-// published store with the freshly copied one and leaves no backup or staging behind.
+// published store with the freshly copied one -- via the atomic swap -- and leaves no staging behind.
 func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
 	saveSeams(t)
 	withDeployRoot(t)
@@ -385,82 +386,158 @@ func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
 	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
 	require.NoError(t, ibi.persistReadOnlyStore(context.Background(), testManifest()))
 
-	// The stale store is replaced by the freshly copied one; no backup or staging remains.
+	// The stale store is replaced by the freshly copied one; no staging remains.
 	assert.NoFileExists(t, staleMarker, "the previous store must be replaced on a successful re-run")
 	assert.FileExists(t, filepath.Join(destStore, roStoreOverlayImagesJSON), "the new store must be in place")
-	assert.NoDirExists(t, destStore+roStoreBackupSuffix, "the backup must be removed after a successful publish")
-	assert.NoDirExists(t, destStore+roStoreStagingSuffix)
+	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the superseded store parked at staging must be removed after a successful publish")
 }
 
-// TestRecoverInterruptedSwap proves the mid-swap recovery: a stale backup is dropped when the live
-// store is present, and the backup is restored when a crash left no live store.
-func TestRecoverInterruptedSwap(t *testing.T) {
-	t.Run("stale backup removed when live store present", func(t *testing.T) {
-		dest := filepath.Join(t.TempDir(), "ro-store")
-		backup := dest + roStoreBackupSuffix
-		require.NoError(t, os.MkdirAll(dest, 0o755))
-		require.NoError(t, os.MkdirAll(backup, 0o755))
+// TestExchangeStoreDirsSwapsAtomically proves the default exchange helper swaps two directories in
+// place via renameat2(RENAME_EXCHANGE): each path ends up holding the other's content and both paths
+// exist throughout. This is the primitive the atomic publish relies on to never leave the configured
+// store path absent.
+func TestExchangeStoreDirsSwapsAtomically(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a")
+	b := filepath.Join(root, "b")
+	require.NoError(t, os.MkdirAll(a, 0o755))
+	require.NoError(t, os.MkdirAll(b, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(a, "marker"), []byte("A"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(b, "marker"), []byte("B"), 0o600))
 
-		require.NoError(t, recoverInterruptedSwap(dest, backup))
-		assert.DirExists(t, dest)
-		assert.NoDirExists(t, backup, "a stale backup must be removed when the live store is present")
-	})
+	require.NoError(t, defaultExchangeStoreDirs(a, b))
 
-	t.Run("backup restored when live store absent", func(t *testing.T) {
-		dest := filepath.Join(t.TempDir(), "ro-store")
-		backup := dest + roStoreBackupSuffix
-		require.NoError(t, os.MkdirAll(backup, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(backup, "marker"), []byte("x"), 0o600))
-
-		require.NoError(t, recoverInterruptedSwap(dest, backup))
-		assert.NoDirExists(t, backup)
-		assert.FileExists(t, filepath.Join(dest, "marker"), "the backup must be restored when no live store exists")
-	})
-
-	t.Run("no backup is a no-op", func(t *testing.T) {
-		dest := filepath.Join(t.TempDir(), "ro-store")
-		require.NoError(t, recoverInterruptedSwap(dest, dest+roStoreBackupSuffix))
-		assert.NoDirExists(t, dest)
-	})
+	assert.DirExists(t, a)
+	assert.DirExists(t, b)
+	gotA, err := os.ReadFile(filepath.Join(a, "marker")) //nolint:gosec // test path under t.TempDir()
+	require.NoError(t, err)
+	gotB, err := os.ReadFile(filepath.Join(b, "marker")) //nolint:gosec // test path under t.TempDir()
+	require.NoError(t, err)
+	assert.Equal(t, "B", string(gotA), "a must hold b's content after the exchange")
+	assert.Equal(t, "A", string(gotB), "b must hold a's content after the exchange")
 }
 
-// TestPersistReadOnlyStoreRecoversInterruptedSwapWhenSourceInvalid proves recovery of an
-// interrupted mid-swap runs before source validation: a prior run that moved the installed store
-// aside to the backup and crashed before landing the replacement must be reconciled -- restoring
-// the previous valid store -- even on a retry whose media source is now missing or malformed.
-// Were validation to run first, the retry would fail closed with the backup left unreconciled,
-// destStore absent, and the drop-in dangling at an empty path -- losing the only valid copy.
-func TestPersistReadOnlyStoreRecoversInterruptedSwapWhenSourceInvalid(t *testing.T) {
+// TestPersistReadOnlyStorePreservesPreviousStoreOnPrePublishFailure covers the "before the exchange"
+// side the Developer of Record asked to test: a failure that happens after a store is already
+// published but before the swap (here, the copy of the replacement fails) must leave the previously
+// published store -- and therefore its still-current registration -- completely untouched, because
+// destStore is only ever modified by the atomic exchange, which never runs.
+func TestPersistReadOnlyStorePreservesPreviousStoreOnPrePublishFailure(t *testing.T) {
 	saveSeams(t)
 	withDeployRoot(t)
 	ctrl := gomock.NewController(t)
-	// No ops or ostree calls: recovery runs, then source validation fails before any copy/label/register.
+	// No ops or ostree calls: the copy fails before any label/exchange/register.
 	mockOps := ops.NewMockOps(ctrl)
 	ostreeMock := ostreeclient.NewMockIClient(ctrl)
 
-	media := t.TempDir() // no <media>/store -- the retry's source is missing/invalid
-	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error {
-		t.Fatal("verify must not run when the source store is missing")
-		return nil
-	}
+	media := t.TempDir()
+	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 1)
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
 	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
-	// Simulate an interrupted swap: the previous store sits in the backup and destStore is absent.
-	backup := destStore + roStoreBackupSuffix
-	require.NoError(t, os.MkdirAll(backup, 0o755))
-	sentinel := filepath.Join(backup, "previous-store-marker")
+	// A previously published, valid store.
+	require.NoError(t, os.MkdirAll(destStore, 0o755))
+	sentinel := filepath.Join(destStore, "previous-store-marker")
 	require.NoError(t, os.WriteFile(sentinel, []byte("keep me"), 0o600))
+
+	copyReadOnlyStore = func(_, dst string) error {
+		require.NoError(t, os.MkdirAll(dst, 0o755))
+		return fmt.Errorf("copy interrupted")
+	}
+	exchangeStoreDirs = func(string, string) error {
+		t.Fatal("the exchange must not run when the replacement copy fails")
+		return nil
+	}
 
 	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
 	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
-	assert.ErrorContains(t, err, "missing or incomplete")
+	assert.ErrorContains(t, err, "failed to copy read-only store")
 
-	// The previous store is restored from the backup despite the fail-closed source error.
-	assert.FileExists(t, filepath.Join(destStore, "previous-store-marker"),
-		"the interrupted swap must be recovered before source validation fails")
-	assert.NoDirExists(t, backup, "the backup must be reconciled, not left behind")
+	// The previously valid store is untouched and the partial staging copy is cleaned up.
+	assert.FileExists(t, sentinel, "a pre-publish failure must never touch the previously published store")
+	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the partial staging copy must be cleaned up")
+}
+
+// TestPersistReadOnlyStoreFailsClosedWhenExchangeUnsupported proves the Developer of Record's
+// explicit constraint: if the target filesystem does not support RENAME_EXCHANGE, the prepare fails
+// without moving the old store aside, and never falls back to a non-atomic move-aside-then-rename
+// that would reopen the crash window.
+func TestPersistReadOnlyStoreFailsClosedWhenExchangeUnsupported(t *testing.T) {
+	saveSeams(t)
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	media := t.TempDir()
+	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 1)
+	copyReadOnlyStore = plainCopyTree
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	// A previously published, valid store that must survive an unsupported-exchange failure.
+	require.NoError(t, os.MkdirAll(destStore, 0o755))
+	sentinel := filepath.Join(destStore, "previous-store-marker")
+	require.NoError(t, os.WriteFile(sentinel, []byte("keep me"), 0o600))
+
+	mockOps.EXPECT().RunInHostNamespace("chcon", "-R", "-t", roStoreSELinuxType, destStore+roStoreStagingSuffix).Return("", nil).Times(1)
+	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error { return nil }
+	// Registration must never be reached when the exchange fails.
+	ostreeMock.EXPECT().GetDeploymentDir(gomock.Any()).Times(0)
+	exchangeStoreDirs = func(string, string) error { return unix.ENOTSUP }
+
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
+	err := ibi.persistReadOnlyStore(context.Background(), testManifest())
+	assert.ErrorContains(t, err, "RENAME_EXCHANGE")
+
+	// The previous store is left exactly where it was -- not moved aside -- and staging is cleaned up.
+	assert.FileExists(t, sentinel, "an unsupported exchange must not move or destroy the previous store")
+	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the staging copy must be cleaned up after a failed exchange")
+}
+
+// TestPersistReadOnlyStoreRecoversLeftoverStagingFromInterruptedSwap proves the recovery property on
+// both sides of the exchange: whether a prior run crashed before the exchange (leaving a half-staged
+// replacement) or after it (leaving the superseded store parked at staging), the configured destStore
+// always still holds a valid store, and the next prepare discards the leftover and republishes
+// cleanly. A leftover staging tree plus an existing store models exactly that interrupted state.
+func TestPersistReadOnlyStoreRecoversLeftoverStagingFromInterruptedSwap(t *testing.T) {
+	saveSeams(t)
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	media := t.TempDir()
+	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 2)
+	copyReadOnlyStore = plainCopyTree
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	// The configured store is present and valid -- the exchange never leaves it absent.
+	require.NoError(t, os.MkdirAll(destStore, 0o755))
+	staleMarker := filepath.Join(destStore, "stale-marker")
+	require.NoError(t, os.WriteFile(staleMarker, []byte("old"), 0o600))
+	// A leftover staging tree an interrupted run parked behind, which the re-run must discard.
+	staging := destStore + roStoreStagingSuffix
+	require.NoError(t, os.MkdirAll(staging, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "leftover"), []byte("junk"), 0o600))
+
+	deploymentDir := filepath.Join(common.GetStaterootPath(osname), "deploy", "abc123.0")
+	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(deploymentDir, nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chcon", "-R", "-t", roStoreSELinuxType, staging).Return("", nil).Times(1)
+	verifyPersistedStore = func(context.Context, *logrus.Logger, string, *localimages.DigestManifest) error { return nil }
+
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, media, seedVersion)
+	require.NoError(t, ibi.persistReadOnlyStore(context.Background(), testManifest()))
+
+	// The leftover is discarded, the fresh store is published, and nothing is parked at staging.
+	assert.NoFileExists(t, staleMarker, "the previous store must be replaced on the re-run")
+	assert.NoFileExists(t, filepath.Join(destStore, "leftover"), "the leftover staging tree must not leak into the published store")
+	assert.FileExists(t, filepath.Join(destStore, roStoreOverlayImagesJSON), "the freshly copied store must be in place")
+	assert.NoDirExists(t, staging, "no store may be left parked at staging after a successful re-run")
 }
 
 // TestPersistReadOnlyStoreSELinuxFailureLeavesNothing proves a labelling failure aborts the

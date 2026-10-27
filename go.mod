@@ -3,6 +3,7 @@ module github.com/openshift-kni/lifecycle-agent
 go 1.26.3
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/coreos/go-semver v0.3.1
 	github.com/coreos/ignition/v2 v2.28.0
 	github.com/cyphar/filepath-securejoin v0.7.0
@@ -47,7 +48,6 @@ require (
 	cel.dev/expr v0.25.3 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/ARO-RP v0.0.0-20250602035759-0693f32d5ccc // indirect
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/ProtonMail/go-crypto v1.5.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
@@ -205,7 +205,7 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
