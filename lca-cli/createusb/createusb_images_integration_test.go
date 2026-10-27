@@ -94,8 +94,9 @@ func TestMirrorAndImportRoundTrip(t *testing.T) {
 	// copy.CopyAllImages + digest-capture path.
 	mediaRoot := t.TempDir()
 	destLayout := filepath.Join(mediaRoot, integrationLayoutDir)
-	recordedDigest, err := copyIntoLayout(context.Background(), srcRef, destLayout, integrationOCITag, "")
+	res, err := copyIntoLayout(context.Background(), logrus.New(), srcRef, destLayout, integrationOCITag, "")
 	require.NoError(t, err)
+	recordedDigest := res.digest
 	require.NotEmpty(t, recordedDigest)
 
 	// The destination descriptor for the tag carries the recorded digest and is the
@@ -189,9 +190,9 @@ func TestCopyIntoLayoutPreservesPinnedDockerManifest(t *testing.T) {
 	require.NoError(t, err)
 	ref := pinnedLayoutReference{ImageReference: layoutRef, canonical: canonical}
 	destDir := filepath.Join(t.TempDir(), "dest")
-	got, err := copyIntoLayout(context.Background(), ref, destDir, "docker-0", "")
+	got, err := copyIntoLayout(context.Background(), logrus.New(), ref, destDir, "docker-0", "")
 	require.NoError(t, err)
-	assert.Equal(t, dockerDigest.String(), got)
+	assert.Equal(t, dockerDigest.String(), got.digest)
 	index := readDestIndex(t, destDir)
 	require.Len(t, index.Manifests, 1)
 	assert.Equal(t, dockerDigest, index.Manifests[0].Digest)
@@ -200,7 +201,7 @@ func TestCopyIntoLayoutPreservesPinnedDockerManifest(t *testing.T) {
 	// The offline importer reads the layout through the same transport.
 	preservedRef, err := layout.NewReference(destDir, "docker-0")
 	require.NoError(t, err)
-	_, err = copyIntoLayout(context.Background(), preservedRef, filepath.Join(t.TempDir(), "offline-copy"), "imported", "")
+	_, err = copyIntoLayout(context.Background(), logrus.New(), preservedRef, filepath.Join(t.TempDir(), "offline-copy"), "imported", "")
 	require.NoError(t, err)
 }
 
@@ -250,9 +251,9 @@ func TestCopyIntoLayoutPreservesPinnedDockerManifestList(t *testing.T) {
 	canonical, err := reference.WithDigest(named, listDigest)
 	require.NoError(t, err)
 	destDir := filepath.Join(t.TempDir(), "dest")
-	got, err := copyIntoLayout(context.Background(), pinnedLayoutReference{ImageReference: layoutRef, canonical: canonical}, destDir, "docker-list-0", "")
+	got, err := copyIntoLayout(context.Background(), logrus.New(), pinnedLayoutReference{ImageReference: layoutRef, canonical: canonical}, destDir, "docker-list-0", "")
 	require.NoError(t, err)
-	assert.Equal(t, listDigest.String(), got)
+	assert.Equal(t, listDigest.String(), got.digest)
 	index := readDestIndex(t, destDir)
 	require.Len(t, index.Manifests, 1)
 	assert.Equal(t, listDigest, index.Manifests[0].Digest)

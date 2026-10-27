@@ -91,7 +91,7 @@ func TestParseDigestManifest(t *testing.T) {
 	})
 
 	invalid := map[string]DigestManifest{
-		"unsupported version": {Version: 3, OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
+		"unsupported version": {Version: 4, OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"missing version":     {OCILayoutPath: "oci", Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"missing layout path": {Version: 1, Images: []ImageEntry{{Name: testImageName, Digest: goodDigest, OCITag: testOCITag}}},
 		"empty images":        {Version: 1, OCILayoutPath: "oci"},

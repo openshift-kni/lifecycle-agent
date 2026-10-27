@@ -27,6 +27,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/pkg/blobinfocache/memory"
 	"go.podman.io/image/v5/types"
 )
 
@@ -42,7 +43,12 @@ func preservePinnedDockerManifest(ctx context.Context, ref types.ImageReference,
 	}
 	defer func() { _ = source.Close() }()
 
-	mediaType, size, err := preserveSourceManifest(ctx, source, layoutDir, nil, pinned)
+	// A real (registry/Docker) image source requires a non-nil BlobInfoCache for GetBlob:
+	// it calls cache.RecordKnownLocation and panics on a nil cache. A process-lifetime
+	// in-memory cache is sufficient here -- the fetched blobs are verified against their
+	// source digests regardless, and the cache only needs to survive this capture.
+	cache := memory.New()
+	mediaType, size, err := preserveSourceManifest(ctx, source, layoutDir, cache, nil, pinned)
 	if err != nil {
 		return fmt.Errorf("preserving pinned Docker manifest %s: %w", pinned, err)
 	}
@@ -79,7 +85,7 @@ func preservePinnedDockerManifest(ctx context.Context, ref types.ImageReference,
 // preserveSourceManifest copies the original manifest graph and any blobs that
 // conversion omitted. Newly fetched bytes are checked against their source
 // digests; blobs already written by copy.Image are reused.
-func preserveSourceManifest(ctx context.Context, source types.ImageSource, layoutDir string, instance *digest.Digest, expected digest.Digest) (string, int64, error) {
+func preserveSourceManifest(ctx context.Context, source types.ImageSource, layoutDir string, cache types.BlobInfoCache, instance *digest.Digest, expected digest.Digest) (string, int64, error) {
 	data, mediaType, err := source.GetManifest(ctx, instance)
 	if err != nil {
 		return "", 0, fmt.Errorf("reading source manifest %s: %w", expected, err)
@@ -108,16 +114,16 @@ func preserveSourceManifest(ctx context.Context, source types.ImageSource, layou
 			return "", 0, fmt.Errorf("docker manifest list %s has no instances", expected)
 		}
 		for _, child := range graph.Manifests {
-			if _, _, err := preserveSourceManifest(ctx, source, layoutDir, &child.Digest, child.Digest); err != nil {
+			if _, _, err := preserveSourceManifest(ctx, source, layoutDir, cache, &child.Digest, child.Digest); err != nil {
 				return "", 0, err
 			}
 		}
 	case manifest.DockerV2Schema2MediaType, imgspecv1.MediaTypeImageManifest:
-		if err := preserveSourceBlob(ctx, source, layoutDir, graph.Config); err != nil {
+		if err := preserveSourceBlob(ctx, source, layoutDir, cache, graph.Config); err != nil {
 			return "", 0, err
 		}
 		for _, layer := range graph.Layers {
-			if err := preserveSourceBlob(ctx, source, layoutDir, layer); err != nil {
+			if err := preserveSourceBlob(ctx, source, layoutDir, cache, layer); err != nil {
 				return "", 0, err
 			}
 		}
@@ -137,7 +143,7 @@ func layoutBlobPath(layoutDir string, dgst digest.Digest) string {
 	return filepath.Join(layoutDir, "blobs", dgst.Algorithm().String(), dgst.Encoded())
 }
 
-func preserveSourceBlob(ctx context.Context, source types.ImageSource, layoutDir string, desc imgspecv1.Descriptor) error {
+func preserveSourceBlob(ctx context.Context, source types.ImageSource, layoutDir string, cache types.BlobInfoCache, desc imgspecv1.Descriptor) error {
 	if err := desc.Digest.Validate(); err != nil {
 		return fmt.Errorf("validating source blob digest %s: %w", desc.Digest, err)
 	}
@@ -147,7 +153,7 @@ func preserveSourceBlob(ctx context.Context, source types.ImageSource, layoutDir
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking layout blob %s: %w", desc.Digest, err)
 	}
-	reader, _, err := source.GetBlob(ctx, types.BlobInfo{Digest: desc.Digest, Size: desc.Size, MediaType: desc.MediaType, URLs: desc.URLs}, nil)
+	reader, _, err := source.GetBlob(ctx, types.BlobInfo{Digest: desc.Digest, Size: desc.Size, MediaType: desc.MediaType, URLs: desc.URLs}, cache)
 	if err != nil {
 		return fmt.Errorf("reading source blob %s: %w", desc.Digest, err)
 	}

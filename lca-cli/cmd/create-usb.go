@@ -22,6 +22,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
@@ -45,33 +46,34 @@ func newCreateUsbCmd() *cobra.Command {
 		rhcosLiveSHA string
 		recertImage  string
 		lcaImage     string
+		usbSize      string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "create-usb",
-		Short: "Create a placeholder USB image from a manifest.",
+		Short: "Create a bootable USB-based IBI image from a manifest.",
 		Long: `create-usb parses a single USB-based IBI manifest, applies CLI overrides, and runs
 every build-time validation rule before assembling the media.
 
-With --output, the command creates a sparse .img with a GPT and formatted placeholder
-partitions. It does not write a live ISO or image payload, so the image is not bootable.
---write-device is deferred. The reserved image-mirroring flags reject explicit values
-until that stage is wired into the command.`,
+With --output, the command builds the customized RHCOS live ISO (fetched over HTTPS and
+verified, with an embedded ignition that auto-runs lca-cli ibi), writes it to the front of the
+image (LBA 0), and appends the formatted, labelled data partitions after it (the CNF-27197-proven
+DOS/MBR layout). It then populates the ibi-images partition with the OCI image layout, the on-media
+digests.json, and the staged lca-cli binary (self-contained media also carries the read-only
+durability store). --lca-image is required for assembly. --usb-size, when set, fails the build if
+the assembled media exceeds the budget. --write-device is deferred.`,
 		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			// These flags are reserved for the image-mirroring stage. Until that stage
-			// is connected to Build, reject explicit values instead of ignoring them.
-			for _, name := range []string{"auth-file", "recert-image", "lca-image"} {
-				if cmd.Flags().Changed(name) {
-					return fmt.Errorf("--%s is not supported until image mirroring is wired into create-usb", name)
-				}
-			}
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreateUsb(createUsbOptions{
 				manifestFile: manifestFile,
+				authFile:     authFile,
 				outputPath:   outputPath,
 				writeDevice:  writeDevice,
 				rhcosLiveISO: rhcosLiveISO,
 				rhcosLiveSHA: rhcosLiveSHA,
+				recertImage:  recertImage,
+				lcaImage:     lcaImage,
+				usbSize:      usbSize,
 			})
 		},
 	}
@@ -95,6 +97,9 @@ until that stage is wired into the command.`,
 	// in CNF-27171); the flags are defined here so the command contract is stable.
 	cmd.Flags().StringVar(&recertImage, "recert-image", defaultRecertImage(), "Recert image pull-spec added to the install-only image set (defaults to $RELATED_IMAGE_RECERT_IMAGE or the built-in default).")
 	cmd.Flags().StringVar(&lcaImage, "lca-image", "", "lca-cli image pull-spec added to the install-only image set (required for media assembly).")
+	// --usb-size is the whole-stick size budget (e.g. "14Gi", "32G"). When set, the build fails if
+	// the assembled media's final apparent size exceeds it. Empty disables the check.
+	cmd.Flags().StringVar(&usbSize, "usb-size", "", "USB-stick size budget (e.g. 14Gi, 32G). The build fails if the assembled media exceeds it. Empty disables the check.")
 
 	_ = cmd.MarkFlagRequired("manifest")
 
@@ -115,20 +120,29 @@ func defaultRecertImage() string {
 // createUsbOptions carries the resolved create-usb flag values.
 type createUsbOptions struct {
 	manifestFile string
+	authFile     string
 	outputPath   string
 	writeDevice  string
 	rhcosLiveISO string
 	rhcosLiveSHA string
+	recertImage  string
+	lcaImage     string
+	usbSize      string
 }
 
-// runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse
-// the manifest, apply the --rhcos-live-iso* overrides, validate the manifest, then hand
-// off to the placeholder media build.
+// runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse the
+// --usb-size budget, parse the manifest, apply the --rhcos-live-iso* overrides, validate the
+// manifest, then hand off to the media assembly build.
 func runCreateUsb(opts createUsbOptions) error {
 	if err := validateOutputTarget(opts.outputPath, opts.writeDevice); err != nil {
 		return err
 	}
 	if err := validateISOOverrideFlags(opts.rhcosLiveISO, opts.rhcosLiveSHA); err != nil {
+		return err
+	}
+
+	usbSizeBytes, err := parseUSBSize(opts.usbSize)
+	if err != nil {
 		return err
 	}
 
@@ -151,12 +165,34 @@ func runCreateUsb(opts createUsbOptions) error {
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
 	if err := createusb.Build(context.Background(), log, manifest, createusb.BuildOptions{
-		OutputPath:  opts.outputPath,
-		WriteDevice: opts.writeDevice,
+		OutputPath:   opts.outputPath,
+		WriteDevice:  opts.writeDevice,
+		LCAImage:     opts.lcaImage,
+		AuthFile:     opts.authFile,
+		RecertImage:  opts.recertImage,
+		USBSizeBytes: usbSizeBytes,
 	}); err != nil {
 		return fmt.Errorf("create-usb: %w", err)
 	}
 	return nil
+}
+
+// parseUSBSize parses the --usb-size budget (e.g. "14Gi", "32G") into bytes using the standard
+// Kubernetes quantity format. An empty value disables the budget (returns 0); a negative or
+// unparseable value is an error.
+func parseUSBSize(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --usb-size %q (use a size like 14Gi or 32G): %w", s, err)
+	}
+	bytes := q.Value()
+	if bytes <= 0 {
+		return 0, fmt.Errorf("invalid --usb-size %q: must be greater than zero", s)
+	}
+	return bytes, nil
 }
 
 // validateOutputTarget enforces that exactly one of --output or --write-device is set.

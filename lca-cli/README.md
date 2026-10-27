@@ -2,7 +2,8 @@
 
 `lca-cli` creates OCI seed images for image-based upgrades and provides commands for
 image-based install, post-pivot configuration, and IP configuration. Its `create-usb`
-command currently creates a partitioned placeholder image for USB-based installation.
+command assembles bootable USB-based IBI media (the live ISO at LBA 0 with the data
+partitions appended after it).
 
 ## Motivation
 
@@ -97,63 +98,76 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 
 ## Creating USB media
 
-With `--output`, `create-usb` creates a sparse `.img` containing the planned GPT
-partition slots. p1 reserves space for the live ISO; p2 and p4 are empty ext4
-filesystems, and self-contained mode also gets an empty ext4 p3. The command does
-not download the ISO, populate images or site configuration, or verify bootability.
-**The output is not bootable installation media.** `--write-device` remains deferred.
+With `--output`, `create-usb` assembles bootable media following the CNF-27197-proven
+DOS/MBR layout: it builds the customized RHCOS live ISO, writes it to the **front of the
+image (LBA 0)** so the ISO's own DOS/MBR table and EFI boot entries are preserved, and
+appends the formatted, labelled data partitions after it. `--lca-image` is **required** for
+assembly. `--write-device` remains deferred: the only target is a sparse `.img`. The
+`ibi-images` partition is populated with the OCI image layout, the on-media `digests.json`,
+and the staged `lca-cli` binary (self-contained media also carries the read-only durability
+`store/`); the `ibi-status` partition ships empty (its runtime records are written on-node).
+The `ibi-images` partition is **sized to its measured payload** (staged into scratch, measured,
+then set to that payload plus ext4 metadata and free-space headroom, with an 8 GiB minimum), so
+an oversized payload fails the `--usb-size` budget at planning time with a clear size error rather
+than overrunning a fixed reservation during population. Assembly fails if the resulting
+whole-stick size exceeds `--usb-size`. End-to-end boot verification on reference hardware is
+tracked by CNF-27158.
 
-The command reads a single YAML or JSON manifest and validates its schema and fields
-before creating the placeholder image. The p1 live-ISO build (`BuildLiveISO`), image
-mirroring (`BuildImageLayout`), and p3 content rendering (`RenderP3Tree`) are
-implemented as separate building blocks but are not yet called by `create-usb`.
-`BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its sha256 before
-use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the build),
-embeds a small ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
-customized ISO that is written into p1 once wired. The exact shipping `lca-cli` binary is
-extracted from `--lca-image` and **staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather
-than embedded in the ISO ignition, because at ~90 MB it far exceeds the fixed ISO ignition
-embed area; the embedded unit execs it from there once p2 is mounted. For the verified-ISO
-contract and the embedded-ignition details, and for the self-contained p3 config tree,
-digest pinning, and offline mirror-resource rules, see
-[docs/create-usb.md](../docs/create-usb.md).
+The command reads a single YAML or JSON manifest and validates its schema and fields, then
+builds the live ISO: `BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and verifies its
+sha256 before use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the
+build), embeds an ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
+customized ISO. The exact shipping `lca-cli` binary is extracted from `--lca-image` and
+**staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather than embedded in the ISO ignition,
+because at ~90 MB it far exceeds the fixed ISO ignition embed area; a label-based `.mount`
+unit in the embedded ignition mounts `ibi-images` and the embedded unit execs `lca-cli` from
+there. For the media layout rationale (why DOS/MBR, not GPT), the verified-ISO contract and
+embedded-ignition details, and the self-contained p3 config tree, digest pinning, and offline
+mirror-resource rules, see [docs/create-usb.md](../docs/create-usb.md).
 
-Creating the partition table requires a Linux host with loop-device access and
-`losetup`, `sgdisk`, `partprobe`, `udevadm`, and `mkfs.ext4` available. Run with
-sufficient privileges to create and format loopback partitions.
+Assembling the media requires a Linux host with loop-device access and `losetup`, `sfdisk`,
+`blockdev`, `udevadm`, `mkfs.ext4`, `blkid`, and `lsblk` available (every create-usb partition
+is `ext4`). Run with sufficient privileges to create and format loopback partitions.
 
 ```bash
-./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img
+./bin/lca-cli create-usb --manifest manifest.yaml --output usb.img --lca-image <lca-cli-pullspec>
 ```
 
 ### Partition layout
 
-Provisional reservation sizes (the sparse `.img` does not consume real bytes until
-content is written). Labels are GPT names and, for p2–p4, also the ext4 filesystem
-labels:
+The customized live ISO owns the front of the media (its own ISO9660/EFI partitions); the
+data partitions below are **appended after it** in the free MBR slots. On-node code discovers
+them **by filesystem label**, not by partition number, so the number each one receives is an
+implementation detail. Reservation sizes (the sparse `.img` does not consume real bytes until
+content is written). `ibi-images` is **sized to its measured payload** — the payload is staged
+into scratch first, measured, and the partition is set to that payload plus ext4 metadata and
+free-space headroom, rounded up, with an **8 GiB minimum** floor; the other partitions are
+fixed-size:
 
-| Partition | Label | Size | Modes | Content today |
-| --- | --- | --- | --- | --- |
-| p1 | `live-iso` | 2 GiB | both | GPT reservation only today; the verified, ignition-customized bootable live ISO (`BuildLiveISO`) is written here once wired (CNF-27171) |
-| p2 | `ibi-images` | 8 GiB | both | Empty ext4 |
-| p3 | `cluster-config` | 256 MiB | self-contained only | Empty ext4 |
-| p4 | `ibi-status` | 64 MiB | both | Empty ext4 |
+| Role | Filesystem label | FS | Size | Modes | Content today |
+| --- | --- | --- | --- | --- | --- |
+| live ISO | — (ISO9660/EFI) | — | ISO size | both | The verified, ignition-customized bootable RHCOS live ISO at LBA 0 |
+| images | `ibi-images` | ext4 | payload-derived (≥ 8 GiB) | both | OCI image layout + `digests.json`, the staged `lca-cli` binary, and (self-contained) the read-only durability `store/` |
+| config | `cluster-config` | ext4 | 256 MiB | self-contained only | Rendered `/opt/openshift` config tree (empty if none supplied) |
+| status | `ibi-status` | ext4 | 64 MiB | both | Empty (runtime records written on-node by CNF-27163) |
 
-install-only media is **p1 / p2 / p4**: the status partition keeps fixed number **4**
-even when p3 is omitted (it is not renumbered to p3).
+For **self-contained** media, MBR's four-primary limit (the ISO already uses two) means
+`ibi-images` is appended as a primary and `cluster-config` + `ibi-status` are logical
+partitions inside an MBR extended container.
 
 ### Flags
 
 | Flag | Description |
 | --- | --- |
 | `--manifest`, `-f` | Path to the USB-based IBI YAML/JSON manifest (required). |
-| `--auth-file` | Reserved for workstation mirror-registry credentials. Explicit use fails until image mirroring is wired into the command. |
-| `--recert-image` | Reserved for the recert image in the on-media image set. Explicit use currently fails. |
-| `--lca-image` | Reserved for the lca-cli image in the on-media image set. Explicit use currently fails. |
+| `--auth-file` | Workstation credentials used at build time to pull `--lca-image` (never written to the media). |
+| `--recert-image` | Recert image pull-spec added to the on-media image set and mirrored into the OCI image layout (defaults to `$RELATED_IMAGE_RECERT_IMAGE` or the built-in default). |
+| `--lca-image` | lca-cli image pull-spec. The exact shipping `lca-cli` binary is extracted from it and staged on the `ibi-images` partition (not embedded in the ISO); the embedded ignition mounts that partition and execs it on boot. Required for media assembly. |
 | `--output` | Path of the `.img` file to write. The path must not already exist — the command refuses to overwrite an existing file. Mutually exclusive with `--write-device`; exactly one is required. |
-| `--write-device` | Reserved block-device target. The command rejects it while media assembly is incomplete. Mutually exclusive with `--output`; exactly one target is required. |
+| `--write-device` | Reserved block-device target. The command rejects it (the only supported target is a sparse `.img`). Mutually exclusive with `--output`; exactly one target is required. |
 | `--rhcos-live-iso` | Override the manifest `rhcosLiveIso.url`. Must be set together with `--rhcos-live-iso-sha256` (they override as a pair). |
 | `--rhcos-live-iso-sha256` | Override the manifest `rhcosLiveIso.sha256`. Must be set together with `--rhcos-live-iso`. |
+| `--usb-size` | Whole-stick size budget (e.g. `14Gi`, `32G`). The build fails if the final apparent media size exceeds it. Empty disables the check. |
 
 ### Manifest schema
 
@@ -217,8 +231,11 @@ siteConfig:
 ```
 
 The command reads the referenced file during validation and fails if it is missing or
-does not contain valid JSON. A future media-population stage will use the resolved
-value; the current placeholder image contains no pull secret.
+does not contain valid JSON. The resolved value is rendered into the `SeedReconfiguration`
+(`cluster-configuration/manifest.json` on the `cluster-config` partition), so a
+self-contained stick carries the pull secret in the clear — treat the media as a
+secret-bearing credential (see the threat model in
+[docs/create-usb.md](../docs/create-usb.md#threat-model-physical-possession-is-trusted)).
 
 ### Example: install-only
 
@@ -262,36 +279,41 @@ siteConfig:
   pullSecret: "@/path/to/pull-secret.json"
 ```
 
-### Planned image payload (`digests.json`)
+### Image payload (`digests.json`)
 
-`create-usb --output` does **not** currently create `digests.json` or an OCI image
-layout. The separately implemented `BuildImageLayout` stage resolves the profile's
-image set to digests, mirrors it into a build-unique OCI layout directory (named
-`oci-<unique>`), and emits a digest manifest. For self-contained profiles it first
-runs `RenderP3Tree` and scans the rendered manifests for image references and offline
-mirror-resource rules. It pins image references to the mirrored digests after
-mirroring; see [docs/create-usb.md](../docs/create-usb.md). Wiring that stage into
-the placeholder image is follow-up work. The format and publication behavior below
-describe that standalone stage, not the current `create-usb` output.
+`create-usb --output` populates the `ibi-images` partition with an OCI image layout and
+`digests.json`. The `BuildImageLayout` stage resolves the profile's image set to digests,
+mirrors it into a build-unique OCI layout directory (named `oci-<unique>`), and emits a
+digest manifest. For self-contained profiles it first runs `RenderP3Tree` and scans the
+rendered manifests for image references and offline mirror-resource rules. It pins image
+references to the mirrored digests after mirroring; see
+[docs/create-usb.md](../docs/create-usb.md). The format and publication behavior below
+describe that stage.
 
 When `BuildImageLayout` runs, it emits the manifest in two places, byte-identical:
 
 - `digests.json` at the media (p2) root — the committed, read-only on-media reference.
 - `<output>.digests.json`, beside the `--output` image — an audit-only, best-effort build-side copy.
 
-Schema (producer emits **version 2**; the on-node consumer still accepts version 1,
-which carries no `sources`):
+Schema (producer emits **version 3**; the on-node consumer still accepts versions 1
+and 2, which carry no `sources` / `signatures` respectively):
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "ociLayoutPath": "oci-1234567890",
   "images": [
     {
       "name": "quay.io/openshift-release-dev/ocp-release",
       "digest": "sha256:9a1f…c3",
       "ociTag": "ocp-release-0",
-      "sources": ["quay.io/openshift-release-dev/ocp-release:4.20.0"]
+      "sources": ["quay.io/openshift-release-dev/ocp-release:4.20.0"],
+      "signatures": [
+        {
+          "instanceDigest": "sha256:0b2e…7a",
+          "blobs": [{ "sha256": "e3b0…b855", "size": 568 }]
+        }
+      ]
     }
   ]
 }
@@ -299,12 +321,13 @@ which carries no `sources`):
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `version` | int | Schema version. The image stage emits `2`. Consumers accept `1` and `2`. |
+| `version` | int | Schema version. The image stage emits `3`. Consumers accept `1`, `2`, and `3`. |
 | `ociLayoutPath` | string | OCI image layout directory, relative to the media root. Each build mirrors into a fresh, build-unique directory (`oci-<unique>`); the consumer locates the layout through this field. |
 | `images[].name` | string | Canonical repository name the image is stored under. |
 | `images[].digest` | string | Digest of the top-level `index.json` descriptor to import. For multi-arch content this is the image-index digest; the layout preserves the full multi-arch index so the node imports the instance matching its platform. |
 | `images[].ociTag` | string | Layout reference name (`org.opencontainers.image.ref.name`) of the descriptor. Unique per image. |
-| `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2 only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
+| `images[].sources` | list of string | Source references (including tags) that requested this image. Version 2+ only; lets disconnected prepare match seed requirements by exact source and register tagged aliases of the imported digest. Empty / omitted in version 1. |
+| `images[].signatures` | list | Source signatures keyed by manifest instance digest (top-level manifest/index digest and each signed per-platform instance); each blob records `size`+`sha256`. Version 3 only; bytes live under `<ociLayoutPath>/signatures/`, re-attached on import. Omitted in v1/v2. |
 
 **Crash-safe publication.** The on-media `digests.json` is the single commit point. Each build
 mirrors into a fresh, build-unique layout directory (never the one the live manifest references)
@@ -333,11 +356,40 @@ which layout is live rather than trusting the just-written name. Builds against 
 are serialized by an advisory file lock, so concurrent builds cannot interleave their commit/GC
 steps and collect a layout the other build just made live.
 
-The build also emits a resulting-size estimate (the OCI-layout subtotal and the image-stage
-subtotal — the layout plus the on-media `digests.json`) for the USB-size budget; the estimate
-excludes content staged by the later media-assembly step and the final filesystem/ISO overhead.
+The image stage also emits an informational resulting-size estimate (the OCI-layout subtotal and
+the image-stage subtotal — the layout plus the on-media `digests.json`). This subtotal is reported
+for visibility only; it does not determine the `--usb-size` budget and omits content staged by the
+later media-assembly step and the final filesystem/ISO overhead. The budget is enforced separately
+by `validateUSBSizeBudget` against the final assembled image's apparent size (`containerSize`: the
+ISO plus every data partition, including the measured `ibi-images` payload and assembly/alignment
+overhead).
 
-> **Trust caveat:** mirroring uses an accept-anything signature policy. Pinning each
-> reference to a digest guarantees the content is immutable and content-addressed, but it
-> verifies **neither publisher identity nor image trust** (no signature verification is
-> performed).
+### Image trust and signature preservation
+
+Mirroring runs under the **build host's configured container trust policy**
+(`signature.DefaultPolicy` — `$CONTAINERS_POLICY_JSON`, `/etc/containers/policy.json`, …),
+not a hardcoded accept-anything policy: a host configured to require signatures rejects an
+unsigned or untrusted source, and an unsigned image is mirrored only when the host policy
+permits it. If the host has **no** trust policy configured at all, the build logs a loud
+warning and falls back to accepting any source (so an unconfigured host still builds); a
+malformed policy is a hard error. Digest-pinning additionally guarantees the content is
+immutable and content-addressed.
+
+An OCI image layout cannot store an image's signatures, so the signatures the source
+registry serves are **captured and staged beside the layout** (under
+`<ociLayoutPath>/signatures/`, keyed by manifest instance digest, each blob recorded with
+its size and sha256 in `digests.json`). When the node imports an image into
+containers-storage — which *can* store signatures — the staged bytes are verified against
+their recorded hashes and **re-attached**, so the installed store carries the same
+signatures the registry served. A missing, truncated, or hash-mismatched signature **fails
+the import** rather than silently dropping trust material.
+
+For a **multi-arch index**, containers-storage stores only the single platform instance the
+node imports, so the installed store carries **that platform instance's** signatures
+(addressable as the image's default set and under the platform-instance digest) — the
+signatures that sign the single manifest the store can verify. **Index-level (manifest-list)
+signatures are not restored** into a single-platform store: querying the index digest resolves
+to the stored platform image and returns its platform signatures, not a distinct
+index-signature set. The index-level bytes are still staged and verified on media, but not
+re-attached on a single-platform import. See [`docs/create-usb.md`](../docs/create-usb.md) for
+details.
