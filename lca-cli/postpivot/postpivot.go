@@ -17,6 +17,7 @@ import (
 
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 
+	"github.com/google/uuid"
 	"github.com/opencontainers/selinux/go-selinux/label"
 
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -684,24 +685,87 @@ func (p *PostPivot) cleanup() error {
 
 func (p *PostPivot) setNewClusterID(ctx context.Context, client runtimeclient.Client, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	p.log.Info("Set new cluster id")
+	clusterID, err := p.resolveClusterID(seedReconfiguration.ClusterID)
+	if err != nil {
+		return err
+	}
+
 	clusterVersion := &v1.ClusterVersion{}
 	if err := client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion); err != nil {
-		return fmt.Errorf("failed to get cluseterVersion: %w", err)
+		return fmt.Errorf("failed to get clusterVersion: %w", err)
 	}
 
-	if seedReconfiguration.ClusterID == "" {
-		// TODO: Generate a fresh cluster ID in case it is empty
-		return fmt.Errorf("cluster id is empty, automatic generation is not yet implemented")
-	}
-
-	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, seedReconfiguration.ClusterID))
+	patch := []byte(fmt.Sprintf(`{"spec":{"clusterID":"%s"}}`, clusterID))
 
 	p.log.Infof("Applying csv deploymet patch %s", string(patch))
-	err := client.Patch(ctx, clusterVersion, runtimeclient.RawPatch(types.MergePatchType, patch))
+	err = client.Patch(ctx, clusterVersion, runtimeclient.RawPatch(types.MergePatchType, patch))
 	if err != nil {
 		return fmt.Errorf("failed to patch cluster id in clusterversion, err: %w", err)
 	}
 	return nil
+}
+
+// resolveClusterID keeps a generated ID stable if post-pivot is retried after a failure.
+// An ID supplied by the caller (for example during IBU) always takes precedence.
+func (p *PostPivot) resolveClusterID(configuredID string) (string, error) {
+	if configuredID != "" {
+		return configuredID, nil
+	}
+
+	idPath := filepath.Join(p.workingDir, "generated-cluster-id")
+	readID := func() (string, error) {
+		data, err := os.ReadFile(idPath) //nolint:gosec // fixed filename in post-pivot's working directory; content is validated as a UUID
+		if err != nil {
+			return "", fmt.Errorf("failed to read generated cluster ID: %w", err)
+		}
+		id := strings.TrimSpace(string(data))
+		if _, err := uuid.Parse(id); err != nil {
+			return "", fmt.Errorf("invalid persisted cluster ID: %w", err)
+		}
+		return id, nil
+	}
+
+	if _, err := os.Stat(idPath); err == nil {
+		return readID()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("failed to check generated cluster ID: %w", err)
+	}
+
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate cluster ID: %w", err)
+	}
+	tmp, err := os.CreateTemp(p.workingDir, ".generated-cluster-id-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary cluster ID file: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.WriteString(id.String() + "\n"); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("failed to write generated cluster ID: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("failed to sync generated cluster ID: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("failed to close generated cluster ID file: %w", err)
+	}
+	if err := os.Link(tmp.Name(), idPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readID()
+		}
+		return "", fmt.Errorf("failed to persist generated cluster ID: %w", err)
+	}
+	dir, err := os.Open(p.workingDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to open cluster ID directory for sync: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
+		return "", fmt.Errorf("failed to sync cluster ID directory: %w", err)
+	}
+	return id.String(), nil
 }
 
 // setDnsMasqConfiguration sets new configuration for dnsmasq and forcedns dispatcher script.

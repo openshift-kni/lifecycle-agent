@@ -6,9 +6,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -39,6 +42,59 @@ func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
 	assert.NoError(t, pp.setSSHKey(" \n\t ", sshKeyFile))
 	_, err := os.Stat(sshKeyFile)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSetNewClusterIDGeneratesOnceAcrossRetries(t *testing.T) {
+	workingDir := t.TempDir()
+	pp := NewPostPivot(nil, logrus.New(), nil, "", workingDir, "")
+	seedReconfiguration := &clusterconfig_api.SeedReconfiguration{}
+	scheme := runtime.NewScheme()
+	require.NoError(t, configv1.AddToScheme(scheme))
+	ctx := context.Background()
+
+	// The first attempt fails after generation because the API object is unavailable.
+	emptyClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	require.Error(t, pp.setNewClusterID(ctx, emptyClient, seedReconfiguration))
+	storedID, err := os.ReadFile(filepath.Join(workingDir, "generated-cluster-id"))
+	require.NoError(t, err)
+	generatedID := strings.TrimSpace(string(storedID))
+	_, err = uuid.Parse(generatedID)
+	require.NoError(t, err)
+	info, err := os.Stat(filepath.Join(workingDir, "generated-cluster-id"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{Name: "version"},
+	}).Build()
+	require.NoError(t, pp.setNewClusterID(ctx, client, seedReconfiguration))
+	clusterVersion := &configv1.ClusterVersion{}
+	require.NoError(t, client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion))
+	assert.Equal(t, generatedID, string(clusterVersion.Spec.ClusterID))
+
+	// A later invocation uses the same ID rather than generating another one.
+	require.NoError(t, pp.setNewClusterID(ctx, client, seedReconfiguration))
+	require.NoError(t, client.Get(ctx, types.NamespacedName{Name: "version"}, clusterVersion))
+	assert.Equal(t, generatedID, string(clusterVersion.Spec.ClusterID))
+}
+
+func TestSetNewClusterIDPreservesConfiguredID(t *testing.T) {
+	workingDir := t.TempDir()
+	pp := NewPostPivot(nil, logrus.New(), nil, "", workingDir, "")
+	scheme := runtime.NewScheme()
+	require.NoError(t, configv1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{Name: "version"},
+	}).Build()
+	configuredID := "f85543de-8665-4a8e-b8b8-34816fd84262"
+	require.NoError(t, pp.setNewClusterID(context.Background(), client, &clusterconfig_api.SeedReconfiguration{
+		ClusterID: configuredID,
+	}))
+	clusterVersion := &configv1.ClusterVersion{}
+	require.NoError(t, client.Get(context.Background(), types.NamespacedName{Name: "version"}, clusterVersion))
+	assert.Equal(t, configuredID, string(clusterVersion.Spec.ClusterID))
+	_, err := os.Stat(filepath.Join(workingDir, "generated-cluster-id"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestSetNodeIPsIfNotProvided_DualStack(t *testing.T) {
