@@ -352,16 +352,26 @@ func ExtractRestoreSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]Restore
 }
 
 // ValidateBackupRestorePairing enforces a strict 1:1 pairing between Backup and
-// Restore CRs across the referenced oadpContent ConfigMaps: within each ConfigMap
-// every Backup must be named by exactly one Restore's spec.backupName and every
-// Restore must name an existing Backup in that same ConfigMap; orphan Backup or
-// Restore documents are rejected; and Backup and Restore names must be unique
+// Restore CRs across the referenced oadpContent ConfigMaps: every Backup must be
+// named by exactly one Restore's spec.backupName and every Restore must name an
+// existing Backup. The matching Backup and Restore may live in different
+// referenced ConfigMaps (as was valid before this change). Orphan Backup or
+// Restore documents are rejected, and Backup and Restore names must be unique
 // across all referenced ConfigMaps. This runs at Prep and is re-checked in
 // StartBackup in case the ConfigMaps changed after Prep.
 func ValidateBackupRestorePairing(configmaps []corev1.ConfigMap) error {
-	seenBackups := make(map[string]string)
-	seenRestores := make(map[string]string)
+	seenBackups := make(map[string]string)  // backup name -> configmap ref
+	seenRestores := make(map[string]string) // restore name -> configmap ref
 
+	type restoreRef struct {
+		name       string
+		cmRef      string
+		backupName string
+	}
+	var allRestores []restoreRef
+
+	// First pass: collect every Backup and Restore across all ConfigMaps so the
+	// pairing can be validated globally rather than per-ConfigMap.
 	for _, cm := range configmaps {
 		cmRef := configmapRef(cm)
 		single := []corev1.ConfigMap{cm}
@@ -375,7 +385,6 @@ func ValidateBackupRestorePairing(configmaps []corev1.ConfigMap) error {
 			return err
 		}
 
-		backupNames := make(map[string]bool, len(backups))
 		for _, b := range backups {
 			if b.Name == "" {
 				return fmt.Errorf("configmap %s contains a Backup CR with no metadata.name", cmRef)
@@ -384,10 +393,8 @@ func ValidateBackupRestorePairing(configmaps []corev1.ConfigMap) error {
 				return fmt.Errorf("duplicate Backup name %q found in configmaps %s and %s", b.Name, prev, cmRef)
 			}
 			seenBackups[b.Name] = cmRef
-			backupNames[b.Name] = true
 		}
 
-		restoreCountByBackup := make(map[string]int, len(backups))
 		for _, r := range restores {
 			if r.Name == "" {
 				return fmt.Errorf("configmap %s contains a Restore CR with no metadata.name", cmRef)
@@ -400,21 +407,29 @@ func ValidateBackupRestorePairing(configmaps []corev1.ConfigMap) error {
 			if r.BackupName == "" {
 				return fmt.Errorf("restore %q in configmap %s has an empty spec.backupName", r.Name, cmRef)
 			}
-			if !backupNames[r.BackupName] {
-				return fmt.Errorf("restore %q in configmap %s references backup %q which is not defined in the same configmap", r.Name, cmRef, r.BackupName)
-			}
-			restoreCountByBackup[r.BackupName]++
+			allRestores = append(allRestores, restoreRef{name: r.Name, cmRef: cmRef, backupName: r.BackupName})
 		}
+	}
 
-		for name := range backupNames {
-			switch restoreCountByBackup[name] {
-			case 1:
-				// exactly one matching Restore — the required pairing
-			case 0:
-				return fmt.Errorf("backup %q in configmap %s has no matching Restore CR in the same configmap", name, cmRef)
-			default:
-				return fmt.Errorf("backup %q in configmap %s is referenced by %d Restore CRs; exactly one is required", name, cmRef, restoreCountByBackup[name])
-			}
+	// Every Restore must name an existing Backup. The Backup may be defined in a
+	// different referenced ConfigMap than the Restore.
+	restoreCountByBackup := make(map[string]int, len(seenBackups))
+	for _, r := range allRestores {
+		if _, ok := seenBackups[r.backupName]; !ok {
+			return fmt.Errorf("restore %q in configmap %s references backup %q which is not defined in any referenced configmap", r.name, r.cmRef, r.backupName)
+		}
+		restoreCountByBackup[r.backupName]++
+	}
+
+	// Every Backup must be named by exactly one Restore.
+	for name, cmRef := range seenBackups {
+		switch restoreCountByBackup[name] {
+		case 1:
+			// exactly one matching Restore — the required pairing
+		case 0:
+			return fmt.Errorf("backup %q in configmap %s has no matching Restore CR", name, cmRef)
+		default:
+			return fmt.Errorf("backup %q in configmap %s is referenced by %d Restore CRs; exactly one is required", name, cmRef, restoreCountByBackup[name])
 		}
 	}
 	return nil
