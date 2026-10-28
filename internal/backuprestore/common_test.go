@@ -622,7 +622,7 @@ func TestValidateBackupRestorePairing(t *testing.T) {
 		cms := []corev1.ConfigMap{backupRestoreCM("cm1", restoreDoc("r1", "b1"))}
 		err := ValidateBackupRestorePairing(cms)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not defined in the same configmap")
+		assert.Contains(t, err.Error(), "not defined in any referenced configmap")
 	})
 
 	t.Run("restore with empty backupName is rejected", func(t *testing.T) {
@@ -660,14 +660,26 @@ func TestValidateBackupRestorePairing(t *testing.T) {
 		assert.Contains(t, err.Error(), "duplicate Restore name")
 	})
 
-	t.Run("cross-configmap pairing is rejected", func(t *testing.T) {
-		// Backup in cm1, its Restore in cm2: the pairing must be within one CM.
+	t.Run("cross-configmap pairing is allowed", func(t *testing.T) {
+		// Backup in cm1, its matching Restore in cm2: the pairing may span
+		// ConfigMaps (as was valid before this feature).
 		cms := []corev1.ConfigMap{
 			backupRestoreCM("cm1", backupDoc("b1")),
 			backupRestoreCM("cm2", restoreDoc("r1", "b1")),
 		}
+		assert.NoError(t, ValidateBackupRestorePairing(cms))
+	})
+
+	t.Run("two cross-configmap restores for one backup are rejected", func(t *testing.T) {
+		// The 1:1 rule still holds across ConfigMaps: a single Backup may not be
+		// named by more than one Restore, even in different ConfigMaps.
+		cms := []corev1.ConfigMap{
+			backupRestoreCM("cm1", backupDoc("b1"), restoreDoc("r1", "b1")),
+			backupRestoreCM("cm2", restoreDoc("r2", "b1")),
+		}
 		err := ValidateBackupRestorePairing(cms)
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "exactly one is required")
 	})
 }
 
