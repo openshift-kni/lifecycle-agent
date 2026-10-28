@@ -1,6 +1,7 @@
 package backuprestore
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -567,50 +568,178 @@ func TestExcludedGroupResources(t *testing.T) {
 	})
 }
 
-func TestValidateBackupRestoreMapping(t *testing.T) {
-	t.Run("valid mapping passes", func(t *testing.T) {
-		restores := []RestoreSpec{
-			{Name: "r1", BackupName: "b1"},
-			{Name: "r2", BackupName: "b2"},
+// backupRestoreCM renders a single configmap holding the given Backup and Restore
+// YAML documents, for the pairing-validation tests.
+func backupRestoreCM(name string, docs ...string) corev1.ConfigMap {
+	data := make(map[string]string, len(docs))
+	for i, d := range docs {
+		data[fmt.Sprintf("doc%d.yaml", i)] = d
+	}
+	return corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "openshift-adp"},
+		Data:       data,
+	}
+}
+
+func backupDoc(name string) string {
+	return fmt.Sprintf(`apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: %s
+spec:
+  includedNamespaces:
+  - app-ns
+`, name)
+}
+
+func restoreDoc(name, backupName string) string {
+	return fmt.Sprintf(`apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: %s
+spec:
+  backupName: %s
+`, name, backupName)
+}
+
+func TestValidateBackupRestorePairing(t *testing.T) {
+	t.Run("valid 1:1 pairing passes", func(t *testing.T) {
+		cms := []corev1.ConfigMap{
+			backupRestoreCM("cm1", backupDoc("b1"), restoreDoc("r1", "b1")),
+			backupRestoreCM("cm2", backupDoc("b2"), restoreDoc("r2", "b2")),
 		}
-		assert.NoError(t, ValidateBackupRestoreMapping(restores))
+		assert.NoError(t, ValidateBackupRestorePairing(cms))
 	})
 
-	t.Run("duplicate backup references fail", func(t *testing.T) {
-		restores := []RestoreSpec{
-			{Name: "r1", BackupName: "b1"},
-			{Name: "r2", BackupName: "b1"},
-		}
-		err := ValidateBackupRestoreMapping(restores)
+	t.Run("backup without a restore is rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{backupRestoreCM("cm1", backupDoc("b1"))}
+		err := ValidateBackupRestorePairing(cms)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiple Restore CRs")
+		assert.Contains(t, err.Error(), "no matching Restore")
 	})
 
-	t.Run("empty backup name is ignored", func(t *testing.T) {
-		restores := []RestoreSpec{
-			{Name: "r1", BackupName: ""},
-			{Name: "r2", BackupName: ""},
-		}
-		assert.NoError(t, ValidateBackupRestoreMapping(restores))
+	t.Run("restore without a matching backup is rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{backupRestoreCM("cm1", restoreDoc("r1", "b1"))}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not defined in the same configmap")
 	})
+
+	t.Run("restore with empty backupName is rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{backupRestoreCM("cm1", backupDoc("b1"), restoreDoc("r1", ""))}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "empty spec.backupName")
+	})
+
+	t.Run("two restores for one backup are rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{backupRestoreCM("cm1",
+			backupDoc("b1"), restoreDoc("r1", "b1"), restoreDoc("r2", "b1"))}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "exactly one is required")
+	})
+
+	t.Run("duplicate backup name across configmaps is rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{
+			backupRestoreCM("cm1", backupDoc("b1"), restoreDoc("r1", "b1")),
+			backupRestoreCM("cm2", backupDoc("b1"), restoreDoc("r2", "b1")),
+		}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate Backup name")
+	})
+
+	t.Run("duplicate restore name across configmaps is rejected", func(t *testing.T) {
+		cms := []corev1.ConfigMap{
+			backupRestoreCM("cm1", backupDoc("b1"), restoreDoc("r1", "b1")),
+			backupRestoreCM("cm2", backupDoc("b2"), restoreDoc("r1", "b2")),
+		}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate Restore name")
+	})
+
+	t.Run("cross-configmap pairing is rejected", func(t *testing.T) {
+		// Backup in cm1, its Restore in cm2: the pairing must be within one CM.
+		cms := []corev1.ConfigMap{
+			backupRestoreCM("cm1", backupDoc("b1")),
+			backupRestoreCM("cm2", restoreDoc("r1", "b1")),
+		}
+		err := ValidateBackupRestorePairing(cms)
+		assert.Error(t, err)
+	})
+}
+
+func TestValidateRestoreSpecs(t *testing.T) {
+	t.Run("restore without existingResourcePolicy passes", func(t *testing.T) {
+		specs := []RestoreSpec{{Name: "r1", BackupName: "b1"}}
+		assert.NoError(t, ValidateRestoreSpecs(specs))
+	})
+
+	t.Run("existingResourcePolicy is rejected", func(t *testing.T) {
+		specs := []RestoreSpec{{Name: "r1", BackupName: "b1", ExistingResourcePolicy: "update"}}
+		err := ValidateRestoreSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "existingResourcePolicy")
+	})
+}
+
+func TestExtractRestoreSpecsParsesExistingResourcePolicy(t *testing.T) {
+	cm := corev1.ConfigMap{
+		Data: map[string]string{
+			"restore.yaml": `
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: my-restore
+spec:
+  backupName: my-backup
+  existingResourcePolicy: update
+`,
+		},
+	}
+	specs, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
+	assert.NoError(t, err)
+	assert.Len(t, specs, 1)
+	assert.Equal(t, "update", specs[0].ExistingResourcePolicy)
+	assert.Error(t, ValidateRestoreSpecs(specs))
 }
 
 func TestValidateBackupSpecs(t *testing.T) {
 	t.Run("specs without legacy field pass", func(t *testing.T) {
 		specs := []BackupSpec{
-			{Name: "b1", IncludedNamespaceScopedResources: []string{"configmaps"}},
+			{Name: "b1", IncludedNamespaces: []string{"app-ns"}, IncludedNamespaceScopedResources: []string{"configmaps"}},
 			{Name: "b2", IncludedClusterScopedResources: []string{"clusterroles"}},
+			{Name: "b3", ApplyLabel: "v1/configmaps/my-cm"},
 		}
 		assert.NoError(t, ValidateBackupSpecs(specs))
 	})
 
 	t.Run("legacy includedResources field is rejected", func(t *testing.T) {
 		specs := []BackupSpec{
-			{Name: "b1", IncludedResources: []string{"deployments"}},
+			{Name: "b1", IncludedNamespaces: []string{"app-ns"}, IncludedResources: []string{"deployments"}},
 		}
 		err := ValidateBackupSpecs(specs)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "includedResources")
+	})
+
+	t.Run("backup selecting no resources is rejected", func(t *testing.T) {
+		// Only namespace-scoped resource types but no included namespaces: nothing
+		// would be queried.
+		specs := []BackupSpec{
+			{Name: "b1", IncludedNamespaceScopedResources: []string{"configmaps"}},
+		}
+		err := ValidateBackupSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "selects no resources")
+	})
+
+	t.Run("empty backup is rejected", func(t *testing.T) {
+		err := ValidateBackupSpecs([]BackupSpec{{Name: "b1"}})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "selects no resources")
 	})
 }
 
