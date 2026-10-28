@@ -134,6 +134,9 @@ type RestoreSpec struct {
 	ApplyWave              string
 	RestorePVs             bool
 	RestoreStatusResources []string
+	// ExistingResourcePolicy mirrors the Velero Restore CR field. LCA does not
+	// implement it; a non-empty value is rejected by ValidateRestoreSpecs.
+	ExistingResourcePolicy string
 }
 
 type BackupTracker struct {
@@ -261,6 +264,11 @@ type veleroRestoreSpec struct {
 	BackupName    string               `json:"backupName"`
 	RestorePVs    bool                 `json:"restorePVs"`
 	RestoreStatus *veleroRestoreStatus `json:"restoreStatus"`
+	// ExistingResourcePolicy is the Velero field that selects how existing
+	// resources are handled during restore. LCA does not implement it (it always
+	// creates-or-updates), so a non-empty value is rejected during validation
+	// rather than silently ignored. See ValidateRestoreSpecs.
+	ExistingResourcePolicy string `json:"existingResourcePolicy"`
 }
 
 type veleroRestoreStatus struct {
@@ -343,29 +351,114 @@ func ExtractRestoreSpecsFromConfigmaps(configmaps []corev1.ConfigMap) ([]Restore
 	return specs, nil
 }
 
-// ValidateBackupRestoreMapping validates that each Backup CR is referenced by at most one Restore CR.
-func ValidateBackupRestoreMapping(restoreSpecs []RestoreSpec) error {
-	seen := make(map[string]string)
-	for _, rs := range restoreSpecs {
-		if rs.BackupName == "" {
-			continue
+// ValidateBackupRestorePairing enforces a strict 1:1 pairing between Backup and
+// Restore CRs across the referenced oadpContent ConfigMaps: within each ConfigMap
+// every Backup must be named by exactly one Restore's spec.backupName and every
+// Restore must name an existing Backup in that same ConfigMap; orphan Backup or
+// Restore documents are rejected; and Backup and Restore names must be unique
+// across all referenced ConfigMaps. This runs at Prep and is re-checked in
+// StartBackup in case the ConfigMaps changed after Prep.
+func ValidateBackupRestorePairing(configmaps []corev1.ConfigMap) error {
+	seenBackups := make(map[string]string)
+	seenRestores := make(map[string]string)
+
+	for _, cm := range configmaps {
+		cmRef := configmapRef(cm)
+		single := []corev1.ConfigMap{cm}
+
+		backups, err := ExtractBackupSpecsFromConfigmaps(single)
+		if err != nil {
+			return err
 		}
-		if existing, ok := seen[rs.BackupName]; ok {
-			return fmt.Errorf("backup %q is referenced by multiple Restore CRs: %q and %q", rs.BackupName, existing, rs.Name)
+		restores, err := ExtractRestoreSpecsFromConfigmaps(single)
+		if err != nil {
+			return err
 		}
-		seen[rs.BackupName] = rs.Name
+
+		backupNames := make(map[string]bool, len(backups))
+		for _, b := range backups {
+			if b.Name == "" {
+				return fmt.Errorf("configmap %s contains a Backup CR with no metadata.name", cmRef)
+			}
+			if prev, ok := seenBackups[b.Name]; ok {
+				return fmt.Errorf("duplicate Backup name %q found in configmaps %s and %s", b.Name, prev, cmRef)
+			}
+			seenBackups[b.Name] = cmRef
+			backupNames[b.Name] = true
+		}
+
+		restoreCountByBackup := make(map[string]int, len(backups))
+		for _, r := range restores {
+			if r.Name == "" {
+				return fmt.Errorf("configmap %s contains a Restore CR with no metadata.name", cmRef)
+			}
+			if prev, ok := seenRestores[r.Name]; ok {
+				return fmt.Errorf("duplicate Restore name %q found in configmaps %s and %s", r.Name, prev, cmRef)
+			}
+			seenRestores[r.Name] = cmRef
+
+			if r.BackupName == "" {
+				return fmt.Errorf("restore %q in configmap %s has an empty spec.backupName", r.Name, cmRef)
+			}
+			if !backupNames[r.BackupName] {
+				return fmt.Errorf("restore %q in configmap %s references backup %q which is not defined in the same configmap", r.Name, cmRef, r.BackupName)
+			}
+			restoreCountByBackup[r.BackupName]++
+		}
+
+		for name := range backupNames {
+			switch restoreCountByBackup[name] {
+			case 1:
+				// exactly one matching Restore — the required pairing
+			case 0:
+				return fmt.Errorf("backup %q in configmap %s has no matching Restore CR in the same configmap", name, cmRef)
+			default:
+				return fmt.Errorf("backup %q in configmap %s is referenced by %d Restore CRs; exactly one is required", name, cmRef, restoreCountByBackup[name])
+			}
+		}
 	}
 	return nil
 }
 
-// ValidateBackupSpecs rejects Backup CR specs that use fields LCA cannot honor,
-// so an unsupported configuration fails loudly instead of silently backing up the
-// wrong (default) set of resources.
+// configmapRef renders a configmap reference as namespace/name for error messages.
+func configmapRef(cm corev1.ConfigMap) string {
+	if cm.Namespace != "" {
+		return fmt.Sprintf("%s/%s", cm.Namespace, cm.Name)
+	}
+	return cm.Name
+}
+
+// ValidateBackupSpecs rejects Backup CR specs that use fields LCA cannot honor or
+// that would back up nothing, so an unsupported or empty configuration fails
+// loudly instead of silently backing up the wrong (default) or an empty set of
+// resources.
 func ValidateBackupSpecs(specs []BackupSpec) error {
 	for _, s := range specs {
 		if len(s.IncludedResources) > 0 {
 			return fmt.Errorf("backup %q sets the unsupported legacy spec.includedResources field; "+
 				"use spec.includedNamespaceScopedResources and spec.includedClusterScopedResources instead", s.Name)
+		}
+		// A backup that sets neither the apply-label annotation, any included
+		// namespace, nor any included cluster-scoped resource issues no resource
+		// queries at all (namespace-scoped resources are only listed within
+		// included namespaces). Reject it instead of recording an empty backup as
+		// successful.
+		if s.ApplyLabel == "" && len(s.IncludedNamespaces) == 0 && len(s.IncludedClusterScopedResources) == 0 {
+			return fmt.Errorf("backup %q selects no resources: set the %s annotation, spec.includedNamespaces, "+
+				"or spec.includedClusterScopedResources", s.Name, applyLabelAnn)
+		}
+	}
+	return nil
+}
+
+// ValidateRestoreSpecs rejects Restore CR fields LCA does not implement so an
+// unsupported configuration fails loudly instead of being silently ignored.
+func ValidateRestoreSpecs(specs []RestoreSpec) error {
+	for _, s := range specs {
+		if s.ExistingResourcePolicy != "" {
+			return fmt.Errorf("restore %q sets spec.existingResourcePolicy=%q which LCA does not implement; "+
+				"LCA always creates or updates restored resources regardless of whether they already exist. "+
+				"Remove the field", s.Name, s.ExistingResourcePolicy)
 		}
 	}
 	return nil
@@ -385,11 +478,12 @@ func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *Restor
 // RestoreSpec, preserving the previous parsing semantics and defaults.
 func (r *veleroRestore) toRestoreSpec() RestoreSpec {
 	spec := RestoreSpec{
-		Name:       r.Metadata.Name,
-		Namespace:  r.Metadata.Namespace,
-		ApplyWave:  r.Metadata.Annotations[common.ApplyWaveAnn],
-		BackupName: r.Spec.BackupName,
-		RestorePVs: r.Spec.RestorePVs,
+		Name:                   r.Metadata.Name,
+		Namespace:              r.Metadata.Namespace,
+		ApplyWave:              r.Metadata.Annotations[common.ApplyWaveAnn],
+		BackupName:             r.Spec.BackupName,
+		RestorePVs:             r.Spec.RestorePVs,
+		ExistingResourcePolicy: r.Spec.ExistingResourcePolicy,
 	}
 	if r.Spec.RestoreStatus != nil {
 		spec.RestoreStatusResources = r.Spec.RestoreStatus.IncludedResources

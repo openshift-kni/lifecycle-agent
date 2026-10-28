@@ -59,7 +59,11 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
-	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
+	if err := ValidateBackupRestorePairing(configmaps); err != nil {
+		return NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -109,7 +113,13 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 
-	if err := ValidateBackupRestoreMapping(restoreSpecs); err != nil {
+	// Re-check the Backup/Restore pairing here in case the referenced ConfigMaps
+	// changed between Prep (ValidateBackupConfigmaps) and this pre-pivot backup.
+	if err := ValidateBackupRestorePairing(configmaps); err != nil {
+		return bt, NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -392,25 +402,66 @@ func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata)
 	}
 
 	if err != nil {
+		// An apply-label names an exact object the backup must capture. If it does
+		// not exist, the configuration is wrong: fail the backup instead of
+		// silently skipping it, so the missing object is not lost on restore.
 		if k8serrors.IsNotFound(err) {
-			h.Log.Info("Resource not found, skipping", "resource", obj.Resource, "name", obj.Name)
-			return nil, nil
+			return nil, fmt.Errorf("apply-label resource %s %q (group %q version %q namespace %q) not found",
+				obj.Resource, obj.Name, obj.Group, obj.Version, obj.Namespace)
 		}
-		return nil, fmt.Errorf("failed to get resource: %w", err)
+		return nil, fmt.Errorf("failed to get apply-label resource %s %q: %w", obj.Resource, obj.Name, err)
 	}
 	return result, nil
 }
 
-// requestedTypeInFailedGroup reports whether a group-qualified resource type
-// (e.g. "widgets.example.com") belongs to an API group whose discovery failed.
-// Such a type cannot be resolved, so skipping it silently would omit it from the
-// backup; callers treat this as a hard failure instead.
-func requestedTypeInFailedGroup(resourceType string, failedGroups map[string]bool) bool {
-	if len(failedGroups) == 0 {
-		return false
+// resolveRequiredGVR resolves a configured (user-requested or default) resource
+// type to its preferred GroupVersionResource, treating anything that prevents a
+// unique, confirmed resolution as a hard error. A configured resource selection
+// must be fetched reliably or fail the Upgrade before pivot, so:
+//   - no match (the type is absent from discovery) fails;
+//   - an ambiguous match (the bare name maps to more than one API group) fails;
+//   - a match that cannot be confirmed because the relevant API group failed
+//     discovery fails.
+//
+// An unrelated API group failing discovery does not fail a type that still
+// resolves uniquely from the successfully discovered resources.
+func resolveRequiredGVR(resourceType string, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) (schema.GroupVersionResource, bool, error) {
+	gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+	if err != nil {
+		// Ambiguous match across multiple API groups.
+		return schema.GroupVersionResource{}, false, err
 	}
+	if found {
+		return gvr, namespaced, nil
+	}
+
+	// Not found. Distinguish "its API group failed discovery" (cannot confirm)
+	// from "genuinely absent" so the error names the right cause.
 	group := schema.ParseGroupResource(resourceType).Group
-	return group != "" && failedGroups[group]
+	if group != "" && failedGroups[group] {
+		return schema.GroupVersionResource{}, false, fmt.Errorf(
+			"cannot resolve resource type %q: its API group %q failed discovery", resourceType, group)
+	}
+	if group == "" && len(failedGroups) > 0 {
+		// A bare name that did not resolve while discovery was incomplete cannot be
+		// confirmed absent: it may live in a group that failed discovery.
+		return schema.GroupVersionResource{}, false, fmt.Errorf(
+			"cannot confirm resource type %q: API discovery was incomplete (failed groups: %v)",
+			resourceType, sortedGroupNames(failedGroups))
+	}
+	return schema.GroupVersionResource{}, false, fmt.Errorf(
+		"resource type %q not found in cluster API discovery", resourceType)
+}
+
+// sortedGroupNames returns the keys of the set as a deterministically ordered
+// slice, for stable error messages.
+func sortedGroupNames(groups map[string]bool) []string {
+	names := make([]string, 0, len(groups))
+	for g := range groups {
+		names = append(names, g)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]*unstructured.Unstructured, error) {
@@ -439,36 +490,24 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	}
 
 	for _, resourceType := range resourceTypes {
-		gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+		gvr, namespaced, err := resolveRequiredGVR(resourceType, apiResourceLists, failedGroups)
 		if err != nil {
-			return nil, err
-		}
-		if !found {
-			if requestedTypeInFailedGroup(resourceType, failedGroups) {
-				return nil, fmt.Errorf("cannot back up requested resource %q in namespace %s: its API group failed discovery", resourceType, namespace)
-			}
-			h.Log.Info("Resource type not found in API discovery, skipping",
-				"resource", resourceType, "namespace", namespace)
-			continue
+			return nil, fmt.Errorf("namespace %s: %w", namespace, err)
 		}
 		if excluded[gvr.GroupResource().String()] {
 			continue
 		}
 		if !namespaced {
-			h.Log.Info("Resource configured as namespace-scoped is cluster-scoped per discovery, skipping in namespace listing",
-				"resource", resourceType, "namespace", namespace)
-			continue
+			return nil, fmt.Errorf("resource %q configured as namespace-scoped is cluster-scoped per discovery (namespace %s); "+
+				"move it to spec.includedClusterScopedResources", resourceType, namespace)
 		}
 
+		// The GVR was confirmed via discovery above, so any List failure here —
+		// including NotFound or "not registered" — is a real error, not an absent
+		// type. A successful List that returns zero items is fine. Failing closed
+		// prevents recording an incomplete backup as successful.
 		list, err := h.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOpts)
 		if err != nil {
-			if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
-				continue
-			}
-			// An unexpected error (Forbidden, timeout, 5xx, ...) must fail the
-			// backup rather than be silently skipped, otherwise an incomplete
-			// backup would be recorded as successful and cause data loss on restore.
-			// This matches the cluster-scoped path's behavior.
 			return nil, fmt.Errorf("failed to list %s in namespace %s: %w", resourceType, namespace, err)
 		}
 		for i := range list.Items {
@@ -480,17 +519,9 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 }
 
 func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceType string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]*unstructured.Unstructured, error) {
-	gvr, namespaced, found, err := resolveResourceGVR(resourceType, apiResourceLists)
+	gvr, namespaced, err := resolveRequiredGVR(resourceType, apiResourceLists, failedGroups)
 	if err != nil {
 		return nil, err
-	}
-	if !found {
-		if requestedTypeInFailedGroup(resourceType, failedGroups) {
-			return nil, fmt.Errorf("cannot back up requested cluster-scoped resource %q: its API group failed discovery", resourceType)
-		}
-		h.Log.Info("Cluster-scoped resource type not found in API discovery, skipping",
-			"resource", resourceType)
-		return nil, nil
 	}
 
 	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedClusterScopedResources)
@@ -499,9 +530,8 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 	}
 
 	if namespaced {
-		h.Log.Info("Resource configured as cluster-scoped is namespace-scoped per discovery, skipping cluster-scoped listing",
-			"resource", resourceType)
-		return nil, nil
+		return nil, fmt.Errorf("resource %q configured as cluster-scoped is namespace-scoped per discovery; "+
+			"move it to spec.includedNamespaceScopedResources", resourceType)
 	}
 
 	listOpts := metav1.ListOptions{}
@@ -513,11 +543,11 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 		listOpts.LabelSelector = selector.String()
 	}
 
+	// The GVR was confirmed via discovery above, so any List failure here —
+	// including NotFound or "not registered" — is a real error, not an absent
+	// type. A successful List returning zero items is fine.
 	list, err := h.DynamicClient.Resource(gvr).List(ctx, listOpts)
 	if err != nil {
-		if k8serrors.IsNotFound(err) || isResourceNotRegistered(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("failed to list cluster-scoped resource %s: %w", resourceType, err)
 	}
 
@@ -692,11 +722,6 @@ func resolveResourceGVR(resourceType string, apiResourceLists []*metav1.APIResou
 			"ambiguous resource %q matches multiple API groups %v; qualify it as <resource>.<group>",
 			resourceType, groups)
 	}
-}
-
-func isResourceNotRegistered(err error) bool {
-	return strings.Contains(err.Error(), "the server could not find the requested resource") ||
-		strings.Contains(err.Error(), "no matches for kind")
 }
 
 func validateBackupName(name string) error {
