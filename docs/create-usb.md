@@ -111,7 +111,7 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
 2. **Embedded ignition (config + units only).** The build embeds a small ignition config
    (version 3.2.0) that writes into the live environment: the rendered `IBIPrepareConfig` at
    `/etc/lca-cli/ibi-config.json`, a label-based systemd `.mount` unit for the `ibi-images`
-   partition (`Where=/var/mnt/ibi-images`, `What=/dev/disk/by-label/ibi-images`), and a oneshot
+   partition (`Where=/run/ibi-images`, `What=/dev/disk/by-label/ibi-images`), and a oneshot
    systemd unit (`lca-ibi.service`) that runs `lca-cli ibi -f /etc/lca-cli/ibi-config.json` on
    boot, ordered after the `.mount`. The embedded config sets `disconnected: true`,
    `localImagesPath` to the on-node `ibi-images` mount point, and `expectedDigestsPath` to the
@@ -123,7 +123,7 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    time. It is **not** embedded in the ISO ignition: at ~90 MB uncompressed it far exceeds the
    fixed RHCOS ISO ignition embed area (~256 KB) and embedding it would fail the build. Instead
    the extracted binary is delivered on the `ibi-images` partition at
-   `/var/mnt/ibi-images/lca-cli`, byte-identical to the binary that lives alongside the
+   `/run/ibi-images/lca-cli`, byte-identical to the binary that lives alongside the
    mirrored images. The `lca-ibi.service` unit's `ExecStart` points at that path and is ordered
    after the label-based `ibi-images` `.mount` unit (via `Requires=`/`After=`), so systemd pulls
    in and waits for that mount before running it. The media-assembly pipeline copies the
