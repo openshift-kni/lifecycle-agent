@@ -34,6 +34,14 @@ var foldersToRemove = []string{
 	common.SeedDataDir,
 }
 
+// Paths touched by the restoration workflow. They are variables rather than
+// constants so tests can redirect them at temporary directories.
+var (
+	serviceUnitsDir  = filepath.Join(common.InstallationConfigurationFilesDir, "services")
+	systemdSystemDir = "/etc/systemd/system/"
+	recertDoneFile   = filepath.Join(common.BackupChecksDir, "recert.done")
+)
+
 // SeedRestoration handles restoration operations after creating a seed image, removing temporary files
 // and executing additional restoration steps as needed.
 type SeedRestoration struct {
@@ -85,8 +93,7 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 		s.log.Info("Skipping restoring crypto via recert tool")
 	} else {
 		s.log.Info("Restoring crypto via recert tool")
-		recertFilePath := filepath.Join(common.BackupChecksDir, "recert.done")
-		if _, err := os.Stat(recertFilePath); err == nil && !os.IsNotExist(err) {
+		if _, err := os.Stat(recertDoneFile); err == nil {
 			if err := s.ops.RestoreOriginalSeedCrypto(s.recertContainerImage, s.authFile); err != nil {
 				s.log.Errorf("Error restoring certificates: %v", err)
 				errors = append(errors, err)
@@ -116,8 +123,13 @@ func (s *SeedRestoration) RestoreSeedCluster() error {
 }
 
 func (s *SeedRestoration) cleanupServiceUnits() error {
-	dir := filepath.Join(common.InstallationConfigurationFilesDir, "services")
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(serviceUnitsDir, func(path string, info os.FileInfo, err error) error {
+		// Walk reports the error that stopped it with a nil FileInfo; returning it
+		// here surfaces a missing or unreadable services directory as an error
+		// instead of dereferencing info.
+		if err != nil {
+			return err
+		}
 		if info.IsDir() {
 			return nil
 		}
@@ -129,7 +141,7 @@ func (s *SeedRestoration) cleanupServiceUnits() error {
 		}
 
 		s.log.Infof("Removing service unit %s", serviceName)
-		if err := os.Remove(filepath.Join("/etc/systemd/system/", serviceName)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(systemdSystemDir, serviceName)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("error removing %s file: %w", serviceName, err)
 		}
 
