@@ -325,6 +325,8 @@ func TestCleanupRhcosSysroot(t *testing.T) {
 	ibiConfig := &ibiconfig.IBIPrepareConfig{}
 	ibi := NewIBIPrepare(log, mockOps, nil, ostreeClientMock, nil, ibiConfig)
 	tmpDir := t.TempDir()
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = tmpDir
 
 	// Test case when rhcosOstreePath doesn't exists, we still should succeed
@@ -497,6 +499,7 @@ func saveSeams(t *testing.T) {
 	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
 	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
 	origExchange := exchangeStoreDirs
+	origPivotTimeout := pivotRebootTimeout
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
@@ -507,6 +510,7 @@ func saveSeams(t *testing.T) {
 		copyReadOnlyStore = origCopy
 		verifyPersistedStore = origVerify
 		exchangeStoreDirs = origExchange
+		pivotRebootTimeout = origPivotTimeout
 	})
 }
 
@@ -1005,6 +1009,8 @@ func TestClosureImportedIntoInstalledGraphroot(t *testing.T) {
 	saveSeams(t)
 	ff := &importerFactory{}
 	newImageImporter = ff.new
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = "/mnt/"
 
 	cfg := &ibiconfig.IBIPrepareConfig{Disconnected: true, LocalImagesPath: "/var/mnt/ibi", SeedVersion: "4.15.0"}
@@ -1037,6 +1043,8 @@ func TestClosureImportRunsOutsideChroot(t *testing.T) {
 	saveSeams(t)
 	ff := &importerFactory{}
 	newImageImporter = ff.new
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
 	common.OstreeDeployPathPrefix = "/mnt/"
 
 	ctrl := gomock.NewController(t)
@@ -1436,6 +1444,48 @@ func TestDisconnectedPrecacheListRejectsUnresolvedSeedImage(t *testing.T) {
 	assert.ErrorContains(t, err, "quay.io/openshift-release-dev/extra@"+missingDigest)
 }
 
+// TestDisconnectedPrecacheSkipsHostPodmanCheck proves a disconnected prepare's precache step
+// keeps the seed-to-manifest coverage check but does NOT run the live-ISO podman presence
+// check or chroot into /host. Image residency is verified directly in the installed stateroot
+// store by the mandatory self-check (verifyImportedClosure) instead, so a disconnected prepare
+// does not depend on /host existing at all (a live ISO without /host). The strict mock
+// controller fails the test on any unexpected host-namespace call, so the absence of a podman
+// presence check is asserted by there being no such expectation.
+func TestDisconnectedPrecacheSkipsHostPodmanCheck(t *testing.T) {
+	manifest := testManifest()
+
+	t.Run("covered seed list: coverage check passes, no chroot, no podman check", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		// A disconnected precache must not chroot into /host; the live-ISO podman presence
+		// check (and the host-namespace commands it needs) are gone.
+		mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, PrecacheDisabled: false})
+		// containers.list references the seed, which is an exact source on a manifest entry.
+		listFile := writeContainersList(t, testSeedImageRef())
+
+		assert.NoError(t, ibi.precacheFlow(listFile, "", defaultRegistriesConfFile, manifest))
+	})
+
+	t.Run("uncovered seed list: the coverage check still fails the prepare", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		mockOps.EXPECT().Chroot(gomock.Any()).Times(0)
+
+		ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, PrecacheDisabled: false})
+		// An image the manifest does not cover must still fail prepare at the retained
+		// seed-to-manifest coverage check, before any residency verification.
+		missing := "quay.io/openshift-release-dev/extra@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+		listFile := writeContainersList(t, testSeedImageRef(), missing)
+
+		err := ibi.precacheFlow(listFile, "", defaultRegistriesConfFile, manifest)
+		assert.ErrorContains(t, err, "does not cover")
+	})
+}
+
 // TestVerifyManifestCoversSeed exercises exact source-reference matching: a seed
 // reference is covered only when it equals a source listed on exactly one manifest
 // entry (whose digest the fail-fast closure import necessarily imported). A
@@ -1593,6 +1643,83 @@ func TestSelfCheckPassesWhenAllPresent(t *testing.T) {
 	assert.Equal(t, resultSuccess, result.Result)
 }
 
+// TestSelfContainedPivotIssuedAfterSuccessFlush drives the full disconnected happy path for
+// the self-contained profile (precache disabled) and proves the end-to-end terminal action:
+// prepare.json: success is written and flushed (the finalize sync) to p4 and p4 is unmounted
+// BEFORE the pivot reboot is issued, so the pivot is necessarily issued after the success
+// record is durable. The node is never powered off (no shutdown now). Because a reboot never
+// returns control in a unit test, the grace period (set to zero) elapses and the pivot is
+// detected as not-taken: p4 is re-mounted, the result is amended with pivot: failed
+// (preserving result: success), and the node halts powered-on via the emergency target.
+func TestSelfContainedPivotIssuedAfterSuccessFlush(t *testing.T) {
+	stubDisconnectedSeams(t)
+	statusDir := useTempStatusPartition(t)
+	pivotRebootTimeout = 0 // do not block on the real reboot grace period
+	// Self-contained disconnected media also persists the read-only store before the final sync
+	// (see runPreparation); stub it to a no-op so this test isolates the pivot terminal action.
+	persistReadOnlyStoreFn = func(*IBIPrepare, context.Context, *localimages.DigestManifest) error { return nil }
+
+	var events []string
+	record := func(name string) func(string, ...string) (string, error) {
+		return func(string, ...string) (string, error) { events = append(events, name); return "", nil }
+	}
+	// lastIdxOf returns the index of the last occurrence of name, so the ordering assertion
+	// below keys off the finalize success-flush sync (the second sync) rather than the earlier
+	// core-flow sync.
+	lastIdxOf := func(name string) int {
+		idx := -1
+		for i, e := range events {
+			if e == name {
+				idx = i
+			}
+		}
+		return idx
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := disconnectedCfg(ibiconfig.ProfileSelfContained)
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
+
+	// p2 (local images) and p4 (ibi-status) are discovered from the same block-device list;
+	// p4 is mounted for the write-back and re-mounted once more by the pivot-failure amend.
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(2)
+	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
+	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
+	expectPodmanInfo(mockOps)
+	ostreeMock.EXPECT().Undeploy(rhcosOstreeIndex).Return(nil).Times(1)
+	// Record the two commands whose ordering proves "flush before pivot": the finalize sync
+	// (the success flush) and the pivot reboot. The core flow also syncs once.
+	mockOps.EXPECT().RunInHostNamespace("sync").DoAndReturn(record("sync")).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", gomock.Any(), "systemctl", "reboot").DoAndReturn(record("pivotReboot")).Times(1)
+	mockOps.EXPECT().Umount("sdb1").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(2)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("shutdown", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "did not reboot into the installed disk")
+
+	// The pivot was issued only after the success record was flushed to p4: the finalize
+	// success-flush sync (the last sync) must precede the pivot reboot.
+	assert.GreaterOrEqual(t, idxOf(events, "pivotReboot"), 0, "the pivot reboot must be issued")
+	assert.Less(t, lastIdxOf("sync"), idxOf(events, "pivotReboot"),
+		"prepare.json: success must be flushed (finalize sync) before the pivot is issued")
+
+	// The record is a successful prepare amended with pivot: failed (result preserved).
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, pivotFailed, result.Pivot)
+}
+
 // TestSelfCheckFailsOnMissingImage proves the self-check is a hard gate before the
 // success terminal action: when VerifyAll reports a missing image, Run() returns that
 // error and never reaches postDeployment, cleanupRhcosSysroot (ostree undeploy), the
@@ -1657,4 +1784,52 @@ func TestSelfCheckFailsOnMissingImage(t *testing.T) {
 	// A failure result is recorded on p4 so a later boot can read how prepare ended.
 	result := readPrepareResult(t, statusDir)
 	assert.Equal(t, resultFailure, result.Result)
+}
+
+// TestVerifyImportedClosureInstalledStore proves the mandatory image self-check verifies
+// residency directly in the installed stateroot store (not the live ISO's /host store): it
+// opens the installed graphroot (under the ostree deploy prefix) with an overlay driver and a
+// temporary runroot that is cleaned up afterwards, calls VerifyAll on the manifest exactly
+// once, and closes the importer. A VerifyAll error (a missing/unresolvable image) is surfaced
+// to the caller.
+func TestVerifyImportedClosureInstalledStore(t *testing.T) {
+	origPrefix := common.OstreeDeployPathPrefix
+	t.Cleanup(func() { common.OstreeDeployPathPrefix = origPrefix })
+	common.OstreeDeployPathPrefix = "/mnt/"
+	osname := common.GetStaterootName("4.15.0")
+	wantGraphRoot := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, "storage")
+
+	t.Run("all images resident: verifies once in the installed store", func(t *testing.T) {
+		saveSeams(t)
+		ff := &importerFactory{}
+		newImageImporter = ff.new
+		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, SeedVersion: "4.15.0"})
+
+		assert.NoError(t, ibi.verifyImportedClosure(context.Background(), testManifest()))
+
+		// Called standalone, the single installed-store open lands in the factory's first
+		// ostree-deploy slot (closure); it is the importer the self-check verified against.
+		if assert.NotNil(t, ff.closure, "the self-check must open the installed stateroot store") {
+			assert.Equal(t, "overlay", ff.closure.cfg.GraphDriverName)
+			assert.Equal(t, wantGraphRoot, ff.closure.cfg.GraphRoot,
+				"the self-check must read the installed stateroot graphroot, not the host store")
+			assert.NotEmpty(t, ff.closure.cfg.RunRoot, "a writable temp runroot is required for the store open")
+			assert.Equal(t, 1, ff.closure.verifiedAll, "the manifest must be verified exactly once")
+			assert.True(t, ff.closure.closed, "the self-check importer must be closed")
+			_, statErr := os.Stat(ff.closure.cfg.RunRoot)
+			assert.True(t, os.IsNotExist(statErr), "the temporary runroot must be removed after the self-check")
+		}
+	})
+
+	t.Run("missing image: VerifyAll error fails the self-check", func(t *testing.T) {
+		saveSeams(t)
+		ff := &importerFactory{verifyErr: fmt.Errorf("image quay.io/x@sha256:dead missing from the store")}
+		newImageImporter = ff.new
+		ibi := NewIBIPrepare(logrus.New(), nil, nil, nil, nil,
+			&ibiconfig.IBIPrepareConfig{Disconnected: true, SeedVersion: "4.15.0"})
+
+		err := ibi.verifyImportedClosure(context.Background(), testManifest())
+		assert.ErrorContains(t, err, "verifying imported closure")
+	})
 }

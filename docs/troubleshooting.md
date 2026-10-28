@@ -21,14 +21,34 @@ USB stick (or the node's p4 partition) to a workstation.
    ```
 
    - `result: "success"` — the prepare phase completed. On install-only media a completed
-     prepare powers the node off.
+     prepare powers the node off; on self-contained media it pivots (reboots into the installed
+     disk) instead.
    - `result: "failure"` — the prepare phase failed; `error` carries the message. On a
      failure the node **halts powered-on** (emergency target) rather than powering off, so it
-     stays reachable for inspection.
-   - `reentry: "blocked"` — a later boot re-entered a **completed** install and the prepare
-     phase refused to re-wipe the disk. The original `result: "success"` is preserved. This is
-     expected and protective: pull the stick (or stop selecting USB as the boot device) so the
-     installed node boots from disk.
+     stays reachable for inspection. A later boot will **not** automatically retry over a
+     recorded failure (the disk may already be partly wiped); the prepare phase blocks it as a
+     re-entry (below). To retry, perform an **explicit operator reset** — clear `prepare.json`
+     from the `ibi-status` partition — after confirming the installation disk is in a safe
+     state to re-wipe.
+   - `reentry: "blocked"` — a later boot re-entered a partition that already records a terminal
+     result — a **completed** install (`result: "success"`) or a **prior failed** prepare
+     (`result: "failure"`) — and the prepare phase refused to re-wipe the disk. The original
+     result is preserved. This is expected and protective. If the original result was
+     `success`, pull the stick (or stop selecting USB as the boot device) so the installed node
+     boots from disk. If it was `failure`, resolve the underlying failure and perform the
+     explicit operator reset above before retrying.
+   - `pivot: "failed"` — a self-contained prepare succeeded (`result: "success"` is preserved)
+     but the on-USB pivot into the installed disk did not take: the reboot command errored, or
+     the reboot was issued but the node had not gone down after the grace period (the original
+     prepare process was still running). This is recorded only by that original process, so it
+     means the reboot itself did not proceed — not that the firmware re-selected the USB. A
+     second boot that lands back in the live ISO (because the firmware booted the USB again) is
+     instead caught on that next boot by the re-entry guard and recorded as `reentry: "blocked"`
+     (above), so check the boot order there. The node **halts powered-on** (emergency target)
+     rather than idling in the live ISO. `error` stays `null` (the prepare itself succeeded);
+     the reboot error or timeout is in the log bundle under `logs/` (refreshed on the
+     pivot-failure path so it covers the pivot attempt) — read it to find why the reboot did
+     not take, then reboot the node into the installed disk manually.
 
 3. Read the compact diagnostic log bundle under `logs/` for the full prepare journal:
 
