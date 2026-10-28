@@ -1,11 +1,58 @@
 package prep
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
+
+func TestSetupStaterootRejectsCorruptExtractedRepo(t *testing.T) {
+	originalMkdirTemp := osMkdirTemp
+	osMkdirTemp = func(_ string, pattern string) (string, error) {
+		return os.MkdirTemp(t.TempDir(), pattern)
+	}
+	t.Cleanup(func() { osMkdirTemp = originalMkdirTemp })
+
+	ctrl := gomock.NewController(t)
+	operations := ops.NewMockOps(ctrl)
+	client := ostreeclient.NewMockIClient(ctrl)
+	seedImage := "example.com/seed:latest"
+
+	operations.EXPECT().MountImage(seedImage).Return("/seed", nil)
+	operations.EXPECT().ExtractTarWithSELinux("/seed/ostree.tgz", gomock.Any()).Return(nil)
+	client.EXPECT().VerifyRepo(gomock.Any()).Return(errors.New("object checksum mismatch"))
+	operations.EXPECT().UnmountAndRemoveImage(seedImage).Return(nil)
+
+	err := SetupStateroot(logr.Discard(), operations, client, nil, seedImage, "4.22.16", true)
+	assert.ErrorContains(t, err, "seed OSTree repository is corrupt after extraction: object checksum mismatch")
+}
+
+func TestVerifySeedOSTreeRejectsCorruptionBeforeDiskPreparation(t *testing.T) {
+	originalMkdirTemp := osMkdirTemp
+	osMkdirTemp = func(_ string, pattern string) (string, error) {
+		return os.MkdirTemp(t.TempDir(), pattern)
+	}
+	t.Cleanup(func() { osMkdirTemp = originalMkdirTemp })
+
+	ctrl := gomock.NewController(t)
+	operations := ops.NewMockOps(ctrl)
+	client := ostreeclient.NewMockIClient(ctrl)
+	seedImage := "example.com/seed:latest"
+	operations.EXPECT().MountImage(seedImage).Return("/seed", nil)
+	operations.EXPECT().ExtractTarWithSELinux("/seed/ostree.tgz", gomock.Any()).Return(nil)
+	client.EXPECT().VerifyRepo(gomock.Any()).Return(errors.New("object checksum mismatch"))
+	operations.EXPECT().UnmountAndRemoveImage(seedImage).Return(nil)
+
+	err := VerifySeedOSTree(logr.Discard(), operations, client, seedImage)
+	assert.ErrorContains(t, err, "seed OSTree repository is corrupt before disk preparation: object checksum mismatch")
+}
 
 func TestGetDeploymentFromDeploymentID(t *testing.T) {
 	testcases := []struct {

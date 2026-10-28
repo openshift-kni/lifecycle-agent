@@ -20,6 +20,7 @@ import (
 
 // need this for unit tests
 var osReadFile = os.ReadFile
+var osMkdirTemp = os.MkdirTemp
 
 // getBootedStaterootIDFromRPMOstreeJson reads rpm-ostree.json file from the seed image
 // and returns the deployment.ID of the booted stateroot
@@ -90,13 +91,50 @@ func getDeploymentFromDeploymentID(deploymentID string) (string, error) {
 	return splitted[len(splitted)-1], nil
 }
 
+// VerifySeedOSTree checks the seed repository while the installation disk is still
+// untouched.  The live ISO's SELinux policy is used during extraction, so this also
+// catches labels that the live environment cannot restore.
+func VerifySeedOSTree(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient, seedImage string) error {
+	defer func() { _ = ops.UnmountAndRemoveImage(seedImage) }()
+
+	workspaceOutsideChroot, err := osMkdirTemp(common.PathOutsideChroot("/var/tmp"), "seed-ostree-preflight-")
+	if err != nil {
+		return fmt.Errorf("failed to create seed preflight workspace: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(workspaceOutsideChroot); err != nil {
+			log.Error(err, "failed to clean up seed preflight workspace")
+		}
+	}()
+
+	workspace, err := common.PathInsideChroot(workspaceOutsideChroot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve seed preflight workspace: %w", err)
+	}
+	mountpoint, err := ops.MountImage(seedImage)
+	if err != nil {
+		return fmt.Errorf("failed to mount seed image: %w", err)
+	}
+	ostreeRepo := filepath.Join(workspace, "ostree")
+	if err := os.Mkdir(filepath.Join(workspaceOutsideChroot, "ostree"), 0o700); err != nil {
+		return fmt.Errorf("failed to create seed preflight repository directory: %w", err)
+	}
+	if err := ops.ExtractTarWithSELinux(filepath.Join(mountpoint, "ostree.tgz"), ostreeRepo); err != nil {
+		return fmt.Errorf("failed to extract seed ostree.tgz before disk preparation: %w", err)
+	}
+	if err := ostreeClient.VerifyRepo(ostreeRepo); err != nil {
+		return fmt.Errorf("seed OSTree repository is corrupt before disk preparation: %w", err)
+	}
+	return nil
+}
+
 func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient,
 	rpmOstreeClient rpmostreeclient.IClient, seedImage, expectedVersion string, ibi bool) error {
 	log.Info("Start setupstateroot")
 
 	defer func() { _ = ops.UnmountAndRemoveImage(seedImage) }()
 
-	workspaceOutsideChroot, err := os.MkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
+	workspaceOutsideChroot, err := osMkdirTemp(common.PathOutsideChroot("/var/tmp"), "")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory %w", err)
 	}
@@ -135,6 +173,9 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 	); err != nil {
 		return fmt.Errorf("failed to extract ostree.tgz: %w", err)
 	}
+	if err := ostreeClient.VerifyRepo(ostreeRepo); err != nil {
+		return fmt.Errorf("seed OSTree repository is corrupt after extraction: %w", err)
+	}
 
 	// example:
 	// seedBootedID: rhcos-ed4ab3244a76c6503a21441da650634b5abd25aba4255ca116782b2b3020519c.1
@@ -164,6 +205,13 @@ func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.ICli
 
 	if err = ostreeClient.PullLocal(ostreeRepo); err != nil {
 		return fmt.Errorf("failed ostree pull-local: %w", err)
+	}
+	installedRepo := "/ostree/repo"
+	if ibi {
+		installedRepo = "/mnt/ostree/repo"
+	}
+	if err = ostreeClient.VerifyRepo(installedRepo); err != nil {
+		return fmt.Errorf("installed OSTree repository is corrupt after pull-local: %w", err)
 	}
 
 	if err = ostreeClient.OSInit(osname); err != nil {
