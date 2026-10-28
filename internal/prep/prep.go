@@ -3,9 +3,11 @@ package prep
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -21,6 +23,10 @@ import (
 // need this for unit tests
 var osReadFile = os.ReadFile
 var osMkdirTemp = os.MkdirTemp
+
+const seedSELinuxPackagesDir = "/usr/share/selinux/packages"
+
+var seedSELinuxModuleName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.cil$`)
 
 // getBootedStaterootIDFromRPMOstreeJson reads rpm-ostree.json file from the seed image
 // and returns the deployment.ID of the booted stateroot
@@ -92,8 +98,8 @@ func getDeploymentFromDeploymentID(deploymentID string) (string, error) {
 }
 
 // VerifySeedOSTree checks the seed repository while the installation disk is still
-// untouched.  The live ISO's SELinux policy is used during extraction, so this also
-// catches labels that the live environment cannot restore.
+// untouched. If the live ISO cannot restore a seed-specific SELinux label, load the
+// seed's policy modules and retry extraction before treating the repository as corrupt.
 func VerifySeedOSTree(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient, seedImage string) error {
 	defer func() { _ = ops.UnmountAndRemoveImage(seedImage) }()
 
@@ -119,13 +125,111 @@ func VerifySeedOSTree(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IC
 	if err := os.Mkdir(filepath.Join(workspaceOutsideChroot, "ostree"), 0o700); err != nil {
 		return fmt.Errorf("failed to create seed preflight repository directory: %w", err)
 	}
-	if err := ops.ExtractTarWithSELinux(filepath.Join(mountpoint, "ostree.tgz"), ostreeRepo); err != nil {
-		return fmt.Errorf("failed to extract seed ostree.tgz before disk preparation: %w", err)
+	archivePath := filepath.Join(mountpoint, "ostree.tgz")
+	extractErr := ops.ExtractTarWithSELinux(archivePath, ostreeRepo)
+	var verifyErr error
+	if extractErr == nil {
+		verifyErr = ostreeClient.VerifyRepo(ostreeRepo)
+	} else {
+		// Some tar versions fail immediately on a label unknown to the live
+		// policy. Read the repository once without xattrs so its own policy
+		// modules can be located; the verified extraction below restores them.
+		if err := resetSeedPreflightRepo(workspaceOutsideChroot); err != nil {
+			return err
+		}
+		if err := ops.ExtractTarWithoutSELinux(archivePath, ostreeRepo); err != nil {
+			return fmt.Errorf("failed to read seed ostree.tgz after SELinux extraction failed (%w): %w", extractErr, err)
+		}
+		verifyErr = extractErr
+	}
+	if verifyErr == nil {
+		return nil
+	}
+
+	// A seed can contain policy supplied by the OpenShift machine OS image that is
+	// absent from the matching base RHCOS live ISO. GNU tar can report an invalid
+	// security.selinux xattr yet exit successfully, leaving a different object
+	// checksum. The extracted repository still contains the seed's CIL modules, so
+	// install those modules and repeat the extraction with the correct live policy.
+	modulePaths, err := seedSELinuxPolicyModules(ops, mountpoint, ostreeRepo, workspaceOutsideChroot)
+	if err != nil {
+		return fmt.Errorf("seed OSTree verification failed (%w); could not load seed SELinux policy: %w", verifyErr, err)
+	}
+	if len(modulePaths) == 0 {
+		return fmt.Errorf("seed OSTree repository is corrupt before disk preparation: %w", verifyErr)
+	}
+	if _, err := ops.RunInHostNamespace("semodule", append([]string{"-i"}, modulePaths...)...); err != nil {
+		return fmt.Errorf("failed to load seed SELinux policy before disk preparation: %w", err)
+	}
+	if err := resetSeedPreflightRepo(workspaceOutsideChroot); err != nil {
+		return err
+	}
+	if err := ops.ExtractTarWithSELinux(archivePath, ostreeRepo); err != nil {
+		return fmt.Errorf("failed to extract seed ostree.tgz with seed SELinux policy: %w", err)
 	}
 	if err := ostreeClient.VerifyRepo(ostreeRepo); err != nil {
-		return fmt.Errorf("seed OSTree repository is corrupt before disk preparation: %w", err)
+		return fmt.Errorf("seed OSTree repository is corrupt after loading seed SELinux policy: %w", err)
 	}
 	return nil
+}
+
+func resetSeedPreflightRepo(workspaceOutsideChroot string) error {
+	repo := filepath.Join(workspaceOutsideChroot, "ostree")
+	if err := os.RemoveAll(repo); err != nil {
+		return fmt.Errorf("failed to remove seed preflight repository before policy retry: %w", err)
+	}
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		return fmt.Errorf("failed to create seed preflight repository for policy retry: %w", err)
+	}
+	return nil
+}
+
+// seedSELinuxPolicyModules reads CIL packages from the booted seed deployment,
+// rather than trusting file names or bytes outside the digest-pinned OSTree commit.
+// Paths returned here are host paths for semodule; the files are removed with the
+// preflight workspace after verification.
+func seedSELinuxPolicyModules(ops ops.Ops, mountpoint, ostreeRepo, workspaceOutsideChroot string) ([]string, error) {
+	seedBootedID, err := getBootedStaterootIDFromRPMOstreeJson(filepath.Join(common.PathOutsideChroot(mountpoint), "rpm-ostree.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		// Older seed images may not carry deployment metadata. Preserve the
+		// original fsck error rather than guessing at a commit.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	deployment, err := getDeploymentFromDeploymentID(seedBootedID)
+	if err != nil {
+		return nil, err
+	}
+	commit := strings.SplitN(deployment, ".", 2)[0]
+	listing, err := ops.RunInHostNamespace("ostree", "ls", "--repo="+ostreeRepo,
+		"--nul-filenames-only", commit, seedSELinuxPackagesDir)
+	if err != nil {
+		return nil, fmt.Errorf("listing seed SELinux policy packages: %w", err)
+	}
+
+	var modulePaths []string
+	for _, path := range strings.Split(listing, "\x00") {
+		name := filepath.Base(path)
+		if filepath.Dir(path) != seedSELinuxPackagesDir || !seedSELinuxModuleName.MatchString(name) {
+			continue
+		}
+		contents, err := ops.RunInHostNamespace("ostree", "cat", "--repo="+ostreeRepo, commit, path)
+		if err != nil {
+			return nil, fmt.Errorf("reading seed SELinux module %s: %w", name, err)
+		}
+		modulePath := filepath.Join(workspaceOutsideChroot, name)
+		if err := os.WriteFile(modulePath, []byte(contents), 0o600); err != nil {
+			return nil, fmt.Errorf("staging seed SELinux module %s: %w", name, err)
+		}
+		insidePath, err := common.PathInsideChroot(modulePath)
+		if err != nil {
+			return nil, fmt.Errorf("resolving seed SELinux module %s: %w", name, err)
+		}
+		modulePaths = append(modulePaths, insidePath)
+	}
+	return modulePaths, nil
 }
 
 func SetupStateroot(log logr.Logger, ops ops.Ops, ostreeClient ostreeclient.IClient,
