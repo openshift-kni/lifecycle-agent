@@ -302,6 +302,20 @@ func renderEmbeddedIgnition(m *Manifest) ([]byte, error) {
 			},
 		},
 	}
+	if m.SiteConfig != nil {
+		keys, err := parseSSHAuthorizedKeys(m.SiteConfig.SSHKey)
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) > 0 {
+			ignConfig["passwd"] = map[string]any{
+				"users": []any{map[string]any{
+					"name":              "core",
+					"sshAuthorizedKeys": keys,
+				}},
+			}
+		}
+	}
 	out, err := json.Marshal(ignConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling embedded ignition: %w", err)

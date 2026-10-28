@@ -118,6 +118,10 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    on-media `digests.json`. `shutdown` is carried from the manifest: install-only ends in
    shutdown, self-contained sets `shutdown: false` so `lca-cli` performs the pivot reboot (the
    pivot / pivot-failure logic and its end-to-end verification are owned by CNF-27164).
+   For self-contained media, an optional, non-empty `siteConfig.sshKey` is also authorized
+   for the live ISO's `core` user. If the field is omitted or empty, the builder omits
+   the entire Ignition `passwd` section; it embeds no SSH authorization. The private
+   key is never embedded.
 3. **Exact shipping binary, staged on p2 (not embedded in ignition).** The stock RHCOS live
    ISO ships no `lca-cli`, so the binary is extracted from the `--lca-image` container at build
    time. It is **not** embedded in the ISO ignition: at ~90 MB uncompressed it far exceeds the
@@ -139,6 +143,28 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    fails before touching the installation disk. When nothing is mounted there (the connected/online
    path, or a manual invocation), prepare mounts the device read-only itself and unmounts it when
    done, as before.
+
+### SSH access to the live ISO
+
+`siteConfig.sshKey` is optional. Omit it when live ISO SSH access is not needed; the USB
+image still builds and the automatic installation proceeds normally. To monitor or
+troubleshoot prepare remotely, set it to one or more **public** OpenSSH authorized keys
+in a self-contained manifest (one key per line). For example, obtain the public half of a
+local private key with `ssh-keygen -y -f ~/.ssh/id_ed25519`, then place the resulting
+line(s) in the manifest:
+
+```yaml
+siteConfig:
+  sshKey: |
+    ssh-ed25519 AAAA... operator@example
+    ssh-ed25519 AAAA... operator2@example
+```
+
+After the USB boots and the live environment has network connectivity, connect with
+`ssh -i ~/.ssh/id_ed25519 core@<live-node-ip>`. Setting `sshKey` does not configure an
+interface or IP address. The installer still starts automatically, so use the live
+connection for observation and diagnostics. The live ISO can present a different SSH
+host key from the installed node.
 
 ### Executing `lca-cli` from `ibi-images`: exec-capable mount and SELinux context
 

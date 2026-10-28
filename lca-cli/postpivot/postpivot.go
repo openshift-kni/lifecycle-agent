@@ -815,7 +815,7 @@ func parseKubeletNodeIPs(content string) ([]string, error) {
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
 func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
-	if sshKey == "" {
+	if strings.TrimSpace(sshKey) == "" {
 		p.log.Infof("No ssh public key was provided, skipping")
 		return nil
 	}
@@ -833,15 +833,33 @@ func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
 	return p.createSSHKeyMachineConfigs(sshKey)
 }
 
+// sshAuthorizedKeysList splits a newline-separated authorized_keys blob into one Ignition
+// sshAuthorizedKeys entry per non-empty, non-comment line.
+func sshAuthorizedKeysList(sshKey string) []string {
+	var keys []string
+	for _, line := range strings.Split(sshKey, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		keys = append(keys, line)
+	}
+	return keys
+}
+
 func (p *PostPivot) createSSHKeyMachineConfigs(sshKey string) error {
 	p.log.Info("Creating worker and master machine configs with provided ssh key, in order to override seed's")
+	keys := sshAuthorizedKeysList(sshKey)
+	if len(keys) == 0 {
+		return fmt.Errorf("ssh key is empty after parsing authorized key lines")
+	}
 	ignConfig := map[string]any{
 		"ignition": map[string]string{"version": "3.2.0"},
 		"passwd": map[string]any{
 			"users": []any{
 				map[string]any{
 					"name":              userCore,
-					"sshAuthorizedKeys": []string{sshKey},
+					"sshAuthorizedKeys": keys,
 				}},
 		},
 	}

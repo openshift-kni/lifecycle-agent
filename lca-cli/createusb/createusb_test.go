@@ -366,6 +366,54 @@ func TestValidateSelfContainedRequiresPullSecret(t *testing.T) {
 	})
 }
 
+// validSSHPublicKey is a throwaway ed25519 authorized_keys line for sshKey validation tests,
+// generated with: ssh-keygen -t ed25519 -C "test@example.com" -N "" (private key discarded).
+const validSSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICRIY/su3X3EirySD0+UmBF5LwDgbgp8TeIZ9oxyrK0a test@example.com"
+
+// validSSHPublicKey2 is a second throwaway ed25519 key for multi-key tests,
+// generated with: ssh-keygen -t ed25519 -C "test2@example.com" -N "" (private key discarded).
+const validSSHPublicKey2 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJfaxsk35YhI2o+9cgL+zX/t268cLU1r2c5ndYwBy2k test2@example.com"
+
+func TestValidateSiteConfigSSHKey(t *testing.T) {
+	t.Run("omitted sshKey passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = ""
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("valid public key passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("multiple public keys pass", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = validSSHPublicKey + "\n" + validSSHPublicKey2
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("malformed key fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "ssh-ed25519 not-a-key"
+		assert.ErrorContains(t, m.Validate(), "malformed public authorized key")
+	})
+	// Regression: ParseAuthorizedKey ignores invalid lines when given a multi-line blob.
+	// Per-line validation must still reject a bad line even when a later line is valid.
+	t.Run("malformed content before a valid key fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "ssh-ed25519 not-a-key\n" + validSSHPublicKey
+		assert.ErrorContains(t, m.Validate(), "malformed public authorized key")
+	})
+	t.Run("private-key material fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----"
+		assert.ErrorContains(t, m.Validate(), "not private-key material")
+	})
+	t.Run("comment-only sshKey fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.SSHKey = "# no keys here"
+		assert.ErrorContains(t, m.Validate(), "at least one public authorized key")
+	})
+}
+
 func TestValidateUnknownOrEmptyMode(t *testing.T) {
 	for _, mode := range []Mode{"", "bogus"} {
 		m := validInstallOnly()

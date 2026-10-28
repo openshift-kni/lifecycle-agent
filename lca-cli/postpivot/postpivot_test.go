@@ -33,6 +33,14 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
 
+func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
+	pp := NewPostPivot(nil, logrus.New(), nil, "", "", "")
+	sshKeyFile := filepath.Join(t.TempDir(), "authorized_keys")
+	assert.NoError(t, pp.setSSHKey(" \n\t ", sshKeyFile))
+	_, err := os.Stat(sshKeyFile)
+	assert.True(t, os.IsNotExist(err))
+}
+
 func TestSetNodeIPsIfNotProvided_DualStack(t *testing.T) {
 	testcases := []struct {
 		name            string

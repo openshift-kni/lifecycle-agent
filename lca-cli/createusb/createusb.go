@@ -39,6 +39,7 @@ import (
 	"regexp"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
 	"sigs.k8s.io/yaml"
 )
 
@@ -91,8 +92,10 @@ type SiteConfig struct {
 	NodeIPs          []string `json:"nodeIPs,omitempty"`
 	MachineNetworks  []string `json:"machineNetworks,omitempty"`
 	RawNMStateConfig string   `json:"rawNMStateConfig,omitempty"`
-	SSHKey           string   `json:"sshKey,omitempty"`
-	PullSecret       string   `json:"pullSecret,omitempty"`
+	// SSHKey is one or more OpenSSH public authorized keys (newline-separated) for the
+	// live ISO core user and the installed node. Never provide a private key.
+	SSHKey     string `json:"sshKey,omitempty"`
+	PullSecret string `json:"pullSecret,omitempty"`
 }
 
 // Manifest is the §6.3 single-manifest schema for `lca-cli create-usb`.
@@ -319,6 +322,11 @@ func (m *Manifest) validateSelfContained() error {
 	if err := m.validateSiteConfigNetworkFields(); err != nil {
 		return err
 	}
+	// Optional sshKey is embedded in the live ISO ignition and the on-media seed
+	// reconfiguration, so reject malformed values and private-key material at build time.
+	if err := m.validateSiteConfigSSHKey(); err != nil {
+		return err
+	}
 
 	// The self-contained media carries the cluster's configuration on-media.
 	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
@@ -353,6 +361,43 @@ func (m *Manifest) validateSiteConfigNetworkFields() error {
 		}
 	}
 	return nil
+}
+
+// validateSiteConfigSSHKey validates the optional siteConfig.sshKey: when set it must
+// contain one or more parseable OpenSSH public authorized keys. Private-key PEM material
+// and malformed lines are rejected so they cannot be embedded in the image.
+func (m *Manifest) validateSiteConfigSSHKey() error {
+	_, err := parseSSHAuthorizedKeys(m.SiteConfig.SSHKey)
+	return err
+}
+
+// parseSSHAuthorizedKeys returns the non-empty, non-comment public authorized key lines
+// from sshKey. An empty/whitespace value yields a nil slice (the field is optional).
+// Private-key PEM material and any non-empty line that is not a valid authorized key are
+// rejected.
+func parseSSHAuthorizedKeys(sshKey string) ([]string, error) {
+	raw := strings.TrimSpace(sshKey)
+	if raw == "" {
+		return nil, nil
+	}
+	if strings.Contains(raw, "PRIVATE KEY") {
+		return nil, fmt.Errorf("siteConfig.sshKey must be public authorized key(s), not private-key material")
+	}
+	var keys []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line)); err != nil {
+			return nil, fmt.Errorf("siteConfig.sshKey contains a malformed public authorized key: %w", err)
+		}
+		keys = append(keys, line)
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("siteConfig.sshKey must contain at least one public authorized key")
+	}
+	return keys, nil
 }
 
 // validateManifestSources rejects a manifest source with an empty path: each entry must
