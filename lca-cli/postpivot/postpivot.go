@@ -815,7 +815,7 @@ func parseKubeletNodeIPs(content string) ([]string, error) {
 // 1. as file in order to give early access to the node
 // 2. creates 2 machine configs in manifests dir that will be applied when cluster is up
 func (p *PostPivot) setSSHKey(sshKey, sshKeyFile string) error {
-	if sshKey == "" {
+	if strings.TrimSpace(sshKey) == "" {
 		p.log.Infof("No ssh public key was provided, skipping")
 		return nil
 	}
