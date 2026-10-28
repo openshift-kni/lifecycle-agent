@@ -91,7 +91,7 @@ type SiteConfig struct {
 	Hostname         string   `json:"hostname,omitempty"`
 	NodeIPs          []string `json:"nodeIPs,omitempty"`
 	MachineNetworks  []string `json:"machineNetworks,omitempty"`
-	RawNMStateConfig string `json:"rawNMStateConfig,omitempty"`
+	RawNMStateConfig string   `json:"rawNMStateConfig,omitempty"`
 	// SSHKey is one or more OpenSSH public authorized keys (newline-separated) for the
 	// live ISO core user and the installed node. Never provide a private key.
 	SSHKey     string `json:"sshKey,omitempty"`
