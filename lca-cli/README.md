@@ -118,7 +118,7 @@ builds the live ISO: `BuildLiveISO` fetches the RHCOS live ISO **over HTTPS and 
 sha256 before use** (a non-HTTPS URL, an unverified download, or a checksum mismatch fails the
 build), embeds an ignition that auto-runs `lca-cli ibi` on boot, and produces the bootable
 customized ISO. The exact shipping `lca-cli` binary is extracted from `--lca-image` and
-**staged on p2** (`/var/mnt/ibi-images/lca-cli`) rather than embedded in the ISO ignition,
+**staged on p2** (`/run/ibi-images/lca-cli`) rather than embedded in the ISO ignition,
 because at ~90 MB it far exceeds the fixed ISO ignition embed area; a label-based `.mount`
 unit in the embedded ignition mounts `ibi-images` and the embedded unit execs `lca-cli` from
 there. For the media layout rationale (why DOS/MBR, not GPT), the verified-ISO contract and
