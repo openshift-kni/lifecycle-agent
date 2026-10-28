@@ -149,17 +149,19 @@ type isoCustomizer interface {
 // isoBuildDeps bundles the injectable seams, mirroring imageBuildDeps in
 // createusb_images.go.
 type isoBuildDeps struct {
-	fetcher    isoFetcher
-	extractor  lcaBinaryExtractor
-	customizer isoCustomizer
+	fetcher     isoFetcher
+	extractor   lcaBinaryExtractor
+	customizer  isoCustomizer
+	seedVersion seedRHCOSVersionReader
 }
 
 // defaultISOBuildDeps returns the production seams backed by net/http, the host ops helpers,
 // and the in-tree isoeditor primitive.
 func defaultISOBuildDeps(log *logrus.Logger) isoBuildDeps {
 	return isoBuildDeps{
-		fetcher:   &httpISOFetcher{log: log},
-		extractor: &opsLCABinaryExtractor{ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)), log: log},
+		fetcher:     &httpISOFetcher{log: log},
+		extractor:   &opsLCABinaryExtractor{ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)), log: log},
+		seedVersion: &opsSeedRHCOSVersionReader{ops: ops.NewOps(log, ops.NewRegularExecutor(log, false))},
 		customizer: &opsISOCustomizer{
 			ops: ops.NewOps(log, ops.NewRegularExecutor(log, false)),
 		},
@@ -190,7 +192,16 @@ func buildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISO
 	}
 
 	baseISO := filepath.Join(opts.WorkDir, baseISOFileName)
-	if err := fetchAndVerifyISO(ctx, deps.fetcher, m.RHCOSLiveISO, baseISO); err != nil {
+	iso := m.RHCOSLiveISO
+	if iso.URL == "" && iso.SHA256 == "" {
+		var err error
+		iso, err = resolveSeedLiveISO(ctx, deps.fetcher, deps.seedVersion, m.SeedImage, opts.AuthFile, opts.WorkDir)
+		if err != nil {
+			return ISOBuildResult{}, err
+		}
+		log.Infof("create-usb: using RHCOS live ISO matching the seed: %s", iso.URL)
+	}
+	if err := fetchAndVerifyISO(ctx, deps.fetcher, iso, baseISO); err != nil {
 		return ISOBuildResult{}, err
 	}
 

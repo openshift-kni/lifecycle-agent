@@ -177,7 +177,7 @@ The manifest has two profiles, selected by the `mode` field:
 - `self-contained` — installs and reconfigures the node from an on-media site configuration, with
   no network access.
 
-Fields common to both profiles (all required):
+Fields common to both profiles (except the optional ISO override):
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -188,8 +188,14 @@ Fields common to both profiles (all required):
 | `installationDisk` | string | The target installation disk (e.g. `/dev/disk/by-id/ata-xxxx`). |
 | `disconnected` | bool | Must be `true` for both profiles (it is not a knob). |
 | `shutdown` | bool | Must be set explicitly and match the mode: `true` for `install-only`, `false` for `self-contained`. Omitting it fails the build. |
-| `rhcosLiveIso.url` | string | HTTPS URL of the RHCOS live ISO (must include a non-empty host). |
-| `rhcosLiveIso.sha256` | string | SHA-256 digest of the RHCOS live ISO (64-character lowercase hex). |
+| `rhcosLiveIso.url` | string | Optional HTTPS URL of the RHCOS live ISO. Omit with `sha256` to use the ISO matching the seed. |
+| `rhcosLiveIso.sha256` | string | Optional SHA-256 digest of the RHCOS live ISO (64-character lowercase hex). Required with `url`. |
+
+Omit `rhcosLiveIso` unless you need to supply an HTTPS mirror. By default the builder
+reads the seed's booted RHCOS build ID from `rpm-ostree.json` and obtains the matching
+live ISO and checksum from official build metadata. A manually supplied ISO from a
+different RHCOS build can fail during seed extraction or installation because its
+SELinux policy may not recognize labels in the seed. If you set one field, set both.
 
 `install-only` adds the following optional field (rejected under `self-contained`):
 
@@ -252,9 +258,6 @@ releaseVersion: 4.20.0
 installationDisk: /dev/disk/by-id/ata-example
 disconnected: true
 shutdown: true
-rhcosLiveIso:
-  url: https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso
-  sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 extraPrecacheImages:
   - quay.io/example/extra@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
@@ -269,9 +272,6 @@ releaseVersion: 4.20.0
 installationDisk: /dev/disk/by-id/ata-example
 disconnected: true
 shutdown: false
-rhcosLiveIso:
-  url: https://mirror.openshift.com/pub/openshift-v4/amd64/dependencies/rhcos/latest/rhcos-live.x86_64.iso
-  sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 clusterManifests:
   - path: manifests/cluster.yaml
 siteConfig:
