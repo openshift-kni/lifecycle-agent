@@ -1655,6 +1655,9 @@ func TestSelfContainedPivotIssuedAfterSuccessFlush(t *testing.T) {
 	stubDisconnectedSeams(t)
 	statusDir := useTempStatusPartition(t)
 	pivotRebootTimeout = 0 // do not block on the real reboot grace period
+	// Self-contained disconnected media also persists the read-only store before the final sync
+	// (see runPreparation); stub it to a no-op so this test isolates the pivot terminal action.
+	persistReadOnlyStoreFn = func(*IBIPrepare, context.Context, *localimages.DigestManifest) error { return nil }
 
 	var events []string
 	record := func(name string) func(string, ...string) (string, error) {

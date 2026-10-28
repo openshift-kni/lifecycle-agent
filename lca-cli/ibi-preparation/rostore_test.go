@@ -623,6 +623,7 @@ func TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())
 	statusDir := useTempStatusPartition(t)
+	pivotRebootTimeout = 0 // the self-contained success terminal action is the pivot; do not block on it
 
 	var events []string
 	parseDigestManifest = func(string) (*localimages.DigestManifest, error) {
@@ -657,10 +658,12 @@ func TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount(t *testing.T) {
 	}
 	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, ostreeMock, cleanupMock, cfg)
 
+	// p4 (ibi-status) is mounted for the success write-back and re-mounted once more by the
+	// pivot-failure amend, since the self-contained success terminal action is the pivot reboot.
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
 	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil).Times(1)
 	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil).Times(1)
-	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(1)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil).Times(2)
 	cleanupMock.EXPECT().CleanupInstallDevice(cfg.InstallationDisk).Return(nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("coreos-installer", []string{"install", cfg.InstallationDisk}).Return("", nil).Times(1)
 	mockOps.EXPECT().SetupContainersFolderCommands().Return(nil).Times(1)
@@ -674,9 +677,16 @@ func TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount(t *testing.T) {
 		events = append(events, "umountP2")
 		return nil
 	}).Times(1)
-	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(1)
+	mockOps.EXPECT().Umount("sdb2").Return(nil).Times(2)
+	// Success terminal action for self-contained media: the pivot reboot is issued; because a
+	// reboot never returns in a unit test, the zero grace period elapses, the result is amended
+	// with pivot: failed, and the node halts powered-on.
+	mockOps.EXPECT().RunInHostNamespace("systemd-run", "--unit", "lca-ibi-pivot",
+		"--description", gomock.Any(), "systemctl", "reboot").Return("", nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 
-	require.NoError(t, ibi.Run())
+	err := ibi.Run()
+	assert.ErrorContains(t, err, "did not reboot into the installed disk")
 
 	// The handoff runs after the closure self-check, before the first (core) sync, and before p2
 	// is unmounted.
@@ -685,9 +695,11 @@ func TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount(t *testing.T) {
 	assert.Less(t, idxOf(events, "persistROStore"), idxOf(events, "sync"))
 	assert.Less(t, idxOf(events, "persistROStore"), idxOf(events, "umountP2"))
 
+	// The success record is preserved (pivot failure only amends it with pivot: failed).
 	result := readPrepareResult(t, statusDir)
 	assert.Equal(t, ibiconfig.ProfileSelfContained, result.Profile)
 	assert.Equal(t, resultSuccess, result.Result)
+	assert.Equal(t, pivotFailed, result.Pivot)
 }
 
 // TestRunInstallOnlySkipsReadOnlyStorePersist proves install-only media never runs the
