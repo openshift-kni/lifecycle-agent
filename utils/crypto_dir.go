@@ -18,7 +18,10 @@ const (
 )
 
 func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubeconfigCryptoRetention *seedreconfig.KubeConfigCryptoRetention) error {
-	if kubeconfigCryptoRetention == nil || *kubeconfigCryptoRetention == (seedreconfig.KubeConfigCryptoRetention{}) {
+	if kubeconfigCryptoRetention == nil || !hasKubeconfigCryptoPEM(kubeconfigCryptoRetention) {
+		if err := os.RemoveAll(cryptoDir); err != nil {
+			return fmt.Errorf("error removing stale crypto directory %s: %w", cryptoDir, err)
+		}
 		return nil
 	}
 	if err := validateKubeconfigCryptoRetention(kubeconfigCryptoRetention); err != nil {
@@ -54,6 +57,16 @@ func SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir string, kubecon
 	}
 
 	return nil
+}
+
+// The ingress certificate CN is used separately by recert for SAN replacement;
+// it does not imply that any key or certificate should be reused.
+func hasKubeconfigCryptoPEM(retention *seedreconfig.KubeConfigCryptoRetention) bool {
+	return strings.TrimSpace(string(retention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate)) != "" ||
+		strings.TrimSpace(string(retention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey)) != "" ||
+		strings.TrimSpace(string(retention.KubeAPICrypto.ServingCrypto.LocalhostSignerPrivateKey)) != "" ||
+		strings.TrimSpace(string(retention.KubeAPICrypto.ServingCrypto.ServiceNetworkSignerPrivateKey)) != "" ||
+		strings.TrimSpace(string(retention.IngresssCrypto.IngressCAPrivateKey)) != ""
 }
 
 // validateKubeconfigCryptoRetention rejects partial retention before recert is

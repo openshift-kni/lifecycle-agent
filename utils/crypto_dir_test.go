@@ -191,6 +191,28 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_EmptyDoesNotCreateDir
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_ClearsStaleDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		retention *seedreconfig.KubeConfigCryptoRetention
+	}{
+		{name: "nil retention"},
+		{name: "empty retention", retention: &seedreconfig.KubeConfigCryptoRetention{}},
+		{name: "CN only", retention: &seedreconfig.KubeConfigCryptoRetention{
+			IngresssCrypto: seedreconfig.IngresssCrypto{IngressCertificateCN: "ingress-operator@1234"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cryptoDir := path.Join(t.TempDir(), "crypto")
+			assert.NoError(t, os.MkdirAll(cryptoDir, 0700))
+			assert.NoError(t, os.WriteFile(path.Join(cryptoDir, "admin-kubeconfig-client-ca.crt"), nil, 0600))
+			assert.NoError(t, SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, tc.retention))
+			_, err := os.Stat(cryptoDir)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
 func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_RejectsPartial(t *testing.T) {
 	cryptoDir := path.Join(t.TempDir(), "crypto")
 	retention := &seedreconfig.KubeConfigCryptoRetention{}
