@@ -495,12 +495,18 @@ func saveSeams(t *testing.T) {
 	t.Helper()
 	origParse, origNew, origSetup := parseDigestManifest, newImageImporter, setupStateroot
 	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
+	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
+	origExchange := exchangeStoreDirs
 	t.Cleanup(func() {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
 		setupStateroot = origSetup
 		statusPartitionMountDir = origMount
 		collectStatusLogs = origCollect
+		persistReadOnlyStoreFn = origPersist
+		copyReadOnlyStore = origCopy
+		verifyPersistedStore = origVerify
+		exchangeStoreDirs = origExchange
 	})
 }
 
@@ -1258,6 +1264,9 @@ func TestRunReturnsErrorOnFailedFinalUnmount(t *testing.T) {
 	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
 		return nil
 	}
+	// This test targets the final p2 unmount failure; stub the self-contained read-only store
+	// handoff to a no-op so the run reaches that step (the handoff itself is covered separately).
+	persistReadOnlyStoreFn = func(*IBIPrepare, context.Context, *localimages.DigestManifest) error { return nil }
 
 	ctrl := gomock.NewController(t)
 	mockOps := ops.NewMockOps(ctrl)
