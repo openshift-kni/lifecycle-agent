@@ -59,7 +59,14 @@ var (
 	}
 	// setupStateroot is seamed so Run()'s import ordering can be unit-tested without
 	// performing the real (heavy, filesystem-dependent) stateroot setup.
-	setupStateroot = prep.SetupStateroot
+	setupStateroot      = prep.SetupStateroot
+	preflightSeedOSTree = func(i *IBIPrepare, ctx context.Context, manifest *localimages.DigestManifest,
+		seedEntry localimages.ImageEntry) error {
+		if err := i.importSeedToLiveStore(ctx, manifest, seedEntry); err != nil {
+			return fmt.Errorf("failed to import seed for preflight: %w", err)
+		}
+		return prep.VerifySeedOSTree(logr.Logger{}, i.ops, i.ostreeClient, i.config.SeedImage)
+	}
 )
 
 type IBIPrepare struct {
@@ -139,13 +146,13 @@ func (i *IBIPrepare) Run() error {
 }
 
 // runDisconnectedPreparation runs the disconnected preflight -- p2 discovery/mount, manifest
-// and seed validation, and the synthetic authfile -- and then the shared core prepare. It is
+// and seed validation, seed OSTree integrity, and the synthetic authfile -- and then the shared core prepare. It is
 // invoked only after the ibi-status (p4) partition is mounted and the re-entry guard has
 // passed, so every error it returns is routed through finalizeDisconnected (recorded to
 // prepare.json, followed by the powered-on terminal action) rather than aborting Run bare.
 // The two hard preconditions (p2 discovery/mount and manifest/seed validation) still run
 // before diskPreparation touches the installation disk, so a missing/ambiguous device or a
-// missing/malformed/seed-mismatched manifest fails while the disk is still intact. It returns
+// missing/malformed/seed-mismatched manifest or corrupt seed fails while the disk is still intact. It returns
 // the number of images the on-media manifest expects (0 until the manifest is parsed; used
 // only to populate the success counts) and the first error encountered.
 func (i *IBIPrepare) runDisconnectedPreparation(ctx context.Context) (imagesExpected int, err error) {
@@ -166,6 +173,15 @@ func (i *IBIPrepare) runDisconnectedPreparation(ctx context.Context) (imagesExpe
 	manifest, seedEntry, err := i.preflightValidateManifest()
 	if err != nil {
 		return 0, fmt.Errorf("failed to validate local images manifest: %w", err)
+	}
+
+	// The seed must survive SELinux-aware extraction and OSTree verification in this
+	// live ISO before cleanupDisk or coreos-installer can replace the original disk.
+	// diskPreparation later mounts a fresh /var/lib/containers, so the seed is
+	// imported again there for SetupStateroot.
+	i.log.Info("Verifying seed OSTree repository before preparing the installation disk")
+	if err := preflightSeedOSTree(i, ctx, manifest, seedEntry); err != nil {
+		return len(manifest.Images), fmt.Errorf("seed preflight failed: %w", err)
 	}
 
 	// In a disconnected prepare there is no operator-provided pull secret, but the precache is

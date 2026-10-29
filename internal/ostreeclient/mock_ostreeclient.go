@@ -151,3 +151,17 @@ func (mr *MockIClientMockRecorder) Undeploy(ostreeIndex any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Undeploy", reflect.TypeOf((*MockIClient)(nil).Undeploy), ostreeIndex)
 }
+
+// VerifyRepo mocks base method.
+func (m *MockIClient) VerifyRepo(repoPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifyRepo", repoPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// VerifyRepo indicates an expected call of VerifyRepo.
+func (mr *MockIClientMockRecorder) VerifyRepo(repoPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyRepo", reflect.TypeOf((*MockIClient)(nil).VerifyRepo), repoPath)
+}

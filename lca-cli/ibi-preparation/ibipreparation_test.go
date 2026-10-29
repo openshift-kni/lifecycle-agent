@@ -3,6 +3,7 @@ package ibi_preparation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -495,7 +496,10 @@ func (ff *importerFactory) new(_ *logrus.Logger, cfg localimages.StoreConfig) (i
 // saveSeams snapshots the package seams and restores them when the test ends.
 func saveSeams(t *testing.T) {
 	t.Helper()
-	origParse, origNew, origSetup := parseDigestManifest, newImageImporter, setupStateroot
+	origParse, origNew, origSetup, origPreflight := parseDigestManifest, newImageImporter, setupStateroot, preflightSeedOSTree
+	preflightSeedOSTree = func(*IBIPrepare, context.Context, *localimages.DigestManifest, localimages.ImageEntry) error {
+		return nil
+	}
 	origMount, origCollect := statusPartitionMountDir, collectStatusLogs
 	origPersist, origCopy, origVerify := persistReadOnlyStoreFn, copyReadOnlyStore, verifyPersistedStore
 	origExchange := exchangeStoreDirs
@@ -504,6 +508,7 @@ func saveSeams(t *testing.T) {
 		parseDigestManifest = origParse
 		newImageImporter = origNew
 		setupStateroot = origSetup
+		preflightSeedOSTree = origPreflight
 		statusPartitionMountDir = origMount
 		collectStatusLogs = origCollect
 		persistReadOnlyStoreFn = origPersist
@@ -1135,6 +1140,10 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	}
 	ff := &importerFactory{events: &events}
 	newImageImporter = ff.new
+	preflightSeedOSTree = func(*IBIPrepare, context.Context, *localimages.DigestManifest, localimages.ImageEntry) error {
+		events = append(events, "preflightSeedOSTree")
+		return nil
+	}
 	setupStateroot = func(logr.Logger, ops.Ops, ostreeclient.IClient, rpmostreeclient.IClient, string, string, bool) error {
 		events = append(events, "setupStateroot")
 		return nil
@@ -1211,7 +1220,7 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	// unexpected call on the strict mock controller and fail the test. Assert the
 	// relative ordering of the recorded events.
 	for _, name := range []string{
-		"listBlockDevices", "mountReadOnlyP2", "parseManifest", "mountP4", "cleanupInstallDevice",
+		"listBlockDevices", "mountReadOnlyP2", "parseManifest", "mountP4", "preflightSeedOSTree", "cleanupInstallDevice",
 		"importSeed", "setupStateroot", "importClosure", "verifyClosure", "sync", "umountP2", "umountP4",
 	} {
 		assert.GreaterOrEqual(t, idxOf(events, name), 0, "missing event %q", name)
@@ -1220,6 +1229,7 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 	assert.Less(t, idxOf(events, "mountReadOnlyP2"), idxOf(events, "cleanupInstallDevice"))
 	assert.Less(t, idxOf(events, "parseManifest"), idxOf(events, "cleanupInstallDevice"))
 	assert.Less(t, idxOf(events, "mountP4"), idxOf(events, "cleanupInstallDevice"))
+	assert.Less(t, idxOf(events, "preflightSeedOSTree"), idxOf(events, "cleanupInstallDevice"))
 	// Seed imports before stateroot; closure imports after stateroot.
 	assert.Less(t, idxOf(events, "importSeed"), idxOf(events, "setupStateroot"))
 	assert.Less(t, idxOf(events, "setupStateroot"), idxOf(events, "importClosure"))
@@ -1255,6 +1265,36 @@ func TestRunDisconnectedOrderingAndUnmountLast(t *testing.T) {
 		assert.Equal(t, wantGraphRoot, ff.verify.cfg.GraphRoot)
 		assert.Equal(t, 1, ff.verify.verifiedAll, "the self-check must verify the manifest exactly once")
 	}
+}
+
+func TestSeedPreflightFailurePreservesInstallationDisk(t *testing.T) {
+	stubDisconnectedSeams(t)
+	statusDir := useTempStatusPartition(t)
+	preflightSeedOSTree = func(*IBIPrepare, context.Context, *localimages.DigestManifest, localimages.ImageEntry) error {
+		return errors.New("object checksum mismatch")
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	cleanupMock := preinstallUtils.NewMockCleanupDevice(ctrl)
+	cfg := disconnectedCfg(ibiconfig.ProfileInstallOnly)
+	ibi := NewIBIPrepare(logrus.New(), mockOps, nil, nil, cleanupMock, cfg)
+
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("sdb1", "sdb2"), nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("cat", "/proc/self/mounts").Return("", nil)
+	mockOps.EXPECT().MountReadOnly("sdb1", cfg.LocalImagesPath).Return(nil)
+	mockOps.EXPECT().Mount("sdb2", statusDir).Return(nil)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil)
+	mockOps.EXPECT().Umount("sdb1").Return(nil)
+	mockOps.EXPECT().Umount("sdb2").Return(nil)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil)
+	cleanupMock.EXPECT().CleanupInstallDevice(gomock.Any()).Times(0)
+	mockOps.EXPECT().RunInHostNamespace("coreos-installer", gomock.Any()).Times(0)
+
+	err := ibi.Run()
+	assert.ErrorContains(t, err, "seed preflight failed: object checksum mismatch")
+	result := readPrepareResult(t, statusDir)
+	assert.Equal(t, resultFailure, result.Result)
 }
 
 // TestRunReturnsErrorOnFailedFinalUnmount proves that when the final p2 unmount

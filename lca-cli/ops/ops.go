@@ -81,6 +81,7 @@ type Ops interface {
 	waitForEtcd(healthzEndpoint string) error
 	RunRecert(recertContainerImage, authFile, recertConfigFile string, additionalPodmanParams ...string) error
 	ExtractTarWithSELinux(srcPath, destPath string) error
+	ExtractTarWithoutSELinux(srcPath, destPath string) error
 	RemountSysroot() error
 	RemountBoot() error
 	ImageExists(img string) (bool, error)
@@ -340,6 +341,17 @@ func (o *ops) prepareSELinuxTar() (string, error) {
 }
 
 func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
+	return o.extractTar(srcPath, destPath, common.TarOpts...)
+}
+
+// ExtractTarWithoutSELinux reads an OSTree archive without restoring labels or
+// xattrs. It is used only to read seed policy modules when the live policy
+// cannot yet restore the archive's labels.
+func (o *ops) ExtractTarWithoutSELinux(srcPath, destPath string) error {
+	return o.extractTar(srcPath, destPath)
+}
+
+func (o *ops) extractTar(srcPath, destPath string, options ...string) error {
 	// Create a copy of /usr/bin/tar with extended permissions
 	tarExec, err := o.prepareSELinuxTar()
 	if err != nil {
@@ -354,10 +366,10 @@ func (o *ops) ExtractTarWithSELinux(srcPath, destPath string) error {
 	}
 
 	tarArgs := []string{"xzf", srcPath, "-C", destPath}
-	tarArgs = append(tarArgs, common.TarOpts...)
+	tarArgs = append(tarArgs, options...)
 
 	if _, err = o.hostCommandsExecutor.Execute(tarExecInsideChroot, tarArgs...); err != nil {
-		return fmt.Errorf("failed to extract tar with SELinux with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
+		return fmt.Errorf("failed to extract tar with sourcePath %s and destPath %s: %w", srcPath, destPath, err)
 	}
 	return nil
 }

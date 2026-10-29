@@ -14,6 +14,7 @@ import (
 //go:generate mockgen -source=ostreeclient.go -package=ostreeclient -destination=mock_ostreeclient.go
 type IClient interface {
 	PullLocal(repoPath string) error
+	VerifyRepo(repoPath string) error
 	OSInit(osname string) error
 	Deploy(osname, refsepc string, kargs []string, rpmOstreeClient rpmostreeclient.IClient, ibi bool) error
 	Undeploy(ostreeIndex int) error
@@ -36,7 +37,10 @@ func NewClient(executor ops.Execute, ibi bool) IClient {
 }
 
 func (c *Client) PullLocal(repoPath string) error {
-	args := []string{"pull-local"}
+	// The seed repository is extracted from an image. Verify its object checksums
+	// instead of trusting its on-disk metadata or hardlinking objects into the
+	// installed repository, which could propagate incorrect SELinux labels.
+	args := []string{"pull-local", "--untrusted"}
 	if c.ibi {
 		args = append(args, "--repo", "/mnt/ostree/repo")
 	}
@@ -44,6 +48,13 @@ func (c *Client) PullLocal(repoPath string) error {
 		return fmt.Errorf("failed to pull local ostree with args %s, %w", args, err)
 	}
 
+	return nil
+}
+
+func (c *Client) VerifyRepo(repoPath string) error {
+	if _, err := c.executor.Execute("ostree", "fsck", "--repo", repoPath); err != nil {
+		return fmt.Errorf("failed to verify ostree repository %s: %w", repoPath, err)
+	}
 	return nil
 }
 

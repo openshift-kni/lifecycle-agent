@@ -124,6 +124,20 @@ func (mr *MockOpsMockRecorder) ExtractTarWithSELinux(srcPath, destPath any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithSELinux), srcPath, destPath)
 }
 
+// ExtractTarWithoutSELinux mocks base method.
+func (m *MockOps) ExtractTarWithoutSELinux(srcPath, destPath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExtractTarWithoutSELinux", srcPath, destPath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExtractTarWithoutSELinux indicates an expected call of ExtractTarWithoutSELinux.
+func (mr *MockOpsMockRecorder) ExtractTarWithoutSELinux(srcPath, destPath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractTarWithoutSELinux", reflect.TypeOf((*MockOps)(nil).ExtractTarWithoutSELinux), srcPath, destPath)
+}
+
 // ForceExpireSeedCrypto mocks base method.
 func (m *MockOps) ForceExpireSeedCrypto(recertContainerImage, authFile string, hasKubeAdminPassword bool) error {
 	m.ctrl.T.Helper()
