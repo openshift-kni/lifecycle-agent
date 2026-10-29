@@ -527,7 +527,8 @@ spec:
 	specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
 	assert.NoError(t, err)
 	assert.Len(t, specs, 1)
-	assert.Equal(t, []string{"events"}, specs[0].ExcludedResources)
+	// The legacy spec.excludedResources field is ignored: only the scope-specific
+	// excluded fields are parsed.
 	assert.Equal(t, []string{"secrets"}, specs[0].ExcludedNamespaceScopedResources)
 	assert.Equal(t, []string{"persistentvolumes"}, specs[0].ExcludedClusterScopedResources)
 }
@@ -728,15 +729,6 @@ func TestValidateBackupSpecs(t *testing.T) {
 		assert.NoError(t, ValidateBackupSpecs(specs))
 	})
 
-	t.Run("legacy includedResources field is rejected", func(t *testing.T) {
-		specs := []BackupSpec{
-			{Name: "b1", IncludedNamespaces: []string{"app-ns"}, IncludedResources: []string{"deployments"}},
-		}
-		err := ValidateBackupSpecs(specs)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "includedResources")
-	})
-
 	t.Run("namespace-scoped resources without included namespaces is rejected", func(t *testing.T) {
 		// Only namespace-scoped resource types but no included namespaces: nothing
 		// would be queried.
@@ -775,7 +767,11 @@ func TestValidateBackupSpecs(t *testing.T) {
 	})
 }
 
-func TestExtractBackupSpecsParsesLegacyIncludedResources(t *testing.T) {
+// TestExtractBackupSpecsIgnoresLegacyIncludedResources verifies that the legacy
+// Velero spec.includedResources field is ignored during parsing: it does not
+// contribute to the resource selection, so a Backup whose only resource field is
+// includedResources is treated as selecting nothing and is rejected by validation.
+func TestExtractBackupSpecsIgnoresLegacyIncludedResources(t *testing.T) {
 	cm := corev1.ConfigMap{
 		Data: map[string]string{
 			"backup.yaml": `
@@ -793,8 +789,11 @@ spec:
 	specs, err := ExtractBackupSpecsFromConfigmaps([]corev1.ConfigMap{cm})
 	assert.NoError(t, err)
 	assert.Len(t, specs, 1)
-	assert.Equal(t, []string{"deployments", "configmaps"}, specs[0].IncludedResources)
-	assert.Error(t, ValidateBackupSpecs(specs))
+	// includedResources is ignored, so the spec selects no resources and fails
+	// validation for that reason.
+	err = ValidateBackupSpecs(specs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "selects no resources")
 }
 
 func TestFindRestoreForBackup(t *testing.T) {

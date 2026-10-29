@@ -114,13 +114,6 @@ type BackupSpec struct {
 	IncludedNamespaces               []string
 	IncludedNamespaceScopedResources []string
 	IncludedClusterScopedResources   []string
-	// IncludedResources is the legacy Velero field that selects resources across
-	// both namespace and cluster scope. LCA does not resolve it (that would
-	// require per-entry scope classification at backup time); configurations that
-	// set it are rejected during validation so they cannot silently fall back to
-	// the default resource selection. Use the *Scoped variants instead.
-	IncludedResources                []string
-	ExcludedResources                []string
 	ExcludedNamespaceScopedResources []string
 	ExcludedClusterScopedResources   []string
 	LabelSelector                    *metav1.LabelSelector
@@ -244,11 +237,12 @@ type veleroBackup struct {
 }
 
 type veleroBackupSpec struct {
+	// The legacy Velero spec.includedResources and spec.excludedResources fields
+	// are intentionally not modeled here: LCA ignores them. Use the scope-specific
+	// included/excluded fields below instead.
 	IncludedNamespaces               []string              `json:"includedNamespaces"`
 	IncludedNamespaceScopedResources []string              `json:"includedNamespaceScopedResources"`
 	IncludedClusterScopedResources   []string              `json:"includedClusterScopedResources"`
-	IncludedResources                []string              `json:"includedResources"`
-	ExcludedResources                []string              `json:"excludedResources"`
 	ExcludedNamespaceScopedResources []string              `json:"excludedNamespaceScopedResources"`
 	ExcludedClusterScopedResources   []string              `json:"excludedClusterScopedResources"`
 	LabelSelector                    *metav1.LabelSelector `json:"labelSelector"`
@@ -449,11 +443,6 @@ func configmapRef(cm corev1.ConfigMap) string {
 // empty set of resources.
 func ValidateBackupSpecs(specs []BackupSpec) error {
 	for _, s := range specs {
-		if len(s.IncludedResources) > 0 {
-			return fmt.Errorf("backup %q sets the unsupported legacy spec.includedResources field; "+
-				"use spec.includedNamespaceScopedResources and spec.includedClusterScopedResources instead", s.Name)
-		}
-
 		// includedNamespaceScopedResources only takes effect within included
 		// namespaces (namespace-scoped resources are listed per included namespace).
 		// Setting it without any included namespace selects nothing, so reject it as
@@ -536,11 +525,9 @@ func (b *veleroBackup) toBackupSpec() BackupSpec {
 		IncludedNamespaces:               b.Spec.IncludedNamespaces,
 		IncludedNamespaceScopedResources: b.Spec.IncludedNamespaceScopedResources,
 		IncludedClusterScopedResources:   b.Spec.IncludedClusterScopedResources,
-		IncludedResources:                b.Spec.IncludedResources,
-		// excludedResources is the legacy Velero filter that applies to both
-		// namespace- and cluster-scoped resources; the *Scoped variants match the
-		// newer Velero resource-policy API and apply to their respective scope.
-		ExcludedResources:                b.Spec.ExcludedResources,
+		// The legacy Velero spec.includedResources and spec.excludedResources
+		// fields are intentionally ignored; LCA uses only the scope-specific
+		// included/excluded fields.
 		ExcludedNamespaceScopedResources: b.Spec.ExcludedNamespaceScopedResources,
 		ExcludedClusterScopedResources:   b.Spec.ExcludedClusterScopedResources,
 		LabelSelector:                    b.Spec.LabelSelector,
