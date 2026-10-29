@@ -737,7 +737,7 @@ func TestValidateBackupSpecs(t *testing.T) {
 		assert.Contains(t, err.Error(), "includedResources")
 	})
 
-	t.Run("backup selecting no resources is rejected", func(t *testing.T) {
+	t.Run("namespace-scoped resources without included namespaces is rejected", func(t *testing.T) {
 		// Only namespace-scoped resource types but no included namespaces: nothing
 		// would be queried.
 		specs := []BackupSpec{
@@ -745,7 +745,27 @@ func TestValidateBackupSpecs(t *testing.T) {
 		}
 		err := ValidateBackupSpecs(specs)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "selects no resources")
+		assert.Contains(t, err.Error(), "without spec.includedNamespaces")
+	})
+
+	t.Run("included namespaces without namespace-scoped resources is rejected", func(t *testing.T) {
+		// Namespaces are included without the apply-label annotation, so the
+		// namespace-scoped resource types must be listed explicitly.
+		specs := []BackupSpec{
+			{Name: "b1", IncludedNamespaces: []string{"app-ns"}},
+		}
+		err := ValidateBackupSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "without spec.includedNamespaceScopedResources")
+	})
+
+	t.Run("apply-label with included namespaces but no namespace-scoped resources passes", func(t *testing.T) {
+		// With the apply-label annotation the scope is limited to the annotated
+		// objects, so the namespace-scoped resource list is not required.
+		specs := []BackupSpec{
+			{Name: "b1", ApplyLabel: "v1/configmaps/app-ns/my-cm", IncludedNamespaces: []string{"app-ns"}},
+		}
+		assert.NoError(t, ValidateBackupSpecs(specs))
 	})
 
 	t.Run("empty backup is rejected", func(t *testing.T) {
