@@ -435,6 +435,23 @@ func configmapRef(cm corev1.ConfigMap) string {
 // empty set of resources.
 func ValidateBackupSpecs(specs []BackupSpec) error {
 	for _, s := range specs {
+		// Validate the apply-wave annotation and the label selector here, during
+		// Prep, so a malformed Backup CR fails before the pre-pivot backup runs.
+		// Otherwise an invalid apply-wave would only surface later in
+		// SortBackupSpecsByApplyWave and an invalid labelSelector only in
+		// fetchResources (after the stale backup directory has already been
+		// removed). The parsing in those call sites remains as defense in depth.
+		if s.ApplyWave != "" {
+			if _, err := strconv.Atoi(s.ApplyWave); err != nil {
+				return fmt.Errorf("backup %q has invalid %s value %q: %w", s.Name, common.ApplyWaveAnn, s.ApplyWave, err)
+			}
+		}
+		if s.LabelSelector != nil {
+			if _, err := metav1.LabelSelectorAsSelector(s.LabelSelector); err != nil {
+				return fmt.Errorf("backup %q has invalid spec.labelSelector: %w", s.Name, err)
+			}
+		}
+
 		// includedNamespaceScopedResources only takes effect within included
 		// namespaces (namespace-scoped resources are listed per included namespace).
 		// Setting it without any included namespace selects nothing, so reject it as
