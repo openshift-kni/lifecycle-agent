@@ -248,8 +248,8 @@ func resolveMaxSeedAge(configured string) (time.Duration, error) {
 // genuine external or on-link time source that could actually step the clock -- a server,
 // pool, or peer pointing at a real address, or a hardware reference clock (refclock). It
 // deliberately excludes sources backed by the same unreliable RTC the gate exists to distrust:
-// the NTP local-clock pseudo-address family (127.127.x.x), loopback servers, and the
-// `local stratum` fallback directive. A config carrying only those is treated as having no
+// the NTP local-clock pseudo-address family (127.127.x.x), loopback servers, the
+// `local stratum` fallback directive, and the RTC refclock driver. A config carrying only those is treated as having no
 // trusted source, so the gate falls through to the RTC plausibility window instead of being
 // bypassed by the very clock it is meant to check.
 func chronyConfigHasTrustedSource(chronyConfig string) bool {
@@ -269,7 +269,14 @@ func chronyConfigHasTrustedSource(chronyConfig string) bool {
 			}
 			return true
 		case "refclock":
-			// A hardware reference clock (PHC/PPS/GPS) is a genuine on-link time source.
+			// A non-RTC hardware reference clock (PHC/PPS/GPS) is a genuine on-link time
+			// source. The RTC driver, however, is backed by the very same unreliable RTC the
+			// gate exists to distrust: a wrong-but-stable RTC would satisfy `waitsync` and
+			// bypass the seed window. Reject `refclock RTC ...` (and a driverless refclock,
+			// which cannot be confirmed) so those configurations fall through to the window.
+			if len(fields) < 2 || strings.EqualFold(fields[1], "RTC") {
+				continue
+			}
 			return true
 		}
 		// `local stratum N`, `rtcsync`, `rtcfile`, and other non-source directives are ignored.
