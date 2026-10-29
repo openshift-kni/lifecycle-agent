@@ -224,16 +224,15 @@ const (
 
 	ContainerStoragePath = "/var/lib/containers"
 
-	// RODurabilityStoreDirName is the directory name, under ContainerStoragePath on the installed
-	// node, where the self-contained prepare persists the read-only containers/storage durability
-	// store copied from the p2 media (LocalImagesStorePath). Post-pivot it is the additional image
-	// store CRI-O resolves the digest-pinned image closure from (CNF-27165).
-	RODurabilityStoreDirName = "ro-store"
+	// RODurabilityStoreDirName is the directory name under /var/lib where self-contained prepare
+	// persists the read-only store copied from the media. Keep it outside ContainerStoragePath:
+	// /var/lib/containers may be a separate mount that would hide a store copied into the stateroot.
+	RODurabilityStoreDirName = "lca-ro-store"
 
 	// RODurabilityStorePath is the post-pivot absolute path of the persisted read-only additional
 	// image store. It is the value the storage.conf drop-in registers in additionalimagestores
 	// (not the prepare-time /mnt path, not the USB mount), so CRI-O finds the store after pivot.
-	RODurabilityStorePath = ContainerStoragePath + "/" + RODurabilityStoreDirName
+	RODurabilityStorePath = "/var/lib/" + RODurabilityStoreDirName
 
 	// StorageConfDropInDir is the containers/storage drop-in config directory the vendored
 	// go.podman.io/storage conf.d loader reads (*.conf). The self-contained prepare writes the

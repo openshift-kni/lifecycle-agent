@@ -181,7 +181,13 @@ func TestPersistReadOnlyStoreHappyPath(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	// Model the post-pivot /var/lib/containers mount without needing mount privileges.
+	// During prepare, the stateroot path is an ordinary directory; after prepare, a
+	// separate filesystem shadows that directory and must not hide the durability store.
+	containerStorage := t.TempDir()
+	containerMountpoint := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath)
+	require.NoError(t, os.MkdirAll(containerMountpoint, 0o755))
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	staging := destStore + roStoreStagingSuffix
 	require.NoError(t, os.MkdirAll(filepath.Dir(destStore), 0o755))
 
@@ -204,6 +210,11 @@ func TestPersistReadOnlyStoreHappyPath(t *testing.T) {
 
 	assert.Equal(t, staging, verifiedPath, "the copied store must be verified at its staging path")
 	assert.DirExists(t, destStore, "the store must be sealed at the ro-store destination")
+	require.NoError(t, os.Rename(containerMountpoint, containerMountpoint+".underlying"))
+	require.NoError(t, os.Symlink(containerStorage, containerMountpoint))
+	assert.DirExists(t, destStore, "mounting /var/lib/containers must not hide the durability store")
+	assert.NoDirExists(t, filepath.Join(containerStorage, common.RODurabilityStoreDirName),
+		"a separate /var/lib/containers filesystem must not receive the durability store")
 	assert.NoDirExists(t, staging, "the staging dir must be gone after the atomic move")
 
 	// Original file modes are preserved by the copy (no blanket mode rewrite).
@@ -241,7 +252,7 @@ func TestPersistReadOnlyStoreFailsClosedOnMissingStore(t *testing.T) {
 	assert.ErrorContains(t, err, "missing or incomplete")
 
 	osname := common.GetStaterootName("4.15.0")
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	assert.NoDirExists(t, destStore)
 }
 
@@ -267,7 +278,7 @@ func TestPersistReadOnlyStoreFailsClosedOnIncompleteStore(t *testing.T) {
 	assert.ErrorContains(t, err, "digest-manifest validation")
 
 	osname := common.GetStaterootName("4.15.0")
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	assert.NoDirExists(t, destStore, "no store may be sealed when validation fails")
 	assert.NoDirExists(t, destStore+roStoreStagingSuffix, "the staging dir must be cleaned up on failure")
 }
@@ -285,7 +296,7 @@ func TestPersistReadOnlyStorePartialCopyLeavesNothing(t *testing.T) {
 	writeFakeOverlayStore(t, filepath.Join(media, common.LocalImagesStoreDirName), 1)
 
 	osname := common.GetStaterootName("4.15.0")
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	staging := destStore + roStoreStagingSuffix
 	require.NoError(t, os.MkdirAll(filepath.Dir(destStore), 0o755))
 
@@ -319,7 +330,7 @@ func TestPersistReadOnlyStoreRollsBackOnDropInFailure(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(destStore), 0o755))
 
 	// Point the deployment dir at a regular file so creating the storage.conf.d dir under it fails.
@@ -357,7 +368,7 @@ func TestPersistReadOnlyStoreRollbackPreservesPreviousStore(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	// A previously published, valid store carrying a sentinel the media store does not have.
 	require.NoError(t, os.MkdirAll(destStore, 0o755))
 	sentinel := filepath.Join(destStore, "previous-store-marker")
@@ -397,7 +408,7 @@ func TestPersistReadOnlyStoreReplacesExistingStore(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	require.NoError(t, os.MkdirAll(destStore, 0o755))
 	staleMarker := filepath.Join(destStore, "stale-marker")
 	require.NoError(t, os.WriteFile(staleMarker, []byte("old"), 0o600))
@@ -434,7 +445,7 @@ func TestPersistReadOnlyStorePreservesPreviousStoreOnPrePublishFailure(t *testin
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	// A previously published, valid store.
 	require.NoError(t, os.MkdirAll(destStore, 0o755))
 	sentinel := filepath.Join(destStore, "previous-store-marker")
@@ -475,7 +486,7 @@ func TestPersistReadOnlyStoreFailsClosedWhenExchangeUnsupported(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	// A previously published, valid store that must survive an unsupported-exchange failure.
 	require.NoError(t, os.MkdirAll(destStore, 0o755))
 	sentinel := filepath.Join(destStore, "previous-store-marker")
@@ -517,7 +528,7 @@ func TestPersistReadOnlyStoreRecoversLeftoverStagingFromInterruptedSwap(t *testi
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	// The configured store is present and valid -- the exchange never leaves it absent.
 	require.NoError(t, os.MkdirAll(destStore, 0o755))
 	staleMarker := filepath.Join(destStore, "stale-marker")
@@ -557,7 +568,7 @@ func TestPersistReadOnlyStoreSELinuxFailureLeavesNothing(t *testing.T) {
 
 	const seedVersion = "4.15.0"
 	osname := common.GetStaterootName(seedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(destStore), 0o755))
 
 	mockOps.EXPECT().RunInHostNamespace("chcon", "-R", "-t", roStoreSELinuxType, destStore+roStoreStagingSuffix).
