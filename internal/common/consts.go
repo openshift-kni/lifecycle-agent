@@ -218,6 +218,13 @@ const (
 	// the root of the ibi-status (p4) partition on both the success and failure paths.
 	PrepareResultFileName = "prepare.json"
 
+	// ReconfigureResultFileName is the machine-readable per-phase result file written at
+	// the root of the ibi-status (p4) partition by the post-pivot reconfigure phase. The
+	// pre-recert clock gate writes it on the failure path (an implausible clock halts the
+	// node before recert runs); the reconfigure result-writer (CNF-27173) owns the final
+	// success record.
+	ReconfigureResultFileName = "reconfigure.json"
+
 	// IBIStatusLogsDir is the directory, relative to the ibi-status (p4) root, under
 	// which the compact diagnostic log bundle is written.
 	IBIStatusLogsDir = "logs"
