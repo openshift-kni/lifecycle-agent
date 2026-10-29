@@ -136,11 +136,17 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	// failure; if the resource set shrank between attempts, orphaned YAML files
 	// would otherwise survive while checksums.sha256 is rewritten without them,
 	// causing the post-pivot restore to hard-fail on the unlisted files.
+	// Filesystem errors below are returned as BRFailedError so the Upgrade stage
+	// fails terminally instead of requeuing forever: a backup that cannot write
+	// to local node storage will not succeed on retry, so human intervention
+	// (moving the IBU back to Idle and restarting) is required.
 	if err := os.RemoveAll(backupDir); err != nil {
-		return bt, fmt.Errorf("failed to clear stale backup directory %s: %w", backupDir, err)
+		return bt, NewBRFailedError("Backup",
+			fmt.Sprintf("failed to clear stale backup directory %s: %s", backupDir, err.Error()))
 	}
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
-		return bt, fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
+		return bt, NewBRFailedError("Backup",
+			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
 	}
 
 	var checksums []string
@@ -169,7 +175,8 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 			specDir := filepath.Join(backupDir, dirName)
 			if err := os.MkdirAll(specDir, 0o700); err != nil {
 				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-				return bt, fmt.Errorf("failed to create backup spec directory: %w", err)
+				return bt, NewBRFailedError("Backup",
+					fmt.Sprintf("failed to create backup spec directory %s: %s", specDir, err.Error()))
 			}
 
 			for i, resource := range resources {
@@ -197,7 +204,8 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 
 				if err := os.WriteFile(filePath, data, 0o600); err != nil {
 					bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-					return bt, fmt.Errorf("failed to write resource file: %w", err)
+					return bt, NewBRFailedError("Backup",
+						fmt.Sprintf("failed to write resource file %s: %s", filePath, err.Error()))
 				}
 
 				logFields := []interface{}{
@@ -221,7 +229,8 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	checksumContent := strings.Join(checksums, "\n") + "\n"
 	checksumPath := filepath.Join(backupDir, "checksums.sha256")
 	if err := os.WriteFile(checksumPath, []byte(checksumContent), 0o600); err != nil {
-		return bt, fmt.Errorf("failed to write checksum manifest: %w", err)
+		return bt, NewBRFailedError("Backup",
+			fmt.Sprintf("failed to write checksum manifest %s: %s", checksumPath, err.Error()))
 	}
 
 	h.Log.Info("All backups completed successfully",
