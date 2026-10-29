@@ -750,6 +750,46 @@ func TestValidateBackupSpecs(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "selects no resources")
 	})
+
+	t.Run("valid apply-wave and label selector pass", func(t *testing.T) {
+		specs := []BackupSpec{
+			{
+				Name:                             "b1",
+				ApplyWave:                        "10",
+				IncludedNamespaces:               []string{"app-ns"},
+				IncludedNamespaceScopedResources: []string{"configmaps"},
+				LabelSelector:                    &metav1.LabelSelector{MatchLabels: map[string]string{"app": "demo"}},
+			},
+		}
+		assert.NoError(t, ValidateBackupSpecs(specs))
+	})
+
+	t.Run("invalid apply-wave is rejected", func(t *testing.T) {
+		specs := []BackupSpec{
+			{Name: "b1", ApplyWave: "not-a-number", IncludedClusterScopedResources: []string{"clusterroles"}},
+		}
+		err := ValidateBackupSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid")
+		assert.Contains(t, err.Error(), "apply-wave")
+	})
+
+	t.Run("invalid label selector is rejected", func(t *testing.T) {
+		specs := []BackupSpec{
+			{
+				Name:                           "b1",
+				IncludedClusterScopedResources: []string{"clusterroles"},
+				LabelSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{Key: "app", Operator: "BogusOperator"},
+					},
+				},
+			},
+		}
+		err := ValidateBackupSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "spec.labelSelector")
+	})
 }
 
 // TestExtractBackupSpecsIgnoresLegacyIncludedResources verifies that the legacy
