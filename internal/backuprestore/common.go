@@ -444,23 +444,42 @@ func configmapRef(cm corev1.ConfigMap) string {
 }
 
 // ValidateBackupSpecs rejects Backup CR specs that use fields LCA cannot honor or
-// that would back up nothing, so an unsupported or empty configuration fails
-// loudly instead of silently backing up the wrong (default) or an empty set of
-// resources.
+// whose resource selection would be empty or ineffective, so an unsupported or
+// misconfigured backup fails loudly instead of silently backing up the wrong or an
+// empty set of resources.
 func ValidateBackupSpecs(specs []BackupSpec) error {
 	for _, s := range specs {
 		if len(s.IncludedResources) > 0 {
 			return fmt.Errorf("backup %q sets the unsupported legacy spec.includedResources field; "+
 				"use spec.includedNamespaceScopedResources and spec.includedClusterScopedResources instead", s.Name)
 		}
-		// A backup that sets neither the apply-label annotation, any included
-		// namespace, nor any included cluster-scoped resource issues no resource
-		// queries at all (namespace-scoped resources are only listed within
-		// included namespaces). Reject it instead of recording an empty backup as
-		// successful.
+
+		// includedNamespaceScopedResources only takes effect within included
+		// namespaces (namespace-scoped resources are listed per included namespace).
+		// Setting it without any included namespace selects nothing, so reject it as
+		// an ineffective selection.
+		if len(s.IncludedNamespaceScopedResources) > 0 && len(s.IncludedNamespaces) == 0 {
+			return fmt.Errorf("backup %q sets spec.includedNamespaceScopedResources without spec.includedNamespaces: "+
+				"namespace-scoped resources are only backed up within included namespaces", s.Name)
+		}
+
+		// When namespaces are included without the apply-label annotation, the
+		// namespace-scoped resource types to back up must be listed explicitly: LCA
+		// does not fall back to a built-in default list. (With the apply-label
+		// annotation the backup scope is limited to the annotated objects, so the
+		// resource list is not required.)
+		if s.ApplyLabel == "" && len(s.IncludedNamespaces) > 0 && len(s.IncludedNamespaceScopedResources) == 0 {
+			return fmt.Errorf("backup %q sets spec.includedNamespaces without spec.includedNamespaceScopedResources: "+
+				"list the namespace-scoped resource types to back up", s.Name)
+		}
+
+		// A backup that selects nothing at all — no apply-label annotation, no
+		// included namespace, and no included cluster-scoped resource — issues no
+		// resource queries. Reject it instead of recording an empty backup as
+		// successful. Cluster-only and apply-label-only backups remain valid.
 		if s.ApplyLabel == "" && len(s.IncludedNamespaces) == 0 && len(s.IncludedClusterScopedResources) == 0 {
-			return fmt.Errorf("backup %q selects no resources: set the %s annotation, spec.includedNamespaces, "+
-				"or spec.includedClusterScopedResources", s.Name, applyLabelAnn)
+			return fmt.Errorf("backup %q selects no resources: set the %s annotation, spec.includedNamespaces "+
+				"(with spec.includedNamespaceScopedResources), or spec.includedClusterScopedResources", s.Name, applyLabelAnn)
 		}
 	}
 	return nil

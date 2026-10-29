@@ -467,16 +467,11 @@ func sortedGroupNames(groups map[string]bool) []string {
 func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace string, spec BackupSpec, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]*unstructured.Unstructured, error) {
 	var resources []*unstructured.Unstructured
 
+	// The namespace-scoped resource types to back up are taken verbatim from the
+	// spec; ValidateBackupSpecs guarantees they are set whenever namespaces are
+	// included without the apply-label annotation, so there is no built-in default
+	// list to fall back to.
 	resourceTypes := spec.IncludedNamespaceScopedResources
-	if len(resourceTypes) == 0 {
-		resourceTypes = []string{
-			"configmaps", "secrets", "services", "serviceaccounts",
-			"persistentvolumeclaims",
-			"deployments.apps", "statefulsets.apps", "daemonsets.apps",
-			"roles.rbac.authorization.k8s.io", "rolebindings.rbac.authorization.k8s.io",
-			"routes.route.openshift.io",
-		}
-	}
 
 	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedNamespaceScopedResources)
 
