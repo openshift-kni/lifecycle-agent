@@ -28,8 +28,7 @@ There are 2 different ways to provide configuration folder:
 1. Add it as part of stateroot configuration process as we do in IBU, should be placed in /opt/openshift
 2. Provide it as block device with label "relocation-config" , in this case we will mount it.
 
-Folder structures can be seen [prepare-installation-configuration.sh](../ibu-imager/installation_configuration_files/scripts/prepare-installation-configuration.sh
-and will be described later on
+The configuration folder structure is described in the [/opt/openshift config tree](create-usb.md#the-optopenshift-config-tree).
 
 ## Network configuration
 
