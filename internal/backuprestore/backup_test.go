@@ -18,8 +18,12 @@ package backuprestore
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +41,56 @@ var (
 func getFakeClientFromObjects(objs ...client.Object) (client.WithWatch, error) {
 	c := fake.NewClientBuilder().WithScheme(testscheme).WithObjects(objs...).WithStatusSubresource(objs...).Build()
 	return c, nil
+}
+
+// TestStartBackupFilesystemErrorIsTerminal verifies that a filesystem error
+// while preparing the local backup directory is returned as a BRFailedError, so
+// the Upgrade stage fails terminally (human intervention) instead of requeuing
+// forever: a backup that cannot write to local node storage will not succeed on
+// retry.
+func TestStartBackupFilesystemErrorIsTerminal(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-cm", Namespace: "openshift-adp"},
+		Data: map[string]string{
+			"backup.yaml": `apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: b1
+spec:
+  includedClusterScopedResources:
+  - clusterroles
+`,
+			"restore.yaml": `apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: r1
+spec:
+  backupName: b1
+`,
+		},
+	}
+	c, err := getFakeClientFromObjects(cm)
+	assert.NoError(t, err)
+
+	// Point hostPath at a temp tree where an ancestor of the backup directory is
+	// a regular file, so clearing/creating the backup directory fails with
+	// ENOTDIR regardless of process privileges (root bypasses permission bits).
+	tmp := t.TempDir()
+	blockingParent := filepath.Join(tmp, "var", "lib", "containers")
+	assert.NoError(t, os.MkdirAll(filepath.Dir(blockingParent), 0o700))
+	assert.NoError(t, os.WriteFile(blockingParent, []byte("not a directory"), 0o600))
+
+	origHostPath := hostPath
+	hostPath = tmp
+	defer func() { hostPath = origHostPath }()
+
+	h := &BRHandler{Client: c, Log: logr.Discard()}
+	_, err = h.StartBackup(context.Background(), []ibuv1.ConfigMapRef{
+		{Name: "backup-cm", Namespace: "openshift-adp"},
+	})
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedError(err),
+		"filesystem error should be a terminal BRFailedError, got: %v", err)
 }
 
 func TestGetObjsFromApplyLabel(t *testing.T) {
