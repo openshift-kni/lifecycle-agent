@@ -33,6 +33,10 @@ entries:
       - name: lifecycle-agent.v4.21.5
         replaces: lifecycle-agent.v4.21.4
         skipRange: '>=4.20.0 <4.21.5'
+      # v4.21.6
+      - name: lifecycle-agent.v4.21.6
+        replaces: lifecycle-agent.v4.21.5
+        skipRange: '>=4.20.0 <4.21.6'
     name: stable
     package: lifecycle-agent
     schema: olm.channel
@@ -61,6 +65,10 @@ entries:
       - name: lifecycle-agent.v4.21.5
         replaces: lifecycle-agent.v4.21.4
         skipRange: '>=4.20.0 <4.21.5'
+      # v4.21.6
+      - name: lifecycle-agent.v4.21.6
+        replaces: lifecycle-agent.v4.21.5
+        skipRange: '>=4.20.0 <4.21.6'
     name: "4.21"
     package: lifecycle-agent
     schema: olm.channel
@@ -80,6 +88,9 @@ entries:
   - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:c405c11881efe85f77c5d1075f10fadd210bb67f816fbff3b64400ff70bc4bf0
     schema: olm.bundle
   # v4.21.5 bundle
+  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:9261fae990ea1646cdd9afda1fbcf20576ad43bea1b2379d2256b66674efb12b
+    schema: olm.bundle
+    # v4.21.6 bundle
   # The url for this last entry is updated by telco5g-konflux/scripts/catalog/update-catalog-template.sh automatically
   - image: placeholder.will.be.updated.by.telco5g-konflux.scripts.catalog.update-catalog-template.sh
     schema: olm.bundle
