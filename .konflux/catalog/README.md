@@ -1,6 +1,6 @@
 # catalog.yaml
 
-The catalog.yaml file was intentionally removed from the git repository because tt would be confusing to leave a static FBC here when we exclusively generate them at runtime to include them in the FBC container image.
+The catalog.yaml file was intentionally removed from the git repository because it would be confusing to leave a static FBC here when we exclusively generate them at runtime to include them in the FBC container image.
 
 However since the file must exist for the Makefile target to generate the bundle the Makefile was updated to create the file when necessary.
 

@@ -21,8 +21,8 @@ backup-restore preserves application and platform state across the upgrade.
 - **IP configuration management** during upgrades
 - **Automatic rollback** on upgrade failure or timeout
 - **Container image pre-caching** to reduce upgrade downtime
-- **USB image scaffolding** through `lca-cli create-usb`, which currently creates a
-  nonbootable partitioned `.img` for the image-based install workflow
+- **USB image scaffolding** through `lca-cli create-usb`, which assembles bootable
+  USB media for the image-based install workflow
 
 ## Custom Resource Definitions
 
@@ -80,11 +80,13 @@ make ci-job      # Full CI pipeline (generate, fmt, vet, lint, test)
 - [Seed Image Generation](docs/seed-image-generation.md)
 - [Backup/Restore with OADP](docs/backuprestore-with-oadp.md)
 - [Post-Pivot Configuration](docs/post-pivot-configuration.md)
+- [IP Configuration](docs/ip-configuration.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Examples](docs/examples.md)
 - [Must-Gather](docs/must-gather.md)
 - [USB Image Scaffolding and Manifest](lca-cli/README.md#creating-usb-media)
 - [create-usb p3 config tree](docs/create-usb.md)
+- [Disconnected IBI Durability](docs/disconnected-ibi-durability.md)
 
 ## Contributing
 

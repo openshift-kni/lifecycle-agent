@@ -8,30 +8,6 @@ This document describes the **IP configuration flow** implemented by Lifecycle A
 - **Protection / rollback mechanisms**
 - **Debugging guidance**
 
-## Agenda
-
-- [General overview](#general-overview)
-- [Primary use cases](#primary-use-cases)
-  - [Disaster recovery / DRP](#disaster-recovery--drp)
-  - [Rehoming / site migration](#rehoming--site-migration)
-- [Solution overview](#solution-overview)
-  - [What’s in scope](#whats-in-scope)
-  - [Design constraints and requirements (current implementation)](#design-constraints-and-requirements-current-implementation)
-  - [Stages and high-level state machine](#stages-and-high-level-state-machine)
-- [Implementation details](#implementation-details)
-  - [Key components](#key-components)
-  - [Two stateroots, one reboot](#two-stateroots-one-reboot)
-  - [What recert does in this flow](#what-recert-does-in-this-flow)
-  - [Networking specifics](#networking-specifics)
-  - [DNSMasq integration (SNO)](#dnsmasq-integration-sno)
-- [User guide](#user-guide)
-  - [Prerequisites](#prerequisites)
-  - [API reference](#api-reference)
-  - [How to run an IP change (happy path)](#how-to-run-an-ip-change-happy-path)
-  - [Protection mechanisms](#protection-mechanisms)
-  - [Debugging and troubleshooting](#debugging-and-troubleshooting)
-- [Notes and future directions](#notes-and-future-directions)
-
 ## General overview
 
 Changing a SNO cluster’s “core networking” (node IP(s), machine network CIDR(s), default gateway, VLAN, DNS settings) is high-risk because it affects:
