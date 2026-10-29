@@ -1094,11 +1094,11 @@ func (m *containersImageMirrorer) MirrorToLayout(ctx context.Context, imageRef, 
 }
 
 // withMountedImage pulls image with the host podman, mounts it, and invokes fn with the
-// mountpoint, unmounting and removing the image on every exit path (including a mount
-// failure). The cleanup error is surfaced only when the pull, mount, and fn all
-// succeeded, so a real failure is never masked by a cleanup error.
+// mountpoint, unmounting it after use. The pulled image may also back a running
+// container, so removing it here would make an otherwise successful build fail.
+// The cleanup error is surfaced only when fn succeeded.
 //
-// It factors the shared podman pull → defer cleanup → mount lifecycle used by both
+// It factors the shared podman pull → mount → defer unmount lifecycle used by both
 // opsSeedClosureReader (here) and opsLCABinaryExtractor (createusb_p1_content.go); each
 // caller supplies the image-specific read via fn.
 func withMountedImage(o ops.Ops, image, authFile string, fn func(mountpoint string) error) (err error) {
@@ -1110,18 +1110,15 @@ func withMountedImage(o ops.Ops, image, authFile string, fn func(mountpoint stri
 	if _, err := o.RunInHostNamespace("podman", pullArgs...); err != nil {
 		return fmt.Errorf("pulling image %q: %w", image, err)
 	}
-	// Clean up the pulled image on every exit path, including a mount failure below.
-	// UnmountAndRemoveImage is a no-op unmount when the image was never mounted.
-	defer func() {
-		if umErr := o.UnmountAndRemoveImage(image); umErr != nil && err == nil {
-			err = fmt.Errorf("cleaning up image %q: %w", image, umErr)
-		}
-	}()
-
 	mountpoint, err := o.MountImage(image)
 	if err != nil {
 		return fmt.Errorf("mounting image %q: %w", image, err)
 	}
+	defer func() {
+		if _, umErr := o.RunInHostNamespace("podman", "image", "umount", image); umErr != nil && err == nil {
+			err = fmt.Errorf("unmounting image %q: %w", image, umErr)
+		}
+	}()
 	return fn(mountpoint)
 }
 
