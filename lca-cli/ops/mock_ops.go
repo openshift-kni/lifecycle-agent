@@ -83,17 +83,17 @@ func (mr *MockOpsMockRecorder) CreateExtraPartition(installationDisk, extraParti
 }
 
 // CreateIsoWithEmbeddedIgnition mocks base method.
-func (m *MockOps) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error {
+func (m *MockOps) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string, kernelArgs []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateIsoWithEmbeddedIgnition", log, ignitionBytes, baseIsoPath, outputIsoPath)
+	ret := m.ctrl.Call(m, "CreateIsoWithEmbeddedIgnition", log, ignitionBytes, baseIsoPath, outputIsoPath, kernelArgs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateIsoWithEmbeddedIgnition indicates an expected call of CreateIsoWithEmbeddedIgnition.
-func (mr *MockOpsMockRecorder) CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseIsoPath, outputIsoPath any) *gomock.Call {
+func (mr *MockOpsMockRecorder) CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseIsoPath, outputIsoPath, kernelArgs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIsoWithEmbeddedIgnition", reflect.TypeOf((*MockOps)(nil).CreateIsoWithEmbeddedIgnition), log, ignitionBytes, baseIsoPath, outputIsoPath)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIsoWithEmbeddedIgnition", reflect.TypeOf((*MockOps)(nil).CreateIsoWithEmbeddedIgnition), log, ignitionBytes, baseIsoPath, outputIsoPath, kernelArgs)
 }
 
 // EnableClusterServices mocks base method.

@@ -143,8 +143,10 @@ type lcaBinaryExtractor interface {
 // isoCustomizer embeds ignitionBytes into the baseISO and writes the bootable result to
 // outISO. The production implementation is ops.CreateIsoWithEmbeddedIgnition.
 type isoCustomizer interface {
-	EmbedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string) error
+	EmbedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string, kernelArgs []string) error
 }
+
+const liveISOFromRAMKernelArg = "coreos.liveiso.fromram"
 
 // isoBuildDeps bundles the injectable seams, mirroring imageBuildDeps in
 // createusb_images.go.
@@ -208,8 +210,8 @@ func buildLiveISO(ctx context.Context, log *logrus.Logger, m *Manifest, opts ISO
 	}
 
 	outISO := filepath.Join(opts.WorkDir, customizedISOFileName)
-	if err := deps.customizer.EmbedIgnition(log, ignitionBytes, baseISO, outISO); err != nil {
-		return ISOBuildResult{}, fmt.Errorf("embedding ignition into live ISO: %w", err)
+	if err := deps.customizer.EmbedIgnition(log, ignitionBytes, baseISO, outISO, []string{liveISOFromRAMKernelArg}); err != nil {
+		return ISOBuildResult{}, fmt.Errorf("customizing live ISO: %w", err)
 	}
 	return ISOBuildResult{ISOPath: outISO, LCABinaryPath: binaryPath}, nil
 }
@@ -542,8 +544,8 @@ type opsISOCustomizer struct {
 	ops ops.Ops
 }
 
-func (c *opsISOCustomizer) EmbedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string) error {
-	if err := c.ops.CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseISO, outISO); err != nil {
+func (c *opsISOCustomizer) EmbedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string, kernelArgs []string) error {
+	if err := c.ops.CreateIsoWithEmbeddedIgnition(log, ignitionBytes, baseISO, outISO, kernelArgs); err != nil {
 		return fmt.Errorf("embedding ignition into %s: %w", baseISO, err)
 	}
 	return nil
