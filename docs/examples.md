@@ -1,87 +1,6 @@
 # Image Based Upgrade Examples
 
-- [Image Based Upgrade Examples](#image-based-upgrade-examples)
-  - [Automatic Rollback Examples](#automatic-rollback-examples)
-    - [Failure in `prepare-installation-configuration.service`](#failure-in-prepare-installation-configurationservice)
-      - [Example IBU Brief Display for `prepare-installation-configuration.service` Failure Rollback](#example-ibu-brief-display-for-prepare-installation-configurationservice-failure-rollback)
-      - [Example IBU Detailed Display for `prepare-installation-configuration.service` Failure Rollback](#example-ibu-detailed-display-for-prepare-installation-configurationservice-failure-rollback)
-    - [Failure in `installation-configuration.service`](#failure-in-installation-configurationservice)
-      - [Example IBU Brief Display for `installation-configuration.service` Failure Rollback](#example-ibu-brief-display-for-installation-configurationservice-failure-rollback)
-      - [Example IBU Detailed Display for `installation-configuration.service` Failure Rollback](#example-ibu-detailed-display-for-installation-configurationservice-failure-rollback)
-    - [LCA Init Monitor Watchdog Timeout](#lca-init-monitor-watchdog-timeout)
-      - [Example IBU Brief Display for Watchdog Timeout Rollback](#example-ibu-brief-display-for-watchdog-timeout-rollback)
-      - [Example IBU Detailed Display for Watchdog Timeout Rollback](#example-ibu-detailed-display-for-watchdog-timeout-rollback)
-
 ## Automatic Rollback Examples
-
-### Failure in `prepare-installation-configuration.service`
-
-#### Example IBU Brief Display for `prepare-installation-configuration.service` Failure Rollback
-
-```console
-$ oc get ibu
-NAME      AGE    STAGE     STATE    DETAILS
-upgrade   110s   Upgrade   Failed   Rollback due to service-unit failure: component config
-```
-
-#### Example IBU Detailed Display for `prepare-installation-configuration.service` Failure Rollback
-
-```console
-$ oc get ibu upgrade -o yaml
-apiVersion: lca.openshift.io/v1
-kind: ImageBasedUpgrade
-metadata:
-  annotations:
-    kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
-  creationTimestamp: "2024-02-01T19:20:40Z"
-  generation: 1
-  name: upgrade
-  resourceVersion: "2950109"
-  uid: 6d60bc28-bf69-4222-b9ff-e6da197495ae
-spec:
-  autoRollbackOnFailure: {}
-  extraManifests:
-  - name: sno-extramanifests
-    namespace: openshift-lifecycle-agent
-  seedImageRef:
-    image: quay.io/user/seedimage:4.15.0
-    version: 4.15.0
-  stage: Upgrade
-status:
-  conditions:
-  - lastTransitionTime: "2024-02-01T19:00:45Z"
-    message: In progress
-    observedGeneration: 2
-    reason: InProgress
-    status: "False"
-    type: Idle
-  - lastTransitionTime: "2024-02-01T19:03:15Z"
-    message: Prep completed
-    observedGeneration: 2
-    reason: Completed
-    status: "False"
-    type: PrepInProgress
-  - lastTransitionTime: "2024-02-01T19:03:15Z"
-    message: Prep completed successfully
-    observedGeneration: 2
-    reason: Completed
-    status: "True"
-    type: PrepCompleted
-  - lastTransitionTime: "2024-02-01T19:09:19Z"
-    message: Upgrade failed
-    observedGeneration: 1
-    reason: Failed
-    status: "False"
-    type: UpgradeCompleted
-  - lastTransitionTime: "2024-02-01T19:09:19Z"
-    message: 'Rollback due to service-unit failure: component config'
-    observedGeneration: 1
-    reason: Failed
-    status: "False"
-    type: UpgradeInProgress
-  observedGeneration: 1
-```
 
 ### Failure in `installation-configuration.service`
 
@@ -104,7 +23,7 @@ items:
   metadata:
     annotations:
       kubectl.kubernetes.io/last-applied-configuration: |
-        {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+        {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:5.1.0","version":"5.1.0"},"stage":"Idle"}}
     creationTimestamp: "2024-02-01T20:00:48Z"
     generation: 1
     name: upgrade
@@ -116,8 +35,8 @@ items:
     - name: sno-extramanifests
       namespace: openshift-lifecycle-agent
     seedImageRef:
-      image: quay.io/user/seedimage:4.15.0
-      version: 4.15.0
+      image: quay.io/user/seedimage:5.1.0
+      version: 5.1.0
     stage: Upgrade
   status:
     conditions:
@@ -184,7 +103,7 @@ kind: ImageBasedUpgrade
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:5.1.0","version":"5.1.0"},"stage":"Idle"}}
   creationTimestamp: "2024-02-01T21:22:36Z"
   generation: 1
   name: upgrade
@@ -197,8 +116,8 @@ spec:
   - name: sno-extramanifests
     namespace: openshift-lifecycle-agent
   seedImageRef:
-    image: quay.io/user/seedimage:4.15.0
-    version: 4.15.0
+    image: quay.io/user/seedimage:5.1.0
+    version: 5.1.0
   stage: Upgrade
 status:
   conditions:
