@@ -212,6 +212,9 @@ func TestClockGate_SyncedLocalSource_Proceeds(t *testing.T) {
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	// The runtime-selected reference is a real external source (not local mode).
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 0A000005 (10.0.0.5)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
 	pp := newGatePostPivot(t, mockOps)
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
@@ -240,6 +243,33 @@ func TestClockGate_ConfiguredSourceUnavailable_FallsBackToWindow(t *testing.T) {
 	pp := newGatePostPivot(t, mockOps)
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := pp.clockGate(seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_SyncedLocalMode_FallsBackToWindow proves that a config which satisfies waitsync
+// only through chrony's local mode (its own clock, no real external source selected) does not
+// bypass the gate: the runtime tracking check rejects the local-mode reference, so the RTC
+// window still decides. Here the clock is implausible, so the gate fails.
+func TestClockGate_SyncedLocalMode_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	// chronyd reports synchronized, but to its own local clock (7F7F01xx) -- not a real source.
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 7F7F0101 ()\nStratum         : 10\nLeap status     : Normal", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	// A mixed config: a reachable-looking server plus a local-stratum fallback.
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\nlocal stratum 10\n"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
 	err := pp.clockGate(seedReconfig, seedClusterInfo)
 	require.Error(t, err)
@@ -322,6 +352,37 @@ func TestChronyConfigHasTrustedSource(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, chronyConfigHasTrustedSource(tc.config))
+		})
+	}
+}
+
+func TestParseChronyReferenceID(t *testing.T) {
+	testcases := []struct {
+		name   string
+		output string
+		want   string
+		wantOk bool
+	}{
+		{
+			name:   "external source",
+			output: "Reference ID    : 0A000005 (10.0.0.5)\nStratum         : 2",
+			want:   "0A000005",
+			wantOk: true,
+		},
+		{
+			name:   "local mode no name",
+			output: "Reference ID    : 7F7F0101 ()\nStratum         : 10",
+			want:   "7F7F0101",
+			wantOk: true,
+		},
+		{name: "no reference id line", output: "Stratum : 2\nLeap status : Normal", want: "", wantOk: false},
+		{name: "empty", output: "", want: "", wantOk: false},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseChronyReferenceID(tc.output)
+			assert.Equal(t, tc.wantOk, ok)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

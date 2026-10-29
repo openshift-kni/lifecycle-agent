@@ -306,6 +306,15 @@ const recertImagePullAttempts = 3
 // var so unit tests can set it to zero.
 var recertImagePullRetryDelay = 5 * time.Second
 
+// recertImagePullAttemptTimeout bounds the elapsed time of a single recert image pull attempt.
+// A bare `podman pull` has no timeout, so a stalled connection to an unreachable registry (a
+// half-open socket, not a clean failure) would block the offline reconfigure path indefinitely
+// -- the very stall the removal of the former 10-minute context must not reintroduce. Each
+// attempt is wrapped in coreutils `timeout`, which terminates podman and surfaces the attempt as
+// a failure so the bounded retry can proceed and ultimately fail fast with the precache hint. It
+// is a package var so unit tests can reference the exact command.
+var recertImagePullAttemptTimeout = 3 * time.Minute
+
 // ensureRecertImageAvailable makes the recert image resolve locally before recert runs. The
 // image must be precached for disconnected/self-contained installs (CNF-27162), so when it is
 // present this is a no-op and no network access occurs. When it is absent it attempts a small,
@@ -321,7 +330,10 @@ func (p *PostPivot) ensureRecertImageAvailable(seedReconfiguration *clusterconfi
 
 	p.log.Warnf("recert image %s is not present locally; it must be precached for disconnected installs. Attempting a bounded pull for the connected case",
 		seedClusterInfo.RecertImagePullSpec)
-	command := "podman"
+	// Wrap each attempt in `timeout` so a stalled pull cannot block the offline reconfigure path
+	// indefinitely. Proxy env vars (when set) must prefix the whole command so they apply to
+	// podman, hence `[ENV=...] timeout <seconds> podman`.
+	command := fmt.Sprintf("timeout %d podman", int(recertImagePullAttemptTimeout.Seconds()))
 	if seedReconfiguration.Proxy != nil {
 		command = fmt.Sprintf("HTTP_PROXY=%s HTTPS_PROXY=%s NO_PROXY=%s %s",
 			seedReconfiguration.Proxy.HTTPProxy, seedReconfiguration.Proxy.HTTPSProxy,

@@ -43,6 +43,16 @@ const (
 	// path return before the clock is actually accurate. One second is tight enough to keep
 	// recert's certificate validity window sane while tolerating normal residual slew.
 	chronySyncMaxCorrection = "1"
+
+	// chronyLocalModeRefIDPrefix is the reference-ID prefix chronyd reports when it is running
+	// in local mode -- i.e. it is "synchronized" to its own clock with no real external source
+	// selected (the NTP local reference-clock refid family, 7F7F01xx). chrony documents that
+	// local mode can appear synchronized without a real time source, so confirming `waitsync`
+	// alone is not enough: a mixed config (a reachable-looking `server` plus a `local stratum`
+	// fallback) whose server is offline can satisfy waitsync through local mode and bypass the
+	// seed window. The runtime tracking check rejects this refid so those configs fall through
+	// to the RTC plausibility window.
+	chronyLocalModeRefIDPrefix = "7F7F01"
 )
 
 // nowUTC returns the current system clock in UTC. It is a package var so unit tests can
@@ -333,7 +343,56 @@ func (p *PostPivot) bringChronyUpAndConfirmSync(chronyConfig string) error {
 	if _, err := p.ops.RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1"); err != nil {
 		return fmt.Errorf("chrony did not confirm synchronization: %w", err)
 	}
+	// waitsync confirms the clock is synchronized but not *which* source was selected. chronyd
+	// can report synchronized while running in local mode (its own clock, no real external
+	// source) -- e.g. a mixed config whose only reachable-looking `server` is offline falling
+	// back to `local stratum`. Verify the runtime-selected reference and reject local mode so
+	// such configs do not bypass the seed window via the very RTC the gate exists to distrust.
+	if err := p.confirmChronyReferenceNotLocal(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// confirmChronyReferenceNotLocal inspects the reference chronyd actually selected (via
+// `chronyc tracking`) and rejects local mode. It is deliberately strict: if the selected
+// reference cannot be determined, it returns an error so the caller falls back to the seed
+// plausibility window rather than treating an unverified clock as authoritative.
+func (p *PostPivot) confirmChronyReferenceNotLocal() error {
+	// `-n` disables reverse-DNS lookups so the check does not depend on name resolution offline.
+	out, err := p.ops.RunInHostNamespace("chronyc", "-n", "tracking")
+	if err != nil {
+		return fmt.Errorf("failed to read chrony tracking state to verify the selected source: %w", err)
+	}
+	refID, ok := parseChronyReferenceID(out)
+	if !ok {
+		return fmt.Errorf("could not determine the synchronized chrony reference from tracking output")
+	}
+	if strings.HasPrefix(strings.ToUpper(refID), chronyLocalModeRefIDPrefix) {
+		return fmt.Errorf("chrony is synchronized in local mode (reference ID %s); no real external time source was selected", refID)
+	}
+	return nil
+}
+
+// parseChronyReferenceID extracts the hexadecimal reference ID from `chronyc tracking` output.
+// The tracking report begins with a line of the form `Reference ID    : 7F7F0101 (name)`.
+func parseChronyReferenceID(trackingOutput string) (string, bool) {
+	for _, raw := range strings.Split(trackingOutput, "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "Reference ID") {
+			continue
+		}
+		_, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		fields := strings.Fields(value)
+		if len(fields) == 0 {
+			continue
+		}
+		return fields[0], true
+	}
+	return "", false
 }
 
 // defaultSeedCertLowerBound returns the earliest NotBefore among the node's control-plane

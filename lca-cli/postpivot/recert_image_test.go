@@ -15,6 +15,13 @@ import (
 
 const testRecertImage = "quay.io/openshift/recert@sha256:abc"
 
+// expectedRecertPullCommand is the bash command string ensureRecertImageAvailable builds for a
+// no-proxy pull: podman wrapped in coreutils `timeout` so a stalled pull cannot block offline
+// reconfigure indefinitely.
+func expectedRecertPullCommand() string {
+	return fmt.Sprintf("timeout %d podman", int(recertImagePullAttemptTimeout.Seconds()))
+}
+
 // TestEnsureRecertImageAvailable_PresentNoPull proves that when the recert image is precached
 // no pull (and therefore no network access) is attempted. This is the offline no-network audit
 // for the recert image resolution.
@@ -45,7 +52,7 @@ func TestEnsureRecertImageAvailable_MissingOffline_FailsFast(t *testing.T) {
 	mockOps.EXPECT().RunInHostNamespace("podman", "image", "exists", testRecertImage).
 		Return("", fmt.Errorf("image not known")).Times(1)
 	// A bounded number of pull attempts, then fail fast.
-	mockOps.EXPECT().RunBashInHostNamespace("podman", "pull", gomock.Any(), gomock.Any(), testRecertImage).
+	mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", gomock.Any(), gomock.Any(), testRecertImage).
 		Return("", fmt.Errorf("no route to host")).Times(recertImagePullAttempts)
 
 	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
@@ -63,7 +70,7 @@ func TestEnsureRecertImageAvailable_MissingPullSucceeds(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().RunInHostNamespace("podman", "image", "exists", testRecertImage).
 		Return("", fmt.Errorf("image not known")).Times(1)
-	mockOps.EXPECT().RunBashInHostNamespace("podman", "pull", gomock.Any(), gomock.Any(), testRecertImage).
+	mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", gomock.Any(), gomock.Any(), testRecertImage).
 		Return("", nil).Times(1)
 
 	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
