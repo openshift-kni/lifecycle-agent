@@ -54,16 +54,13 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
-	restoreSpecs, err := ExtractRestoreSpecsFromConfigmaps(configmaps)
-	if err != nil {
+	// Parse the Restore docs to surface malformed configuration early; the
+	// specs themselves are not needed for backup validation.
+	if _, err := ExtractRestoreSpecsFromConfigmaps(configmaps); err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
 	if err := ValidateBackupRestorePairing(configmaps); err != nil {
-		return NewBRFailedValidationError("Backup", err.Error())
-	}
-
-	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -116,10 +113,6 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	// Re-check the Backup/Restore pairing here in case the referenced ConfigMaps
 	// changed between Prep (ValidateBackupConfigmaps) and this pre-pivot backup.
 	if err := ValidateBackupRestorePairing(configmaps); err != nil {
-		return bt, NewBRFailedValidationError("Backup", err.Error())
-	}
-
-	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 

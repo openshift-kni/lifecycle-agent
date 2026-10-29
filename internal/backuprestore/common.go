@@ -127,9 +127,6 @@ type RestoreSpec struct {
 	ApplyWave              string
 	RestorePVs             bool
 	RestoreStatusResources []string
-	// ExistingResourcePolicy mirrors the Velero Restore CR field. LCA does not
-	// implement it; a non-empty value is rejected by ValidateRestoreSpecs.
-	ExistingResourcePolicy string
 }
 
 type BackupTracker struct {
@@ -258,11 +255,6 @@ type veleroRestoreSpec struct {
 	BackupName    string               `json:"backupName"`
 	RestorePVs    bool                 `json:"restorePVs"`
 	RestoreStatus *veleroRestoreStatus `json:"restoreStatus"`
-	// ExistingResourcePolicy is the Velero field that selects how existing
-	// resources are handled during restore. LCA does not implement it (it always
-	// creates-or-updates), so a non-empty value is rejected during validation
-	// rather than silently ignored. See ValidateRestoreSpecs.
-	ExistingResourcePolicy string `json:"existingResourcePolicy"`
 }
 
 type veleroRestoreStatus struct {
@@ -474,19 +466,6 @@ func ValidateBackupSpecs(specs []BackupSpec) error {
 	return nil
 }
 
-// ValidateRestoreSpecs rejects Restore CR fields LCA does not implement so an
-// unsupported configuration fails loudly instead of being silently ignored.
-func ValidateRestoreSpecs(specs []RestoreSpec) error {
-	for _, s := range specs {
-		if s.ExistingResourcePolicy != "" {
-			return fmt.Errorf("restore %q sets spec.existingResourcePolicy=%q which LCA does not implement; "+
-				"LCA always creates or updates restored resources regardless of whether they already exist. "+
-				"Remove the field", s.Name, s.ExistingResourcePolicy)
-		}
-	}
-	return nil
-}
-
 // FindRestoreForBackup returns the RestoreSpec matching a backup name, or nil if none
 func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *RestoreSpec {
 	for i := range restoreSpecs {
@@ -501,12 +480,11 @@ func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *Restor
 // RestoreSpec, preserving the previous parsing semantics and defaults.
 func (r *veleroRestore) toRestoreSpec() RestoreSpec {
 	spec := RestoreSpec{
-		Name:                   r.Metadata.Name,
-		Namespace:              r.Metadata.Namespace,
-		ApplyWave:              r.Metadata.Annotations[common.ApplyWaveAnn],
-		BackupName:             r.Spec.BackupName,
-		RestorePVs:             r.Spec.RestorePVs,
-		ExistingResourcePolicy: r.Spec.ExistingResourcePolicy,
+		Name:       r.Metadata.Name,
+		Namespace:  r.Metadata.Namespace,
+		ApplyWave:  r.Metadata.Annotations[common.ApplyWaveAnn],
+		BackupName: r.Spec.BackupName,
+		RestorePVs: r.Spec.RestorePVs,
 	}
 	if r.Spec.RestoreStatus != nil {
 		spec.RestoreStatusResources = r.Spec.RestoreStatus.IncludedResources

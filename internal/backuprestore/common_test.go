@@ -684,21 +684,7 @@ func TestValidateBackupRestorePairing(t *testing.T) {
 	})
 }
 
-func TestValidateRestoreSpecs(t *testing.T) {
-	t.Run("restore without existingResourcePolicy passes", func(t *testing.T) {
-		specs := []RestoreSpec{{Name: "r1", BackupName: "b1"}}
-		assert.NoError(t, ValidateRestoreSpecs(specs))
-	})
-
-	t.Run("existingResourcePolicy is rejected", func(t *testing.T) {
-		specs := []RestoreSpec{{Name: "r1", BackupName: "b1", ExistingResourcePolicy: "update"}}
-		err := ValidateRestoreSpecs(specs)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "existingResourcePolicy")
-	})
-}
-
-func TestExtractRestoreSpecsParsesExistingResourcePolicy(t *testing.T) {
+func TestExtractRestoreSpecsIgnoresExistingResourcePolicy(t *testing.T) {
 	cm := corev1.ConfigMap{
 		Data: map[string]string{
 			"restore.yaml": `
@@ -715,8 +701,7 @@ spec:
 	specs, err := ExtractRestoreSpecsFromConfigmaps([]corev1.ConfigMap{cm})
 	assert.NoError(t, err)
 	assert.Len(t, specs, 1)
-	assert.Equal(t, "update", specs[0].ExistingResourcePolicy)
-	assert.Error(t, ValidateRestoreSpecs(specs))
+	assert.Equal(t, "my-backup", specs[0].BackupName)
 }
 
 func TestValidateBackupSpecs(t *testing.T) {
