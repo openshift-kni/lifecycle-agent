@@ -473,7 +473,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 	// list to fall back to.
 	resourceTypes := spec.IncludedNamespaceScopedResources
 
-	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedNamespaceScopedResources)
+	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedNamespaceScopedResources)
 
 	listOpts := metav1.ListOptions{}
 	if spec.LabelSelector != nil {
@@ -519,7 +519,7 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 		return nil, err
 	}
 
-	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedResources, spec.ExcludedClusterScopedResources)
+	excluded := excludedGroupResources(apiResourceLists, spec.ExcludedClusterScopedResources)
 	if excluded[gvr.GroupResource().String()] {
 		return nil, nil
 	}
