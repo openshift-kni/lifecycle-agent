@@ -72,9 +72,9 @@ The gate accepts the clock when **either**:
   RTC itself (`local stratum`, the `127.127.x.x` reference-clock pseudo-addresses, loopback, or
   `rtcsync`-only configs) are explicitly not trusted, so the gate can never be bypassed by the
   very clock it is meant to check; **or**
-- the system clock falls within the plausible window `[seedCreationTime, seedCreationTime +
-  maxSeedAge]`. `seedCreationTime` is stamped into the seed at build time. `maxSeedAge` defaults
-  to **180 days** and is configurable via the `maxSeedAge` field of the
+- the system clock falls within the plausible window `[seed_creation_time, seed_creation_time +
+  max_seed_age]`. `seed_creation_time` is stamped into the seed at build time. `max_seed_age`
+  defaults to **180 days** and is configurable via the `max_seed_age` field of the
   [seed reconfiguration](../api/seedreconfig/seedreconfig.go) (a Go duration string such as
   `4320h`); invalid, non-positive, or absurdly large values are rejected with a clear config
   error.
@@ -85,17 +85,17 @@ which check failed) and halts the node **powered-on** via `emergency.target` so 
 diagnose and correct the clock. A later boot with a corrected clock (or an added trusted time
 source) passes the gate and overwrites the failure record as it completes reconfigure.
 
-**Accurate clock past the ceiling.** A node genuinely deployed more than `maxSeedAge` after the
+**Accurate clock past the ceiling.** A node genuinely deployed more than `max_seed_age` after the
 seed was built, with an accurate clock and no trusted local time source, will fail the gate —
 without a trusted source the gate cannot distinguish "accurate clock, old seed" from "wrong
-clock." Mitigate this by configuring a reachable local time source or by widening `maxSeedAge`
+clock." Mitigate this by configuring a reachable local time source or by widening `max_seed_age`
 for long-shelf deployments.
 
-**Older seeds (compatibility limitation).** Seeds built before `seedCreationTime` existed carry
+**Older seeds (compatibility limitation).** Seeds built before `seed_creation_time` existed carry
 no timestamp. For those the gate applies only a degraded, lower-bound-only check derived from
 the seed's control-plane certificate validity (it still rejects a grossly-past clock) and
 otherwise proceeds with a warning. This degraded path does **not** provide the full plausibility
-window and is not a substitute for a seed that carries `seedCreationTime`.
+window and is not a substitute for a seed that carries `seed_creation_time`.
 
 ## User specifications
 

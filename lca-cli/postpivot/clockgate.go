@@ -35,6 +35,14 @@ const (
 	// (the offline case) fails fast and the gate falls back to the RTC window instead of
 	// stalling the pre-recert path. At a 1s interval this is a few seconds at most.
 	chronySyncMaxTries = "3"
+
+	// chronySyncMaxCorrection is the maximum remaining clock correction (in seconds) that
+	// `chronyc waitsync` will accept as synchronized. It must be non-zero: a value of "0" tells
+	// waitsync not to check the correction at all, so a selected source could report
+	// synchronized while the clock still has a large uncorrected offset, letting the trusted
+	// path return before the clock is actually accurate. One second is tight enough to keep
+	// recert's certificate validity window sane while tolerating normal residual slew.
+	chronySyncMaxCorrection = "1"
 )
 
 // nowUTC returns the current system clock in UTC. It is a package var so unit tests can
@@ -312,8 +320,10 @@ func (p *PostPivot) bringChronyUpAndConfirmSync(chronyConfig string) error {
 		return fmt.Errorf("failed to restart chronyd: %w", err)
 	}
 	// `chronyc waitsync <max-tries> <max-correction> <max-skew> <interval>`: a small max-tries
-	// at a 1s interval bounds the wait so an unreachable source does not stall the gate.
-	if _, err := p.ops.RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, "0", "0", "1"); err != nil {
+	// at a 1s interval bounds the wait so an unreachable source does not stall the gate, and a
+	// bounded max-correction (non-zero) ensures the remaining clock correction is actually small
+	// before we treat the source as authoritative — "0" would disable that check entirely.
+	if _, err := p.ops.RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1"); err != nil {
 		return fmt.Errorf("chrony did not confirm synchronization: %w", err)
 	}
 	return nil

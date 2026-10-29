@@ -211,7 +211,7 @@ func TestClockGate_SyncedLocalSource_Proceeds(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, "0", "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
 	pp := newGatePostPivot(t, mockOps)
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
@@ -235,7 +235,7 @@ func TestClockGate_ConfiguredSourceUnavailable_FallsBackToWindow(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, "0", "0", "1").
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").
 		Return("", fmt.Errorf("timeout")).Times(1)
 	pp := newGatePostPivot(t, mockOps)
 
