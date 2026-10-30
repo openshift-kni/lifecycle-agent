@@ -34,8 +34,11 @@ and will be described later on
 
 User can provide specific network configuration that he wants to be applied on the node as part of installation process.
 Currently, we support nmconnection files that should be placed in /opt/openshift/network-configuration/system-connections
-Prepare installation service is on charge to copy them to network manager configuration folder and restart NM
-[prepare-installation-configuration.sh](../lca-cli/installation_configuration_files/scripts/prepare-installation-configuration.sh)
+
+When the folder is already present at boot (IBU), [lca-restore-nmconnections.service](../lca-cli/installation_configuration_files/services/lca-restore-nmconnections.service)
+copies them to the NetworkManager configuration folder before NetworkManager starts.
+Otherwise NetworkManager auto-activates a default DHCP profile on the NIC and keeps it even after a restart.
+Post pivot copies the files again and restarts NetworkManager, which covers a configuration folder provided later as a block device.
 
 ## Recertification flow
 
