@@ -1,0 +1,18 @@
+[Unit]
+Description=Restore NetworkManager connection profiles for image based SNO configuration
+# When NetworkManager finds a NIC without a matching profile it creates
+# and auto-activates a default DHCP profile for it, and keeps that
+# connection across a restart. The provided profiles therefore have to
+# be in place before NetworkManager first starts. This is kept separate
+# from installation-configuration.service because that one has to wait
+# for coreos-update-ca-trust.service, which finishes too late.
+Before=NetworkManager.service
+ConditionDirectoryNotEmpty=/var/opt/openshift/network-configuration/system-connections
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/local/bin/lca-cli restore-nmconnections
+
+[Install]
+WantedBy=multi-user.target
