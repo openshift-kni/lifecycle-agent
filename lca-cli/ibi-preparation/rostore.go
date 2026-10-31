@@ -75,7 +75,7 @@ var (
 
 // persistReadOnlyStore copies the pre-built read-only containers/storage durability store staged
 // on p2 (common.LocalImagesStorePath) onto the installed disk, validates it against the on-media
-// digest manifest, seals it read-only at the post-pivot /var/lib/containers/ro-store path, and
+// digest manifest, seals it read-only at the post-pivot RODurabilityStorePath, and
 // registers it in the effective storage.conf via a conf.d drop-in. It runs only for
 // self-contained disconnected media, while the stateroot is still mounted and before p2 is
 // unmounted (so additionalimagestores never points at a path that has already gone away), and it
@@ -95,7 +95,7 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 	srcStore := filepath.Join(i.config.LocalImagesPath, common.LocalImagesStoreDirName)
 
 	osname := common.GetStaterootName(i.config.SeedVersion)
-	destStore := filepath.Join(common.GetStaterootPath(osname), common.ContainerStoragePath, common.RODurabilityStoreDirName)
+	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	staging := destStore + roStoreStagingSuffix
 
 	// Fail closed: self-contained media must carry a complete overlay durability store. A
