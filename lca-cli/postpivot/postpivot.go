@@ -171,13 +171,21 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to set no proxy: %w", err)
 	}
 
+	// Pre-recert clock/RTC plausibility gate (self-contained USB IBI only). It runs before
+	// recert so certificates are never minted with a bad validity window when the node is
+	// personalized offline; on an implausible clock it halts the node powered-on and recert
+	// never runs.
+	if err := p.clockGate(seedReconfiguration, seedClusterInfo); err != nil {
+		return fmt.Errorf("pre-recert clock gate failed: %w", err)
+	}
+
 	// NOTE: This must be done before we run recert, as otherwise recert could
 	// fail to pull in absence of a precached recert image
 	if err := p.establishEarlyCertificateTrust(seedReconfiguration); err != nil {
 		return fmt.Errorf("failed copy cluster config files: %w", err)
 	}
 
-	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, ctx, seedReconfiguration, seedClusterInfo); err != nil {
+	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, seedReconfiguration, seedClusterInfo); err != nil {
 		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
 	}
 
@@ -255,7 +263,7 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	return p.cleanup()
 }
 
-func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+func (p *PostPivot) recert(seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 	if _, err := os.Stat(recert.SummaryFile); err == nil {
 		return fmt.Errorf("found %s file, returning error, it means recert previously failed. "+
 			"In case you still want to rerun it please remove the file", recert.SummaryFile)
@@ -273,23 +281,8 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 
-	if _, err := p.ops.RunInHostNamespace("podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err != nil {
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		defer cancel()
-		_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
-			p.log.Info("pulling recert image")
-			command := "podman"
-			if seedReconfiguration.Proxy != nil {
-				command = fmt.Sprintf("HTTP_PROXY=%s HTTPS_PROXY=%s NO_PROXY=%s %s",
-					seedReconfiguration.Proxy.HTTPProxy, seedReconfiguration.Proxy.HTTPSProxy,
-					seedReconfiguration.Proxy.NoProxy, command)
-			}
-			if _, err := p.ops.RunBashInHostNamespace(command, "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec); err != nil {
-				p.log.Warnf("failed to pull recert image, will retry, err: %s", err.Error())
-				return false, nil
-			}
-			return true, nil
-		})
+	if err := p.ensureRecertImageAvailable(seedReconfiguration, seedClusterInfo); err != nil {
+		return err
 	}
 
 	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
@@ -302,6 +295,66 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 	}
 
 	return nil
+}
+
+// recertImagePullAttempts bounds how many times the recert image is pulled before failing. A
+// small bound tolerates a transient registry blip in the connected flow while still failing
+// fast offline (where every attempt fails immediately) instead of the former 10-minute stall.
+const recertImagePullAttempts = 3
+
+// recertImagePullRetryDelay is the delay between recert image pull attempts. It is a package
+// var so unit tests can set it to zero.
+var recertImagePullRetryDelay = 5 * time.Second
+
+// recertImagePullAttemptTimeout bounds the elapsed time of a single recert image pull attempt.
+// A bare `podman pull` has no timeout, so a stalled connection to an unreachable registry (a
+// half-open socket, not a clean failure) would block the offline reconfigure path indefinitely
+// -- the very stall the removal of the former 10-minute context must not reintroduce. Each
+// attempt is wrapped in coreutils `timeout`, which terminates podman and surfaces the attempt as
+// a failure so the bounded retry can proceed and ultimately fail fast with the precache hint. It
+// is a package var so unit tests can reference the exact command.
+var recertImagePullAttemptTimeout = 3 * time.Minute
+
+// ensureRecertImageAvailable makes the recert image resolve locally before recert runs. The
+// image must be precached for disconnected/self-contained installs (CNF-27162), so when it is
+// present this is a no-op and no network access occurs. When it is absent it attempts a small,
+// bounded number of pulls and then fails fast with a clear precache hint, rather than the former
+// 10-minute silent poll loop: offline the pull can never succeed, so that loop produced a
+// 10-minute stall followed by an opaque recert failure. The bounded retry keeps the connected
+// flow resilient to a momentary registry hiccup.
+func (p *PostPivot) ensureRecertImageAvailable(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	if _, err := p.ops.RunInHostNamespace("podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err == nil {
+		return nil
+	}
+
+	p.log.Warnf("recert image %s is not present locally; it must be precached for disconnected installs. Attempting a bounded pull for the connected case",
+		seedClusterInfo.RecertImagePullSpec)
+	// Wrap each attempt in `timeout` so a stalled pull cannot block the offline reconfigure path
+	// indefinitely. Proxy env vars (when set) must prefix the whole command so they apply to
+	// podman, hence `[ENV=...] timeout <seconds> podman`.
+	command := fmt.Sprintf("timeout %d podman", int(recertImagePullAttemptTimeout.Seconds()))
+	if seedReconfiguration.Proxy != nil {
+		command = fmt.Sprintf("HTTP_PROXY=%s HTTPS_PROXY=%s NO_PROXY=%s %s",
+			seedReconfiguration.Proxy.HTTPProxy, seedReconfiguration.Proxy.HTTPSProxy,
+			seedReconfiguration.Proxy.NoProxy, command)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= recertImagePullAttempts; attempt++ {
+		_, err := p.ops.RunBashInHostNamespace(command, "pull", "--authfile", common.ImageRegistryAuthFile, seedClusterInfo.RecertImagePullSpec)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		p.log.Warnf("recert image pull attempt %d/%d failed: %v", attempt, recertImagePullAttempts, err)
+		if attempt < recertImagePullAttempts {
+			time.Sleep(recertImagePullRetryDelay)
+		}
+	}
+	return fmt.Errorf("recert image %s is not present locally and could not be pulled after %d attempts; "+
+		"it must be precached for disconnected/self-contained installs: %w",
+		seedClusterInfo.RecertImagePullSpec, recertImagePullAttempts, lastErr)
 }
 
 func (p *PostPivot) applyServerSSHKeys(serverSSHKeys []clusterconfig_api.ServerSSHKey) error {
