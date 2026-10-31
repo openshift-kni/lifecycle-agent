@@ -451,7 +451,7 @@ func TestValidateRHCOSLiveISO(t *testing.T) {
 		mutate   func(*Manifest)
 		expected string
 	}{
-		{"missing url", func(m *Manifest) { m.RHCOSLiveISO.URL = "" }, "url is required"},
+		{"missing url with sha256", func(m *Manifest) { m.RHCOSLiveISO.URL = "" }, "url is required"},
 		{"non-https url", func(m *Manifest) { m.RHCOSLiveISO.URL = "http://example.com/x.iso" }, "https url"},
 		{"https url without host", func(m *Manifest) { m.RHCOSLiveISO.URL = "https://" }, "host"},
 		{"scheme-only no host", func(m *Manifest) { m.RHCOSLiveISO.URL = "https:///path/x.iso" }, "host"},
@@ -468,6 +468,11 @@ func TestValidateRHCOSLiveISO(t *testing.T) {
 	}
 	t.Run("valid pair passes", func(t *testing.T) {
 		assert.NoError(t, validInstallOnly().Validate())
+	})
+	t.Run("omitted iso resolves from seed", func(t *testing.T) {
+		m := validInstallOnly()
+		m.RHCOSLiveISO = RHCOSLiveISO{}
+		assert.NoError(t, m.Validate())
 	})
 }
 

@@ -100,9 +100,19 @@ hardware is tracked by CNF-27158.
 The live ISO at the front of the media is the bootable RHCOS live ISO, customized so the node
 runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
 
-1. **Verified ISO source (HTTPS + sha256).** The RHCOS live ISO is fetched from
-   `rhcosLiveIso.url` **over HTTPS only** and its SHA-256 is verified against
-   `rhcosLiveIso.sha256` **before the ISO is used**. Any of the following **fails the build**:
+1. **Verified ISO source (HTTPS + sha256).** Leave `rhcosLiveIso` unset in the manifest
+   in normal use. The builder reads the booted RHCOS build ID from the seed image's
+   `rpm-ostree.json`, fetches that build's official metadata, and uses its live ISO URL
+   and SHA-256. This avoids a live OS policy mismatch with the seed, which can cause
+   seed extraction and installation to fail. Set both `rhcosLiveIso.url` and
+   `rhcosLiveIso.sha256` only when the automatic source is unavailable, such as when
+   using an HTTPS mirror; ensure the ISO still matches the seed's RHCOS build.
+   Automatic metadata lookup supports RHEL-style build IDs (such as `9.8.*` and
+   `10.2.*`) and older OpenShift-style build IDs (such as `418.94.*`, resolved
+   through stream `4.18-9.4`).
+   For an unsupported build ID format, supply the ISO URL and checksum explicitly.
+   The ISO is fetched **over HTTPS only** and its SHA-256 is verified **before use**.
+   Any of the following **fails the build**:
    a non-`https` URL (plain HTTP is never used, and a redirect to a non-`https` URL is
    refused), a download error (missing or unreachable source), or a checksum mismatch. The
    ISO host must therefore serve the ISO over HTTPS. The RHCOS live ISO on
@@ -222,12 +232,10 @@ durability store.
 
 ### Target architecture
 
-The media is built on a workstation whose architecture may differ from the node the media
-installs, and the OCI layout deliberately preserves **every** architecture. The build therefore
-selects the **target node's architecture explicitly** when importing into the store, rather than
-defaulting to the build host's. A layout that carries no instance for the target architecture
-**fails the build**, so a cross-architecture build can never ship a valid-looking store the node
-cannot run.
+The OCI layout preserves every available architecture, but the live ISO and durability store
+are selected for the build host's architecture. Build the media on a host with the same
+architecture as the target node; cross-architecture media builds are not supported. A layout
+without an image instance for the selected architecture fails the build.
 
 ### Crash-safe, recoverable commit
 

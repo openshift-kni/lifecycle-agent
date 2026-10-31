@@ -120,7 +120,7 @@ type Manifest struct {
 	// silently. A nil Shutdown is rejected as a missing required field.
 	Shutdown *bool `json:"shutdown,omitempty"`
 
-	// RHCOSLiveISO is required; the --rhcos-live-iso* flags override it (flag wins).
+	// RHCOSLiveISO is optional; when omitted, the matching ISO is resolved from the seed.
 	RHCOSLiveISO RHCOSLiveISO `json:"rhcosLiveIso,omitempty"`
 
 	// ExtraPrecacheImages is install-only only. It is a pointer so a present-but-empty
@@ -270,8 +270,11 @@ func validateHTTPSURL(rawURL string) error {
 
 // validateRHCOSLiveISO enforces an HTTPS url and a well-formed SHA-256 digest.
 func (m *Manifest) validateRHCOSLiveISO() error {
+	if m.RHCOSLiveISO.URL == "" && m.RHCOSLiveISO.SHA256 == "" {
+		return nil
+	}
 	if m.RHCOSLiveISO.URL == "" {
-		return fmt.Errorf("rhcosLiveIso.url is required")
+		return fmt.Errorf("rhcosLiveIso.url is required when sha256 is set")
 	}
 	if err := validateHTTPSURL(m.RHCOSLiveISO.URL); err != nil {
 		return fmt.Errorf("rhcosLiveIso.url %w", err)
