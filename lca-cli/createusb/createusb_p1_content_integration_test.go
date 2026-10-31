@@ -42,8 +42,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/openshift/assisted-image-service/pkg/isoeditor"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,4 +136,15 @@ func TestEmbeddedUnitRunsExactBinary(t *testing.T) {
 	outBytes, err := os.ReadFile(res.ISOPath)
 	require.NoError(t, err)
 	assert.NotEqual(t, baseBytes, outBytes, "the customized ISO must differ from the base ISO (ignition embedded)")
+
+	bootloaderFiles, err := isoeditor.KargsFiles(res.ISOPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, bootloaderFiles)
+	for _, path := range bootloaderFiles {
+		content, err := isoeditor.ReadFileFromISO(res.ISOPath, path)
+		require.NoError(t, err, path)
+		assert.Contains(t, string(content), " "+liveISOFromRAMKernelArg+"\n", path)
+		assert.NotContains(t, string(content), `"operation":"append"`, path)
+		assert.Equal(t, 1, strings.Count(string(content), liveISOFromRAMKernelArg), path)
+	}
 }

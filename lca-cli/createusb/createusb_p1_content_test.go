@@ -77,16 +77,18 @@ func (f *fakeLCAExtractor) ExtractLCABinary(lcaImage, authFile, destPath string)
 }
 
 type fakeISOCustomizer struct {
-	gotIgnition []byte
-	gotBase     string
-	gotOut      string
-	err         error
+	gotIgnition   []byte
+	gotBase       string
+	gotOut        string
+	gotKernelArgs []string
+	err           error
 }
 
-func (f *fakeISOCustomizer) EmbedIgnition(_ logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string) error {
+func (f *fakeISOCustomizer) EmbedIgnition(_ logrus.FieldLogger, ignitionBytes []byte, baseISO, outISO string, kernelArgs []string) error {
 	f.gotIgnition = append([]byte(nil), ignitionBytes...)
 	f.gotBase = baseISO
 	f.gotOut = outISO
+	f.gotKernelArgs = append([]string(nil), kernelArgs...)
 	if f.err != nil {
 		return f.err
 	}
@@ -453,6 +455,7 @@ func TestBuildLiveISO(t *testing.T) {
 	assert.Equal(t, "quay.io/example/lca@sha256:"+validSHA256, extractor.gotImage)
 	assert.Equal(t, filepath.Join(work, baseISOFileName), customizer.gotBase)
 	assert.Equal(t, res.ISOPath, customizer.gotOut)
+	assert.Equal(t, []string{"coreos.liveiso.fromram"}, customizer.gotKernelArgs)
 	assert.FileExists(t, res.ISOPath)
 
 	// The binary is staged byte-for-byte for placement on p2, and is NOT embedded in the

@@ -22,6 +22,11 @@ func newTestOps(t *testing.T, timeout time.Duration) *ops {
 	return &ops{log: log, etcdTimeout: timeout}
 }
 
+func TestFormatISOKernelArgs(t *testing.T) {
+	assert.Nil(t, formatISOKernelArgs(nil))
+	assert.Equal(t, " coreos.liveiso.fromram\n", string(formatISOKernelArgs([]string{"coreos.liveiso.fromram"})))
+}
+
 func TestMountReadOnly(t *testing.T) {
 	const deviceName = "sdb1"
 
