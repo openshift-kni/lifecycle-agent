@@ -29,6 +29,14 @@ import (
 
 var (
 	dnsIPFamily string
+
+	// primaryIPFile is the file inferPrimaryStack reads the node's current primary
+	// IP from. It is a variable so the read can be redirected without a node.
+	primaryIPFile = PrimaryIPPath
+
+	// kubeconfigPath is the node kubeconfig used to build the Kubernetes client.
+	// The chroot prefix is resolved once here so the call site stays a plain read.
+	kubeconfigPath = common.PathOutsideChroot(common.KubeconfigFile)
 )
 
 const (
@@ -50,7 +58,7 @@ func buildOpsAndK8sClient(
 	}
 	opsInterface := ops.NewOps(pkgLog, hostCommandsExecutor)
 
-	k8sConfig, err := clientcmd.BuildConfigFromFlags("", common.PathOutsideChroot(common.KubeconfigFile))
+	k8sConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create k8s config: %w", err)
 	}
