@@ -12,35 +12,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ConditionType is a string representing the condition's type
-type ConditionType string
+// ConditionType is a string representing the condition's type.
+// It is an alias for the canonical type defined in the public API package
+// (api/imagebasedupgrade/v1) so there is a single source of truth that
+// downstream consumers can reference without vendoring this package.
+type ConditionType = ibuv1.ConditionType
 
-// ConditionTypes define the different types of conditions that will be set
-var ConditionTypes = struct {
-	Idle               ConditionType
-	PrepInProgress     ConditionType
-	PrepCompleted      ConditionType
-	UpgradeInProgress  ConditionType
-	UpgradeCompleted   ConditionType
-	RollbackInProgress ConditionType
-	RollbackCompleted  ConditionType
-	SeedGenInProgress  ConditionType
-	SeedGenCompleted   ConditionType
-	ConfigInProgress   ConditionType
-	ConfigCompleted    ConditionType
-}{
-	Idle:               "Idle", //nolint:goconst
-	PrepInProgress:     "PrepInProgress",
-	PrepCompleted:      "PrepCompleted",
-	UpgradeInProgress:  "UpgradeInProgress",
-	UpgradeCompleted:   "UpgradeCompleted",
-	RollbackInProgress: "RollbackInProgress",
-	RollbackCompleted:  "RollbackCompleted",
-	SeedGenInProgress:  "SeedGenInProgress",
-	SeedGenCompleted:   "SeedGenCompleted",
-	ConfigInProgress:   "ConfigInProgress",
-	ConfigCompleted:    "ConfigCompleted",
-}
+// ConditionTypes define the different types of conditions that will be set.
+// It re-exports the canonical definition from the public API package.
+var ConditionTypes = ibuv1.ConditionTypes
 
 var SeedGenConditionTypes = struct {
 	SeedGenInProgress ConditionType

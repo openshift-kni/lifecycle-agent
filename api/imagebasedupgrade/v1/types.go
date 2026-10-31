@@ -61,6 +61,36 @@ var Stages = struct {
 	Rollback: "Rollback",
 }
 
+// ConditionType is a string representing the condition's type
+type ConditionType string
+
+// ConditionTypes define the different types of conditions that will be set
+var ConditionTypes = struct {
+	Idle               ConditionType
+	PrepInProgress     ConditionType
+	PrepCompleted      ConditionType
+	UpgradeInProgress  ConditionType
+	UpgradeCompleted   ConditionType
+	RollbackInProgress ConditionType
+	RollbackCompleted  ConditionType
+	SeedGenInProgress  ConditionType
+	SeedGenCompleted   ConditionType
+	ConfigInProgress   ConditionType
+	ConfigCompleted    ConditionType
+}{
+	Idle:               "Idle", //nolint:goconst
+	PrepInProgress:     "PrepInProgress",
+	PrepCompleted:      "PrepCompleted",
+	UpgradeInProgress:  "UpgradeInProgress",
+	UpgradeCompleted:   "UpgradeCompleted",
+	RollbackInProgress: "RollbackInProgress",
+	RollbackCompleted:  "RollbackCompleted",
+	SeedGenInProgress:  "SeedGenInProgress",
+	SeedGenCompleted:   "SeedGenCompleted",
+	ConfigInProgress:   "ConfigInProgress",
+	ConfigCompleted:    "ConfigCompleted",
+}
+
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
 type ImageBasedUpgradeSpec struct {
 	//+kubebuilder:validation:Enum=Idle;Prep;Upgrade;Rollback
