@@ -179,7 +179,7 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir(t *testing.T) {
 	}
 }
 
-func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_CreatesDirectory(t *testing.T) {
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_EmptyDoesNotCreateDirectory(t *testing.T) {
 	dir := t.TempDir()
 	cryptoDir := path.Join(dir, "nested", "crypto")
 
@@ -187,7 +187,38 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_CreatesDirectory(t *t
 	err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention)
 	assert.NoError(t, err)
 
-	info, err := os.Stat(cryptoDir)
-	assert.NoError(t, err)
-	assert.True(t, info.IsDir())
+	_, err = os.Stat(cryptoDir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_ClearsStaleDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		retention *seedreconfig.KubeConfigCryptoRetention
+	}{
+		{name: "nil retention"},
+		{name: "empty retention", retention: &seedreconfig.KubeConfigCryptoRetention{}},
+		{name: "CN only", retention: &seedreconfig.KubeConfigCryptoRetention{
+			IngresssCrypto: seedreconfig.IngresssCrypto{IngressCertificateCN: "ingress-operator@1234"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cryptoDir := path.Join(t.TempDir(), "crypto")
+			assert.NoError(t, os.MkdirAll(cryptoDir, 0700))
+			assert.NoError(t, os.WriteFile(path.Join(cryptoDir, "admin-kubeconfig-client-ca.crt"), nil, 0600))
+			assert.NoError(t, SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, tc.retention))
+			_, err := os.Stat(cryptoDir)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_RejectsPartial(t *testing.T) {
+	cryptoDir := path.Join(t.TempDir(), "crypto")
+	retention := &seedreconfig.KubeConfigCryptoRetention{}
+	retention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey = "key"
+	err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention)
+	assert.ErrorContains(t, err, "admin_ca_certificate")
+	_, statErr := os.Stat(cryptoDir)
+	assert.True(t, os.IsNotExist(statErr))
 }
