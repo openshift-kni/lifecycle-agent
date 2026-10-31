@@ -96,6 +96,20 @@ tool will use `quay.io/edge-infrastructure/recert:v0` as the default recert imag
 > **Note:** For a disconnected environment, first mirror the `lca-cli` and `recert` container images to your local
 > registry using [skopeo](https://github.com/containers/skopeo) or a similar tool.
 
+### Internal commands
+
+The following commands are invoked by the Lifecycle Agent itself (node systemd units and
+Kubernetes Jobs). They are not intended to be run manually and are listed here only for
+completeness.
+
+| Command | Invoked by | Purpose | Flags |
+| --- | --- | --- | --- |
+| `post-pivot` | `installation-configuration.service` in the new stateroot | Applies the seed reconfiguration (network, hostname, recert, extra manifests) after pivot; triggers auto-rollback on failure when enabled | `--in-container` (use the nsenter executor when running inside a container) |
+| `restore` | `lca-cli` after seed image creation | Restores the seed cluster configuration from `/var/ibu` | common flags: `--authfile`, `--image` (required), `--recert-image`, `--skip-recert-validation`, `--skip-cleanup` |
+| `init-monitor` | init-monitor systemd unit | Watchdog that waits for cluster readiness and triggers rollback on timeout | `--monitor`, `--exec-stop-post <component-tag>`, `--mode ibu\|ipc`; `--monitor` and `--exec-stop-post` are mutually exclusive and one is required |
+| `ibuStaterootSetup` (alias `ibu-stateroot-setup`) | stateroot setup Job in the Prep stage | Pulls the seed image and creates and configures the new stateroot | none |
+| `ibuPrecacheWorkload` (alias `ibu-precache-workload`) | precache Job | Pulls the images listed in the file named by `$PRECACHE_SPEC_FILE` | none (configured through `$PRECACHE_SPEC_FILE`) |
+
 ## Creating USB media
 
 With `--output`, `create-usb` assembles bootable media following the CNF-27197-proven
@@ -135,25 +149,12 @@ is `ext4`). Run with sufficient privileges to create and format loopback partiti
 
 ### Partition layout
 
-The customized live ISO owns the front of the media (its own ISO9660/EFI partitions); the
-data partitions below are **appended after it** in the free MBR slots. On-node code discovers
-them **by filesystem label**, not by partition number, so the number each one receives is an
-implementation detail. Reservation sizes (the sparse `.img` does not consume real bytes until
-content is written). `ibi-images` is **sized to its measured payload** — the payload is staged
-into scratch first, measured, and the partition is set to that payload plus ext4 metadata and
-free-space headroom, rounded up, with an **8 GiB minimum** floor; the other partitions are
-fixed-size:
-
-| Role | Filesystem label | FS | Size | Modes | Content today |
-| --- | --- | --- | --- | --- | --- |
-| live ISO | — (ISO9660/EFI) | — | ISO size | both | The verified, ignition-customized bootable RHCOS live ISO at LBA 0 |
-| images | `ibi-images` | ext4 | payload-derived (≥ 8 GiB) | both | OCI image layout + `digests.json`, the staged `lca-cli` binary, and (self-contained) the read-only durability `store/` |
-| config | `cluster-config` | ext4 | 256 MiB | self-contained only | Rendered `/opt/openshift` config tree (empty if none supplied) |
-| status | `ibi-status` | ext4 | 64 MiB | both | Empty (runtime records written on-node by CNF-27163) |
-
-For **self-contained** media, MBR's four-primary limit (the ISO already uses two) means
-`ibi-images` is appended as a primary and `cluster-config` + `ibi-status` are logical
-partitions inside an MBR extended container.
+The media is a DOS/MBR image whose front is the customized RHCOS live ISO, with the
+formatted data partitions (`ibi-images`, and for self-contained media `cluster-config` and
+`ibi-status`) appended after it. On-node code discovers partitions **by filesystem label**,
+not by partition number. See
+[docs/create-usb.md](../docs/create-usb.md#media-layout-the-live-iso-owns-lba-0) for the
+full layout, sizes, and MBR extended-container details.
 
 ### Flags
 
@@ -371,27 +372,8 @@ overhead).
 Mirroring runs under the **build host's configured container trust policy**
 (`signature.DefaultPolicy` — `$CONTAINERS_POLICY_JSON`, `/etc/containers/policy.json`, …),
 not a hardcoded accept-anything policy: a host configured to require signatures rejects an
-unsigned or untrusted source, and an unsigned image is mirrored only when the host policy
-permits it. If the host has **no** trust policy configured at all, the build logs a loud
-warning and falls back to accepting any source (so an unconfigured host still builds); a
-malformed policy is a hard error. Digest-pinning additionally guarantees the content is
-immutable and content-addressed.
-
-An OCI image layout cannot store an image's signatures, so the signatures the source
-registry serves are **captured and staged beside the layout** (under
-`<ociLayoutPath>/signatures/`, keyed by manifest instance digest, each blob recorded with
-its size and sha256 in `digests.json`). When the node imports an image into
-containers-storage — which *can* store signatures — the staged bytes are verified against
-their recorded hashes and **re-attached**, so the installed store carries the same
-signatures the registry served. A missing, truncated, or hash-mismatched signature **fails
-the import** rather than silently dropping trust material.
-
-For a **multi-arch index**, containers-storage stores only the single platform instance the
-node imports, so the installed store carries **that platform instance's** signatures
-(addressable as the image's default set and under the platform-instance digest) — the
-signatures that sign the single manifest the store can verify. **Index-level (manifest-list)
-signatures are not restored** into a single-platform store: querying the index digest resolves
-to the stored platform image and returns its platform signatures, not a distinct
-index-signature set. The index-level bytes are still staged and verified on media, but not
-re-attached on a single-platform import. See [`docs/create-usb.md`](../docs/create-usb.md) for
-details.
+unsigned or untrusted source. Signatures served by the source registry are captured beside
+the OCI layout and re-attached when the node imports the image into containers-storage, so
+the installed store carries the signatures the registry served. See
+[`docs/create-usb.md`](../docs/create-usb.md#image-trust-and-signature-preservation) for the
+build-time policy behavior, staging format, and multi-arch index limitations.

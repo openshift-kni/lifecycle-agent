@@ -48,16 +48,29 @@ The Lifecycle Agent provides orchestration of an IBU on the target SNO via the `
   - This stage can only be set if the prep stage completed successfully.
   - This is where the actual upgrade happens. It consists of three main steps: pre-pivot, pivot and post-pivot.
     - Before pivoting the new state root, LCA collects the required cluster specific info/artifacts and store them in
-      the new state root. It also performs [backups](backup-and-restore). Additionally, it exports CRs specified by the
+      the new state root. It also performs [backups](backuprestore-with-oadp.md). Additionally, it exports CRs specified by the
 `extraManifests` field in the IBU spec as well as the CRs described in the ZTP policies bound to the cluster for the
 target OCP version.
     - Once pre pivot step is completed, LCA makes the new state root the default and reboots the node.
-    - After booting from the new state root, LCA reconfigures the cluster so it looks like the original cluster by applying cluster specific info saved in the pre-pivot step (ref recert?). It and applies all saved CRs, and restores the [backups](backup-and-restore).
+    - After booting from the new state root, LCA reconfigures the cluster so it looks like the original cluster by applying cluster specific info saved in the pre-pivot step (ref recert?). It and applies all saved CRs, and restores the [backups](backuprestore-with-oadp.md).
 
 - Rollback
   - This is an optional stage. It can be set if upgrade has gone beyond the pivot step, whether it has completed, failed or still in progress. The LCA performs the rollback by setting the original state root as default and rebooting the node.
 
-TODO Insert the state transition diagram
+```mermaid
+stateDiagram-v2
+    [*] --> Idle : IBU CR created
+    Idle --> Prep : spec.stage=Prep
+    Prep --> Idle : abort or prep failure
+    Prep --> Upgrade : prep completed
+    Upgrade --> Idle : abort or upgrade failure before pivot
+    Upgrade --> Rollback : rollback requested or failure after pivot
+    Upgrade --> Idle : finalize after success
+    Rollback --> Idle : rollback completed
+```
+
+The controller publishes the currently allowed transitions in `.status.validNextStages`;
+use that field as the authoritative list for a given CR.
 
 ## Handling Site Specific Artifacts
 
