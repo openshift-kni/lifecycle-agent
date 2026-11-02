@@ -435,7 +435,7 @@ github.com/go-openapi/swag/yamlutils
 # github.com/golang/mock v1.6.0
 ## explicit; go 1.11
 github.com/golang/mock/gomock
-# github.com/google/cel-go v0.30.0
+# github.com/google/cel-go v0.31.0
 ## explicit; go 1.23.0
 github.com/google/cel-go/cel
 github.com/google/cel-go/cel/async
@@ -793,7 +793,7 @@ github.com/openshift/machine-config-operator/pkg/controller/common
 github.com/openshift/machine-config-operator/pkg/daemon/constants
 github.com/openshift/machine-config-operator/pkg/secrets
 github.com/openshift/machine-config-operator/pkg/version
-# github.com/operator-framework/api v0.45.0
+# github.com/operator-framework/api v0.46.0
 ## explicit; go 1.26.3
 github.com/operator-framework/api/pkg/lib/release
 github.com/operator-framework/api/pkg/lib/version

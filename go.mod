@@ -20,7 +20,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20261021093739-9467096e1b0d
 	github.com/openshift/local-storage-operator v0.0.0-20240119085755-569393ff42e1
 	github.com/openshift/lvm-operator/v4 v4.0.0-20260605114020-f1424ab8f6c9
-	github.com/operator-framework/api v0.45.0
+	github.com/operator-framework/api v0.46.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pelletier/go-toml v1.9.5
 	github.com/samber/lo v1.53.0
@@ -84,7 +84,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
-	github.com/google/cel-go v0.30.0 // indirect
+	github.com/google/cel-go v0.31.0 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
