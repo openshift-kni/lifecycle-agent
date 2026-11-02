@@ -19,7 +19,12 @@ import (
 type ConditionType = ibuv1.ConditionType
 
 // ConditionTypes define the different types of conditions that will be set.
-// It re-exports the canonical definition from the public API package.
+//
+// It is a compatibility-only re-export of the canonical definition from the
+// public API package (api/imagebasedupgrade/v1); new code should prefer the
+// canonical ibuv1.ConditionTypes directly. Its fields form a stable consumer
+// contract and must be treated as immutable: do not reassign ConditionTypes or
+// any of its fields at runtime.
 var ConditionTypes = ibuv1.ConditionTypes
 
 var SeedGenConditionTypes = struct {
