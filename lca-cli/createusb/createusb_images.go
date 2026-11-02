@@ -100,12 +100,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
@@ -226,8 +229,9 @@ type imageMirrorer interface {
 
 // imageBuildDeps bundles the injectable seams.
 type imageBuildDeps struct {
-	seedReader seedClosureReader
-	mirrorer   imageMirrorer
+	seedReader           seedClosureReader
+	mirrorer             imageMirrorer
+	mirrorRetryBaseDelay time.Duration // zero uses the production one-second delay
 }
 
 // defaultImageBuildDeps returns the production seams backed by containers/image and
@@ -546,7 +550,7 @@ func mirrorToOCILayout(ctx context.Context, refs []string, stagingLayoutDir, aut
 	usedTags := make(map[string]struct{}, len(refs))
 	for i, ref := range refs {
 		tag := uniqueOCITag(ref, i, usedTags)
-		res, err := deps.mirrorer.MirrorToLayout(ctx, ref, stagingLayoutDir, tag, authFile)
+		res, err := mirrorWithRetry(ctx, deps.mirrorer, ref, stagingLayoutDir, tag, authFile, deps.mirrorRetryBaseDelay)
 		if err != nil {
 			return nil, fmt.Errorf("failed to mirror and digest-pin image %q: %w", ref, err)
 		}
@@ -559,6 +563,74 @@ func mirrorToOCILayout(ctx context.Context, refs []string, stagingLayoutDir, aut
 		})
 	}
 	return entries, nil
+}
+
+// mirrorWithRetry retries only transport failures. The OCI destination replaces an
+// existing tag on a successful copy, so retrying the same tag is safe even if the
+// previous attempt wrote some blobs before its registry connection failed.
+func mirrorWithRetry(ctx context.Context, mirrorer imageMirrorer, ref, layoutDir, tag, authFile string, baseDelay time.Duration) (mirrorResult, error) {
+	if baseDelay <= 0 {
+		baseDelay = time.Second
+	}
+	var result mirrorResult
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return mirrorResult{}, fmt.Errorf("mirror canceled before attempt: %w", err)
+		}
+		result, err = mirrorer.MirrorToLayout(ctx, ref, layoutDir, tag, authFile)
+		if err == nil {
+			return result, nil
+		}
+		if !retryableMirrorError(err) {
+			return result, fmt.Errorf("mirror attempt failed: %w", err)
+		}
+		if attempt == 3 {
+			return mirrorResult{}, fmt.Errorf("after %d attempts: %w", attempt, err)
+		}
+		logrus.WithError(err).Warnf("Transient error mirroring %q (attempt %d/3); retrying", ref, attempt)
+		timer := time.NewTimer(time.Duration(1<<attempt) * baseDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return mirrorResult{}, fmt.Errorf("mirror retry canceled during backoff: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return mirrorResult{}, fmt.Errorf("mirror retry failed: %w", err)
+}
+
+func retryableMirrorError(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ETIMEDOUT) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	var netErr net.Error
+	return (errors.As(err, &netErr) && netErr.Timeout()) ||
+		strings.Contains(err.Error(), "unexpected EOF") || retryableFallbackErrorText(err)
+}
+
+// containers/image includes fallback errors in its message without wrapping them.
+// Inspect only that part of the message so a permanent original error remains
+// non-retryable unless a fallback failed with a transport error.
+func retryableFallbackErrorText(err error) bool {
+	_, fallback, ok := strings.Cut(err.Error(), "(Fallback sources also failed: ")
+	if !ok {
+		return false
+	}
+	fallback, _, ok = strings.Cut(fallback, "): ")
+	if !ok {
+		return false
+	}
+	fallback = strings.ToLower(fallback)
+	for _, text := range []string{"i/o timeout", "context deadline exceeded", "client.timeout exceeded", "operation timed out", "connection reset by peer", "broken pipe"} {
+		if strings.Contains(fallback, text) {
+			return true
+		}
+	}
+	return false
 }
 
 // marshalDigestManifest marshals the digest manifest for the given entries, recording
