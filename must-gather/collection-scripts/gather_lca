@@ -46,6 +46,11 @@ function get_installationConfiguration_service_log() {
     oc adm node-logs --role master -u installation-configuration &> $LCA_DATA_PATH/installation-configuration.service.log
 }
 
+function get_restoreNMConnections_service_log() {
+    echo "INFO: Collecting lca-restore-nmconnections.service log" | tee -a $MUST_GATHER_LOGFILE_PATH
+    oc adm node-logs --role master -u lca-restore-nmconnections &> $LCA_DATA_PATH/lca-restore-nmconnections.service.log
+}
+
 function get_recert_summary() {
     echo "INFO: Collecting recert-summary.yaml. Looking for it under all stateroots" | tee -a $MUST_GATHER_LOGFILE_PATH
     rcp=$LCA_DATA_PATH/recert-summary
@@ -110,6 +115,9 @@ get_lca_image_builder_log &
 pids+=($!)
 
 get_installationConfiguration_service_log &
+pids+=($!)
+
+get_restoreNMConnections_service_log &
 pids+=($!)
 
 get_healthcheck_crs &

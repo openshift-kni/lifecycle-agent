@@ -38,7 +38,9 @@ Currently, we support nmconnection files that should be placed in /opt/openshift
 When the folder is already present at boot (IBU), [lca-restore-nmconnections.service](../lca-cli/installation_configuration_files/services/lca-restore-nmconnections.service)
 copies them to the NetworkManager configuration folder before NetworkManager starts.
 Otherwise NetworkManager auto-activates a default DHCP profile on the NIC and keeps it even after a restart.
-Post pivot copies the files again and restarts NetworkManager, which covers a configuration folder provided later as a block device.
+Post pivot copies the files again and restarts NetworkManager. For a configuration folder provided later as a block device,
+NetworkManager has already started by then, and the restart may keep a default DHCP connection it already activated.
+Use NMState configuration (`raw_nm_state_config`) in that case, since post pivot applies it with `nmstatectl apply`.
 
 ## Recertification flow
 

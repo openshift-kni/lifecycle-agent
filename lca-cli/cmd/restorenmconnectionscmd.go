@@ -41,7 +41,8 @@ func restoreNMConnections() {
 	opsClient := ops.NewOps(log, ops.NewRegularExecutor(log, true))
 	postPivotRunner := postpivot.NewPostPivot(scheme, log, opsClient,
 		common.ImageRegistryAuthFile, common.OptOpenshift, common.KubeconfigFile)
-	// No rollback here: post-pivot copies the files again and handles failures
+	// No rollback here: NetworkManager requires this unit, so post-pivot's NetworkManager restart
+	// retries it, and post-pivot handles the failure
 	if err := postPivotRunner.RestoreNMConnectionFiles(); err != nil {
 		log.Fatal(err)
 	}
