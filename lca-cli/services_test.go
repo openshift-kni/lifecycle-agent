@@ -44,7 +44,10 @@ func TestRestoreNMConnectionsServiceOrdering(t *testing.T) {
 		assert.NotContains(t, after, "NetworkManager")
 	}
 	assert.Equal(t, []string{"/usr/local/bin/lca-cli restore-nmconnections"}, directives["ExecStart"])
-	assert.Equal(t, []string{"multi-user.target"}, directives["WantedBy"])
+	// Without the requirement a failed restore would still let NetworkManager start without the profiles
+	assert.Equal(t, []string{"NetworkManager.service"}, directives["RequiredBy"])
+	assert.Empty(t, directives["WantedBy"])
+	assert.Equal(t, []string{"yes"}, directives["RemainAfterExit"])
 
 	// The condition must point at the folder post-pivot copies from, as seen from the new stateroot
 	// (/opt is a symlink to /var/opt on RHCOS)
