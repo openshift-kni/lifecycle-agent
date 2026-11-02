@@ -156,6 +156,13 @@ runs `lca-cli ibi` automatically on boot. `BuildLiveISO` builds it:
    path, or a manual invocation), prepare mounts the device read-only itself and unmounts it when
    done, as before.
 
+The builder also adds `coreos.liveiso.fromram` to the live ISO boot arguments. This copies
+the live ISO into RAM during boot and releases the whole USB device before systemd mounts
+the appended `ibi-images` partition. On some kernels, the whole-device ISO mount otherwise
+blocks access to that partition. Plan for enough RAM to hold the live ISO in addition to
+the normal live environment and installation workload; the required amount varies with
+the RHCOS ISO version but is typically around 2GB.
+
 ### SSH access to the live ISO
 
 `siteConfig.sshKey` is optional. Omit it when live ISO SSH access is not needed; the USB

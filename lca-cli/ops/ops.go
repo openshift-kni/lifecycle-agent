@@ -98,7 +98,7 @@ type Ops interface {
 	CreateExtraPartition(installationDisk, extraPartitionLabel, extraPartitionStart string, extraPartitionNumber uint) error
 	SetupContainersFolderCommands() error
 	GetHostname() (string, error)
-	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error
+	CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string, kernelArgs []string) error
 	GetContainerStorageTarget() (string, error)
 	StopClusterServices() error
 	EnableClusterServices() error
@@ -816,10 +816,10 @@ func (o *ops) GetHostname() (string, error) {
 	return hostname, nil
 }
 
-func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string) error {
+func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionBytes []byte, baseIsoPath, outputIsoPath string, kernelArgs []string) error {
 	ignitionc := &isoeditor.IgnitionContent{}
 	ignitionc.Config = ignitionBytes
-	reader, err := isoeditor.NewRHCOSStreamReader(baseIsoPath, ignitionc, nil, nil)
+	reader, err := isoeditor.NewRHCOSStreamReader(baseIsoPath, ignitionc, nil, formatISOKernelArgs(kernelArgs))
 	if err != nil {
 		return fmt.Errorf("failed to create reader for rhcos iso: %w", err)
 	}
@@ -837,6 +837,14 @@ func (o *ops) CreateIsoWithEmbeddedIgnition(log logrus.FieldLogger, ignitionByte
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
 	return nil
+}
+
+// formatISOKernelArgs returns the text inserted into the bootloader's kernel command line.
+func formatISOKernelArgs(args []string) []byte {
+	if len(args) == 0 {
+		return nil
+	}
+	return []byte(" " + strings.Join(args, " ") + "\n")
 }
 
 func (o *ops) GetContainerStorageTarget() (string, error) {
