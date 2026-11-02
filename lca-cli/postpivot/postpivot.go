@@ -1005,8 +1005,10 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 
 // RestoreNMConnectionFiles copies the provided nmconnection files into the NM connections folder.
 // It runs from nmConnectionRestoreService before NetworkManager starts, so NM never auto-activates
-// a default DHCP profile on a NIC whose profile has not been copied yet. networkConfiguration copies
-// them again, which covers configuration folders that only become available later (e.g. IBI block device).
+// a default DHCP profile on a NIC whose profile has not been copied yet. This only covers profiles
+// already staged at boot (IBU). networkConfiguration copies them again and restarts NM, but for profiles
+// that only become available later (e.g. IBI block device) that restart may not replace a default
+// DHCP connection NM has already activated.
 func (p *PostPivot) RestoreNMConnectionFiles() error {
 	return p.copyNMConnectionFiles(path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder)
 }

@@ -6,13 +6,18 @@ Description=Restore NetworkManager connection profiles for image based SNO confi
 # be in place before NetworkManager first starts. This is kept separate
 # from installation-configuration.service because that one has to wait
 # for coreos-update-ca-trust.service, which finishes too late.
+# NetworkManager requires this unit (see [Install]), so a failed restore
+# keeps NetworkManager from starting without the profiles. When nothing
+# is staged the condition skips the unit and NetworkManager starts normally.
 Before=NetworkManager.service
 ConditionDirectoryNotEmpty=/var/opt/openshift/network-configuration/system-connections
 
 [Service]
 Type=oneshot
-RemainAfterExit=no
+# Stay active so later NetworkManager restarts do not run the restore again
+RemainAfterExit=yes
+TimeoutStartSec=120
 ExecStart=/usr/local/bin/lca-cli restore-nmconnections
 
 [Install]
-WantedBy=multi-user.target
+RequiredBy=NetworkManager.service
