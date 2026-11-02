@@ -63,15 +63,17 @@ Steps (all-or-nothing):
    post-boot-only `restorecon`), so CRI-O can read it the moment offline recovery is needed. The
    label is verified after pivot by the e2e recovery test.
 5. **Atomically seal.** The verified, labelled store is moved into place at the post-pivot path
-   **`/var/lib/containers/ro-store`** (`stage ⇒ verify ⇒ move`), outside CRI-O's writable
-   graphroot. An interrupted copy leaves no partial `ro-store`.
+   **`/var/lib/lca-ro-store`** (`stage ⇒ verify ⇒ move`), outside CRI-O's writable
+   graphroot and outside `/var/lib/containers`. The latter may be a separate mount on the
+   installed node; placing the store beneath it would hide the prepared copy after pivot.
+   An interrupted copy leaves no partial store.
 6. **Register.** Only after the store is in place, prepare writes a
    `/etc/containers/storage.conf.d/50-lca-ro-store.conf` drop-in onto the installed deployment
-   that adds `/var/lib/containers/ro-store` to `additionalimagestores`:
+   that adds `/var/lib/lca-ro-store` to `additionalimagestores`:
 
    ```toml
    [storage.options]
-   additionalimagestores = ["/var/lib/containers/ro-store", {append = true}]
+   additionalimagestores = ["/var/lib/lca-ro-store", {append = true}]
    ```
 
    `append = true` is required: the vendored `go.podman.io/storage` `conf.d` loader otherwise
