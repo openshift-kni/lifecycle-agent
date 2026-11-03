@@ -482,6 +482,16 @@ func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMa
 		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
 	}
 
+	// Record that the restore fully completed (resources applied and PV reclaim
+	// policy restored) so a re-entrant PostPivot run — e.g. one requeued by a
+	// deferred health check after a successful restore — skips re-applying the
+	// resources. The marker is created only now, after both steps above have
+	// succeeded. Creation errors are BRFailedError, so the caller's existing
+	// PostPivot failure and rollback path handles them.
+	if err := u.BackupRestore.MarkRestoreCompleted(ctx); err != nil {
+		return requeueWithError(fmt.Errorf("failed to mark restore as completed: %w", err))
+	}
+
 	// Note: the local backup directory is intentionally NOT removed here. PostPivot
 	// can re-enter and call HandleRestore again (e.g. when a deferred health check
 	// requeues after a successful restore), and StartRestore hard-fails if the

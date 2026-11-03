@@ -144,6 +144,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
+				mockBackuprestore.EXPECT().MarkRestoreCompleted(gomock.Any()).Return(nil).Times(1)
 			}
 
 			uph := &UpgHandler{
@@ -759,6 +760,11 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 			}
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)
+				// The restore-completed marker is only written once the PV reclaim
+				// policy restore succeeds.
+				if tt.restorePVsReclaimPolicyReturn() == nil {
+					mockBackuprestore.EXPECT().MarkRestoreCompleted(gomock.Any()).Return(nil).Times(1)
+				}
 			}
 			if tt.initiateRollbackReturn != nil {
 				mockRebootClient.EXPECT().InitiateRollback(gomock.Any()).Return(tt.initiateRollbackReturn()).Times(1)
