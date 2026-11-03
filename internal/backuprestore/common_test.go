@@ -792,6 +792,37 @@ func TestValidateBackupSpecs(t *testing.T) {
 	})
 }
 
+func TestValidateRestoreSpecs(t *testing.T) {
+	t.Run("nil and empty specs pass", func(t *testing.T) {
+		assert.NoError(t, ValidateRestoreSpecs(nil))
+		assert.NoError(t, ValidateRestoreSpecs([]RestoreSpec{}))
+	})
+
+	t.Run("restore without apply-wave passes", func(t *testing.T) {
+		specs := []RestoreSpec{{Name: "r1", BackupName: "b1"}}
+		assert.NoError(t, ValidateRestoreSpecs(specs))
+	})
+
+	t.Run("valid apply-wave passes", func(t *testing.T) {
+		specs := []RestoreSpec{
+			{Name: "r1", BackupName: "b1", ApplyWave: "5"},
+			{Name: "r2", BackupName: "b2", ApplyWave: "-1"},
+		}
+		assert.NoError(t, ValidateRestoreSpecs(specs))
+	})
+
+	t.Run("invalid apply-wave is rejected", func(t *testing.T) {
+		specs := []RestoreSpec{
+			{Name: "r1", BackupName: "b1", ApplyWave: "not-a-number"},
+		}
+		err := ValidateRestoreSpecs(specs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "restore \"r1\"")
+		assert.Contains(t, err.Error(), "invalid")
+		assert.Contains(t, err.Error(), "apply-wave")
+	})
+}
+
 // TestExtractBackupSpecsIgnoresLegacyIncludedResources verifies that the legacy
 // Velero spec.includedResources field is ignored during parsing: it does not
 // contribute to the resource selection, so a Backup whose only resource field is

@@ -491,6 +491,24 @@ func ValidateBackupSpecs(specs []BackupSpec) error {
 	return nil
 }
 
+// ValidateRestoreSpecs rejects Restore CR specs whose apply-wave annotation LCA
+// cannot honor, so a malformed Restore CR fails loudly during Prep instead of
+// silently falling back to a different wave later. resolveWave gives the Restore
+// CR's apply-wave precedence over the Backup CR's, but it parses the value with a
+// silent strconv.Atoi fallback: a non-numeric Restore apply-wave would otherwise
+// pass validation and then quietly place resources in the wrong dependency wave.
+// This mirrors the Backup apply-wave validation in ValidateBackupSpecs.
+func ValidateRestoreSpecs(specs []RestoreSpec) error {
+	for _, s := range specs {
+		if s.ApplyWave != "" {
+			if _, err := strconv.Atoi(s.ApplyWave); err != nil {
+				return fmt.Errorf("restore %q has invalid %s value %q: %w", s.Name, common.ApplyWaveAnn, s.ApplyWave, err)
+			}
+		}
+	}
+	return nil
+}
+
 // FindRestoreForBackup returns the RestoreSpec matching a backup name, or nil if none
 func FindRestoreForBackup(backupName string, restoreSpecs []RestoreSpec) *RestoreSpec {
 	for i := range restoreSpecs {
