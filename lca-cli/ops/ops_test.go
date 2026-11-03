@@ -11,7 +11,11 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/recert"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -88,6 +92,119 @@ func TestMountReadOnly(t *testing.T) {
 		_, statErr := os.Stat(mountFolder)
 		assert.NoError(t, statErr, "a pre-existing mountpoint must not be removed")
 	})
+}
+
+func TestPodmanArgsPrependLocalImageStore(t *testing.T) {
+	o := &ops{localImageStorePath: common.RODurabilityStorePath}
+	got := o.podmanArgs([]string{"run", "--rm", "image"})
+	assert.Equal(t,
+		[]string{"--storage-opt", "imagestore=" + common.RODurabilityStorePath, "run", "--rm", "image"},
+		got,
+		"the storage option is a global Podman option and must precede the subcommand")
+}
+
+func TestPodmanArgsNoLocalImageStore(t *testing.T) {
+	o := &ops{}
+	got := o.podmanArgs([]string{"run", "--rm", "image"})
+	assert.Equal(t, []string{"run", "--rm", "image"}, got)
+}
+
+func TestRunRecertUsesLocalImageStoreAndNoPull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	exec := NewMockExecute(ctrl)
+	log := logrus.New()
+	o := &ops{log: log, hostCommandsExecutor: exec, localImageStorePath: common.RODurabilityStorePath}
+
+	exec.EXPECT().
+		Execute("podman",
+			"--storage-opt", "imagestore="+common.RODurabilityStorePath,
+			"run", "--rm", "--network=host", "--privileged", "--replace",
+			"--name", "recert",
+			"-v", "/etc:"+recert.EtcMount,
+			"-v", "/etc/ssh:"+recert.EtcSSHMount,
+			"-v", "/etc/kubernetes:"+recert.EtcKubernetesMount,
+			"-v", "/var/lib/kubelet:"+recert.VarLibKubeletMount,
+			"-v", "/var/tmp:/var/tmp",
+			"-v", "/etc/machine-config-daemon:"+recert.EtcMachineConfigDaemonMount,
+			"-v", "/etc/pki:"+recert.EtcPKIMount,
+			"-e", "RECERT_CONFIG=/tmp/recert.yaml",
+			"--pull=never",
+			"quay.io/example/recert:latest",
+		).
+		Return("", nil).
+		Times(1)
+
+	err := o.RunRecert("quay.io/example/recert:latest", "", "/tmp/recert.yaml")
+	assert.NoError(t, err)
+}
+
+func TestNewOpsWithLocalImageStoreIfConfigured(t *testing.T) {
+	t.Run("valid drop-in and store enable local image store mode", func(t *testing.T) {
+		dir := t.TempDir()
+		dropIn := filepath.Join(dir, "99-lca-ro-store.conf")
+		storeCheck := filepath.Join(dir, "store")
+		require.NoError(t, os.MkdirAll(storeCheck, 0o755))
+		require.NoError(t, os.WriteFile(dropIn, []byte(common.RODurabilityCrioDropInContent()), 0o644))
+
+		exec := NewMockExecute(gomock.NewController(t))
+		got, err := newOpsWithLocalImageStoreIfConfigured(logrus.New(), exec, dropIn, common.RODurabilityStorePath, storeCheck)
+		require.NoError(t, err)
+		assert.True(t, got.LocalImageStoreEnabled())
+	})
+
+	t.Run("absent drop-in leaves connected behavior unchanged", func(t *testing.T) {
+		dir := t.TempDir()
+		dropIn := filepath.Join(dir, "99-lca-ro-store.conf")
+		storeCheck := filepath.Join(dir, "store")
+
+		exec := NewMockExecute(gomock.NewController(t))
+		got, err := newOpsWithLocalImageStoreIfConfigured(logrus.New(), exec, dropIn, common.RODurabilityStorePath, storeCheck)
+		require.NoError(t, err)
+		assert.False(t, got.LocalImageStoreEnabled())
+	})
+
+	t.Run("unexpected drop-in content fails closed", func(t *testing.T) {
+		dir := t.TempDir()
+		dropIn := filepath.Join(dir, "99-lca-ro-store.conf")
+		storeCheck := filepath.Join(dir, "store")
+		require.NoError(t, os.MkdirAll(storeCheck, 0o755))
+		require.NoError(t, os.WriteFile(dropIn, []byte("unexpected"), 0o644))
+
+		exec := NewMockExecute(gomock.NewController(t))
+		_, err := newOpsWithLocalImageStoreIfConfigured(logrus.New(), exec, dropIn, common.RODurabilityStorePath, storeCheck)
+		assert.ErrorContains(t, err, "unexpected content")
+	})
+
+	t.Run("missing durable store fails closed", func(t *testing.T) {
+		dir := t.TempDir()
+		dropIn := filepath.Join(dir, "99-lca-ro-store.conf")
+		storeCheck := filepath.Join(dir, "store")
+		require.NoError(t, os.WriteFile(dropIn, []byte(common.RODurabilityCrioDropInContent()), 0o644))
+
+		exec := NewMockExecute(gomock.NewController(t))
+		_, err := newOpsWithLocalImageStoreIfConfigured(logrus.New(), exec, dropIn, common.RODurabilityStorePath, storeCheck)
+		assert.ErrorContains(t, err, "validating local image store")
+	})
+}
+
+func TestImageExistsUsesLocalImageStore(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	exec := NewMockExecute(ctrl)
+	log := logrus.New()
+	o := &ops{log: log, hostCommandsExecutor: exec, localImageStorePath: common.RODurabilityStorePath}
+
+	exec.EXPECT().
+		Execute("podman",
+			"--storage-opt", "imagestore="+common.RODurabilityStorePath,
+			"image", "exists", "quay.io/example/recert:latest",
+		).
+		Return("", nil).
+		Times(1)
+
+	exists, err := o.ImageExists("quay.io/example/recert:latest")
+	assert.NoError(t, err)
+	assert.True(t, exists)
+	assert.True(t, o.LocalImageStoreEnabled())
 }
 
 func TestWaitForEtcd_ImmediateSuccess(t *testing.T) {

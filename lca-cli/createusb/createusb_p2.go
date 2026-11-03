@@ -114,16 +114,14 @@ func stageIBIImagesPayload(ctx context.Context, log *logrus.Logger, deps mediaBu
 	}
 
 	// 3. Self-contained only: build the read-only durability store under <stagingRoot>/store from the
-	//    same digest-pinned closure. install-only is a no-op. The store's additionalimagestores point
-	//    at the on-node runtime path (common.LocalImagesStorePath), not the staging location, so
-	//    staging in scratch does not change the baked on-node reference.
+	//    same digest-pinned closure. install-only is a no-op.
 	//
 	//    The store is built for the build host's architecture (runtime.GOARCH): the manifest carries
 	//    no target-node architecture, so cross-architecture media (e.g. an amd64 workstation building
 	//    for an arm64 node) is not supported here — selecting an explicit target architecture is
 	//    follow-up work. Same-architecture builds (the common case) are correct.
 	if m.Mode == ModeSelfContained {
-		store, serr := deps.images.BuildStore(ctx, log, m, stagingRoot, common.LocalImagesStorePath, runtime.GOARCH)
+		store, serr := deps.images.BuildStore(ctx, log, m, stagingRoot, runtime.GOARCH)
 		if serr != nil {
 			return 0, fmt.Errorf("building the on-media durability store for ibi-images: %w", serr)
 		}

@@ -37,24 +37,6 @@ const (
 	roStoreOverlayLayersJSON = "overlay-layers/layers.json"
 )
 
-// roStoreStorageConfDropIn is the storage.conf.d drop-in that registers the persisted store as
-// a read-only additional image store at the post-pivot RODurabilityStorePath. The single %s is
-// that absolute path. append=true is required: the vendored go.podman.io/storage conf.d loader
-// otherwise has a drop-in array *replace* additionalimagestores, which would drop any entries
-// an existing storage.conf already sets; append preserves them (merges into the effective
-// config). The store is read-only by additional-image-store semantics plus its root-owned,
-// relabelled on-disk form -- not by rewriting content modes.
-const roStoreStorageConfDropIn = `# Written by lca-cli ibi prepare (CNF-27165) for self-contained USB-based IBI media.
-#
-# Registers the on-disk, read-only containers/storage durability store copied from the installer
-# media as a read-only additional image store, so the installed node resolves the digest-pinned
-# image closure locally with no registry and no network (the primary durability model). The copy
-# survives kubelet GC and CRI-O reboot-time cleanup because both act only on the writable
-# graphroot. append=true preserves any additionalimagestores already set in the effective config.
-[storage.options]
-additionalimagestores = ["%s", {append = true}]
-`
-
 // Seams overridable from tests. The real implementations copy a real containers-storage store
 // and open it as an additional image store; tests replace them to exercise the persist
 // orchestration (fail-closed, atomic seal, drop-in registration, ordering) without root, an
@@ -76,9 +58,9 @@ var (
 // persistReadOnlyStore copies the pre-built read-only containers/storage durability store staged
 // on p2 (common.LocalImagesStorePath) onto the installed disk, validates it against the on-media
 // digest manifest, seals it read-only at the post-pivot RODurabilityStorePath, and
-// registers it in the effective storage.conf via a conf.d drop-in. It runs only for
+// registers it with CRI-O via a config drop-in. It runs only for
 // self-contained disconnected media, while the stateroot is still mounted and before p2 is
-// unmounted (so additionalimagestores never points at a path that has already gone away), and it
+// unmounted (so the registered image store never points at a path that has already gone away), and it
 // fails closed: self-contained media that is missing or carries an incomplete store is an error,
 // never a silent install-only-style no-op.
 //
@@ -87,7 +69,7 @@ var (
 // renameat2(RENAME_EXCHANGE) (a plain rename on a first publish, where no live store exists yet),
 // and only then is the drop-in written. The exchange never leaves the configured path momentarily
 // absent, so a crash mid-swap cannot leave a dangling registration pointing at a missing store. An
-// interrupted copy leaves no ro-store and no storage.conf entry; a failure writing the drop-in rolls
+// interrupted copy leaves no ro-store and no CRI-O drop-in; a failure writing the drop-in rolls
 // the store back to the previous copy.
 func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localimages.DigestManifest) error {
 	// The store is staged at <p2 mount>/store; read it from the configured mount path so it
@@ -173,7 +155,7 @@ func (i *IBIPrepare) persistReadOnlyStore(ctx context.Context, manifest *localim
 	i.log.Infof("Sealed read-only durability store at %s", destStore)
 
 	// Register the store only after it is in place and verified, so an interrupted prepare never
-	// leaves a storage.conf entry pointing at an incomplete/absent store. If registration fails, undo
+	// leaves a CRI-O drop-in pointing at an incomplete/absent store. If registration fails, undo
 	// the publish so the (store, config) pair stays all-or-nothing and the retry never destroys a
 	// valid store.
 	if err := i.registerReadOnlyStore(osname); err != nil {
@@ -225,7 +207,7 @@ func pathExists(path string) (bool, error) {
 	return true, nil
 }
 
-// registerReadOnlyStore writes the storage.conf.d drop-in that registers the persisted store as a
+// registerReadOnlyStore writes the CRI-O drop-in that registers the persisted store as a
 // read-only additional image store. The drop-in is written onto the installed deployment's /etc
 // (resolved via the ostree deployment dir) so it is the effective config post-pivot, and it is
 // written atomically (temp file + rename) so a reader never observes a half-written config.
@@ -238,21 +220,30 @@ func (i *IBIPrepare) registerReadOnlyStore(osname string) error {
 		return fmt.Errorf("no deployment found for stateroot %q", osname)
 	}
 
-	dropInDir := filepath.Join(deploymentDir, common.StorageConfDropInDir)
-	// 0o755: /etc/containers/storage.conf.d is a world-readable config directory by convention
+	dropInDir := filepath.Join(deploymentDir, common.CrioConfigDropInDir)
+	// 0o755: /etc/crio/crio.conf.d is a world-readable config directory by convention
 	// (it holds no secrets, only the public additional-image-store registration), matching the
 	// mode it carries on a stock RHCOS node.
 	if err := os.MkdirAll(dropInDir, 0o755); err != nil { //nolint:gosec // public config dir, no secrets
-		return fmt.Errorf("failed to create storage.conf.d dir %q: %w", dropInDir, err)
+		return fmt.Errorf("failed to create CRI-O config dir %q: %w", dropInDir, err)
 	}
-	dropInPath := filepath.Join(dropInDir, common.RODurabilityStoreDropInName)
-	// The drop-in content is deterministic (it registers the fixed RODurabilityStorePath), and
-	// writeFileAtomic replaces it in place via a rename. Do not remove any existing drop-in first:
-	// leaving it until the new one atomically replaces it keeps the previous registration intact if
-	// the write fails, so a store rolled back to its previous copy keeps its matching registration.
-	content := fmt.Sprintf(roStoreStorageConfDropIn, common.RODurabilityStorePath)
+	dropInPath := filepath.Join(dropInDir, common.RODurabilityCrioDropInName)
+	content := common.RODurabilityCrioDropInContent()
+
+	// Refuse to overwrite a customer- or platform-owned file at the same path. Matching content
+	// is idempotent; anything else is a conflict that must be surfaced rather than silently
+	// replaced.
+	if existing, err := os.ReadFile(dropInPath); err == nil { //nolint:gosec // Deployment directory joined with a fixed drop-in filename.
+		if string(existing) != content {
+			return fmt.Errorf("refusing to overwrite unexpected CRI-O drop-in %q", dropInPath)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing CRI-O drop-in %q: %w", dropInPath, err)
+	}
+
 	if err := writeFileAtomic(dropInPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("failed to write storage.conf drop-in %q: %w", dropInPath, err)
+		return fmt.Errorf("failed to write CRI-O drop-in %q: %w", dropInPath, err)
 	}
 	i.log.Infof("Registered read-only additional image store %s via %s", common.RODurabilityStorePath, dropInPath)
 	return nil

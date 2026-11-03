@@ -21,7 +21,6 @@ partition) is documented in [create-usb.md](create-usb.md#the-self-contained-dur
   oci-<build-id>/      # OCI image layout + signatures/ subtree
   digests.json         # on-media digest manifest (v2+)
   store/               # read-only containers/storage overlay store  <-- this is what prepare copies
-  storage.conf         # the media's own drop-in (registers store/ at the p2 path)
 ```
 
 The store is built from the **same digest-pinned closure** recorded in `digests.json`, so it
@@ -68,23 +67,38 @@ Steps (all-or-nothing):
    installed node; placing the store beneath it would hide the prepared copy after pivot.
    An interrupted copy leaves no partial store.
 6. **Register.** Only after the store is in place, prepare writes a
-   `/etc/containers/storage.conf.d/50-lca-ro-store.conf` drop-in onto the installed deployment
-   that adds `/var/lib/lca-ro-store` to `additionalimagestores`:
+   `/etc/crio/crio.conf.d/99-lca-ro-store.conf` drop-in onto the installed deployment:
 
    ```toml
-   [storage.options]
-   additionalimagestores = ["/var/lib/lca-ro-store", {append = true}]
+   [crio]
+   storage_option = [
+     "imagestore=/var/lib/lca-ro-store",
+   ]
    ```
 
-   `append = true` is required: the vendored `go.podman.io/storage` `conf.d` loader otherwise
-   has a drop-in array **replace** `additionalimagestores`, which would drop any entries an
-   existing `storage.conf` already sets. `append` **merges** into the effective config,
-   preserving existing entries. If the drop-in write fails, the sealed store is rolled back so
-   the store and its registration stay atomic as a pair.
+   CRI-O reads its own drop-in directory independently of the older host Podman
+   `containers/storage.conf.d` loader. It also merges `storage_option` values with the base
+   configuration, so the platform's existing storage options are preserved. If the drop-in
+   write fails, the sealed store is rolled back so the store and its registration stay atomic
+   as a pair.
 
 Post-boot, CRI-O resolves every closure image from `ro-store` by canonical `name@digest` with
 no registry and no IDMS. The copy survives both kubelet GC and CRI-O's reboot-time corruption
 cleanup, because both act only on the writable graphroot. There is **no systemd service**.
+
+LCA-controlled Podman commands that must resolve images from the same store pass the global
+option:
+
+```text
+--storage-opt imagestore=/var/lib/lca-ro-store
+```
+
+Recert and the temporary etcd server used by recert also use Podman's `--pull=never` in this
+mode, so a missing local image fails instead of silently becoming a registry pull.
+
+Before post-pivot enables this mode, it validates the exact CRI-O drop-in content and confirms
+the durable store directory exists. A corrupt drop-in or missing store fails closed instead of
+silently reverting to connected-mode behavior.
 
 ## Disk-space trade-off
 

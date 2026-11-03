@@ -188,8 +188,7 @@ const (
 
 	// LocalImagesStorePath is where create-usb stages the read-only containers/storage durability
 	// store on the p2 (ibi-images) partition for self-contained media, mounted at
-	// LocalImagesMountPath on the node. It is the absolute path the rendered storage.conf drop-in
-	// registers as a read-only additional image store, and the path the prepare/persist stages
+	// LocalImagesMountPath on the node. It is the path the prepare/persist stages
 	// (CNF-27165) read the store from once p2 is mounted; both sides must use this constant so the
 	// path never diverges.
 	LocalImagesStorePath = LocalImagesMountPath + "/" + LocalImagesStoreDirName
@@ -230,18 +229,22 @@ const (
 	RODurabilityStoreDirName = "lca-ro-store"
 
 	// RODurabilityStorePath is the post-pivot absolute path of the persisted read-only additional
-	// image store. It is the value the storage.conf drop-in registers in additionalimagestores
-	// (not the prepare-time /mnt path, not the USB mount), so CRI-O finds the store after pivot.
+	// image store. It is the value the CRI-O drop-in and LCA Podman command register (not the
+	// prepare-time /mnt path, not the USB mount), so CRI-O finds the store after pivot.
 	RODurabilityStorePath = "/var/lib/" + RODurabilityStoreDirName
 
-	// StorageConfDropInDir is the containers/storage drop-in config directory the vendored
-	// go.podman.io/storage conf.d loader reads (*.conf). The self-contained prepare writes the
-	// additional-image-store registration here, on the installed deployment's /etc.
-	StorageConfDropInDir = "/etc/containers/storage.conf.d"
+	// CrioConfigDropInDir is CRI-O's drop-in config directory. OpenShift and customers already
+	// use this directory for CRI-O-specific configuration, and unlike the older host Podman
+	// storage.conf.d loader, CRI-O reads it on the affected RHCOS build.
+	CrioConfigDropInDir = "/etc/crio/crio.conf.d"
 
-	// RODurabilityStoreDropInName is the storage.conf.d drop-in filename the self-contained
-	// prepare writes to register the persisted read-only additional image store.
-	RODurabilityStoreDropInName = "50-lca-ro-store.conf"
+	// RODurabilityCrioDropInName is the CRI-O drop-in filename the self-contained prepare
+	// writes to register the persisted read-only additional image store.
+	RODurabilityCrioDropInName = "99-lca-ro-store.conf"
+
+	// RODurabilityCrioDropInPath is the absolute path of the CRI-O drop-in that registers
+	// the persisted read-only additional image store.
+	RODurabilityCrioDropInPath = CrioConfigDropInDir + "/" + RODurabilityCrioDropInName
 
 	DnsmasqOverrides = "/etc/default/sno_dnsmasq_configuration_overrides"
 

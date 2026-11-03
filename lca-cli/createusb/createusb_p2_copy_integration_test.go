@@ -198,14 +198,13 @@ func TestCopiedDurabilityStoreReadableAsAdditionalImageStoreIntegration(t *testi
 	// Probe overlay availability up front, so a later build/read error is a genuine regression.
 	requireOverlayStore(t)
 
-	// The store will finally live at <mount>/store once copied, so render the drop-in against that
-	// path -- the absolute path the node mounts p2 at and opens the store from.
+	// The store will finally live at <mount>/store once copied.
 	mnt := mountExt4Loop(t)
 	runtimeStorePath := filepath.Join(mnt, durabilityStoreDirName)
 
 	// Build the store under the staging root (committed to <staging>/store); with overlay confirmed
 	// available, a build error is a real regression.
-	res, err := BuildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, staging, runtimeStorePath, runtime.GOARCH)
+	res, err := BuildDurabilityStore(context.Background(), testLogger(), &Manifest{Mode: ModeSelfContained}, staging, runtime.GOARCH)
 	require.NoError(t, err, "overlay is available, so a build error is a real regression")
 	require.NotNil(t, res)
 	require.Equal(t, filepath.Join(staging, durabilityStoreDirName), res.StorePath)
@@ -219,18 +218,15 @@ func TestCopiedDurabilityStoreReadableAsAdditionalImageStoreIntegration(t *testi
 	remount, err := exec.Command("mount", "-o", "remount,ro", mnt).CombinedOutput() //nolint:gosec // fixed temp mountpoint
 	require.NoError(t, err, string(remount))
 
-	// The rendered drop-in registers the copied store at its final (read-only) path.
-	driver, additionalStores := parseRenderedStorageConf(t, res.StorageConfPath)
-	require.Equal(t, durabilityStoreDriver, driver)
-	require.Equal(t, []string{runtimeStorePath}, additionalStores, "the drop-in must register the store at its final copied path")
+	// Open the copied store directly as a read-only additional image store.
 
 	// Open a throwaway, empty primary overlay store with the copied, read-only store attached as a
 	// read-only additional image store -- how the node consumes the media.
 	store, err := cstorage.GetStore(cstorage.StoreOptions{
-		GraphDriverName:    driver,
+		GraphDriverName:    durabilityStoreDriver,
 		GraphRoot:          filepath.Join(t.TempDir(), "node-graph"),
 		RunRoot:            filepath.Join(t.TempDir(), "node-run"),
-		GraphDriverOptions: []string{"imagestore=" + additionalStores[0]},
+		GraphDriverOptions: []string{"imagestore=" + runtimeStorePath},
 	})
 	require.NoError(t, err, "opening the copied store as a read-only additional image store is the consumer-side gate")
 	defer func() {

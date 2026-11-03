@@ -273,7 +273,21 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		return fmt.Errorf("failed to create recert config file: %w", err)
 	}
 
-	if _, err := p.ops.RunInHostNamespace("podman", "image", "exists", seedClusterInfo.RecertImagePullSpec); err != nil {
+	imageExists, err := p.ops.ImageExists(seedClusterInfo.RecertImagePullSpec)
+	if err != nil {
+		if p.ops.LocalImageStoreEnabled() {
+			return fmt.Errorf("failed to check whether recert image %q exists locally: %w", seedClusterInfo.RecertImagePullSpec, err)
+		}
+		// Connected and install-only nodes retain the pull fallback on inspection errors.
+		imageExists = false
+	}
+	if !imageExists {
+		// Self-contained USB IBI must fail closed: the recert image is expected to be in the
+		// persisted read-only store, and a registry pull would mask a broken local-image handoff.
+		if p.ops.LocalImageStoreEnabled() {
+			return fmt.Errorf("recert image %q is not available in the local image store", seedClusterInfo.RecertImagePullSpec)
+		}
+
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		_ = wait.PollUntilContextCancel(ctxWithTimeout, time.Second, true, func(ctx context.Context) (bool, error) {
@@ -292,7 +306,7 @@ func (p *PostPivot) recert(ctx context.Context, seedReconfiguration *clusterconf
 		})
 	}
 
-	err := p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
+	err = p.ops.RecertFullFlow(seedClusterInfo.RecertImagePullSpec, p.authFile,
 		path.Join(p.workingDir, recert.RecertConfigFile),
 		nil,
 		func() error { return p.postRecertCommands() },

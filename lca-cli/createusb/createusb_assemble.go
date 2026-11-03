@@ -249,8 +249,8 @@ type imagePopulator interface {
 	// none), and writes the <output>.digests.json sidecar beside outputPath.
 	BuildLayout(ctx context.Context, log *logrus.Logger, m *Manifest, opts ImageSetOptions, outputPath, p2Root, p3Root string) (*LayoutBuildResult, error)
 	// BuildStore builds the read-only containers/storage durability store under p2Root for
-	// self-contained media. runtimeStorePath/targetArch are empty to use the build defaults.
-	BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error)
+	// self-contained media. targetArch selects the node architecture.
+	BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, targetArch string) (*StoreBuildResult, error)
 }
 
 // defaultImagePopulator wraps the production BuildImageLayout / BuildDurabilityStore.
@@ -260,8 +260,8 @@ func (defaultImagePopulator) BuildLayout(ctx context.Context, log *logrus.Logger
 	return BuildImageLayout(ctx, log, m, opts, outputPath, p2Root, p3Root)
 }
 
-func (defaultImagePopulator) BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error) {
-	return BuildDurabilityStore(ctx, log, m, p2Root, runtimeStorePath, targetArch)
+func (defaultImagePopulator) BuildStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, targetArch string) (*StoreBuildResult, error) {
+	return BuildDurabilityStore(ctx, log, m, p2Root, targetArch)
 }
 
 // mediaBuildDeps bundles the injectable seams: the privileged partition ops, the live-ISO

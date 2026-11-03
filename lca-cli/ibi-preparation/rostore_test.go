@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	storagetypes "go.podman.io/storage/types"
 	"go.uber.org/mock/gomock"
 
 	"github.com/openshift-kni/lifecycle-agent/api/ibiconfig"
@@ -166,7 +165,7 @@ func TestValidateSourceStoreFailsClosedWhenAbsent(t *testing.T) {
 // TestPersistReadOnlyStoreHappyPath proves the full handoff: the pre-built store is copied onto
 // the installed disk (modes preserved), validated as an overlay store, verified against the
 // digest manifest, SELinux-labelled, atomically sealed at the post-pivot ro-store path, and
-// registered via a storage.conf.d drop-in using append=true -- in that order, with the store
+// registered with CRI-O via a config drop-in -- in that order, with the store
 // verified at its staging path before the move.
 func TestPersistReadOnlyStoreHappyPath(t *testing.T) {
 	saveSeams(t)
@@ -222,13 +221,13 @@ func TestPersistReadOnlyStoreHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o640), fi.Mode().Perm())
 
-	// The drop-in registers the store at the post-pivot absolute path, with append=true, on the
+	// The CRI-O drop-in registers the store at the post-pivot absolute path on the
 	// deployment's /etc.
-	dropIn := filepath.Join(deploymentDir, common.StorageConfDropInDir, common.RODurabilityStoreDropInName)
+	dropIn := filepath.Join(deploymentDir, common.CrioConfigDropInDir, common.RODurabilityCrioDropInName)
 	data, err := os.ReadFile(dropIn)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `additionalimagestores = ["`+common.RODurabilityStorePath+`", {append = true}]`)
-	assert.Contains(t, string(data), "[storage.options]")
+	assert.Contains(t, string(data), `storage_option = [`)
+	assert.Contains(t, string(data), `"imagestore=`+common.RODurabilityStorePath+`"`)
 }
 
 // TestPersistReadOnlyStoreFailsClosedOnMissingStore proves self-contained media without the
@@ -284,7 +283,7 @@ func TestPersistReadOnlyStoreFailsClosedOnIncompleteStore(t *testing.T) {
 }
 
 // TestPersistReadOnlyStorePartialCopyLeavesNothing proves an interrupted/failed copy leaves no
-// partial ro-store and no storage.conf entry.
+// partial ro-store and no CRI-O drop-in.
 func TestPersistReadOnlyStorePartialCopyLeavesNothing(t *testing.T) {
 	saveSeams(t)
 	withDeployRoot(t)
@@ -333,7 +332,7 @@ func TestPersistReadOnlyStoreRollsBackOnDropInFailure(t *testing.T) {
 	destStore := filepath.Join(common.GetStaterootPath(osname), common.RODurabilityStorePath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(destStore), 0o755))
 
-	// Point the deployment dir at a regular file so creating the storage.conf.d dir under it fails.
+	// Point the deployment dir at a regular file so creating the CRI-O config dir under it fails.
 	badDeploymentDir := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(badDeploymentDir, []byte("x"), 0o600))
 	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(badDeploymentDir, nil).Times(1)
@@ -583,29 +582,72 @@ func TestPersistReadOnlyStoreSELinuxFailureLeavesNothing(t *testing.T) {
 	assert.NoDirExists(t, destStore+roStoreStagingSuffix)
 }
 
-// TestReadOnlyStoreDropInMergesPreservingExistingEntries proves the rendered drop-in registers
-// the ro-store in the effective storage.conf *without clobbering* a pre-existing
-// additionalimagestores entry: decoding a base storage.conf and then the drop-in into the same
-// struct (as the conf.d loader does) yields both entries, because the drop-in uses append=true.
-func TestReadOnlyStoreDropInMergesPreservingExistingEntries(t *testing.T) {
-	const baseStorageConf = `[storage]
-driver = "overlay"
-[storage.options]
-additionalimagestores = ["/var/lib/containers/pre-existing-store"]
-`
-	dropIn := fmt.Sprintf(roStoreStorageConfDropIn, common.RODurabilityStorePath)
+// TestReadOnlyStoreCrioDropInRegistersImageStore proves the rendered CRI-O drop-in carries the
+// expected storage_option entry. CRI-O merges storage_option values from drop-ins with its base
+// configuration, so this file adds the ro-store without replacing platform storage settings.
+func TestReadOnlyStoreCrioDropInRegistersImageStore(t *testing.T) {
+	dropIn := common.RODurabilityCrioDropInContent()
 
-	// Decode the base then the drop-in into the same struct, mirroring the conf.d merge order.
-	var cfg storagetypes.TomlConfig
-	_, err := toml.Decode(baseStorageConf, &cfg)
-	require.NoError(t, err)
-	_, err = toml.Decode(dropIn, &cfg)
+	var cfg struct {
+		Crio struct {
+			StorageOptions []string `toml:"storage_option"`
+		} `toml:"crio"`
+	}
+	_, err := toml.Decode(dropIn, &cfg)
 	require.NoError(t, err)
 
 	assert.Equal(t,
-		[]string{"/var/lib/containers/pre-existing-store", common.RODurabilityStorePath},
-		cfg.Storage.Options.AdditionalImageStores.Values,
-		"the drop-in must append the ro-store, preserving the existing additionalimagestores entry")
+		[]string{"imagestore=" + common.RODurabilityStorePath},
+		cfg.Crio.StorageOptions,
+		"the CRI-O drop-in must register the persisted read-only image store")
+}
+
+// TestRegisterReadOnlyStoreRefusesUnexpectedExistingDropIn proves prepare fails rather than
+// overwrite a customer- or platform-owned file at the LCA drop-in path.
+func TestRegisterReadOnlyStoreRefusesUnexpectedExistingDropIn(t *testing.T) {
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	deploymentDir := filepath.Join(common.GetStaterootPath(osname), "deploy", "abc123.0")
+	dropIn := filepath.Join(deploymentDir, common.CrioConfigDropInDir, common.RODurabilityCrioDropInName)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dropIn), 0o755))
+	require.NoError(t, os.WriteFile(dropIn, []byte("customer-owned"), 0o644))
+
+	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(deploymentDir, nil).Times(1)
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, t.TempDir(), seedVersion)
+
+	err := ibi.registerReadOnlyStore(osname)
+	assert.ErrorContains(t, err, "refusing to overwrite unexpected CRI-O drop-in")
+
+	data, readErr := os.ReadFile(dropIn)
+	require.NoError(t, readErr)
+	assert.Equal(t, "customer-owned", string(data), "the existing file must not be modified")
+}
+
+// TestRegisterReadOnlyStoreIsIdempotent proves a matching LCA drop-in is accepted rather than
+// treated as a conflict or unnecessarily rewritten.
+func TestRegisterReadOnlyStoreIsIdempotent(t *testing.T) {
+	withDeployRoot(t)
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	ostreeMock := ostreeclient.NewMockIClient(ctrl)
+
+	const seedVersion = "4.15.0"
+	osname := common.GetStaterootName(seedVersion)
+	deploymentDir := filepath.Join(common.GetStaterootPath(osname), "deploy", "abc123.0")
+	dropIn := filepath.Join(deploymentDir, common.CrioConfigDropInDir, common.RODurabilityCrioDropInName)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dropIn), 0o755))
+	content := common.RODurabilityCrioDropInContent()
+	require.NoError(t, os.WriteFile(dropIn, []byte(content), 0o644))
+
+	ostreeMock.EXPECT().GetDeploymentDir(osname).Return(deploymentDir, nil).Times(1)
+	ibi := newSelfContainedPrepare(mockOps, ostreeMock, t.TempDir(), seedVersion)
+
+	require.NoError(t, ibi.registerReadOnlyStore(osname))
 }
 
 func TestWriteFileAtomic(t *testing.T) {
@@ -629,7 +671,7 @@ func TestWriteFileAtomic(t *testing.T) {
 // TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount drives the full self-contained
 // disconnected happy path and asserts the read-only store handoff runs after the closure
 // self-check and before the final sync and the p2 unmount -- the ordering the unmount-p2 comment
-// reserves, so additionalimagestores never points at a path that has gone away.
+// reserves, so the registered image store never points at a path that has gone away.
 func TestRunSelfContainedPersistsBeforeFinalSyncAndUnmount(t *testing.T) {
 	saveSeams(t)
 	t.Chdir(t.TempDir())

@@ -241,6 +241,20 @@ func (mr *MockOpsMockRecorder) ListBlockDevices() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlockDevices", reflect.TypeOf((*MockOps)(nil).ListBlockDevices))
 }
 
+// LocalImageStoreEnabled mocks base method.
+func (m *MockOps) LocalImageStoreEnabled() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LocalImageStoreEnabled")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// LocalImageStoreEnabled indicates an expected call of LocalImageStoreEnabled.
+func (mr *MockOpsMockRecorder) LocalImageStoreEnabled() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalImageStoreEnabled", reflect.TypeOf((*MockOps)(nil).LocalImageStoreEnabled))
+}
+
 // MkdirAll mocks base method.
 func (m *MockOps) MkdirAll(path string, perm os.FileMode) error {
 	m.ctrl.T.Helper()

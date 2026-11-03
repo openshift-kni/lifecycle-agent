@@ -45,7 +45,8 @@ import (
 )
 
 const (
-	podman = "podman"
+	podman                = "podman"
+	podmanImageSubcommand = "image"
 
 	defaultEtcdHealthTimeout = 1 * time.Minute
 	etcdPollInterval         = 1 * time.Second
@@ -102,6 +103,7 @@ type Ops interface {
 	GetContainerStorageTarget() (string, error)
 	StopClusterServices() error
 	EnableClusterServices() error
+	LocalImageStoreEnabled() bool
 }
 
 type CMD struct {
@@ -123,11 +125,95 @@ type ops struct {
 	log                  *logrus.Logger
 	hostCommandsExecutor Execute
 	etcdTimeout          time.Duration
+	localImageStorePath  string
 }
 
 // NewOps creates and returns an Ops interface for executing host namespace operations
 func NewOps(log *logrus.Logger, hostCommandsExecutor Execute) Ops {
 	return &ops{hostCommandsExecutor: hostCommandsExecutor, log: log}
+}
+
+// NewOpsWithLocalImageStore returns an Ops implementation whose Podman commands use the supplied
+// path as a read-only additional image store. It is intended for self-contained USB IBI
+// post-pivot flows where images must resolve locally instead of falling back to a registry pull.
+func NewOpsWithLocalImageStore(log *logrus.Logger, hostCommandsExecutor Execute, storePath string) Ops {
+	return &ops{
+		hostCommandsExecutor: hostCommandsExecutor,
+		log:                  log,
+		localImageStorePath:  storePath,
+	}
+}
+
+// NewOpsWithLocalImageStoreIfConfigured returns an Ops implementation that uses the persisted
+// ro-store when lca-cli ibi prepare has registered it with CRI-O. The drop-in is absent on
+// connected and install-only targets, which keeps their behavior unchanged. If the drop-in is
+// present, its exact content and the durable store are validated so a corrupt or dangling
+// registration fails closed instead of silently reverting to connected-mode pulls.
+func NewOpsWithLocalImageStoreIfConfigured(log *logrus.Logger, hostCommandsExecutor Execute) (Ops, error) {
+	return newOpsWithLocalImageStoreIfConfigured(
+		log,
+		hostCommandsExecutor,
+		common.PathOutsideChroot(common.RODurabilityCrioDropInPath),
+		common.RODurabilityStorePath,
+		common.PathOutsideChroot(common.RODurabilityStorePath),
+	)
+}
+
+// newOpsWithLocalImageStoreIfConfigured is the testable core of
+// NewOpsWithLocalImageStoreIfConfigured. storePath is the path Podman sees in the host or chroot
+// namespace; storeCheckPath is the path this process uses to validate the store when it may be
+// running in a container with the host mounted at /host.
+func newOpsWithLocalImageStoreIfConfigured(
+	log *logrus.Logger,
+	hostCommandsExecutor Execute,
+	dropInPath,
+	storePath,
+	storeCheckPath string,
+) (Ops, error) {
+	data, err := os.ReadFile(dropInPath) //nolint:gosec // Fixed drop-in path, optionally prefixed by the host mount.
+	if os.IsNotExist(err) {
+		return NewOps(log, hostCommandsExecutor), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading local image store CRI-O drop-in %q: %w", dropInPath, err)
+	}
+	if string(data) != common.RODurabilityCrioDropInContent() {
+		return nil, fmt.Errorf("unexpected content in local image store CRI-O drop-in %q", dropInPath)
+	}
+
+	info, err := os.Stat(storeCheckPath)
+	if err != nil {
+		return nil, fmt.Errorf("validating local image store %q: %w", storeCheckPath, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("local image store path %q is not a directory", storeCheckPath)
+	}
+
+	return NewOpsWithLocalImageStore(log, hostCommandsExecutor, storePath), nil
+}
+
+// LocalImageStoreEnabled reports whether Podman commands should use the persisted read-only
+// additional image store.
+func (o *ops) LocalImageStoreEnabled() bool {
+	return o.localImageStorePath != ""
+}
+
+// podmanArgs prepends the rootful Podman global storage option when a local image store is
+// configured. The option must appear before the Podman subcommand.
+func (o *ops) podmanArgs(args []string) []string {
+	if o.localImageStorePath == "" {
+		return args
+	}
+	return append([]string{"--storage-opt", "imagestore=" + o.localImageStorePath}, args...)
+}
+
+// withNoPull appends Podman's run --pull=never option when the local image store is enabled. In
+// self-contained mode a missing image must fail rather than silently become a registry pull.
+func (o *ops) withNoPull(args []string) []string {
+	if o.localImageStorePath == "" {
+		return args
+	}
+	return append(args, "--pull=never")
 }
 
 func (o *ops) SystemctlAction(action string, args ...string) (string, error) {
@@ -234,12 +320,15 @@ func (o *ops) RunUnauthenticatedEtcdServer(authFile, name string) error {
 		"--name", name,
 		"--entrypoint", "etcd",
 		"-v", "/var/lib/etcd:/store",
+	)
+	args = o.withNoPull(args)
+	args = append(args,
 		etcdImage,
 		"--name", "editor", "--data-dir", "/store")
 
 	// Run the command and return an error if it occurs
-	if _, err := o.RunInHostNamespace(command, args...); err != nil {
-		return err
+	if _, err := o.hostCommandsExecutor.Execute(command, o.podmanArgs(args)...); err != nil {
+		return fmt.Errorf("failed to start unauthenticated etcd server: %w", err)
 	}
 
 	o.log.Info("Waiting for unauthenticated etcd start serving for recert tool")
@@ -310,8 +399,9 @@ func (o *ops) RunRecert(recertContainerImage, authFile, recertConfigFile string,
 	}
 
 	args = append(args, additionalPodmanParams...)
+	args = o.withNoPull(args)
 	args = append(args, recertContainerImage)
-	if _, err := o.hostCommandsExecutor.Execute(command, args...); err != nil {
+	if _, err := o.hostCommandsExecutor.Execute(command, o.podmanArgs(args)...); err != nil {
 		return fmt.Errorf("failed to run recert tool container: %w", err)
 	}
 
@@ -389,7 +479,7 @@ func (o *ops) RemountBoot() error {
 }
 
 func (o *ops) ImageExists(img string) (bool, error) {
-	_, err := o.hostCommandsExecutor.Execute(podman, "image", "exists", img)
+	_, err := o.hostCommandsExecutor.Execute(podman, o.podmanArgs([]string{podmanImageSubcommand, "exists", img})...)
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -411,7 +501,7 @@ type PodmanImage struct {
 // IsImageMounted checkes whether certain image is mounted
 // pass in the full address with tag e.g: quay.io/openshift/lifecycle-agent-operator:latest
 func (o *ops) IsImageMounted(imgName string) (bool, error) {
-	output, err := o.hostCommandsExecutor.Execute(podman, "image", "mount", "--format", "json", "--log-level", "error")
+	output, err := o.hostCommandsExecutor.Execute(podman, o.podmanArgs([]string{podmanImageSubcommand, "mount", "--format", "json", "--log-level", "error"})...)
 	if err != nil {
 		return false, fmt.Errorf("failed to mount podamn image: %w", err)
 	}
@@ -450,7 +540,7 @@ func (o *ops) UnmountAndRemoveImage(img string) error {
 		return fmt.Errorf("failed to check if image is mounted: %w", err)
 	} else if mounted {
 		if _, err := o.hostCommandsExecutor.Execute(
-			podman, "image", "umount", img,
+			podman, podmanImageSubcommand, "umount", img,
 		); err != nil {
 			return fmt.Errorf("failed to unmount image: %w", err)
 		}
@@ -461,7 +551,7 @@ func (o *ops) UnmountAndRemoveImage(img string) error {
 
 func (o *ops) MountImage(img string) (string, error) {
 	command := podman
-	args := []string{"image", "mount", img}
+	args := o.podmanArgs([]string{podmanImageSubcommand, "mount", img})
 
 	// In 4.18 crio got an update which removes all containers
 	// that don't have a mount point on the host.
