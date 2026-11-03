@@ -54,9 +54,10 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
-	// Parse the Restore docs to surface malformed configuration early; the
-	// specs themselves are not needed for backup validation.
-	if _, err := ExtractRestoreSpecsFromConfigmaps(configmaps); err != nil {
+	// Parse the Restore docs to surface malformed configuration early and to
+	// validate the Restore apply-wave annotation during Prep.
+	restoreSpecs, err := ExtractRestoreSpecsFromConfigmaps(configmaps)
+	if err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -65,6 +66,10 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	}
 
 	if err := ValidateBackupSpecs(backupSpecs); err != nil {
+		return NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return NewBRFailedValidationError("Backup", err.Error())
 	}
 
@@ -117,6 +122,10 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	}
 
 	if err := ValidateBackupSpecs(backupSpecs); err != nil {
+		return bt, NewBRFailedValidationError("Backup", err.Error())
+	}
+
+	if err := ValidateRestoreSpecs(restoreSpecs); err != nil {
 		return bt, NewBRFailedValidationError("Backup", err.Error())
 	}
 
