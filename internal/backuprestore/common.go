@@ -59,6 +59,13 @@ const (
 
 	LocalBackupPath = "/var/lib/containers/lca-backups"
 
+	// restoreCompletedMarker is an empty file written inside LocalBackupPath once
+	// a restore has fully completed (all resources applied and the PV reclaim
+	// policy restored). Its presence lets a re-entrant PostPivot run skip
+	// re-applying the backed-up resources. CleanupBackups removes it together with
+	// the rest of the backup directory after Upgrade completion is persisted.
+	restoreCompletedMarker = "restore-completed"
+
 	topolvmValue                   = "topolvm.io"
 	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
 	updatedReclaimPolicyAnnotation = "lca.openshift.io/updated-reclaim-policy"
@@ -73,6 +80,7 @@ type BackuperRestorer interface {
 	ValidateBackupConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
 	StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error)
 	StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error)
+	MarkRestoreCompleted(ctx context.Context) error
 	CleanupBackups(ctx context.Context) error
 	PatchPVsReclaimPolicy(ctx context.Context) error
 	RestorePVsReclaimPolicy(ctx context.Context) error

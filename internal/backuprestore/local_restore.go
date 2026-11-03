@@ -90,6 +90,22 @@ func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapR
 		return rt, nil
 	}
 
+	// If a previous PostPivot run already completed the restore (all resources
+	// applied and the PV reclaim policy restored), a restore-completed marker is
+	// present inside the backup directory. A later re-entry — e.g. a deferred
+	// health check that requeues PostPivot after a successful restore — must not
+	// re-apply the resources, so skip restoration successfully. A stat error other
+	// than "not exists" is a hard failure so the Upgrade fails terminally (human
+	// intervention) rather than silently re-restoring.
+	markerPath := filepath.Join(backupPath, restoreCompletedMarker)
+	if _, err := os.Stat(markerPath); err == nil {
+		h.Log.Info("Restore already completed on a previous run, skipping restore", "marker", markerPath)
+		return rt, nil
+	} else if !os.IsNotExist(err) {
+		return rt, NewBRFailedError("Restore",
+			fmt.Sprintf("failed to stat restore-completed marker %s: %s", markerPath, err.Error()))
+	}
+
 	validatedFiles, err := validateChecksums(backupPath)
 	if err != nil {
 		return rt, NewBRFailedError("Restore",
@@ -141,6 +157,62 @@ func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapR
 	h.Log.Info("All resources restored successfully",
 		"restoredCount", len(rt.SucceededRestores))
 	return rt, nil
+}
+
+// MarkRestoreCompleted atomically creates the restore-completed marker inside the
+// local backup directory, recording that the restore fully completed (all
+// resources applied and the PV reclaim policy restored). HandleRestore calls this
+// after RestorePVsReclaimPolicy so that a re-entrant PostPivot run skips
+// re-applying resources (see StartRestore).
+//
+// The marker is written to a temporary file that is fsync'd and atomically
+// renamed into place, after which the parent directory is fsync'd so the new
+// directory entry survives a crash/reboot — otherwise a lost marker would trigger
+// a spurious re-restore. All failures are returned as BRFailedError so the
+// existing PostPivot failure and rollback path handles them.
+func (h *BRHandler) MarkRestoreCompleted(_ context.Context) error {
+	backupPath := filepath.Join(hostPath, LocalBackupPath)
+	markerPath := filepath.Join(backupPath, restoreCompletedMarker)
+
+	tmp, err := os.CreateTemp(backupPath, restoreCompletedMarker+".tmp-*")
+	if err != nil {
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to create restore-completed marker temp file in %s: %s", backupPath, err.Error()))
+	}
+	tmpPath := tmp.Name()
+	// Best-effort removal of the temp file; a no-op once the rename below succeeds.
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to sync restore-completed marker temp file %s: %s", tmpPath, err.Error()))
+	}
+	if err := tmp.Close(); err != nil {
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to close restore-completed marker temp file %s: %s", tmpPath, err.Error()))
+	}
+
+	if err := os.Rename(tmpPath, markerPath); err != nil {
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to rename restore-completed marker into place at %s: %s", markerPath, err.Error()))
+	}
+
+	// fsync the parent directory so the rename (the marker's new directory entry)
+	// is durable across a crash/reboot.
+	dir, err := os.Open(backupPath) //nolint:gosec
+	if err != nil {
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to open backup directory %s to sync restore-completed marker: %s", backupPath, err.Error()))
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
+		return NewBRFailedError("Restore",
+			fmt.Sprintf("failed to sync backup directory %s after writing restore-completed marker: %s", backupPath, err.Error()))
+	}
+
+	h.Log.Info("Restore-completed marker written", "marker", markerPath)
+	return nil
 }
 
 // restoreResourceEntry applies a single backed-up resource to the cluster and

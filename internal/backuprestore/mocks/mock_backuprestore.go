@@ -56,6 +56,20 @@ func (mr *MockBackuperRestorerMockRecorder) CleanupBackups(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupBackups", reflect.TypeOf((*MockBackuperRestorer)(nil).CleanupBackups), ctx)
 }
 
+// MarkRestoreCompleted mocks base method.
+func (m *MockBackuperRestorer) MarkRestoreCompleted(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkRestoreCompleted", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkRestoreCompleted indicates an expected call of MarkRestoreCompleted.
+func (mr *MockBackuperRestorerMockRecorder) MarkRestoreCompleted(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkRestoreCompleted", reflect.TypeOf((*MockBackuperRestorer)(nil).MarkRestoreCompleted), ctx)
+}
+
 // PatchPVsReclaimPolicy mocks base method.
 func (m *MockBackuperRestorer) PatchPVsReclaimPolicy(ctx context.Context) error {
 	m.ctrl.T.Helper()
