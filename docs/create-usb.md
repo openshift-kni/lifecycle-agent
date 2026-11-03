@@ -27,42 +27,22 @@ by everything below.)
 
 ## Creating USB media
 
-`create-usb` reads one YAML/JSON manifest, validates it, and assembles a bootable `.img` with
-`--output`. `--lca-image` is required (its `lca-cli` binary is extracted and staged on the media).
-`--write-device` is deferred — the only target today is a sparse `.img` that can be `dd`-ed to a
-stick later.
+For the CLI usage, flags, manifest schema, and `--usb-size` semantics, see
+[lca-cli/README.md](../lca-cli/README.md#creating-usb-media). This document covers what the
+build does internally.
 
-```bash
-# install-only media
-lca-cli create-usb --manifest manifest.yaml --output usb.img \
-  --lca-image <lca-cli-pullspec> --usb-size 14Gi
+### Size budget internals
 
-# self-contained media (same command; the manifest's mode selects the profile)
-lca-cli create-usb --manifest manifest.yaml --output usb.img \
-  --lca-image <lca-cli-pullspec> --auth-file ./auth.json --usb-size 32Gi
-```
-
-Both profiles use the same command; the manifest `mode` selects `install-only` vs
-`self-contained`. `--auth-file` supplies workstation registry credentials used at build time only
-(to pull `--lca-image` and mirror the image set); it is never written to the media.
-
-### Size budget (`--usb-size`)
-
-`--usb-size` is the whole-stick size budget (e.g. `14Gi`, `32G`). When set, the build fails if the
-**final apparent image size** — the live ISO plus every data partition and the MBR
-extended-container/alignment overhead — exceeds it, so the resulting `.img` is guaranteed to fit
-the target stick. The check validates the final apparent size rather than the staged-byte subtotal
-(`SizeReport.StagedBytes`), which deliberately excludes partition/alignment overhead. An empty
-`--usb-size` disables the check.
-
+`--usb-size` is checked against the **final apparent image size** — the live ISO plus every
+data partition and the MBR extended-container/alignment overhead — rather than the staged-byte
+subtotal (`SizeReport.StagedBytes`), which deliberately excludes partition/alignment overhead.
 The `ibi-images` partition is **sized to its actual payload**, not a fixed reservation: the OCI
 image layout, `digests.json`, the staged `lca-cli` binary, and (self-contained) the durability
 `store/` are built into scratch space first, the staged tree is measured, and the partition is set
 to the measured payload plus ext4 metadata and free-space headroom, rounded up to a whole MiB, with
-an **8 GiB minimum** floor. The `--usb-size` budget is then evaluated against this final plan and
-the staged tree is copied onto the formatted partition (with a free-space check). Because the
-partition is planned around the measured payload, an oversized payload fails `--usb-size` at
-planning time with a clear size error instead of overrunning a fixed partition during population.
+an **8 GiB minimum** floor. The budget is then evaluated against this final plan and the staged
+tree is copied onto the formatted partition (with a free-space check), so an oversized payload
+fails at planning time instead of overrunning a fixed partition during population.
 
 ## Media layout: the live ISO owns LBA 0
 

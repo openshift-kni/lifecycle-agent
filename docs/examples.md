@@ -33,7 +33,7 @@ kind: ImageBasedUpgrade
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:5.1.0","version":"5.1.0"},"stage":"Idle"}}
   creationTimestamp: "2024-02-01T19:20:40Z"
   generation: 1
   name: upgrade
@@ -45,8 +45,8 @@ spec:
   - name: sno-extramanifests
     namespace: openshift-lifecycle-agent
   seedImageRef:
-    image: quay.io/user/seedimage:4.15.0
-    version: 4.15.0
+    image: quay.io/user/seedimage:5.1.0
+    version: 5.1.0
   stage: Upgrade
 status:
   conditions:
@@ -104,7 +104,7 @@ items:
   metadata:
     annotations:
       kubectl.kubernetes.io/last-applied-configuration: |
-        {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+        {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:5.1.0","version":"5.1.0"},"stage":"Idle"}}
     creationTimestamp: "2024-02-01T20:00:48Z"
     generation: 1
     name: upgrade
@@ -116,8 +116,8 @@ items:
     - name: sno-extramanifests
       namespace: openshift-lifecycle-agent
     seedImageRef:
-      image: quay.io/user/seedimage:4.15.0
-      version: 4.15.0
+      image: quay.io/user/seedimage:5.1.0
+      version: 5.1.0
     stage: Upgrade
   status:
     conditions:
@@ -184,7 +184,7 @@ kind: ImageBasedUpgrade
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:4.15.0","version":"4.15.0"},"stage":"Idle"}}
+      {"apiVersion":"lca.openshift.io/v1","kind":"ImageBasedUpgrade","metadata":{"annotations":{},"name":"upgrade"},"spec":{"extraManifests":[{"name":"sno-extramanifests","namespace":"openshift-lifecycle-agent"}],"seedImageRef":{"image":"quay.io/user/seedimage:5.1.0","version":"5.1.0"},"stage":"Idle"}}
   creationTimestamp: "2024-02-01T21:22:36Z"
   generation: 1
   name: upgrade
@@ -197,8 +197,8 @@ spec:
   - name: sno-extramanifests
     namespace: openshift-lifecycle-agent
   seedImageRef:
-    image: quay.io/user/seedimage:4.15.0
-    version: 4.15.0
+    image: quay.io/user/seedimage:5.1.0
+    version: 5.1.0
   stage: Upgrade
 status:
   conditions:

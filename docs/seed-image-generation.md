@@ -328,7 +328,35 @@ present. If the validation fails, the CR will be updated with conditions and sta
 be generated and provide a rejection message. The LCA operator manager logs will also provide the rejection message,
 along with related log messages.
 
-*TODO*: Provide example of CR with rejection message.
+Example of a rejected `SeedGenerator` CR (in this case the cluster has configured
+PersistentVolumes, which seed generation does not support):
+
+```yaml
+apiVersion: lca.openshift.io/v1
+kind: SeedGenerator
+metadata:
+  name: seedimage
+spec:
+  seedImage: quay.io/myrepo/upgbackup:orchestrated-seed-image
+status:
+  observedGeneration: 1
+  conditions:
+    - lastTransitionTime: "2026-06-11T14:22:03Z"
+      message: "Seed generation failed: Rejected: Cluster must not have any Persistent Volumes configured"
+      observedGeneration: 1
+      reason: Failed
+      status: "False"
+      type: SeedGenCompleted
+    - lastTransitionTime: "2026-06-11T14:22:03Z"
+      message: "Rejected: Cluster must not have any Persistent Volumes configured"
+      observedGeneration: 1
+      reason: Failed
+      status: "False"
+      type: SeedGenInProgress
+```
+
+The same rejection message is written to the operator manager log. Resolve the reported
+condition and update the CR to retry.
 
 After the system config has been validated successfully, the orchestor will perform any necessary cleanup and launch the lca-cli tool to generate and publish the image.
 

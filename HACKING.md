@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- go >=1.24
+- go >=1.26.3 (see `go.mod`)
 - Spoke SNO cluster with pull-secret containing credentials to quay.io/${MY_REPO_ID}/
 
 ## Makefile targets
@@ -11,11 +11,13 @@ To see all `make` targets, run `make help`
 
 ## Linter tests
 
-As of this writing, three linters are run by the `make ci-job` command:
+As of this writing, `make ci-job` runs code generation, formatting, `go vet`, the unit tests, and the following linters:
 
 - golangci-lint
 - shellcheck
 - bashate
+- yamllint
+- kustomize validation (`test-kustomize`)
 
 These tests will be run automatically as part of the ci-job test post a pull request an update. Failures will mean your pull request
 cannot be merged. It is recommended that you run `make ci-job` regularly as part of development.
