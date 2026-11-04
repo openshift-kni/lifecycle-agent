@@ -166,6 +166,15 @@ type SeedReconfiguration struct {
 	// In IBI case data will be taken from the user provided configuration.
 	ChronyConfig string `json:"chrony_config,omitempty"`
 
+	// MaxSeedAge optionally overrides the default maximum plausible age of the seed image
+	// used by the post-pivot clock gate (see lca-cli/postpivot). It is a Go duration string
+	// (for example "4320h" for 180 days). The gate rejects a system clock later than the
+	// seed's creation time plus this bound. An empty value uses the default (180 days);
+	// non-parseable, non-positive, or absurdly large values are rejected with a config error.
+	// It lets long-shelf deployments widen the window when no trusted local time source is
+	// available.
+	MaxSeedAge string `json:"max_seed_age,omitempty"`
+
 	AdditionalTrustBundle AdditionalTrustBundle `json:"additionalTrustBundle,omitempty"`
 
 	// The desired node labels for the SNO node.
