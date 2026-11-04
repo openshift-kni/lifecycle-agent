@@ -136,6 +136,115 @@ func TestCreateOrUpdateResourceConflictRetry(t *testing.T) {
 	})
 }
 
+// TestStripRestoreMetadata verifies that the cluster-assigned, non-portable
+// metadata fields are removed while managedFields and the
+// last-applied-configuration annotation are preserved.
+func TestStripRestoreMetadata(t *testing.T) {
+	resource := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":              "cm1",
+			"namespace":         "ns1",
+			"generateName":      "cm-",
+			"selfLink":          "/api/v1/namespaces/ns1/configmaps/cm1",
+			"uid":               "uid-123",
+			"resourceVersion":   "42",
+			"generation":        int64(7),
+			"creationTimestamp": "2020-01-01T00:00:00Z",
+			"ownerReferences": []interface{}{
+				map[string]interface{}{"kind": "Deployment", "name": "owner"},
+			},
+			"managedFields": []interface{}{
+				map[string]interface{}{"manager": "kubectl"},
+			},
+			"labels": map[string]interface{}{"app": "demo"},
+			"annotations": map[string]interface{}{
+				"kubectl.kubernetes.io/last-applied-configuration": "{}",
+				"custom.io/keep": "yes",
+			},
+		},
+	}}
+
+	stripRestoreMetadata(resource)
+
+	md, _, _ := unstructured.NestedMap(resource.Object, "metadata")
+	for _, removed := range []string{
+		"generateName", "selfLink", "uid", "resourceVersion",
+		"generation", "creationTimestamp", "ownerReferences",
+	} {
+		_, present := md[removed]
+		assert.Falsef(t, present, "metadata.%s must be removed on restore", removed)
+	}
+
+	// Preserved fields.
+	_, present := md["managedFields"]
+	assert.True(t, present, "metadata.managedFields must be preserved on restore")
+	assert.Equal(t, "cm1", resource.GetName())
+	annotations := resource.GetAnnotations()
+	assert.Equal(t, "{}", annotations["kubectl.kubernetes.io/last-applied-configuration"],
+		"last-applied-configuration annotation must be preserved on restore")
+	assert.Equal(t, "yes", annotations["custom.io/keep"])
+}
+
+// TestRestoreResourceEntryStatusGating verifies that status is restored only when
+// the paired Restore CR configured the resource's kind, and never otherwise.
+func TestRestoreResourceEntryStatusGating(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	newCMWithStatus := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]interface{}{"name": "cm1", "namespace": "ns1"},
+			"data":       map[string]interface{}{"k": "v"},
+			"status":     map[string]interface{}{"phase": "Ready"},
+		}}
+	}
+
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"v1": {GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
+		}},
+	}}
+
+	t.Run("status restored when configured", func(t *testing.T) {
+		dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme())
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+
+		rt := &RestoreTracker{}
+		err := h.restoreResourceEntry(context.Background(), resourceEntry{
+			resource:      newCMWithStatus(),
+			fileName:      "cm1.yaml",
+			restoreConfig: &specRestoreConfig{RestoreStatusResources: []string{"configmaps"}},
+		}, rt)
+		assert.NoError(t, err)
+
+		got, err := dc.Resource(gvr).Namespace("ns1").Get(context.Background(), "cm1", metav1.GetOptions{})
+		assert.NoError(t, err)
+		phase, _, _ := unstructured.NestedString(got.Object, "status", "phase")
+		assert.Equal(t, "Ready", phase, "status must be restored for a configured kind")
+	})
+
+	t.Run("status not restored when not configured", func(t *testing.T) {
+		dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme())
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+
+		rt := &RestoreTracker{}
+		err := h.restoreResourceEntry(context.Background(), resourceEntry{
+			resource:      newCMWithStatus(),
+			fileName:      "cm1.yaml",
+			restoreConfig: nil,
+		}, rt)
+		assert.NoError(t, err)
+
+		got, err := dc.Resource(gvr).Namespace("ns1").Get(context.Background(), "cm1", metav1.GetOptions{})
+		assert.NoError(t, err)
+		_, found, _ := unstructured.NestedMap(got.Object, "status")
+		assert.False(t, found, "status must not be restored when no kind is configured")
+	})
+}
+
 // TestResolveGVRIrregularPlural verifies that a custom resource whose plural
 // does not follow the naive pluralization rules is resolved to the correct GVR
 // using live discovery rather than a derived plural.

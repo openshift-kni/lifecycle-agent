@@ -66,9 +66,23 @@ const (
 	// the rest of the backup directory after Upgrade completion is persisted.
 	restoreCompletedMarker = "restore-completed"
 
+	// restoreConfigFileName is the per-spec file, written next to the backed-up
+	// resource YAMLs, that carries the restore-time configuration derived from the
+	// paired Restore CR (status-resource selection and restorePVs). The post-pivot
+	// restore reads it from disk so it does not depend on the Restore CR ConfigMaps
+	// still existing in the upgraded cluster. It is covered by checksums.sha256.
+	restoreConfigFileName = "restore-config.json"
+
 	topolvmValue                   = "topolvm.io"
 	topolvmAnnotation              = "pv.kubernetes.io/provisioned-by"
 	updatedReclaimPolicyAnnotation = "lca.openshift.io/updated-reclaim-policy"
+
+	// reasonFailed is the Reason recorded on a terminal Backup/Restore error.
+	reasonFailed = "Failed"
+
+	// kindJob is the Kind of a batch Job, special-cased during backup (completed
+	// Jobs are skipped) and restore (controller-UID labels are cleared).
+	kindJob = "Job"
 )
 
 var (
@@ -154,7 +168,7 @@ func (e *BRStatusError) Error() string {
 func NewBRFailedError(brType, msg string) *BRStatusError {
 	return &BRStatusError{
 		Type:       brType,
-		Reason:     "Failed",
+		Reason:     reasonFailed,
 		ErrMessage: msg,
 	}
 }
@@ -171,7 +185,7 @@ func IsBRFailedError(err error) bool {
 	var brErr *BRStatusError
 	if errors.As(err, &brErr) {
 		if brErr.Type == "Backup" || brErr.Type == "Restore" {
-			return brErr.Reason == "Failed"
+			return brErr.Reason == reasonFailed
 		}
 	}
 	return false

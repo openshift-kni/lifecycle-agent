@@ -18,6 +18,9 @@ package backuprestore
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -136,6 +139,102 @@ func TestFetchClusterScopedResourceScopeMismatch(t *testing.T) {
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "namespace-scoped per discovery")
+}
+
+// TestIsJobCompletedOrFailed verifies that only Jobs with a Complete or Failed
+// condition set to True are reported as terminated.
+func TestIsJobCompletedOrFailed(t *testing.T) {
+	newJob := func(conditions []interface{}) *unstructured.Unstructured {
+		obj := map[string]interface{}{
+			"apiVersion": "batch/v1",
+			"kind":       "Job",
+			"metadata":   map[string]interface{}{"name": "j", "namespace": "ns"},
+		}
+		if conditions != nil {
+			obj["status"] = map[string]interface{}{"conditions": conditions}
+		}
+		return &unstructured.Unstructured{Object: obj}
+	}
+	cond := func(t, s string) interface{} {
+		return map[string]interface{}{"type": t, "status": s}
+	}
+
+	t.Run("Complete condition True is terminated", func(t *testing.T) {
+		assert.True(t, isJobCompletedOrFailed(newJob([]interface{}{cond("Complete", "True")})))
+	})
+	t.Run("Failed condition True is terminated", func(t *testing.T) {
+		assert.True(t, isJobCompletedOrFailed(newJob([]interface{}{cond("Failed", "True")})))
+	})
+	t.Run("Complete condition False is not terminated", func(t *testing.T) {
+		assert.False(t, isJobCompletedOrFailed(newJob([]interface{}{cond("Complete", "False")})))
+	})
+	t.Run("running Job with no conditions is not terminated", func(t *testing.T) {
+		assert.False(t, isJobCompletedOrFailed(newJob(nil)))
+	})
+	t.Run("non-Job resource is never terminated", func(t *testing.T) {
+		pod := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"status":     map[string]interface{}{"conditions": []interface{}{cond("Complete", "True")}},
+		}}
+		assert.False(t, isJobCompletedOrFailed(pod))
+	})
+}
+
+// TestWriteAndLoadRestoreConfig verifies that the per-spec restore configuration
+// round-trips through disk and that its checksum entry matches the written file.
+func TestWriteAndLoadRestoreConfig(t *testing.T) {
+	backupDir := t.TempDir()
+	dirName := "000_b1"
+	specDir := filepath.Join(backupDir, dirName)
+	assert.NoError(t, os.MkdirAll(specDir, 0o700))
+
+	restore := &RestoreSpec{
+		Name:                   "r1",
+		BackupName:             "b1",
+		RestorePVs:             true,
+		RestoreStatusResources: []string{"LogicalVolumes", "deployments"},
+	}
+
+	checksum, err := writeRestoreConfig(specDir, dirName, restore)
+	assert.NoError(t, err)
+	assert.Contains(t, checksum, filepath.Join(dirName, restoreConfigFileName))
+
+	relPath := filepath.Join(dirName, restoreConfigFileName)
+	cfg, err := loadRestoreConfig(specDir, dirName, map[string]bool{relPath: true})
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg)
+	assert.True(t, cfg.RestorePVs)
+	assert.Equal(t, []string{"LogicalVolumes", "deployments"}, cfg.RestoreStatusResources)
+	assert.True(t, cfg.statusResourceSet()["logicalvolumes"])
+	assert.True(t, cfg.statusResourceSet()["deployments"])
+
+	t.Run("nil restore spec writes a valid empty config", func(t *testing.T) {
+		d := t.TempDir()
+		sd := filepath.Join(d, "001_b2")
+		assert.NoError(t, os.MkdirAll(sd, 0o700))
+		_, err := writeRestoreConfig(sd, "001_b2", nil)
+		assert.NoError(t, err)
+		data, err := os.ReadFile(filepath.Join(sd, restoreConfigFileName))
+		assert.NoError(t, err)
+		parsed := &specRestoreConfig{}
+		assert.NoError(t, json.Unmarshal(data, parsed))
+		assert.False(t, parsed.RestorePVs)
+		assert.Empty(t, parsed.RestoreStatusResources)
+	})
+
+	t.Run("config file not in checksum manifest is rejected", func(t *testing.T) {
+		_, err := loadRestoreConfig(specDir, dirName, map[string]bool{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not listed in checksum manifest")
+	})
+
+	t.Run("missing config file yields nil config", func(t *testing.T) {
+		emptyDir := t.TempDir()
+		cfg, err := loadRestoreConfig(emptyDir, "002_b3", map[string]bool{})
+		assert.NoError(t, err)
+		assert.Nil(t, cfg)
+	})
 }
 
 // TestFetchResourcesApplyLabelMissingFails verifies that an apply-label entry
