@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -66,7 +67,7 @@ var resourceWaveOrder = map[string]int{
 	"Deployment":               8,
 	"StatefulSet":              8,
 	"DaemonSet":                8,
-	"Job":                      8,
+	kindJob:                    8,
 	"CronJob":                  8,
 	"Route":                    9,
 	"Ingress":                  9,
@@ -231,8 +232,25 @@ func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntr
 		return nil
 	}
 
-	savedStatus, hasStatus := resource.Object["status"]
+	// Strip the cluster-assigned, non-portable metadata fields that must not be
+	// recreated on restore (matching Velero's reset of these fields).
+	// metadata.managedFields and the kubectl.kubernetes.io/last-applied-configuration
+	// annotation are deliberately preserved.
+	stripRestoreMetadata(resource)
+
+	// Resource-specific restore actions (Service, ServiceAccount, Secret, PVC, Job, Route).
 	prepareResourceForRestore(resource)
+
+	// When the paired Restore CR set restorePVs, reset PersistentVolume binding so
+	// the restored PV can rebind to its restored PVC.
+	if entry.restoreConfig != nil && entry.restoreConfig.RestorePVs {
+		removePVClaimRef(resource)
+	}
+
+	// Status is applied via the status subresource after the object exists, and
+	// only for the resource kinds the paired Restore CR configured.
+	restoreStatus := shouldPreserveStatus(resource, entry.restoreConfig.statusResourceSet())
+	savedStatus, hasStatus := resource.Object["status"]
 
 	unstructured.RemoveNestedField(resource.Object, "status")
 
@@ -256,7 +274,7 @@ func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntr
 		h.invalidateDiscovery()
 	}
 
-	if hasStatus && savedStatus != nil {
+	if restoreStatus && hasStatus && savedStatus != nil {
 		if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
 			h.Log.Info("Failed to restore status subresource, continuing",
 				"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
@@ -622,6 +640,10 @@ func validateChecksums(backupPath string) (map[string]bool, error) {
 type resourceEntry struct {
 	resource *unstructured.Unstructured
 	fileName string
+	// restoreConfig is the restore-time configuration persisted with the spec this
+	// resource was backed up under (status-resource selection and restorePVs). It
+	// may be nil for a spec that persisted no configuration.
+	restoreConfig *specRestoreConfig
 }
 
 type waveGroup struct {
@@ -671,6 +693,11 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 			return nil, fmt.Errorf("failed to read spec directory %s: %w", d.dirName, err)
 		}
 
+		restoreConfig, err := loadRestoreConfig(specDir, d.dirName, validatedFiles)
+		if err != nil {
+			return nil, err
+		}
+
 		count := 0
 		for _, yamlFile := range yamlFiles {
 			if yamlFile.IsDir() || !strings.HasSuffix(yamlFile.Name(), ".yaml") {
@@ -695,8 +722,9 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 				waveOrder = append(waveOrder, d.wave)
 			}
 			wg.resources = append(wg.resources, resourceEntry{
-				resource: resource,
-				fileName: yamlFile.Name(),
+				resource:      resource,
+				fileName:      yamlFile.Name(),
+				restoreConfig: restoreConfig,
 			})
 			count++
 		}
@@ -709,6 +737,33 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 		result = append(result, *waveMap[w])
 	}
 	return result, nil
+}
+
+// loadRestoreConfig reads the per-spec restore configuration persisted next to the
+// backed-up resources. The file is covered by checksums.sha256, so when present it
+// must appear in the validated manifest. A spec directory without a config file
+// yields a nil configuration, under which the restore applies no status and no PV
+// rebinding.
+func loadRestoreConfig(specDir, dirName string, validatedFiles map[string]bool) (*specRestoreConfig, error) {
+	configPath := filepath.Join(specDir, restoreConfigFileName)
+	data, err := os.ReadFile(configPath) //nolint:gosec
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil //nolint:nilnil
+		}
+		return nil, fmt.Errorf("failed to read restore config %s: %w", configPath, err)
+	}
+
+	relPath := filepath.Join(dirName, restoreConfigFileName)
+	if !validatedFiles[relPath] {
+		return nil, fmt.Errorf("file %s is not listed in checksum manifest, refusing to restore", relPath)
+	}
+
+	cfg := &specRestoreConfig{}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse restore config %s: %w", relPath, err)
+	}
+	return cfg, nil
 }
 
 func sortResourcesByWave(resources []resourceEntry) {
@@ -748,6 +803,25 @@ func shouldSkipRestore(resource *unstructured.Unstructured) bool {
 	return false
 }
 
+// stripRestoreMetadata removes the cluster-assigned, non-portable metadata fields
+// that must not be recreated when a backed-up resource is applied to the cluster,
+// matching the set of fields Velero resets on restore. metadata.managedFields and
+// the kubectl.kubernetes.io/last-applied-configuration annotation are intentionally
+// left in place.
+func stripRestoreMetadata(resource *unstructured.Unstructured) {
+	for _, field := range []string{
+		"generateName",
+		"selfLink",
+		"uid",
+		"resourceVersion",
+		"generation",
+		"creationTimestamp",
+		"ownerReferences",
+	} {
+		unstructured.RemoveNestedField(resource.Object, "metadata", field)
+	}
+}
+
 // prepareResourceForRestore applies Velero-compatible transformations to
 // resources before they are applied to the cluster, matching the behavior
 // of Velero's built-in restore item actions and the openshift-velero-plugin.
@@ -762,7 +836,7 @@ func prepareResourceForRestore(resource *unstructured.Unstructured) {
 		prepareSecretForRestore(resource)
 	case "PersistentVolumeClaim":
 		preparePVCForRestore(resource)
-	case "Job":
+	case kindJob:
 		prepareJobForRestore(resource)
 	case "Route":
 		prepareRouteForRestore(resource)

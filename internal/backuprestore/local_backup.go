@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -169,8 +170,6 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 			}
 
 			restoreSpec := FindRestoreForBackup(spec.Name, restoreSpecs)
-			statusResources := resolveStatusResources(restoreSpec)
-			restorePVs := restoreSpec != nil && restoreSpec.RestorePVs
 
 			resources, err := h.fetchResources(ctx, spec)
 			if err != nil {
@@ -189,14 +188,24 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 			}
 
 			for i, resource := range resources {
-				stripTransientMetadata(resource, statusResources)
-
-				// When the matching Restore CR sets restorePVs: true, strip
-				// spec.claimRef from PersistentVolumes so that when they are
-				// (re)applied during the post-pivot restore they are not bound
-				// to a stale PVC reference and can rebind to their restored PVC.
-				if restorePVs {
-					removePVClaimRef(resource)
+				// Back up resources in full fidelity (including status). Transient,
+				// cluster-assigned metadata is stripped later, at restore time
+				// (see stripRestoreMetadata), matching Velero's model. Two classes
+				// of resources are skipped entirely here:
+				//   - resources with metadata.deletionTimestamp set: they are being
+				//     deleted, so restoring them would recreate objects the cluster
+				//     was actively tearing down.
+				//   - Jobs that have already completed (Complete or Failed condition
+				//     True): they have run to termination and must not be recreated.
+				if resource.GetDeletionTimestamp() != nil {
+					h.Log.Info("Skipping resource being deleted",
+						"kind", resource.GetKind(), "name", resource.GetName(), "namespace", resource.GetNamespace())
+					continue
+				}
+				if isJobCompletedOrFailed(resource) {
+					h.Log.Info("Skipping completed/failed Job",
+						"name", resource.GetName(), "namespace", resource.GetNamespace())
+					continue
 				}
 
 				data, err := k8syaml.Marshal(resource.Object)
@@ -229,6 +238,18 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 				checksums = append(checksums, fmt.Sprintf("%s  %s",
 					hex.EncodeToString(hash[:]), filepath.Join(dirName, fileName)))
 			}
+
+			// Persist the restore-time configuration derived from the paired Restore
+			// CR alongside the backed-up resources. The post-pivot restore reads only
+			// from disk (the Restore CR ConfigMaps are not guaranteed to exist in the
+			// upgraded cluster), so the status-resource selection and restorePVs flag
+			// must travel with the backup to drive status restoration and PV rebinding.
+			cfgChecksum, err := writeRestoreConfig(specDir, dirName, restoreSpec)
+			if err != nil {
+				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
+				return bt, err
+			}
+			checksums = append(checksums, cfgChecksum)
 
 			h.Log.Info("Backup completed for spec", "name", spec.Name, "resourceCount", len(resources))
 			bt.SucceededBackups = append(bt.SucceededBackups, spec.Name)
@@ -564,34 +585,78 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 	return resources, nil
 }
 
-// stripTransientMetadata removes transient fields from a resource before backup.
-// If statusResources is non-nil, status is preserved for resource kinds whose
-// pluralized name appears in the set (matching Velero Restore CR restoreStatus behavior).
-func stripTransientMetadata(resource *unstructured.Unstructured, statusResources map[string]bool) {
-	resource.SetUID("")
-	resource.SetResourceVersion("")
-	resource.SetGeneration(0)
-	resource.SetCreationTimestamp(metav1.Time{})
-	resource.SetManagedFields(nil)
+// specRestoreConfig is the restore-time configuration persisted alongside a
+// backed-up spec's resources. It is derived from the paired Restore CR at backup
+// time and consumed by the post-pivot restore, which reads only from disk.
+type specRestoreConfig struct {
+	// RestoreStatusResources lists the resource types (as written in the Restore
+	// CR's spec.restoreStatus.includedResources) whose status must be restored.
+	RestoreStatusResources []string `json:"restoreStatusResources,omitempty"`
+	// RestorePVs mirrors the Restore CR's spec.restorePVs: when true, the restore
+	// resets PersistentVolume binding so the PV can rebind to its restored PVC.
+	RestorePVs bool `json:"restorePVs,omitempty"`
+}
 
-	annotations := resource.GetAnnotations()
-	if annotations != nil {
-		delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
-		if len(annotations) == 0 {
-			resource.SetAnnotations(nil)
-		} else {
-			resource.SetAnnotations(annotations)
+// statusResourceSet returns the lowercased set of pluralized resource names whose
+// status should be restored, or nil when none are configured.
+func (c *specRestoreConfig) statusResourceSet() map[string]bool {
+	if c == nil {
+		return nil
+	}
+	return resolveStatusResources(&RestoreSpec{RestoreStatusResources: c.RestoreStatusResources})
+}
+
+// writeRestoreConfig persists the restore-time configuration derived from the
+// paired Restore CR into the spec directory and returns the checksum manifest
+// line for the written file. A nil restore spec still produces a valid (empty)
+// configuration so the restore always finds a config file to read.
+func writeRestoreConfig(specDir, dirName string, restore *RestoreSpec) (string, error) {
+	cfg := specRestoreConfig{}
+	if restore != nil {
+		cfg.RestoreStatusResources = restore.RestoreStatusResources
+		cfg.RestorePVs = restore.RestorePVs
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal restore config: %w", err)
+	}
+
+	cfgPath := filepath.Join(specDir, restoreConfigFileName)
+	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to write restore config %s: %s", cfgPath, err.Error()))
+	}
+
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("%s  %s", hex.EncodeToString(hash[:]), filepath.Join(dirName, restoreConfigFileName)), nil
+}
+
+// isJobCompletedOrFailed reports whether the resource is a Job that has already
+// run to termination, i.e. it has a Complete or Failed condition set to True.
+// Such Jobs are skipped during backup: recreating them on restore would re-run
+// finished work. A Pod launched by a Job (or a Job created by a CronJob) is a
+// backup-configuration concern, not handled here.
+func isJobCompletedOrFailed(resource *unstructured.Unstructured) bool {
+	if resource.GetKind() != kindJob {
+		return false
+	}
+	conditions, found, err := unstructured.NestedSlice(resource.Object, "status", "conditions")
+	if !found || err != nil {
+		return false
+	}
+	for _, c := range conditions {
+		cond, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		condType, _ := cond["type"].(string)
+		condStatus, _ := cond["status"].(string)
+		if (condType == "Complete" || condType == "Failed") && condStatus == "True" {
+			return true
 		}
 	}
-
-	if !shouldPreserveStatus(resource, statusResources) {
-		unstructured.RemoveNestedField(resource.Object, "status")
-	}
-	unstructured.RemoveNestedField(resource.Object, "metadata", "deletionTimestamp")
-	unstructured.RemoveNestedField(resource.Object, "metadata", "deletionGracePeriodSeconds")
-	unstructured.RemoveNestedField(resource.Object, "metadata", "ownerReferences")
-	unstructured.RemoveNestedField(resource.Object, "metadata", "finalizers")
-	unstructured.RemoveNestedField(resource.Object, "metadata", "selfLink")
+	return false
 }
 
 // removePVClaimRef clears spec.claimRef from a PersistentVolume. It is invoked

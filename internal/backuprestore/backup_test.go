@@ -18,8 +18,10 @@ package backuprestore
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -28,6 +30,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -91,6 +96,162 @@ spec:
 	assert.Error(t, err)
 	assert.True(t, IsBRFailedError(err),
 		"filesystem error should be a terminal BRFailedError, got: %v", err)
+}
+
+// TestStartBackupFullFidelityAndSkips verifies that StartBackup backs up
+// resources in full fidelity (cluster-assigned metadata is kept on disk and
+// stripped only at restore), skips resources being deleted and completed/failed
+// Jobs, and persists the per-spec restore configuration.
+func TestStartBackupFullFidelityAndSkips(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-cm", Namespace: "openshift-adp"},
+		Data: map[string]string{
+			"backup.yaml": `apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: b1
+spec:
+  includedNamespaces:
+  - app-ns
+  includedNamespaceScopedResources:
+  - configmaps
+  - jobs
+`,
+			"restore.yaml": `apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: r1
+spec:
+  backupName: b1
+  restorePVs: true
+  restoreStatus:
+    includedResources:
+    - configmaps
+`,
+		},
+	}
+	c, err := getFakeClientFromObjects(cm)
+	assert.NoError(t, err)
+
+	dynScheme := runtime.NewScheme()
+	register := func(gvk schema.GroupVersionKind, isList bool) {
+		if isList {
+			dynScheme.AddKnownTypeWithName(gvk, &unstructured.UnstructuredList{})
+		} else {
+			dynScheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+		}
+	}
+	register(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"}, false)
+	register(schema.GroupVersionKind{Version: "v1", Kind: "NamespaceList"}, true)
+	register(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, false)
+	register(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMapList"}, true)
+	register(schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"}, false)
+	register(schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "JobList"}, true)
+
+	appNs := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Namespace",
+		"metadata": map[string]interface{}{"name": "app-ns", "resourceVersion": "1"},
+	}}
+	keepCM := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name": "keep-cm", "namespace": "app-ns",
+			"uid": "cm-uid-123", "resourceVersion": "42",
+		},
+		"data": map[string]interface{}{"k": "v"},
+	}}
+	deletingCM := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name": "deleting-cm", "namespace": "app-ns",
+			"deletionTimestamp": "2020-01-01T00:00:00Z",
+			"finalizers":        []interface{}{"example.com/keep"},
+		},
+	}}
+	doneJob := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]interface{}{"name": "done-job", "namespace": "app-ns"},
+		"status": map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Complete", "status": "True"},
+			},
+		},
+	}}
+	activeJob := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]interface{}{"name": "active-job", "namespace": "app-ns"},
+		"status":   map[string]interface{}{"active": int64(1)},
+	}}
+
+	dc := dynamicfake.NewSimpleDynamicClient(dynScheme, appNs, keepCM, deletingCM, doneJob, activeJob)
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"v1": {GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "namespaces", SingularName: "namespace", Namespaced: false, Kind: "Namespace"},
+			{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
+		}},
+		"batch/v1": {GroupVersion: "batch/v1", APIResources: []metav1.APIResource{
+			{Name: "jobs", SingularName: "job", Namespaced: true, Kind: "Job"},
+		}},
+	}}
+
+	tmp := t.TempDir()
+	origHostPath := hostPath
+	hostPath = tmp
+	defer func() { hostPath = origHostPath }()
+
+	h := &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+	bt, err := h.StartBackup(context.Background(), []ibuv1.ConfigMapRef{
+		{Name: "backup-cm", Namespace: "openshift-adp"},
+	})
+	assert.NoError(t, err)
+	assert.Contains(t, bt.SucceededBackups, "b1")
+
+	// No apply-wave on either CR, so the spec directory uses the default wave 999.
+	specDir := filepath.Join(tmp, LocalBackupPath, "999_b1")
+	entries, err := os.ReadDir(specDir)
+	assert.NoError(t, err)
+
+	var yamlNames []string
+	foundConfig := false
+	for _, e := range entries {
+		if e.Name() == restoreConfigFileName {
+			foundConfig = true
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".yaml") {
+			yamlNames = append(yamlNames, e.Name())
+		}
+	}
+	joined := strings.Join(yamlNames, "\n")
+
+	assert.True(t, foundConfig, "restore-config.json must be persisted next to the resources")
+	assert.Contains(t, joined, "keep-cm", "a live ConfigMap must be backed up")
+	assert.Contains(t, joined, "active-job", "a running Job must be backed up")
+	assert.Contains(t, joined, "namespace", "the included namespace must be backed up")
+	assert.NotContains(t, joined, "deleting-cm", "a resource being deleted must be skipped")
+	assert.NotContains(t, joined, "done-job", "a completed Job must be skipped")
+
+	// Full fidelity: cluster-assigned metadata is preserved on disk (it is stripped
+	// only at restore time).
+	var keepCMFile string
+	for _, n := range yamlNames {
+		if strings.Contains(n, "keep-cm") {
+			keepCMFile = n
+		}
+	}
+	assert.NotEmpty(t, keepCMFile)
+	data, err := os.ReadFile(filepath.Join(specDir, keepCMFile))
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), "cm-uid-123", "uid must be preserved in the backup file")
+	assert.Contains(t, string(data), "resourceVersion", "resourceVersion must be preserved in the backup file")
+
+	// The persisted restore config reflects the paired Restore CR.
+	cfgData, err := os.ReadFile(filepath.Join(specDir, restoreConfigFileName))
+	assert.NoError(t, err)
+	cfg := &specRestoreConfig{}
+	assert.NoError(t, json.Unmarshal(cfgData, cfg))
+	assert.True(t, cfg.RestorePVs)
+	assert.Equal(t, []string{"configmaps"}, cfg.RestoreStatusResources)
 }
 
 func TestGetObjsFromApplyLabel(t *testing.T) {
