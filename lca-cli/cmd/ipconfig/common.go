@@ -48,7 +48,10 @@ func buildOpsAndK8sClient(
 	} else {
 		hostCommandsExecutor = ops.NewRegularExecutor(pkgLog, true)
 	}
-	opsInterface := ops.NewOps(pkgLog, hostCommandsExecutor)
+	opsInterface, err := ops.NewOpsWithLocalImageStoreIfConfigured(pkgLog, hostCommandsExecutor)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to configure local image store: %w", err)
+	}
 
 	k8sConfig, err := clientcmd.BuildConfigFromFlags("", common.PathOutsideChroot(common.KubeconfigFile))
 	if err != nil {

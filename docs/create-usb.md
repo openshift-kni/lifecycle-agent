@@ -220,8 +220,11 @@ image closure resolves locally with no registry and no network.
   oci-<build-id>/      # OCI image layout + signatures/ subtree (BuildImageLayout)
   digests.json         # on-media digest manifest (BuildImageLayout)
   store/               # read-only containers/storage overlay store (this stage)
-  storage.conf         # drop-in registering store/ as a read-only additional image store
 ```
+
+The installed node's runtime registration is not staged on p2. `lca-cli ibi prepare` copies the
+store to the installed disk and writes the target CRI-O drop-in under
+`/etc/crio/crio.conf.d`.
 
 - **`store/`** is built from the **same digest-pinned closure** recorded in `digests.json`:
   the build reads that committed manifest and imports its images, by their canonical
@@ -230,9 +233,6 @@ image closure resolves locally with no registry and no network.
   `containers/image` path the on-node consumer (`localimages`) and prepare use — there is no
   external `skopeo` binary and no registry (the proposal's
   `skopeo copy oci:<layout> containers-storage:...` is realized in-process).
-- **`storage.conf`** is a rendered drop-in that registers `store/` under the `overlay`
-  driver via `additionalimagestores`, which is read-only by definition. It never references a
-  registry.
 
 **install-only media emits nothing here** — it ships no on-media site configuration and no
 durability store.
@@ -246,12 +246,10 @@ without an image instance for the selected architecture fails the build.
 
 ### Crash-safe, recoverable commit
 
-The store and its `storage.conf` are built into **build-unique staging artifacts** and both are
-validated before anything committed is touched. They are then committed together by a
-**recoverable swap**: the previous `store/` and `storage.conf` are moved aside, the staging
-artifacts are renamed into place, and the previous pair is **restored if any step returns an
-error**. So an **in-process commit failure** never destroys the last valid store, and `store/`
-is always paired with its matching `storage.conf`.
+The store is built into a **build-unique staging directory** and validated before anything
+committed is touched. It is then committed by a **recoverable swap**: the previous `store/` is
+moved aside, the staging store is renamed into place, and the previous store is **restored if any
+step returns an error**. So an **in-process commit failure** never destroys the last valid store.
 
 A **crash mid-commit** is a different case: the previous pair is left in a `.store-backup-*`
 backup and is **not restored in place**. Instead, the next build garbage-collects that backup and
@@ -282,9 +280,8 @@ an OCI-layout→registry-storage conversion). Because post-pivot runs
 `deleteAllOldMirrorResources` before applying the config directory, the IDMS must be in the
 applied set, and — critically — the IDMS and the registry service are an **all-or-nothing
 unit**: shipping the IDMS without a running `localhost:5000` registry would break image
-resolution. This fallback is **not implemented**; it is the deferred §6.6 contingency, and the
-rendered `storage.conf` never references a registry. It would only be built if the compat gate
-above proves overlay unworkable.
+resolution. This fallback is **not implemented**; it is the deferred §6.6 contingency. It would only be
+built if the compat gate above proves overlay unworkable.
 
 ## The /opt/openshift config tree
 

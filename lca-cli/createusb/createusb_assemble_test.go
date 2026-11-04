@@ -252,7 +252,7 @@ func (f *fakeImagePopulator) BuildLayout(_ context.Context, _ *logrus.Logger, _ 
 	return &LayoutBuildResult{Size: SizeReport{StagedBytes: 42}}, nil
 }
 
-func (f *fakeImagePopulator) BuildStore(_ context.Context, _ *logrus.Logger, _ *Manifest, p2Root, _, targetArch string) (*StoreBuildResult, error) {
+func (f *fakeImagePopulator) BuildStore(_ context.Context, _ *logrus.Logger, _ *Manifest, p2Root, targetArch string) (*StoreBuildResult, error) {
 	f.calls = append(f.calls, "buildStore")
 	f.gotArch = targetArch
 	if f.storeErr != nil {

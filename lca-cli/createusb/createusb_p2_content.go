@@ -19,8 +19,8 @@ package createusb
 // This file implements the create-usb self-contained durability-store stage (USB-based
 // IBI proposal §6.4 step 4, §8.D): build the read-only containers/storage image store
 // from the on-media closure, validate it against the target CRI-O overlay driver/layer
-// format (the §6.6 compatibility gate), and stage it read-only on p2 at store/ with a
-// rendered storage.conf drop-in beside it. install-only emits nothing.
+// format (the §6.6 compatibility gate), and stage it read-only on p2 at store/.
+// install-only emits nothing.
 //
 // # Producer of the on-media durability store
 //
@@ -41,17 +41,15 @@ package createusb
 // # Crash-safe staging and recoverable commit
 //
 // Mirroring createusb_images.go's model, the store is built into a fresh, build-unique
-// staging directory under p2Root and the storage.conf drop-in is rendered into a build-unique
-// staging file; both are validated and sized before anything committed is touched. Only then
-// are they committed together by a recoverable swap: the previous store/ and storage.conf are
-// moved aside, the staging artifacts renamed into place, and the previous pair restored if any
-// step fails. So the committed store/ only ever appears complete and validated, and the store
-// and its storage.conf are always a matched pair.
+// staging directory under p2Root and validated before anything committed is touched. Only
+// then is it committed by a recoverable swap: the previous store/ is moved aside, the staging
+// store renamed into place, and the previous store restored if any step fails. So the
+// committed store/ only ever appears complete and validated.
 //
 // The preservation guarantee is scoped to an in-process commit *failure*: if a rename returns
-// an error mid-swap, the moved-aside previous pair is restored before returning, so the last
+// an error mid-swap, the moved-aside previous store is restored before returning, so the last
 // valid store survives. A crash mid-commit (the process dies after a moveAside, before the swap
-// completes) is a different case and is not preserved in place: the previous pair is left in a
+// completes) is a different case and is not preserved in place: the previous store is left in a
 // .store-backup-* backup, and the next build GCs that backup and rebuilds the store from the OCI
 // layout + digests.json (the source of truth that always remains on the media) rather than
 // restoring it. A rebuild that then fails is surfaced as a hard error out of
@@ -79,15 +77,13 @@ package createusb
 // store and wrote the overlay driver/layer metadata CRI-O reads. If the overlay additional
 // -image-store model is ever found unworkable, the documented alternative is the registry
 // fallback (an ImageDigestMirrorSet plus an on-node registry) -- documented in
-// docs/create-usb.md, deliberately not implemented here, and never referenced by the
-// rendered storage.conf.
+// docs/create-usb.md and deliberately not implemented here.
 //
 // # Wiring
 //
 // Like BuildImageLayout, BuildDurabilityStore is a self-contained, unit-tested building
 // block. Wiring it into the end-to-end media-assembly flow (after the OCI layout +
-// digests.json are committed, with the runtime store path the installed node will mount
-// p2 at) lands in the media-assembly story (CNF-27171).
+// digests.json are committed) lands in the media-assembly story (CNF-27171).
 
 import (
 	"context"
@@ -106,7 +102,7 @@ import (
 const (
 	// durabilityStoreDirName is the committed containers/storage graphroot staged directly
 	// under the p2 media root, beside the OCI layout and digests.json. The installed node
-	// registers it as a read-only additional image store (see the rendered storage.conf).
+	// consumes it after lca-cli ibi prepare copies and registers it on the installed disk.
 	durabilityStoreDirName = "store"
 
 	// storeStagingDirPrefix prefixes the fresh, build-unique directory the store is built
@@ -114,22 +110,11 @@ const (
 	// (orphaned by a crashed build) are garbage-collected at the start of every build.
 	storeStagingDirPrefix = ".store-staging-"
 
-	// stagingConfSuffix is appended to the staging directory's path to name the build-unique
-	// staging storage.conf (so it shares storeStagingDirPrefix and is GC'd alongside a crashed
-	// build's staging directory). The drop-in is rendered here and renamed into place at commit.
-	stagingConfSuffix = ".conf"
-
-	// storeBackupPrefix prefixes the build-unique locations the previous store/ and
-	// storage.conf are moved aside to during a commit, so they can be restored if the swap
-	// fails. Stale backups (orphaned by a crash mid-commit) are garbage-collected at the start
+	// storeBackupPrefix prefixes the build-unique location the previous store/ is moved
+	// aside to during a commit, so it can be restored if the swap fails. Stale backups (orphaned by a crash mid-commit) are garbage-collected at the start
 	// of every build; the media is always rebuildable from the OCI layout + digests.json, so a
 	// discarded stale backup is never load-bearing.
 	storeBackupPrefix = ".store-backup-"
-
-	// storageConfDropInName is the rendered storage.conf drop-in staged at the p2 root
-	// beside the store. It registers the store as a read-only additional image store under
-	// the overlay driver.
-	storageConfDropInName = "storage.conf"
 
 	// durabilityStoreDriver is the containers/storage graph driver the durability store is
 	// built with. It is fixed to overlay: RHCOS/CRI-O use overlay for the node's persistent
@@ -155,12 +140,10 @@ const (
 )
 
 // StoreBuildResult is returned by BuildDurabilityStore once the read-only durability
-// store and its storage.conf drop-in have been staged under the p2 media root.
+// store has been staged under the p2 media root.
 type StoreBuildResult struct {
 	// StorePath is the committed containers/storage graphroot (<p2Root>/store).
 	StorePath string
-	// StorageConfPath is the rendered storage.conf drop-in (<p2Root>/storage.conf).
-	StorageConfPath string
 	// ImportedImages is the number of closure images imported into the store (the digest
 	// manifest's image count; ImportAll is fail-fast, so a nil error means every one was
 	// imported).
@@ -203,9 +186,7 @@ func defaultStoreBuildDeps() storeBuildDeps {
 
 // BuildDurabilityStore builds the read-only containers/storage durability store for
 // self-contained media and stages it under p2Root at store/, validated against the target
-// CRI-O overlay driver/layer format, with a storage.conf drop-in beside it that registers
-// the store as a read-only additional image store at runtimeStorePath (the absolute path
-// the installed node will see the store at once p2 is mounted). It is built from the
+// CRI-O overlay driver/layer format, for consumption by the installed node. It is built from the
 // digest-pinned closure in the digests.json BuildImageLayout committed at the p2 root, so
 // the store and the OCI layout carry the same image set.
 //
@@ -219,29 +200,18 @@ func defaultStoreBuildDeps() storeBuildDeps {
 // no-op returning a nil result.
 //
 // It is the entry point the media-assembly story (CNF-27171) wires in, after the OCI
-// layout + digests.json are committed; it supplies runtimeStorePath and targetArch.
-func BuildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string) (*StoreBuildResult, error) {
-	return buildDurabilityStore(ctx, log, m, p2Root, runtimeStorePath, targetArch, defaultStoreBuildDeps())
+// layout + digests.json are committed; it supplies targetArch.
+func BuildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, targetArch string) (*StoreBuildResult, error) {
+	return buildDurabilityStore(ctx, log, m, p2Root, targetArch, defaultStoreBuildDeps())
 }
 
 // buildDurabilityStore is the dependency-injected core of BuildDurabilityStore.
-func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, runtimeStorePath, targetArch string, deps storeBuildDeps) (result *StoreBuildResult, err error) {
+func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, p2Root, targetArch string, deps storeBuildDeps) (result *StoreBuildResult, err error) {
 	// install-only ships no on-media durability store (the node is not reconfigured
 	// offline), so this stage emits nothing.
 	if m.Mode != ModeSelfContained {
 		log.Infof("create-usb: mode %q ships no durability store; nothing to stage", m.Mode)
 		return nil, nil
-	}
-
-	// The drop-in must name the absolute path the store is registered at on the node; a
-	// relative or empty path is not a valid additionalimagestores entry, so fail the build
-	// rather than render an unusable storage.conf.
-	runtimeStorePath = strings.TrimSpace(runtimeStorePath)
-	if runtimeStorePath == "" {
-		return nil, errors.New("runtime store path is required to render the storage.conf drop-in")
-	}
-	if !filepath.IsAbs(runtimeStorePath) {
-		return nil, fmt.Errorf("runtime store path %q must be absolute", runtimeStorePath)
 	}
 
 	// The store must carry the target node's architecture, not the build host's. A build on
@@ -283,17 +253,12 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 
 	// Build into a fresh, build-unique staging directory; it is never store/, so an
 	// in-process failure or a crash before the commit below cannot leave a half-built store/
-	// on the media. The storage.conf is likewise rendered into a build-unique staging file,
-	// so both artifacts are complete and validated before the previous store/ is touched. The
-	// committed defer keeps the staging artifacts only once they have become store/ +
-	// storage.conf.
+	// on the media. The committed defer keeps the staging directory only until it has become
+	// store/.
 	staging, err := os.MkdirTemp(p2Root, storeStagingDirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating durability store staging directory under %q: %w", p2Root, err)
 	}
-	// stagingConf shares the staging prefix (so gcStaleStoreArtifacts collects a crashed
-	// build's leftover config too) and is unique per build via the staging dir's token.
-	stagingConf := staging + stagingConfSuffix
 	committed := false
 	defer func() {
 		if committed {
@@ -301,9 +266,6 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 		}
 		if rmErr := os.RemoveAll(staging); rmErr != nil && err == nil {
 			err = fmt.Errorf("cleaning up durability store staging directory %q: %w", staging, rmErr)
-		}
-		if rmErr := os.Remove(stagingConf); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
-			err = fmt.Errorf("cleaning up durability store staging config %q: %w", stagingConf, rmErr)
 		}
 	}()
 
@@ -324,38 +286,26 @@ func buildDurabilityStore(ctx context.Context, log *logrus.Logger, m *Manifest, 
 		return nil, fmt.Errorf("sizing durability store %q: %w", staging, err)
 	}
 
-	// Render the storage.conf drop-in into its staging file, so both artifacts are ready
-	// before the previous store/ is touched; a render failure here leaves the committed store/
-	// and storage.conf untouched.
-	if err := renderStorageConfDropIn(stagingConf, runtimeStorePath); err != nil {
-		return nil, err
-	}
-
-	// Commit both artifacts with a recoverable swap: the previous store/ and storage.conf are
-	// moved aside, the validated staging artifacts renamed into place, and the previous
-	// artifacts restored if any step returns an error -- so an in-process commit failure never
-	// leaves the media without a valid, matched store + storage.conf pair. A crash mid-commit is
-	// instead recovered by rebuild-from-layout on the next build (see the file header).
+	// Commit the store with a recoverable swap: the previous store/ is moved aside, the
+	// validated staging store is renamed into place, and the previous store is restored if any
+	// step returns an error. A crash mid-commit is recovered by rebuild-from-layout on the next
+	// build (see the file header).
 	storePath := filepath.Join(p2Root, durabilityStoreDirName)
-	confPath := filepath.Join(p2Root, storageConfDropInName)
-	if err := commitStoreAndConf(log, staging, stagingConf, storePath, confPath); err != nil {
+	if err := commitStore(log, staging, storePath); err != nil {
 		return nil, err
 	}
 	committed = true
 
 	log.WithFields(logrus.Fields{
-		"storePath":        storePath,
-		"storageConf":      confPath,
-		"runtimeStorePath": runtimeStorePath,
-		"importedImages":   len(manifest.Images),
-		"storeBytes":       storeBytes,
+		"storePath":      storePath,
+		"importedImages": len(manifest.Images),
+		"storeBytes":     storeBytes,
 	}).Info("create-usb: staged read-only durability store on p2")
 
 	return &StoreBuildResult{
-		StorePath:       storePath,
-		StorageConfPath: confPath,
-		ImportedImages:  len(manifest.Images),
-		StoreBytes:      storeBytes,
+		StorePath:      storePath,
+		ImportedImages: len(manifest.Images),
+		StoreBytes:     storeBytes,
 	}, nil
 }
 
@@ -412,56 +362,37 @@ func importClosureIntoStore(ctx context.Context, log *logrus.Logger, manifest *l
 	return nil
 }
 
-// commitStoreAndConf atomically swaps the validated staging store and storage.conf into
-// store/ and storage.conf, preserving the previous pair until both new artifacts are in
-// place. It moves the previous store/ and storage.conf aside, renames the staging artifacts
-// into place, and restores the previous pair if any step returns an error -- so an in-process
-// commit *failure* never leaves the media without a valid, matched store + storage.conf (the
-// gap the plain remove-then-rename left). On success the preserved previous artifacts are
-// discarded.
+// commitStore atomically swaps the validated staging store into store/, preserving the
+// previous store until the new one is in place. It moves the previous store aside, renames
+// the staging store into place, and restores the previous store if any step returns an error
+// -- so an in-process commit *failure* never leaves the media without a valid store.
 //
-// A crash mid-swap is a different case and is not recovered in place: the previous pair is left
-// aside in a .store-backup-* backup that the next build GCs rather than restores. Builds are
-// serialized by the p2 lock, so no concurrent build observes the swap window; the crashed build
-// self-heals on the next build, which rebuilds the store from the OCI layout + digests.json (the
-// source of truth that always remains on the media). A rebuild that itself fails is surfaced as
-// a hard error, so media assembly must treat an unsuccessful rebuild as unusable media.
-func commitStoreAndConf(log *logrus.Logger, stagingStore, stagingConf, storePath, confPath string) error {
+// A crash mid-swap is a different case and is not recovered in place: the previous store is
+// left aside in a .store-backup-* backup that the next build GCs rather than restores. Builds
+// are serialized by the p2 lock, so no concurrent build observes the swap window; the crashed
+// build self-heals on the next build, which rebuilds the store from the OCI layout +
+// digests.json (the source of truth that always remains on the media). A rebuild that itself
+// fails is surfaced as a hard error, so media assembly must treat an unsuccessful rebuild as
+// unusable media.
+func commitStore(log *logrus.Logger, stagingStore, storePath string) error {
 	p2Root := filepath.Dir(storePath)
 	storeBackup := filepath.Join(p2Root, storeBackupPrefix+durabilityStoreDirName)
-	confBackup := filepath.Join(p2Root, storeBackupPrefix+storageConfDropInName)
 
-	// Move the previous artifacts aside (a first build has none, backing up to ""), so they
-	// can be restored if a later step fails.
+	// Move the previous store aside (a first build has none, backing up to ""), so it can be
+	// restored if a later step fails.
 	savedStore, err := moveAside(storePath, storeBackup)
 	if err != nil {
 		return fmt.Errorf("preserving previous durability store %q: %w", storePath, err)
 	}
-	savedConf, err := moveAside(confPath, confBackup)
-	if err != nil {
-		restoreAside(log, savedStore, storePath)
-		return fmt.Errorf("preserving previous storage.conf %q: %w", confPath, err)
-	}
 
-	// Swap in the new store; restore the previous pair if it fails.
+	// Swap in the new store; restore the previous store if it fails.
 	if err := os.Rename(stagingStore, storePath); err != nil {
 		restoreAside(log, savedStore, storePath)
-		restoreAside(log, savedConf, confPath)
 		return fmt.Errorf("committing durability store to %q: %w", storePath, err)
 	}
 
-	// Swap in the new storage.conf; roll the new store back too if it fails, so the media
-	// never carries a new store paired with the previous (mismatched) config.
-	if err := os.Rename(stagingConf, confPath); err != nil {
-		removeStoreDir(log, storePath)
-		restoreAside(log, savedStore, storePath)
-		restoreAside(log, savedConf, confPath)
-		return fmt.Errorf("committing storage.conf to %q: %w", confPath, err)
-	}
-
-	// Both artifacts committed; discard the preserved previous pair.
+	// The new store is committed; discard the preserved previous store.
 	discardAside(log, savedStore)
-	discardAside(log, savedConf)
 	return nil
 }
 
@@ -541,8 +472,6 @@ func gcStaleStoreArtifacts(log *logrus.Logger, p2Root string) {
 // store fails at open, not here); this check guards against an import that left the store
 // empty or without its overlay metadata.
 func validateOverlayStore(storePath string) error {
-	// The overlay graph-driver directory is where containers/storage writes overlay layer
-	// data; its absence means the import did not populate an overlay store.
 	graphDir := filepath.Join(storePath, overlayGraphDirName)
 	if info, err := os.Stat(graphDir); err != nil {
 		return fmt.Errorf("overlay graph-driver directory %q missing (store not in overlay layer format): %w", graphDir, err)
@@ -550,8 +479,6 @@ func validateOverlayStore(storePath string) error {
 		return fmt.Errorf("overlay graph-driver path %q is not a directory", graphDir)
 	}
 
-	// images.json records the imported images in the format CRI-O reads; it must list at
-	// least one image, or the store carries no closure.
 	imagesJSON := filepath.Join(storePath, overlayImagesJSONPath)
 	count, err := countStoredImages(imagesJSON)
 	if err != nil {
@@ -561,7 +488,6 @@ func validateOverlayStore(storePath string) error {
 		return fmt.Errorf("durability store %q records no images", storePath)
 	}
 
-	// layers.json records the overlay layer chain the images resolve through.
 	layersJSON := filepath.Join(storePath, overlayLayersJSONPath)
 	if _, err := os.Stat(layersJSON); err != nil {
 		return fmt.Errorf("overlay layer metadata %q missing: %w", layersJSON, err)
@@ -583,49 +509,4 @@ func countStoredImages(imagesJSONPath string) (int, error) {
 		return 0, fmt.Errorf("parsing store image metadata %q: %w", imagesJSONPath, err)
 	}
 	return len(images), nil
-}
-
-// renderStorageConfDropIn writes the storage.conf drop-in that registers the staged store as
-// a read-only additional image store at runtimeStorePath, under the overlay driver. It is
-// written atomically (temp file + rename) so a reader never observes a half-written config.
-// The drop-in never references a registry: the registry fallback is the documented
-// alternative only (see docs/create-usb.md).
-func renderStorageConfDropIn(confPath, runtimeStorePath string) error {
-	content := fmt.Sprintf(storageConfDropInTemplate, durabilityStoreDriver, runtimeStorePath)
-	if _, err := publishFile(confPath, []byte(content), false); err != nil {
-		return fmt.Errorf("writing storage.conf drop-in %q: %w", confPath, err)
-	}
-	return nil
-}
-
-// storageConfDropInTemplate is the storage.conf drop-in rendered beside the store. The two
-// %s are the graph driver and the absolute runtime store path. additionalimagestores is
-// read-only by definition in containers/storage, so registering the store there (and
-// staging it on read-only p2) is what makes it a read-only additional image store.
-const storageConfDropInTemplate = `# Rendered by lca-cli create-usb for self-contained USB-based IBI media.
-#
-# Registers the on-media, read-only containers/storage durability store as a read-only
-# additional image store, so the installed node resolves the digest-pinned image closure
-# locally with no registry and no network (the primary durability model). The store is
-# built from the same OCI layout + digests.json staged on this partition.
-#
-# The registry fallback (an ImageDigestMirrorSet plus an on-node registry) is the documented
-# alternative only, used if the overlay additional-image-store model is unavailable; see
-# docs/create-usb.md. This drop-in never references a registry.
-[storage]
-driver = "%s"
-
-[storage.options]
-additionalimagestores = [
-  "%s",
-]
-`
-
-// removeStoreDir removes a committed store directory on a rollback path, best-effort: a
-// failure to clean up wastes media space but cannot leave a mismatched medium, so it is
-// logged rather than returned.
-func removeStoreDir(log *logrus.Logger, storePath string) {
-	if err := os.RemoveAll(storePath); err != nil {
-		log.Warnf("create-usb: failed to remove durability store %s during rollback: %v", storePath, err)
-	}
 }

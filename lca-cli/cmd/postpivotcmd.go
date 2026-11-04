@@ -58,7 +58,10 @@ func postPivot() {
 	} else {
 		hostCommandsExecutor = ops.NewRegularExecutor(log, true)
 	}
-	opsClient := ops.NewOps(log, hostCommandsExecutor)
+	opsClient, err := ops.NewOpsWithLocalImageStoreIfConfigured(log, hostCommandsExecutor)
+	if err != nil {
+		log.Fatal(err)
+	}
 	rpmOstreeClient := rpmostreeclient.NewClient("initmonitor", hostCommandsExecutor)
 	ostreeClient := ostreeclient.NewClient(hostCommandsExecutor, false)
 	rebootClient := reboot.NewIBURebootClient(&logr.Logger{}, hostCommandsExecutor, rpmOstreeClient, ostreeClient, opsClient)

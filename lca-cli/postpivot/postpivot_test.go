@@ -2,6 +2,7 @@ package postpivot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -1672,4 +1673,49 @@ func TestRenderedManifestSuppliesNMState(t *testing.T) {
 	applied, err := os.ReadFile(nmstateFile)
 	require.NoError(t, err)
 	assert.Equal(t, rawNMState, string(applied))
+}
+
+func TestRecertLocalImageHandling(t *testing.T) {
+	inspectionErr := errors.New("image inspection failed")
+	for _, tc := range []struct {
+		name       string
+		localStore bool
+		exists     bool
+		checkErr   error
+		wantPull   bool
+		wantErr    string
+	}{
+		{name: "connected inspection error falls back to pull", checkErr: inspectionErr, wantPull: true},
+		{name: "local store inspection error fails closed", localStore: true, checkErr: inspectionErr, wantErr: "failed to check whether recert image"},
+		{name: "connected missing image is pulled", wantPull: true},
+		{name: "local store missing image fails closed", localStore: true, wantErr: "is not available in the local image store"},
+		{name: "connected existing image is reused", exists: true},
+		{name: "local store existing image is reused", localStore: true, exists: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockOps := ops.NewMockOps(gomock.NewController(t))
+			workingDir := t.TempDir()
+			pp := NewPostPivot(nil, logrus.New(), mockOps, "", workingDir, "")
+			const image = "quay.io/example/recert:test"
+			mockOps.EXPECT().ImageExists(image).Return(tc.exists, tc.checkErr)
+			if tc.checkErr != nil || !tc.exists {
+				mockOps.EXPECT().LocalImageStoreEnabled().Return(tc.localStore).AnyTimes()
+			}
+			if tc.wantPull {
+				mockOps.EXPECT().RunBashInHostNamespace("podman", "pull", "--authfile", common.ImageRegistryAuthFile, image).Return("", nil)
+			}
+			if tc.wantErr == "" {
+				mockOps.EXPECT().RecertFullFlow(image, "", gomock.Any(), gomock.Any(), gomock.Any(), "-v", workingDir+":"+workingDir).Return(nil)
+			}
+			err := pp.recert(context.Background(), &clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				if tc.checkErr != nil {
+					require.ErrorIs(t, err, tc.checkErr)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
