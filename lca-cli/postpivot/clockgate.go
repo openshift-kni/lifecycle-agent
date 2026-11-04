@@ -20,17 +20,6 @@ import (
 )
 
 const (
-	// defaultMaxSeedAge is the default plausibility ceiling for the system clock relative to
-	// the seed's creation time: a conservative warehouse->ship->field shelf life that catches
-	// gross RTC errors (an unset/battery-dead clock landing in 1970/2000, or a wildly future
-	// date) without tripping on realistic logistics. It is configurable per deployment via
-	// SeedReconfiguration.MaxSeedAge. 180 days was confirmed as a reasonable starting default.
-	defaultMaxSeedAge = 180 * 24 * time.Hour
-
-	// maxAllowedSeedAge caps a configured maxSeedAge so an absurd or overflowing value is
-	// rejected with a clear config error rather than silently widening the window to meaningless.
-	maxAllowedSeedAge = 10 * 365 * 24 * time.Hour
-
 	// chronySyncMaxTries bounds `chronyc waitsync` so a configured-but-unreachable time source
 	// (the offline case) fails fast and the gate falls back to the RTC window instead of
 	// stalling the pre-recert path. At a 1s interval this is a few seconds at most.
@@ -124,7 +113,7 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 		return nil
 	}
 
-	maxSeedAge, err := resolveMaxSeedAge(seedReconfiguration.MaxSeedAge)
+	maxSeedAge, err := clusterconfig_api.ParseMaxSeedAge(seedReconfiguration.MaxSeedAge)
 	if err != nil {
 		// A malformed maxSeedAge is an operator configuration error in a tuning knob, not an
 		// implausible clock. Fail the reconfigure with a plain error (which aborts before recert,
@@ -136,7 +125,7 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 	// Tier 1: a trusted, confirmed-synced local time source makes the clock authoritative.
 	// Presence of a chrony config alone is never enough -- the source must be a genuine
 	// external/on-link source and must actually confirm synchronization before recert.
-	if chronyConfigHasTrustedSource(seedReconfiguration.ChronyConfig) {
+	if clusterconfig_api.ChronyConfigHasTrustedSource(seedReconfiguration.ChronyConfig) {
 		if syncErr := p.bringChronyUpAndConfirmSync(seedReconfiguration.ChronyConfig); syncErr != nil {
 			p.log.Warnf("Clock gate: a trusted chrony source is configured but synchronization was not confirmed (%v); falling back to the RTC plausibility window", syncErr)
 		} else {
@@ -231,94 +220,6 @@ func (p *PostPivot) failClockGate(seedClusterInfo *seedclusterinfo.SeedClusterIn
 		Clock:       clk,
 	}
 	return writeReconfigureFailureAndHalt(p.ops, p.log, result, fmt.Errorf("pre-recert clock gate failed: %w", cause))
-}
-
-// resolveMaxSeedAge validates and resolves the configured maxSeedAge. An empty value uses the
-// default (180 days); a value must be a positive Go duration string no larger than
-// maxAllowedSeedAge, otherwise a config error is returned so the gate fails closed rather than
-// silently accepting an implausible window.
-func resolveMaxSeedAge(configured string) (time.Duration, error) {
-	if strings.TrimSpace(configured) == "" {
-		return defaultMaxSeedAge, nil
-	}
-	d, err := time.ParseDuration(configured)
-	if err != nil {
-		return 0, fmt.Errorf("maxSeedAge %q is not a valid duration: %w", configured, err)
-	}
-	if d <= 0 {
-		return 0, fmt.Errorf("maxSeedAge %q must be positive", configured)
-	}
-	if d > maxAllowedSeedAge {
-		return 0, fmt.Errorf("maxSeedAge %q exceeds the maximum allowed (%s)", configured, maxAllowedSeedAge)
-	}
-	return d, nil
-}
-
-// chronyConfigHasTrustedSource reports whether a chrony configuration declares at least one
-// genuine external or on-link time source that could actually step the clock -- a server,
-// pool, or peer pointing at a real address, or a hardware reference clock (refclock). It
-// deliberately excludes sources backed by the same unreliable RTC the gate exists to distrust:
-// the NTP local-clock pseudo-address family (127.127.x.x), loopback servers, the
-// `local stratum` fallback directive, and the RTC refclock driver. A config carrying only those is treated as having no
-// trusted source, so the gate falls through to the RTC plausibility window instead of being
-// bypassed by the very clock it is meant to check.
-func chronyConfigHasTrustedSource(chronyConfig string) bool {
-	for _, raw := range strings.Split(chronyConfig, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || isChronyCommentLine(line) {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		switch strings.ToLower(fields[0]) {
-		case "server", "pool", "peer":
-			if len(fields) < 2 || isLocalClockAddress(fields[1]) {
-				continue
-			}
-			return true
-		case "refclock":
-			// A non-RTC hardware reference clock (PHC/PPS/GPS) is a genuine on-link time
-			// source. The RTC driver, however, is backed by the very same unreliable RTC the
-			// gate exists to distrust: a wrong-but-stable RTC would satisfy `waitsync` and
-			// bypass the seed window. Reject `refclock RTC ...` (and a driverless refclock,
-			// which cannot be confirmed) so those configurations fall through to the window.
-			if len(fields) < 2 || strings.EqualFold(fields[1], "RTC") {
-				continue
-			}
-			return true
-		}
-		// `local stratum N`, `rtcsync`, `rtcfile`, and other non-source directives are ignored.
-	}
-	return false
-}
-
-// isChronyCommentLine reports whether a trimmed chrony config line is a comment. chrony treats
-// lines beginning with '#', '%', '!', or ';' as comments.
-func isChronyCommentLine(line string) bool {
-	if line == "" {
-		return false
-	}
-	switch line[0] {
-	case '#', '%', '!', ';':
-		return true
-	}
-	return false
-}
-
-// isLocalClockAddress reports whether addr is the local/RTC-backed pseudo-source the gate must
-// not trust: the NTP reference-clock pseudo-IP family (127.127.x.x) or a loopback address.
-func isLocalClockAddress(addr string) bool {
-	a := strings.ToLower(strings.TrimSpace(addr))
-	if strings.HasPrefix(a, "127.127.") {
-		return true
-	}
-	switch a {
-	case "127.0.0.1", "::1", "localhost":
-		return true
-	}
-	return false
 }
 
 // bringChronyUpAndConfirmSync places the user's chrony configuration and (re)starts chronyd

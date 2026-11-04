@@ -84,6 +84,14 @@ The gate accepts the clock when **either**:
   `4320h`); invalid, non-positive, or absurdly large values are rejected with a clear config
   error.
 
+On the self-contained USB-based IBI profile both knobs are set **explicitly** through the
+`create-usb` manifest's `siteConfig` (`chronyConfig` and `maxSeedAge`), which render into
+`manifest.json`; the node never auto-trusts inherited host chrony configuration. Both are
+validated at build time with the same rules the gate applies at runtime (shared via
+[api/seedreconfig](../api/seedreconfig/clockgate_config.go)): a `chronyConfig` that declares no
+trusted source, and an out-of-range `maxSeedAge`, fail the build rather than the node. See
+[create-usb](./create-usb.md).
+
 If neither holds, recert never runs: the gate writes a terminal `reconfigure.json` failure
 record to the `ibi-status` partition (recording the observed time, the plausible window, and
 which check failed) and halts the node **powered-on** via `emergency.target` so a technician can
