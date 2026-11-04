@@ -153,7 +153,11 @@ linters-settings:
       - .WrapPrefixf(
 run:
   concurrency: 6
-  timeout: 5m
+  # The local backup/restore migration (CNF-22167) added ~4.5k lines, pushing the
+  # full lint run just past the former 5m deadline on contended CI runners (observed
+  # 5m11s with 0 issues). Raised to 10m to give comfortable headroom; the linter set
+  # and rules are unchanged.
+  timeout: 10m
   tests: false
   # Required to type-check packages that use containers/image + containers/storage
   # (e.g. lca-cli/localimages). See GO_BUILD_TAGS in the Makefile.
