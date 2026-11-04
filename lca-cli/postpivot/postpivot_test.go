@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -957,24 +958,36 @@ func TestRestoreNMConnectionFiles(t *testing.T) {
 			mockOps := ops.NewMockOps(ctrl)
 			pp := NewPostPivot(nil, &logrus.Logger{}, mockOps, "", tmpDir, "")
 			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
-			require.NoError(t, os.MkdirAll(nmConnectionFolder, 0o700))
+			if err := os.MkdirAll(nmConnectionFolder, 0o700); err != nil {
+				t.Fatal(err)
+			}
 
 			if tc.provided != nil {
 				source := path.Join(tmpDir, common.NetworkDir, "system-connections")
-				require.NoError(t, os.MkdirAll(source, 0o700))
+				if err := os.MkdirAll(source, 0o700); err != nil {
+					t.Fatal(err)
+				}
 				for name, content := range tc.provided {
-					require.NoError(t, os.WriteFile(path.Join(source, name), []byte(content), 0o600))
+					if err := os.WriteFile(path.Join(source, name), []byte(content), 0o600); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 
-			require.NoError(t, pp.RestoreNMConnectionFiles())
+			if err := pp.RestoreNMConnectionFiles(); err != nil {
+				t.Fatal(err)
+			}
 
 			entries, err := os.ReadDir(nmConnectionFolder)
-			require.NoError(t, err)
+			if err != nil {
+				t.Fatal(err)
+			}
 			assert.Len(t, entries, len(tc.expectedFiles))
 			for name, content := range tc.expectedFiles {
 				data, err := os.ReadFile(path.Join(nmConnectionFolder, name))
-				require.NoError(t, err)
+				if err != nil {
+					t.Fatal(err)
+				}
 				assert.Equal(t, content, string(data))
 			}
 		})
