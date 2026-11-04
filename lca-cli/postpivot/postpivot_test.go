@@ -998,6 +998,56 @@ func TestNetworkConfiguration(t *testing.T) {
 	}
 }
 
+func TestRestoreNMConnectionFiles(t *testing.T) {
+	profile := "[connection]\nid=Wired connection 1\ninterface-name=enp1s0\n"
+
+	testcases := []struct {
+		name          string
+		provided      map[string]string
+		expectedFiles map[string]string
+	}{
+		{
+			name:          "Provided profiles are copied",
+			provided:      map[string]string{"Wired connection 1.nmconnection": profile},
+			expectedFiles: map[string]string{"Wired connection 1.nmconnection": profile},
+		},
+		{
+			name:          "No provided profiles",
+			provided:      nil,
+			expectedFiles: map[string]string{},
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			pp := NewPostPivot(nil, &logrus.Logger{}, mockOps, "", tmpDir, "")
+			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
+			require.NoError(t, os.MkdirAll(nmConnectionFolder, 0o700))
+
+			if tc.provided != nil {
+				source := path.Join(tmpDir, common.NetworkDir, "system-connections")
+				require.NoError(t, os.MkdirAll(source, 0o700))
+				for name, content := range tc.provided {
+					require.NoError(t, os.WriteFile(path.Join(source, name), []byte(content), 0o600))
+				}
+			}
+
+			require.NoError(t, pp.RestoreNMConnectionFiles())
+
+			entries, err := os.ReadDir(nmConnectionFolder)
+			require.NoError(t, err)
+			assert.Len(t, entries, len(tc.expectedFiles))
+			for name, content := range tc.expectedFiles {
+				data, err := os.ReadFile(path.Join(nmConnectionFolder, name))
+				require.NoError(t, err)
+				assert.Equal(t, content, string(data))
+			}
+		})
+	}
+}
+
 func fakeICSP(name string) *operatorv1alpha1.ImageContentSourcePolicy {
 	return &operatorv1alpha1.ImageContentSourcePolicy{
 		TypeMeta: metav1.TypeMeta{
