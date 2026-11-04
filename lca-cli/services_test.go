@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 )
@@ -15,7 +14,9 @@ import (
 // unitDirectives returns the values of every "key=value" line in a systemd unit, keyed by key
 func unitDirectives(t *testing.T, unitPath string) map[string][]string {
 	data, err := os.ReadFile(unitPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	directives := map[string][]string{}
 	for _, line := range strings.Split(string(data), "\n") {
