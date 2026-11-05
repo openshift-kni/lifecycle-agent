@@ -84,8 +84,9 @@ const (
 	OldblockDeviceLabel    = "relocation-config"
 	blockDeviceMountFolder = "/mnt/config"
 
-	nmService      = "NetworkManager.service"
-	dnsmasqService = "dnsmasq.service"
+	nmService                  = "NetworkManager.service"
+	dnsmasqService             = "dnsmasq.service"
+	nmConnectionRestoreService = "lca-restore-nmconnections.service"
 
 	localhost         = "localhost"
 	kubeletConfigFile = "/etc/systemd/system/kubelet.service.d/20-nodenet.conf"
@@ -249,6 +250,12 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
+	}
+
+	// The restore service is a no-op once cleanup removes the working dir, so failing to disable it
+	// is not worth failing the upgrade for
+	if _, err = p.ops.SystemctlAction("disable", nmConnectionRestoreService); err != nil {
+		p.log.Warnf("failed to disable %s, err: %v", nmConnectionRestoreService, err)
 	}
 
 	return p.cleanup()
@@ -999,6 +1006,16 @@ func (p *PostPivot) copyNMConnectionFiles(source, dest string) error {
 	return nil
 }
 
+// RestoreNMConnectionFiles copies the provided nmconnection files into the NM connections folder.
+// It runs from nmConnectionRestoreService before NetworkManager starts, so NM never auto-activates
+// a default DHCP profile on a NIC whose profile has not been copied yet. This only covers profiles
+// already staged at boot (IBU). networkConfiguration copies them again and restarts NM, but for profiles
+// that only become available later (e.g. IBI block device) that restart may not replace a default
+// DHCP connection NM has already activated.
+func (p *PostPivot) RestoreNMConnectionFiles() error {
+	return p.copyNMConnectionFiles(path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder)
+}
+
 // setNodeIpHint writes provided subnets to nodeIPHintFile
 func (p *PostPivot) setNodeIpHint(machineNetworks []string) error {
 	if len(machineNetworks) == 0 {
@@ -1039,8 +1056,7 @@ func (p *PostPivot) setNodeIpHint(machineNetworks []string) error {
 // 5. Restart NM and dnsmasq in order to apply provided configurations
 func (p *PostPivot) networkConfiguration(ctx context.Context, seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	var err error
-	if err := p.copyNMConnectionFiles(
-		path.Join(p.workingDir, common.NetworkDir, "system-connections"), nmConnectionFolder); err != nil {
+	if err := p.RestoreNMConnectionFiles(); err != nil {
 		return err
 	}
 
