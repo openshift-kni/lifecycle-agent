@@ -165,6 +165,9 @@ func seedReconfigurationFromSiteConfig(sc *SiteConfig) *seedreconfig.SeedReconfi
 		RawNMStateConfig: sc.RawNMStateConfig,
 		SSHKey:           sc.SSHKey,
 		PullSecret:       sc.PullSecret,
+
+		KubeadminPasswordHash:     sc.KubeadminPasswordHash,
+		KubeconfigCryptoRetention: sc.KubeconfigCryptoRetention,
 	}
 }
 
