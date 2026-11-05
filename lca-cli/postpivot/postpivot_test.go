@@ -1707,7 +1707,22 @@ func TestRecertLocalImageHandling(t *testing.T) {
 			if tc.wantErr == "" {
 				mockOps.EXPECT().RecertFullFlow(image, "", gomock.Any(), gomock.Any(), gomock.Any(), "-v", workingDir+":"+workingDir).Return(nil)
 			}
-			err := pp.recert(&clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
+			// Recert execution is mocked; nonempty retention satisfies the prerequisite
+			// presence check so these cases exercise image handling rather than crypto validation.
+			seedReconfiguration := &clusterconfig_api.SeedReconfiguration{
+				KubeconfigCryptoRetention: clusterconfig_api.KubeConfigCryptoRetention{
+					KubeAPICrypto: clusterconfig_api.KubeAPICrypto{
+						ClientAuthCrypto: clusterconfig_api.ClientAuthCrypto{AdminCACertificate: "test-admin-ca"},
+						ServingCrypto: clusterconfig_api.ServingCrypto{
+							LoadbalancerSignerPrivateKey:   "test-loadbalancer-key",
+							LocalhostSignerPrivateKey:      "test-localhost-key",
+							ServiceNetworkSignerPrivateKey: "test-service-network-key",
+						},
+					},
+					IngresssCrypto: clusterconfig_api.IngresssCrypto{IngressCAPrivateKey: "test-ingress-key"},
+				},
+			}
+			err := pp.recert(seedReconfiguration, &seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				if tc.checkErr != nil {
