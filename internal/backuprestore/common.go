@@ -569,44 +569,58 @@ func (b *veleroBackup) toBackupSpec() BackupSpec {
 	}
 }
 
-// SortBackupSpecsByApplyWave groups and sorts backup specs by their apply-wave annotation
+// SortBackupSpecsByApplyWave groups backup specs by their apply-wave annotation and
+// orders the groups by ascending wave, so the pre-pivot backup processes lower
+// apply-waves first. A backup with a missing or empty apply-wave is processed in
+// the final wave — after every explicitly-waved backup — matching the prior
+// OADP-based behavior (a missing wave is not treated as wave 0). An explicit "0"
+// remains a valid wave 0, and negative and positive waves keep their natural
+// numeric ordering. Specs sharing a wave are grouped together, ordered by name for
+// determinism.
 func SortBackupSpecsByApplyWave(specs []BackupSpec) ([][]BackupSpec, error) {
 	if len(specs) == 0 {
 		return nil, nil
 	}
 
 	type waveSpec struct {
-		wave int
-		spec BackupSpec
+		wave    int
+		hasWave bool
+		spec    BackupSpec
 	}
 
-	var items []waveSpec
+	items := make([]waveSpec, 0, len(specs))
 	for _, s := range specs {
-		wave := 0
+		item := waveSpec{spec: s}
 		if s.ApplyWave != "" {
-			var err error
-			wave, err = strconv.Atoi(s.ApplyWave)
+			w, err := strconv.Atoi(s.ApplyWave)
 			if err != nil {
 				return nil, fmt.Errorf("invalid apply-wave value %q: %w", s.ApplyWave, err)
 			}
+			item.wave = w
+			item.hasWave = true
 		}
-		items = append(items, waveSpec{wave: wave, spec: s})
+		items = append(items, item)
 	}
 
+	// Specs with an explicit apply-wave sort first (by ascending wave); specs
+	// without one sort last so they form the final wave. Ties break by name.
 	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].wave != items[j].wave {
+		if items[i].hasWave != items[j].hasWave {
+			return items[i].hasWave
+		}
+		if items[i].hasWave && items[i].wave != items[j].wave {
 			return items[i].wave < items[j].wave
 		}
 		return items[i].spec.Name < items[j].spec.Name
 	})
 
-	// The first item always starts a new group; subsequent items start a new group
-	// only when their wave differs from the preceding item. Comparing against the
-	// previous item (rather than a sentinel) avoids an index-out-of-range panic when
-	// the lowest wave happens to equal a sentinel value such as a negative apply-wave.
+	// Start a new group whenever the wave key (its value together with whether a
+	// wave was set) differs from the preceding item. Keying on hasWave as well as
+	// the value keeps an explicit "0" in its own group, separate from the
+	// no-wave group that also carries a zero value.
 	var groups [][]BackupSpec
 	for i, item := range items {
-		if i == 0 || item.wave != items[i-1].wave {
+		if i == 0 || item.hasWave != items[i-1].hasWave || item.wave != items[i-1].wave {
 			groups = append(groups, []BackupSpec{})
 		}
 		groups[len(groups)-1] = append(groups[len(groups)-1], item.spec)
