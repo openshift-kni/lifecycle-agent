@@ -1,5 +1,7 @@
 package seedreconfig
 
+import "strings"
+
 type PEM string
 
 const (
@@ -202,6 +204,30 @@ type IngresssCrypto struct {
 	// trusted with the target cluster's CA bundle.
 	// Its format is `ingress-operator@<unix-timestamp>`.
 	IngressCertificateCN string `json:"ingress_certificate_cn,omitempty"`
+}
+
+// MissingPEMFields returns the JSON field names of required kubeconfig-retention
+// PEM values that are absent or contain only whitespace. Callers can use this
+// single source of truth when producing mode-specific validation errors.
+func (r KubeConfigCryptoRetention) MissingPEMFields() []string {
+	fields := []struct {
+		name  string
+		value PEM
+	}{
+		{"admin_ca_certificate", r.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate},
+		{"loadbalancer_external_signer_private_key", r.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey},
+		{"localhost_signer_private_key", r.KubeAPICrypto.ServingCrypto.LocalhostSignerPrivateKey},
+		{"service_network_signer_private_key", r.KubeAPICrypto.ServingCrypto.ServiceNetworkSignerPrivateKey},
+		{"ingress_ca", r.IngresssCrypto.IngressCAPrivateKey},
+	}
+
+	var missing []string
+	for _, field := range fields {
+		if strings.TrimSpace(string(field.value)) == "" {
+			missing = append(missing, field.name)
+		}
+	}
+	return missing
 }
 
 // Proxy defines the proxy settings for the cluster.

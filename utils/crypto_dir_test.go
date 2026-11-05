@@ -179,15 +179,63 @@ func TestSeedReconfigurationKubeconfigRetentionToCryptoDir(t *testing.T) {
 	}
 }
 
-func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_CreatesDirectory(t *testing.T) {
-	dir := t.TempDir()
-	cryptoDir := path.Join(dir, "nested", "crypto")
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_ReplacesStaleDirectory(t *testing.T) {
+	cryptoDir := path.Join(t.TempDir(), "crypto")
+	assert.NoError(t, os.MkdirAll(cryptoDir, 0700))
+	assert.NoError(t, os.WriteFile(path.Join(cryptoDir, "ingresskey-stale.key"), []byte("stale"), 0600))
 
-	retention := &seedreconfig.KubeConfigCryptoRetention{}
-	err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention)
-	assert.NoError(t, err)
+	retention := &seedreconfig.KubeConfigCryptoRetention{
+		KubeAPICrypto: seedreconfig.KubeAPICrypto{
+			ServingCrypto: seedreconfig.ServingCrypto{
+				LoadbalancerSignerPrivateKey:   "lb-key-pem",
+				LocalhostSignerPrivateKey:      "localhost-key-pem",
+				ServiceNetworkSignerPrivateKey: "service-network-key-pem",
+			},
+			ClientAuthCrypto: seedreconfig.ClientAuthCrypto{
+				AdminCACertificate: "admin-ca-cert-pem",
+			},
+		},
+		IngresssCrypto: seedreconfig.IngresssCrypto{
+			IngressCAPrivateKey: "ingress-key-pem",
+		},
+	}
 
-	info, err := os.Stat(cryptoDir)
-	assert.NoError(t, err)
-	assert.True(t, info.IsDir())
+	assert.NoError(t, SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, retention))
+
+	_, statErr := os.Stat(path.Join(cryptoDir, "ingresskey-stale.key"))
+	assert.True(t, os.IsNotExist(statErr))
+	assert.FileExists(t, path.Join(cryptoDir, "ingresskey-ingress-operator.key"))
+}
+
+func TestSeedReconfigurationKubeconfigRetentionToCryptoDir_RejectsIncompleteAndClearsStaleDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		retention   *seedreconfig.KubeConfigCryptoRetention
+		expectedErr string
+	}{
+		{name: "nil retention", expectedErr: "crypto retention is missing"},
+		{name: "empty retention", retention: &seedreconfig.KubeConfigCryptoRetention{}, expectedErr: "admin_ca_certificate"},
+		{name: "CN only", retention: &seedreconfig.KubeConfigCryptoRetention{
+			IngresssCrypto: seedreconfig.IngresssCrypto{IngressCertificateCN: "ingress-operator@1234"},
+		}, expectedErr: "admin_ca_certificate"},
+		{name: "partial retention", retention: &seedreconfig.KubeConfigCryptoRetention{
+			KubeAPICrypto: seedreconfig.KubeAPICrypto{
+				ServingCrypto: seedreconfig.ServingCrypto{
+					LoadbalancerSignerPrivateKey: "key",
+				},
+			},
+		}, expectedErr: "admin_ca_certificate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cryptoDir := path.Join(t.TempDir(), "crypto")
+			assert.NoError(t, os.MkdirAll(cryptoDir, 0700))
+			assert.NoError(t, os.WriteFile(path.Join(cryptoDir, "admin-kubeconfig-client-ca.crt"), nil, 0600))
+
+			err := SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, tc.retention)
+			assert.ErrorContains(t, err, tc.expectedErr)
+
+			_, statErr := os.Stat(cryptoDir)
+			assert.True(t, os.IsNotExist(statErr))
+		})
+	}
 }
