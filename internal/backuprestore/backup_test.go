@@ -206,8 +206,9 @@ spec:
 	assert.NoError(t, err)
 	assert.Contains(t, bt.SucceededBackups, "b1")
 
-	// No apply-wave on either CR, so the spec directory uses the default wave 999.
-	specDir := filepath.Join(tmp, LocalBackupPath, "999_b1")
+	// No apply-wave on either CR, so b1 forms the single (final) restore group,
+	// written as the first ordinal directory.
+	specDir := filepath.Join(tmp, LocalBackupPath, "restore-1")
 	entries, err := os.ReadDir(specDir)
 	assert.NoError(t, err)
 
@@ -245,13 +246,17 @@ spec:
 	assert.Contains(t, string(data), "cm-uid-123", "uid must be preserved in the backup file")
 	assert.Contains(t, string(data), "resourceVersion", "resourceVersion must be preserved in the backup file")
 
-	// The persisted restore config reflects the paired Restore CR.
+	// The persisted group restore config reflects the paired Restore CR, and its
+	// entry references the backed-up resource files.
 	cfgData, err := os.ReadFile(filepath.Join(specDir, restoreConfigFileName))
 	assert.NoError(t, err)
-	cfg := &specRestoreConfig{}
+	cfg := &groupRestoreConfig{}
 	assert.NoError(t, json.Unmarshal(cfgData, cfg))
-	assert.True(t, cfg.RestorePVs)
-	assert.Equal(t, []string{"configmaps"}, cfg.RestoreStatusResources)
+	assert.Len(t, cfg.Entries, 1)
+	assert.True(t, cfg.Entries[0].RestorePVs)
+	assert.Equal(t, []string{"configmaps"}, cfg.Entries[0].RestoreStatusResources)
+	assert.ElementsMatch(t, yamlNames, cfg.Entries[0].Files,
+		"the group config entry must reference exactly the backed-up resource files")
 }
 
 func TestGetObjsFromApplyLabel(t *testing.T) {

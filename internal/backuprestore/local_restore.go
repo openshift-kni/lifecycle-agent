@@ -651,13 +651,34 @@ type waveGroup struct {
 	resources []resourceEntry
 }
 
-func parseWavePrefix(dirName string) (int, string) {
-	if idx := strings.Index(dirName, "_"); idx > 0 {
-		if w, err := strconv.Atoi(dirName[:idx]); err == nil {
-			return w, dirName[idx+1:]
+// restoreGroupDirPrefix is the fixed prefix of a restore ordinal group directory
+// name written by the backup (restore-1, restore-01, ...).
+const restoreGroupDirPrefix = "restore-"
+
+// parseGroupOrdinal parses the 1-based ordinal from a restore group directory name
+// of the form "restore-<n>" (with any amount of zero-padding). It returns the
+// ordinal and true, or false when the name is not a restore group directory.
+func parseGroupOrdinal(dirName string) (int, bool) {
+	if !strings.HasPrefix(dirName, restoreGroupDirPrefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(dirName[len(restoreGroupDirPrefix):])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseResourceIndex parses the leading "<n>_" numeric prefix of a resource file
+// name. It returns the index and true, or false when the name carries no numeric
+// prefix.
+func parseResourceIndex(fileName string) (int, bool) {
+	if idx := strings.Index(fileName, "_"); idx > 0 {
+		if n, err := strconv.Atoi(fileName[:idx]); err == nil {
+			return n, true
 		}
 	}
-	return 999, dirName
+	return 0, false
 }
 
 func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool, log logr.Logger) ([]waveGroup, error) {
@@ -666,90 +687,103 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 		return nil, fmt.Errorf("failed to read backup directory: %w", err)
 	}
 
-	type dirEntry struct {
-		wave    int
+	type groupDir struct {
+		ordinal int
 		dirName string
 	}
-	var dirs []dirEntry
+	var dirs []groupDir
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		wave, _ := parseWavePrefix(entry.Name())
-		dirs = append(dirs, dirEntry{wave: wave, dirName: entry.Name()})
+		ordinal, ok := parseGroupOrdinal(entry.Name())
+		if !ok {
+			// Ignore any directory that is not a restore ordinal group.
+			continue
+		}
+		dirs = append(dirs, groupDir{ordinal: ordinal, dirName: entry.Name()})
 	}
 
+	// Apply the groups in ascending ordinal order. The ordinal is parsed
+	// numerically so padding never changes the order.
 	sort.SliceStable(dirs, func(i, j int) bool {
-		return dirs[i].wave < dirs[j].wave
+		return dirs[i].ordinal < dirs[j].ordinal
 	})
 
-	waveMap := make(map[int]*waveGroup)
-	var waveOrder []int
-
+	var result []waveGroup
 	for _, d := range dirs {
-		specDir := filepath.Join(backupPath, d.dirName)
-		yamlFiles, err := os.ReadDir(specDir)
+		groupDirPath := filepath.Join(backupPath, d.dirName)
+		files, err := os.ReadDir(groupDirPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read spec directory %s: %w", d.dirName, err)
+			return nil, fmt.Errorf("failed to read restore group directory %s: %w", d.dirName, err)
 		}
 
-		restoreConfig, err := loadRestoreConfig(specDir, d.dirName, validatedFiles)
+		fileConfig, err := loadGroupRestoreConfig(groupDirPath, d.dirName, validatedFiles)
 		if err != nil {
 			return nil, err
 		}
 
-		count := 0
-		for _, yamlFile := range yamlFiles {
-			if yamlFile.IsDir() || !strings.HasSuffix(yamlFile.Name(), ".yaml") {
+		// Collect the resource files and sort them by their leading numeric index
+		// rather than relying on lexical ordering, so the backup's intended
+		// within-group order is honored even past nine files.
+		type resourceFile struct {
+			index int
+			name  string
+		}
+		var resourceFiles []resourceFile
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
 				continue
 			}
-
-			relPath := filepath.Join(d.dirName, yamlFile.Name())
+			relPath := filepath.Join(d.dirName, f.Name())
 			if !validatedFiles[relPath] {
 				return nil, fmt.Errorf("file %s is not listed in checksum manifest, refusing to restore", relPath)
 			}
+			index, ok := parseResourceIndex(f.Name())
+			if !ok {
+				return nil, fmt.Errorf("resource file %s has no numeric index prefix", relPath)
+			}
+			resourceFiles = append(resourceFiles, resourceFile{index: index, name: f.Name()})
+		}
+		sort.SliceStable(resourceFiles, func(i, j int) bool {
+			return resourceFiles[i].index < resourceFiles[j].index
+		})
 
-			filePath := filepath.Join(specDir, yamlFile.Name())
+		wg := waveGroup{wave: d.ordinal}
+		for _, rf := range resourceFiles {
+			filePath := filepath.Join(groupDirPath, rf.name)
 			resource := &unstructured.Unstructured{}
 			if err := utils.ReadYamlOrJSONFile(filePath, resource); err != nil {
 				return nil, fmt.Errorf("failed to read resource file %s: %w", filePath, err)
 			}
-
-			wg, ok := waveMap[d.wave]
-			if !ok {
-				wg = &waveGroup{wave: d.wave}
-				waveMap[d.wave] = wg
-				waveOrder = append(waveOrder, d.wave)
-			}
 			wg.resources = append(wg.resources, resourceEntry{
 				resource:      resource,
-				fileName:      yamlFile.Name(),
-				restoreConfig: restoreConfig,
+				fileName:      rf.name,
+				restoreConfig: fileConfig[rf.name],
 			})
-			count++
 		}
 
-		log.Info("Loaded backup resources from spec", "spec", d.dirName, "count", count)
+		log.Info("Loaded backup resources from restore group", "group", d.dirName, "count", len(wg.resources))
+		result = append(result, wg)
 	}
 
-	var result []waveGroup
-	for _, w := range waveOrder {
-		result = append(result, *waveMap[w])
-	}
 	return result, nil
 }
 
-// loadRestoreConfig reads the per-spec restore configuration persisted next to the
-// backed-up resources. The file is covered by checksums.sha256, so when present it
-// must appear in the validated manifest. A spec directory without a config file
-// yields a nil configuration, under which the restore applies no status and no PV
-// rebinding.
-func loadRestoreConfig(specDir, dirName string, validatedFiles map[string]bool) (*specRestoreConfig, error) {
-	configPath := filepath.Join(specDir, restoreConfigFileName)
+// loadGroupRestoreConfig reads the per-group restore configuration persisted in a
+// restore ordinal group directory and returns a map from each resource file name
+// in the group to the restore configuration that applies to it. The file is
+// covered by checksums.sha256, so when present it must appear in the validated
+// manifest. A group directory without a config file yields an empty map, under
+// which the restore applies no status and no PV rebinding.
+func loadGroupRestoreConfig(groupDir, dirName string, validatedFiles map[string]bool) (map[string]*specRestoreConfig, error) {
+	fileConfig := map[string]*specRestoreConfig{}
+
+	configPath := filepath.Join(groupDir, restoreConfigFileName)
 	data, err := os.ReadFile(configPath) //nolint:gosec
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil //nolint:nilnil
+			return fileConfig, nil
 		}
 		return nil, fmt.Errorf("failed to read restore config %s: %w", configPath, err)
 	}
@@ -759,11 +793,22 @@ func loadRestoreConfig(specDir, dirName string, validatedFiles map[string]bool) 
 		return nil, fmt.Errorf("file %s is not listed in checksum manifest, refusing to restore", relPath)
 	}
 
-	cfg := &specRestoreConfig{}
+	cfg := &groupRestoreConfig{}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse restore config %s: %w", relPath, err)
 	}
-	return cfg, nil
+
+	for i := range cfg.Entries {
+		entry := cfg.Entries[i]
+		sc := &specRestoreConfig{
+			RestoreStatusResources: entry.RestoreStatusResources,
+			RestorePVs:             entry.RestorePVs,
+		}
+		for _, f := range entry.Files {
+			fileConfig[f] = sc
+		}
+	}
+	return fileConfig, nil
 }
 
 func sortResourcesByWave(resources []resourceEntry) {

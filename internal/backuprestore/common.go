@@ -66,9 +66,10 @@ const (
 	// the rest of the backup directory after Upgrade completion is persisted.
 	restoreCompletedMarker = "restore-completed"
 
-	// restoreConfigFileName is the per-spec file, written next to the backed-up
-	// resource YAMLs, that carries the restore-time configuration derived from the
-	// paired Restore CR (status-resource selection and restorePVs). The post-pivot
+	// restoreConfigFileName is the per-group file, written inside each restore
+	// ordinal group directory, that carries the restore-time configuration derived
+	// from the paired Restore CRs (status-resource selection and restorePVs) for
+	// every backup whose resources were stored in that group. The post-pivot
 	// restore reads it from disk so it does not depend on the Restore CR ConfigMaps
 	// still existing in the upgraded cluster. It is covered by checksums.sha256.
 	restoreConfigFileName = "restore-config.json"
@@ -507,11 +508,11 @@ func ValidateBackupSpecs(specs []BackupSpec) error {
 
 // ValidateRestoreSpecs rejects Restore CR specs whose apply-wave annotation LCA
 // cannot honor, so a malformed Restore CR fails loudly during Prep instead of
-// silently falling back to a different wave later. resolveWave gives the Restore
-// CR's apply-wave precedence over the Backup CR's, but it parses the value with a
-// silent strconv.Atoi fallback: a non-numeric Restore apply-wave would otherwise
-// pass validation and then quietly place resources in the wrong dependency wave.
-// This mirrors the Backup apply-wave validation in ValidateBackupSpecs.
+// silently falling back to a different group later. The Restore CR's apply-wave
+// alone determines the restore ordinal group (see resolveRestoreWave), but it is
+// parsed with a silent strconv.Atoi fallback: a non-numeric Restore apply-wave
+// would otherwise pass validation and then quietly place resources in the final
+// group. This mirrors the Backup apply-wave validation in ValidateBackupSpecs.
 func ValidateRestoreSpecs(specs []RestoreSpec) error {
 	for _, s := range specs {
 		if s.ApplyWave != "" {
