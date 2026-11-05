@@ -282,7 +282,7 @@ func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntr
 	}
 
 	logFields := []interface{}{
-		"file", entry.fileName, "resourceType", kind, "name", name,
+		"file", entry.fileName, "restoreWave", entry.wave, "resourceType", kind, "name", name,
 	}
 	if namespace != "" {
 		logFields = append(logFields, "namespace", namespace)
@@ -640,6 +640,10 @@ func validateChecksums(backupPath string) (map[string]bool, error) {
 type resourceEntry struct {
 	resource *unstructured.Unstructured
 	fileName string
+	// wave is the 1-based restore group ordinal (the "restore-<n>" directory the
+	// resource was loaded from) the resource belongs to. It is logged on restore
+	// so operators can see which restore wave each resource was applied in.
+	wave int
 	// restoreConfig is the restore-time configuration persisted with the spec this
 	// resource was backed up under (status-resource selection and restorePVs). It
 	// may be nil for a spec that persisted no configuration.
@@ -759,6 +763,7 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 			wg.resources = append(wg.resources, resourceEntry{
 				resource:      resource,
 				fileName:      rf.name,
+				wave:          d.ordinal,
 				restoreConfig: fileConfig[rf.name],
 			})
 		}
