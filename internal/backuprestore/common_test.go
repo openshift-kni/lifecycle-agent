@@ -894,48 +894,82 @@ func TestFindRestoreForBackup(t *testing.T) {
 	})
 }
 
-func TestResolveWave(t *testing.T) {
-	t.Run("restore wave takes priority", func(t *testing.T) {
-		backup := BackupSpec{Name: "b1", ApplyWave: "5"}
+func TestResolveRestoreWave(t *testing.T) {
+	t.Run("restore wave is used when set", func(t *testing.T) {
 		restore := &RestoreSpec{Name: "r1", ApplyWave: "2"}
-		assert.Equal(t, 2, resolveWave(backup, restore))
+		wave, ok := resolveRestoreWave(restore)
+		assert.True(t, ok)
+		assert.Equal(t, 2, wave)
 	})
 
-	t.Run("falls back to backup wave", func(t *testing.T) {
-		backup := BackupSpec{Name: "b1", ApplyWave: "3"}
-		assert.Equal(t, 3, resolveWave(backup, nil))
+	t.Run("negative restore wave is honored", func(t *testing.T) {
+		restore := &RestoreSpec{Name: "r1", ApplyWave: "-10"}
+		wave, ok := resolveRestoreWave(restore)
+		assert.True(t, ok)
+		assert.Equal(t, -10, wave)
 	})
 
-	t.Run("falls back to backup wave when restore has no wave", func(t *testing.T) {
-		backup := BackupSpec{Name: "b1", ApplyWave: "7"}
-		restore := &RestoreSpec{Name: "r1"}
-		assert.Equal(t, 7, resolveWave(backup, restore))
+	t.Run("nil restore has no wave", func(t *testing.T) {
+		_, ok := resolveRestoreWave(nil)
+		assert.False(t, ok)
 	})
 
-	t.Run("defaults to 999", func(t *testing.T) {
-		backup := BackupSpec{Name: "b1"}
-		assert.Equal(t, 999, resolveWave(backup, nil))
+	t.Run("empty restore wave has no wave", func(t *testing.T) {
+		_, ok := resolveRestoreWave(&RestoreSpec{Name: "r1"})
+		assert.False(t, ok)
 	})
 }
 
-func TestParseWavePrefix(t *testing.T) {
-	t.Run("parses wave prefix", func(t *testing.T) {
-		wave, name := parseWavePrefix("001_acm-klusterlet")
-		assert.Equal(t, 1, wave)
-		assert.Equal(t, "acm-klusterlet", name)
+func TestParseGroupOrdinal(t *testing.T) {
+	t.Run("parses single-digit ordinal", func(t *testing.T) {
+		ordinal, ok := parseGroupOrdinal("restore-3")
+		assert.True(t, ok)
+		assert.Equal(t, 3, ordinal)
 	})
 
-	t.Run("parses three-digit wave", func(t *testing.T) {
-		wave, name := parseWavePrefix("999_test-app")
-		assert.Equal(t, 999, wave)
-		assert.Equal(t, "test-app", name)
+	t.Run("parses zero-padded ordinal", func(t *testing.T) {
+		ordinal, ok := parseGroupOrdinal("restore-007")
+		assert.True(t, ok)
+		assert.Equal(t, 7, ordinal)
 	})
 
-	t.Run("no prefix defaults to 999", func(t *testing.T) {
-		wave, name := parseWavePrefix("my-backup")
-		assert.Equal(t, 999, wave)
-		assert.Equal(t, "my-backup", name)
+	t.Run("rejects non-group directory", func(t *testing.T) {
+		_, ok := parseGroupOrdinal("checksums.sha256")
+		assert.False(t, ok)
+		_, ok = parseGroupOrdinal("restore-")
+		assert.False(t, ok)
+		_, ok = parseGroupOrdinal("restore-abc")
+		assert.False(t, ok)
 	})
+}
+
+func TestParseResourceIndex(t *testing.T) {
+	t.Run("parses index prefix", func(t *testing.T) {
+		index, ok := parseResourceIndex("1_configmap_app-ns_cm1.yaml")
+		assert.True(t, ok)
+		assert.Equal(t, 1, index)
+	})
+
+	t.Run("parses padded index prefix", func(t *testing.T) {
+		index, ok := parseResourceIndex("012_namespace__app-ns.yaml")
+		assert.True(t, ok)
+		assert.Equal(t, 12, index)
+	})
+
+	t.Run("rejects missing prefix", func(t *testing.T) {
+		_, ok := parseResourceIndex("restore-config.json")
+		assert.False(t, ok)
+	})
+}
+
+func TestNumDigits(t *testing.T) {
+	assert.Equal(t, 1, numDigits(0))
+	assert.Equal(t, 1, numDigits(-3))
+	assert.Equal(t, 1, numDigits(9))
+	assert.Equal(t, 2, numDigits(10))
+	assert.Equal(t, 2, numDigits(42))
+	assert.Equal(t, 3, numDigits(120))
+	assert.Equal(t, 3, numDigits(125))
 }
 
 func TestResolveStatusResources(t *testing.T) {

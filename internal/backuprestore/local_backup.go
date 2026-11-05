@@ -159,8 +159,11 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
 	}
 
-	var checksums []string
-
+	// Fetch every backup's resources, processing lower Backup apply-waves first.
+	// The on-disk layout is driven separately by the paired Restore CR's apply-wave
+	// (see assignRestoreOrdinals below): the Backup apply-wave never affects restore
+	// ordering.
+	collected := make([]collectedBackup, 0, len(backupSpecs))
 	for groupIdx, group := range sortedGroups {
 		h.Log.Info("Processing backup group", "groupIndex", groupIdx+1, "totalGroups", len(sortedGroups))
 		for _, spec := range group {
@@ -178,82 +181,46 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 					fmt.Sprintf("failed to fetch resources for backup %s: %s", spec.Name, err.Error()))
 			}
 
-			wave := resolveWave(spec, restoreSpec)
-			dirName := fmt.Sprintf("%03d_%s", wave, spec.Name)
-			specDir := filepath.Join(backupDir, dirName)
-			if err := os.MkdirAll(specDir, 0o700); err != nil {
-				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-				return bt, NewBRFailedError("Backup",
-					fmt.Sprintf("failed to create backup spec directory %s: %s", specDir, err.Error()))
-			}
-
-			for i, resource := range resources {
-				// Back up resources in full fidelity (including status). Transient,
-				// cluster-assigned metadata is stripped later, at restore time
-				// (see stripRestoreMetadata), matching Velero's model. Two classes
-				// of resources are skipped entirely here:
-				//   - resources with metadata.deletionTimestamp set: they are being
-				//     deleted, so restoring them would recreate objects the cluster
-				//     was actively tearing down.
-				//   - Jobs that have already completed (Complete or Failed condition
-				//     True): they have run to termination and must not be recreated.
-				if resource.GetDeletionTimestamp() != nil {
-					h.Log.Info("Skipping resource being deleted",
-						"kind", resource.GetKind(), "name", resource.GetName(), "namespace", resource.GetNamespace())
-					continue
-				}
-				if isJobCompletedOrFailed(resource) {
-					h.Log.Info("Skipping completed/failed Job",
-						"name", resource.GetName(), "namespace", resource.GetNamespace())
-					continue
-				}
-
-				data, err := k8syaml.Marshal(resource.Object)
-				if err != nil {
-					bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-					return bt, fmt.Errorf("failed to marshal resource: %w", err)
-				}
-
-				ns := resource.GetNamespace()
-				name := resource.GetName()
-				kind := resource.GetKind()
-				fileName := fmt.Sprintf("%05d_%s_%s_%s.yaml", i, strings.ToLower(kind), ns, name)
-				filePath := filepath.Join(specDir, fileName)
-
-				if err := os.WriteFile(filePath, data, 0o600); err != nil {
-					bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-					return bt, NewBRFailedError("Backup",
-						fmt.Sprintf("failed to write resource file %s: %s", filePath, err.Error()))
-				}
-
-				logFields := []interface{}{
-					"file", fileName, "resourceType", kind, "name", name,
-				}
-				if ns != "" {
-					logFields = append(logFields, "namespace", ns)
-				}
-				h.Log.Info("Resource backed up", logFields...)
-
-				hash := sha256.Sum256(data)
-				checksums = append(checksums, fmt.Sprintf("%s  %s",
-					hex.EncodeToString(hash[:]), filepath.Join(dirName, fileName)))
-			}
-
-			// Persist the restore-time configuration derived from the paired Restore
-			// CR alongside the backed-up resources. The post-pivot restore reads only
-			// from disk (the Restore CR ConfigMaps are not guaranteed to exist in the
-			// upgraded cluster), so the status-resource selection and restorePVs flag
-			// must travel with the backup to drive status restoration and PV rebinding.
-			cfgChecksum, err := writeRestoreConfig(specDir, dirName, restoreSpec)
-			if err != nil {
-				bt.FailedBackups = append(bt.FailedBackups, spec.Name)
-				return bt, err
-			}
-			checksums = append(checksums, cfgChecksum)
-
-			h.Log.Info("Backup completed for spec", "name", spec.Name, "resourceCount", len(resources))
-			bt.SucceededBackups = append(bt.SucceededBackups, spec.Name)
+			collected = append(collected, collectedBackup{
+				spec:      spec,
+				restore:   restoreSpec,
+				resources: h.selectBackupResources(resources),
+			})
 		}
+	}
+
+	// Assign each backup to a 1-based restore ordinal group, ordered by the paired
+	// Restore CR's apply-wave (missing or empty last). Backups that share a restore
+	// wave share an ordinal. The ordinals are written as zero-padded directory names
+	// (restore-1, restore-01, ...) wide enough for the final ordinal, so lexical and
+	// numeric ordering agree and no raw wave value appears in a directory name.
+	buckets, numGroups := assignRestoreOrdinals(collected)
+	ordinalWidth := numDigits(numGroups)
+
+	var checksums []string
+	for ordinal := 1; ordinal <= numGroups; ordinal++ {
+		bucket := buckets[ordinal]
+
+		// Number the resource files 1-based across the whole group, padded wide
+		// enough for the group's total file count so lexical and numeric ordering
+		// agree even past nine files.
+		total := 0
+		for _, c := range bucket {
+			total += len(c.resources)
+		}
+
+		groupDirName := fmt.Sprintf("restore-%0*d", ordinalWidth, ordinal)
+		groupDir := filepath.Join(backupDir, groupDirName)
+		if err := os.MkdirAll(groupDir, 0o700); err != nil {
+			return bt, NewBRFailedError("Backup",
+				fmt.Sprintf("failed to create restore group directory %s: %s", groupDir, err.Error()))
+		}
+
+		groupChecksums, err := h.writeRestoreGroup(groupDir, groupDirName, bucket, numDigits(total), bt)
+		if err != nil {
+			return bt, err
+		}
+		checksums = append(checksums, groupChecksums...)
 	}
 
 	checksumContent := strings.Join(checksums, "\n") + "\n"
@@ -269,20 +236,199 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	return bt, nil
 }
 
-// resolveWave determines the wave number for a backup spec.
-// Priority: Restore CR's apply-wave > Backup CR's apply-wave > default 999.
-func resolveWave(backup BackupSpec, restore *RestoreSpec) int {
+// collectedBackup pairs a backup spec with its paired Restore CR and the already
+// filtered resources to persist, carried between the fetch pass (ordered by Backup
+// apply-wave) and the write pass (ordered by restore ordinal group).
+type collectedBackup struct {
+	spec      BackupSpec
+	restore   *RestoreSpec
+	resources []*unstructured.Unstructured
+}
+
+// selectBackupResources returns the resources to persist, in their fetched order,
+// dropping the two classes that must never be recreated on restore:
+//   - resources with metadata.deletionTimestamp set: they are being deleted, so
+//     restoring them would recreate objects the cluster was actively tearing down.
+//   - Jobs that have already run to termination (Complete or Failed condition
+//     True): recreating them on restore would re-run finished work.
+//
+// Resources are otherwise kept in full fidelity (including status); the transient,
+// cluster-assigned metadata is stripped later, at restore time (see
+// stripRestoreMetadata), matching Velero's model.
+func (h *BRHandler) selectBackupResources(resources []*unstructured.Unstructured) []*unstructured.Unstructured {
+	selected := make([]*unstructured.Unstructured, 0, len(resources))
+	for _, resource := range resources {
+		if resource.GetDeletionTimestamp() != nil {
+			h.Log.Info("Skipping resource being deleted",
+				"kind", resource.GetKind(), "name", resource.GetName(), "namespace", resource.GetNamespace())
+			continue
+		}
+		if isJobCompletedOrFailed(resource) {
+			h.Log.Info("Skipping completed/failed Job",
+				"name", resource.GetName(), "namespace", resource.GetNamespace())
+			continue
+		}
+		selected = append(selected, resource)
+	}
+	return selected
+}
+
+// writeRestoreGroup writes one restore ordinal group's resources and its per-group
+// restore config into groupDir, numbering the resource files 1-based across the
+// whole group with fileWidth-padded prefixes so lexical and numeric ordering agree.
+// It records each contributing backup in the tracker and returns the checksum
+// manifest lines for every file written (resources and the config). The per-group
+// config travels with the backup because the post-pivot restore reads only from
+// disk (the Restore CR ConfigMaps are not guaranteed to exist in the upgraded
+// cluster), so the status-resource selection and restorePVs flag must be persisted.
+func (h *BRHandler) writeRestoreGroup(groupDir, groupDirName string, bucket []collectedBackup, fileWidth int, bt *BackupTracker) ([]string, error) {
+	var checksums []string
+	idx := 1
+	var cfgEntries []groupRestoreConfigEntry
+
+	for _, c := range bucket {
+		files := make([]string, 0, len(c.resources))
+		for _, resource := range c.resources {
+			data, err := k8syaml.Marshal(resource.Object)
+			if err != nil {
+				bt.FailedBackups = append(bt.FailedBackups, c.spec.Name)
+				return nil, fmt.Errorf("failed to marshal resource: %w", err)
+			}
+
+			ns := resource.GetNamespace()
+			name := resource.GetName()
+			kind := resource.GetKind()
+			fileName := fmt.Sprintf("%0*d_%s_%s_%s.yaml", fileWidth, idx, strings.ToLower(kind), ns, name)
+			filePath := filepath.Join(groupDir, fileName)
+
+			if err := os.WriteFile(filePath, data, 0o600); err != nil {
+				bt.FailedBackups = append(bt.FailedBackups, c.spec.Name)
+				return nil, NewBRFailedError("Backup",
+					fmt.Sprintf("failed to write resource file %s: %s", filePath, err.Error()))
+			}
+
+			logFields := []interface{}{
+				"file", filepath.Join(groupDirName, fileName), "resourceType", kind, "name", name,
+			}
+			if ns != "" {
+				logFields = append(logFields, "namespace", ns)
+			}
+			h.Log.Info("Resource backed up", logFields...)
+
+			hash := sha256.Sum256(data)
+			checksums = append(checksums, fmt.Sprintf("%s  %s",
+				hex.EncodeToString(hash[:]), filepath.Join(groupDirName, fileName)))
+			files = append(files, fileName)
+			idx++
+		}
+
+		cfgEntries = append(cfgEntries, groupRestoreConfigEntry{
+			RestoreStatusResources: restoreStatusResourcesOf(c.restore),
+			RestorePVs:             restorePVsOf(c.restore),
+			Files:                  files,
+		})
+
+		h.Log.Info("Backup completed for spec", "name", c.spec.Name, "resourceCount", len(c.resources))
+		bt.SucceededBackups = append(bt.SucceededBackups, c.spec.Name)
+	}
+
+	cfgChecksum, err := writeGroupRestoreConfig(groupDir, groupDirName, cfgEntries)
+	if err != nil {
+		return nil, err
+	}
+	checksums = append(checksums, cfgChecksum)
+
+	return checksums, nil
+}
+
+// assignRestoreOrdinals buckets the collected backups into 1-based restore ordinal
+// groups. The distinct restore waves are ordered ascending, with backups that have
+// no paired Restore apply-wave forming the final group; backups sharing a wave
+// share an ordinal. It returns the buckets indexed by ordinal (1..numGroups; index
+// 0 is unused) and the number of groups.
+func assignRestoreOrdinals(collected []collectedBackup) ([][]collectedBackup, int) {
+	type groupKey struct {
+		wave    int
+		hasWave bool
+	}
+
+	keyOf := func(c collectedBackup) groupKey {
+		wave, hasWave := resolveRestoreWave(c.restore)
+		return groupKey{wave: wave, hasWave: hasWave}
+	}
+
+	var keys []groupKey
+	seen := map[groupKey]bool{}
+	for _, c := range collected {
+		k := keyOf(c)
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+
+	// Explicit waves first, ascending; the no-wave group sorts last.
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].hasWave != keys[j].hasWave {
+			return keys[i].hasWave
+		}
+		return keys[i].wave < keys[j].wave
+	})
+
+	ordinalOf := make(map[groupKey]int, len(keys))
+	for i, k := range keys {
+		ordinalOf[k] = i + 1
+	}
+
+	buckets := make([][]collectedBackup, len(keys)+1)
+	for _, c := range collected {
+		o := ordinalOf[keyOf(c)]
+		buckets[o] = append(buckets[o], c)
+	}
+	return buckets, len(keys)
+}
+
+// resolveRestoreWave returns the apply-wave of a backup's paired Restore CR and
+// whether one was set. The Backup CR's apply-wave never affects restore ordering,
+// so a backup without a paired Restore apply-wave reports hasWave=false and is
+// placed in the final restore group. The value is parsed defensively;
+// ValidateRestoreSpecs already rejects a non-numeric Restore apply-wave during Prep.
+func resolveRestoreWave(restore *RestoreSpec) (int, bool) {
 	if restore != nil && restore.ApplyWave != "" {
 		if w, err := strconv.Atoi(restore.ApplyWave); err == nil {
-			return w
+			return w, true
 		}
 	}
-	if backup.ApplyWave != "" {
-		if w, err := strconv.Atoi(backup.ApplyWave); err == nil {
-			return w
-		}
+	return 0, false
+}
+
+// numDigits returns the number of decimal digits needed to represent n, and at
+// least 1 so an empty group still yields a usable padding width.
+func numDigits(n int) int {
+	if n <= 0 {
+		return 1
 	}
-	return 999
+	d := 0
+	for n > 0 {
+		d++
+		n /= 10
+	}
+	return d
+}
+
+// restoreStatusResourcesOf returns the status-resource selection of a paired
+// Restore CR, or nil when there is none.
+func restoreStatusResourcesOf(restore *RestoreSpec) []string {
+	if restore == nil {
+		return nil
+	}
+	return restore.RestoreStatusResources
+}
+
+// restorePVsOf returns the restorePVs flag of a paired Restore CR, or false when
+// there is none.
+func restorePVsOf(restore *RestoreSpec) bool {
+	return restore != nil && restore.RestorePVs
 }
 
 // resolveStatusResources returns the list of resource kinds/plurals for which
@@ -606,30 +752,51 @@ func (c *specRestoreConfig) statusResourceSet() map[string]bool {
 	return resolveStatusResources(&RestoreSpec{RestoreStatusResources: c.RestoreStatusResources})
 }
 
-// writeRestoreConfig persists the restore-time configuration derived from the
-// paired Restore CR into the spec directory and returns the checksum manifest
-// line for the written file. A nil restore spec still produces a valid (empty)
-// configuration so the restore always finds a config file to read.
-func writeRestoreConfig(specDir, dirName string, restore *RestoreSpec) (string, error) {
-	cfg := specRestoreConfig{}
-	if restore != nil {
-		cfg.RestoreStatusResources = restore.RestoreStatusResources
-		cfg.RestorePVs = restore.RestorePVs
-	}
+// groupRestoreConfig is persisted once per restore ordinal group directory. It
+// records, for each backup that contributed resources to the group, the
+// restore-time configuration derived from its paired Restore CR and the resource
+// files in the group that configuration applies to. Multiple backups can land in
+// the same group (when their Restore CRs share an apply-wave), so the per-backup
+// configuration is kept distinct and associated with its own files.
+type groupRestoreConfig struct {
+	Entries []groupRestoreConfigEntry `json:"entries"`
+}
+
+// groupRestoreConfigEntry is one backup's restore-time configuration within a
+// restore group, together with the resource file names (within that group
+// directory) it applies to.
+type groupRestoreConfigEntry struct {
+	// RestoreStatusResources lists the resource types (as written in the Restore
+	// CR's spec.restoreStatus.includedResources) whose status must be restored.
+	RestoreStatusResources []string `json:"restoreStatusResources,omitempty"`
+	// RestorePVs mirrors the Restore CR's spec.restorePVs: when true, the restore
+	// resets PersistentVolume binding so the PV can rebind to its restored PVC.
+	RestorePVs bool `json:"restorePVs,omitempty"`
+	// Files are the resource file names in the group directory this configuration
+	// applies to.
+	Files []string `json:"files,omitempty"`
+}
+
+// writeGroupRestoreConfig persists the restore-time configuration for every backup
+// in a restore group into the group directory and returns the checksum manifest
+// line for the written file. A group with no configured backups still produces a
+// valid (empty) configuration so the restore always finds a config file to read.
+func writeGroupRestoreConfig(groupDir, groupDirName string, entries []groupRestoreConfigEntry) (string, error) {
+	cfg := groupRestoreConfig{Entries: entries}
 
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal restore config: %w", err)
 	}
 
-	cfgPath := filepath.Join(specDir, restoreConfigFileName)
+	cfgPath := filepath.Join(groupDir, restoreConfigFileName)
 	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
 		return "", NewBRFailedError("Backup",
 			fmt.Sprintf("failed to write restore config %s: %s", cfgPath, err.Error()))
 	}
 
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%s  %s", hex.EncodeToString(hash[:]), filepath.Join(dirName, restoreConfigFileName)), nil
+	return fmt.Sprintf("%s  %s", hex.EncodeToString(hash[:]), filepath.Join(groupDirName, restoreConfigFileName)), nil
 }
 
 // isJobCompletedOrFailed reports whether the resource is a Job that has already

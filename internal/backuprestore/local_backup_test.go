@@ -19,6 +19,7 @@ package backuprestore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,59 +182,185 @@ func TestIsJobCompletedOrFailed(t *testing.T) {
 	})
 }
 
-// TestWriteAndLoadRestoreConfig verifies that the per-spec restore configuration
-// round-trips through disk and that its checksum entry matches the written file.
-func TestWriteAndLoadRestoreConfig(t *testing.T) {
+// TestWriteAndLoadGroupRestoreConfig verifies that a restore group's per-backup
+// configuration round-trips through disk, maps each resource file to its own
+// configuration (so backups sharing a group keep distinct settings), and that its
+// checksum entry matches the written file.
+func TestWriteAndLoadGroupRestoreConfig(t *testing.T) {
 	backupDir := t.TempDir()
-	dirName := "000_b1"
-	specDir := filepath.Join(backupDir, dirName)
-	assert.NoError(t, os.MkdirAll(specDir, 0o700))
+	dirName := "restore-1"
+	groupDir := filepath.Join(backupDir, dirName)
+	assert.NoError(t, os.MkdirAll(groupDir, 0o700))
 
-	restore := &RestoreSpec{
-		Name:                   "r1",
-		BackupName:             "b1",
-		RestorePVs:             true,
-		RestoreStatusResources: []string{"LogicalVolumes", "deployments"},
+	entries := []groupRestoreConfigEntry{
+		{
+			RestoreStatusResources: []string{"LogicalVolumes", "deployments"},
+			RestorePVs:             true,
+			Files:                  []string{"1_persistentvolume__pv1.yaml", "2_deployment_app-ns_d1.yaml"},
+		},
+		{
+			RestorePVs: false,
+			Files:      []string{"3_configmap_app-ns_cm1.yaml"},
+		},
 	}
 
-	checksum, err := writeRestoreConfig(specDir, dirName, restore)
+	checksum, err := writeGroupRestoreConfig(groupDir, dirName, entries)
 	assert.NoError(t, err)
 	assert.Contains(t, checksum, filepath.Join(dirName, restoreConfigFileName))
 
 	relPath := filepath.Join(dirName, restoreConfigFileName)
-	cfg, err := loadRestoreConfig(specDir, dirName, map[string]bool{relPath: true})
+	fileConfig, err := loadGroupRestoreConfig(groupDir, dirName, map[string]bool{relPath: true})
 	assert.NoError(t, err)
+
+	// The first backup's files carry its status/PV configuration.
+	cfg := fileConfig["1_persistentvolume__pv1.yaml"]
 	assert.NotNil(t, cfg)
 	assert.True(t, cfg.RestorePVs)
 	assert.Equal(t, []string{"LogicalVolumes", "deployments"}, cfg.RestoreStatusResources)
 	assert.True(t, cfg.statusResourceSet()["logicalvolumes"])
 	assert.True(t, cfg.statusResourceSet()["deployments"])
+	assert.Same(t, cfg, fileConfig["2_deployment_app-ns_d1.yaml"])
 
-	t.Run("nil restore spec writes a valid empty config", func(t *testing.T) {
+	// The second backup in the same group keeps its own (different) configuration.
+	cfg2 := fileConfig["3_configmap_app-ns_cm1.yaml"]
+	assert.NotNil(t, cfg2)
+	assert.False(t, cfg2.RestorePVs)
+	assert.Empty(t, cfg2.RestoreStatusResources)
+
+	t.Run("empty entries write a valid empty config", func(t *testing.T) {
 		d := t.TempDir()
-		sd := filepath.Join(d, "001_b2")
-		assert.NoError(t, os.MkdirAll(sd, 0o700))
-		_, err := writeRestoreConfig(sd, "001_b2", nil)
+		gd := filepath.Join(d, "restore-2")
+		assert.NoError(t, os.MkdirAll(gd, 0o700))
+		_, err := writeGroupRestoreConfig(gd, "restore-2", nil)
 		assert.NoError(t, err)
-		data, err := os.ReadFile(filepath.Join(sd, restoreConfigFileName))
+		data, err := os.ReadFile(filepath.Join(gd, restoreConfigFileName))
 		assert.NoError(t, err)
-		parsed := &specRestoreConfig{}
+		parsed := &groupRestoreConfig{}
 		assert.NoError(t, json.Unmarshal(data, parsed))
-		assert.False(t, parsed.RestorePVs)
-		assert.Empty(t, parsed.RestoreStatusResources)
+		assert.Empty(t, parsed.Entries)
 	})
 
 	t.Run("config file not in checksum manifest is rejected", func(t *testing.T) {
-		_, err := loadRestoreConfig(specDir, dirName, map[string]bool{})
+		_, err := loadGroupRestoreConfig(groupDir, dirName, map[string]bool{})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not listed in checksum manifest")
 	})
 
-	t.Run("missing config file yields nil config", func(t *testing.T) {
+	t.Run("missing config file yields an empty map", func(t *testing.T) {
 		emptyDir := t.TempDir()
-		cfg, err := loadRestoreConfig(emptyDir, "002_b3", map[string]bool{})
+		fc, err := loadGroupRestoreConfig(emptyDir, "restore-3", map[string]bool{})
 		assert.NoError(t, err)
-		assert.Nil(t, cfg)
+		assert.Empty(t, fc)
+	})
+}
+
+// TestAssignRestoreOrdinals verifies that backups are mapped to 1-based restore
+// ordinal groups ordered by the paired Restore CR's apply-wave (missing last),
+// that duplicate waves share an ordinal, and that the Backup CR's apply-wave never
+// affects the grouping.
+func TestAssignRestoreOrdinals(t *testing.T) {
+	// Backup apply-waves are set opposite to the restore apply-waves to prove they
+	// do not influence the restore grouping.
+	collected := []collectedBackup{
+		{spec: BackupSpec{Name: "e", ApplyWave: "1"}, restore: nil},                               // missing restore wave -> final group
+		{spec: BackupSpec{Name: "c", ApplyWave: "99"}, restore: &RestoreSpec{ApplyWave: "0"}},     // wave 0
+		{spec: BackupSpec{Name: "a", ApplyWave: "-999"}, restore: &RestoreSpec{ApplyWave: "-10"}}, // wave -10
+		{spec: BackupSpec{Name: "d", ApplyWave: "0"}, restore: &RestoreSpec{ApplyWave: "50"}},     // wave 50
+		{spec: BackupSpec{Name: "b", ApplyWave: ""}, restore: &RestoreSpec{ApplyWave: "-1"}},      // wave -1
+		{spec: BackupSpec{Name: "c2"}, restore: &RestoreSpec{ApplyWave: "0"}},                     // duplicate wave 0
+	}
+
+	buckets, numGroups := assignRestoreOrdinals(collected)
+	assert.Equal(t, 5, numGroups, "five distinct restore waves (-10, -1, 0, 50, missing)")
+
+	// restore-1: wave -10, restore-2: wave -1, restore-3: wave 0 (shared),
+	// restore-4: wave 50, restore-5: missing.
+	assert.Equal(t, []string{"a"}, specNames(buckets[1]))
+	assert.Equal(t, []string{"b"}, specNames(buckets[2]))
+	assert.Equal(t, []string{"c", "c2"}, specNames(buckets[3]))
+	assert.Equal(t, []string{"d"}, specNames(buckets[4]))
+	assert.Equal(t, []string{"e"}, specNames(buckets[5]))
+}
+
+func specNames(bucket []collectedBackup) []string {
+	names := make([]string, 0, len(bucket))
+	for _, c := range bucket {
+		names = append(names, c.spec.Name)
+	}
+	return names
+}
+
+// TestLoadBackupResourcesByWaveNumericOrder verifies that restore ordinal group
+// directories are loaded in numeric ordinal order regardless of zero-padding, that
+// the resource files within a group are ordered by their numeric index prefix
+// (not lexically), that the per-group config is associated with the right files,
+// and that an unprefixed resource file is rejected.
+func TestLoadBackupResourcesByWaveNumericOrder(t *testing.T) {
+	backupPath := t.TempDir()
+	validatedFiles := map[string]bool{}
+
+	writeCM := func(dir, fileName, name string) {
+		content := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: ns\n"
+		assert.NoError(t, os.WriteFile(filepath.Join(backupPath, dir, fileName), []byte(content), 0o600))
+		validatedFiles[filepath.Join(dir, fileName)] = true
+	}
+
+	// Two groups written with two-digit zero-padding to exercise numeric parsing.
+	assert.NoError(t, os.MkdirAll(filepath.Join(backupPath, "restore-01"), 0o700))
+	assert.NoError(t, os.MkdirAll(filepath.Join(backupPath, "restore-02"), 0o700))
+
+	// Group 1 holds ten files; "10_" must sort after "2_" (numeric), not before it
+	// (lexical).
+	var g1Files []string
+	for i := 1; i <= 10; i++ {
+		fileName := fmt.Sprintf("%d_configmap_ns_cm-%02d.yaml", i, i)
+		writeCM("restore-01", fileName, fmt.Sprintf("cm-%02d", i))
+		g1Files = append(g1Files, fileName)
+	}
+	g1Cfg, err := writeGroupRestoreConfig(
+		filepath.Join(backupPath, "restore-01"), "restore-01",
+		[]groupRestoreConfigEntry{{RestorePVs: true, Files: g1Files}})
+	assert.NoError(t, err)
+	validatedFiles[filepath.Join("restore-01", restoreConfigFileName)] = true
+	assert.Contains(t, g1Cfg, filepath.Join("restore-01", restoreConfigFileName))
+
+	// Group 2 holds a single file.
+	writeCM("restore-02", "1_configmap_ns_late.yaml", "late")
+	_, err = writeGroupRestoreConfig(
+		filepath.Join(backupPath, "restore-02"), "restore-02",
+		[]groupRestoreConfigEntry{{Files: []string{"1_configmap_ns_late.yaml"}}})
+	assert.NoError(t, err)
+	validatedFiles[filepath.Join("restore-02", restoreConfigFileName)] = true
+
+	groups, err := loadBackupResourcesByWave(backupPath, validatedFiles, logr.Discard())
+	assert.NoError(t, err)
+	assert.Len(t, groups, 2)
+
+	// Group 1 comes before group 2 (ordinal order) and holds its ten files in
+	// numeric-index order.
+	assert.Equal(t, 1, groups[0].wave)
+	assert.Len(t, groups[0].resources, 10)
+	var loadedOrder []string
+	for _, r := range groups[0].resources {
+		loadedOrder = append(loadedOrder, r.fileName)
+		assert.NotNil(t, r.restoreConfig, "every group-1 file must carry its config")
+		assert.True(t, r.restoreConfig.RestorePVs)
+	}
+	assert.Equal(t, g1Files, loadedOrder, "resources must load in numeric-index order")
+
+	assert.Equal(t, 2, groups[1].wave)
+	assert.Len(t, groups[1].resources, 1)
+
+	t.Run("resource file without a numeric prefix is rejected", func(t *testing.T) {
+		bad := t.TempDir()
+		assert.NoError(t, os.MkdirAll(filepath.Join(bad, "restore-1"), 0o700))
+		assert.NoError(t, os.WriteFile(
+			filepath.Join(bad, "restore-1", "noindex.yaml"),
+			[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"), 0o600))
+		vf := map[string]bool{filepath.Join("restore-1", "noindex.yaml"): true}
+		_, err := loadBackupResourcesByWave(bad, vf, logr.Discard())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no numeric index prefix")
 	})
 }
 
