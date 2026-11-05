@@ -383,6 +383,30 @@ func TestSortBackupSpecsByApplyWave(t *testing.T) {
 		assert.Equal(t, 1, len(groups[1]))
 		assert.Equal(t, "b", groups[1][0].Name)
 	})
+
+	t.Run("missing or empty apply-wave is processed in the final wave", func(t *testing.T) {
+		specs := []BackupSpec{
+			{Name: "no-wave-b"},
+			{Name: "explicit-zero", ApplyWave: "0"},
+			{Name: "no-wave-a", ApplyWave: ""},
+			{Name: "wave-neg", ApplyWave: "-5"},
+		}
+		groups, err := SortBackupSpecsByApplyWave(specs)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(groups))
+
+		// -5 first, then explicit wave 0, then the no-wave group last.
+		assert.Equal(t, 1, len(groups[0]))
+		assert.Equal(t, "wave-neg", groups[0][0].Name)
+
+		assert.Equal(t, 1, len(groups[1]))
+		assert.Equal(t, "explicit-zero", groups[1][0].Name)
+
+		// The no-wave specs form the final group, ordered by name.
+		assert.Equal(t, 2, len(groups[2]))
+		assert.Equal(t, "no-wave-a", groups[2][0].Name)
+		assert.Equal(t, "no-wave-b", groups[2][1].Name)
+	})
 }
 
 func TestExtractRestoreSpecsFromConfigmaps(t *testing.T) {
