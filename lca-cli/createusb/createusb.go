@@ -30,7 +30,10 @@ limitations under the License.
 package createusb
 
 import (
+	"bytes"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/url"
@@ -71,6 +74,10 @@ var sha256HexRegex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // component followed by a full 64-character lowercase hex sha256 digest. It rejects a
 // bare tag (no digest) and a malformed digest such as "repo@sha256:" with no hex.
 var seedImageDigestRegex = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
+
+// kubeadminPasswordHashRegex matches the modular-crypt format emitted by bcrypt and
+// restricts the cost to the 04-31 range supported by bcrypt.
+var kubeadminPasswordHashRegex = regexp.MustCompile(`^\$2[aby]\$(?:0[4-9]|[12][0-9]|3[01])\$[./A-Za-z0-9]{53}$`)
 
 // RHCOSLiveISO is the structured reference to the RHCOS live ISO used to build the media.
 type RHCOSLiveISO struct {
@@ -116,6 +123,11 @@ type SiteConfig struct {
 	// empty value uses the default (180 days). It is validated at build time: a non-parseable,
 	// non-positive, or absurdly large value fails the build.
 	MaxSeedAge string `json:"maxSeedAge,omitempty"`
+	// KubeadminPasswordHash and KubeconfigCryptoRetention are generated in advance
+	// together with the kubeconfig handed to the user. The hash keeps kubeadmin usable
+	// after recert; the retention set makes the target cluster trust that kubeconfig.
+	KubeadminPasswordHash     string                                 `json:"kubeadminPasswordHash,omitempty"`
+	KubeconfigCryptoRetention seedreconfig.KubeConfigCryptoRetention `json:"kubeconfigCryptoRetention,omitempty"`
 }
 
 // Manifest is the §6.3 single-manifest schema for `lca-cli create-usb`.
@@ -328,6 +340,16 @@ func (m *Manifest) validateSelfContained() error {
 		return fmt.Errorf("siteConfig.pullSecret is not valid json: %w", err)
 	}
 
+	// Required kubeconfig identity data. These values are generated with the kubeconfig
+	// that will be handed to the user; omitting them would leave the installed cluster
+	// without a working pre-generated kubeconfig or kubeadmin credential.
+	if err := m.validateSiteConfigKubeadminPasswordHash(); err != nil {
+		return err
+	}
+	if err := m.validateSiteConfigKubeconfigCryptoRetention(); err != nil {
+		return err
+	}
+
 	// Required identity fields the reconfigure path needs.
 	if m.SiteConfig.ClusterName == "" {
 		return fmt.Errorf("siteConfig.clusterName is required for mode %q", ModeSelfContained)
@@ -419,6 +441,123 @@ func (m *Manifest) validateSiteConfigClockGate() error {
 		return fmt.Errorf("siteConfig.chronyConfig declares no trusted time source for the pre-recert clock gate: provide a server/pool/peer pointing at a real address or a non-RTC hardware refclock (RTC-backed or local-only sources are not trusted), or omit chronyConfig to rely on the seed-age plausibility window")
 	}
 	return nil
+}
+
+// validateSiteConfigKubeadminPasswordHash requires a syntactically valid bcrypt
+// hash so a truncated or mistyped value cannot ship unusable kubeadmin media.
+func (m *Manifest) validateSiteConfigKubeadminPasswordHash() error {
+	m.SiteConfig.KubeadminPasswordHash = strings.TrimSpace(m.SiteConfig.KubeadminPasswordHash)
+	hash := m.SiteConfig.KubeadminPasswordHash
+	if hash == "" {
+		return fmt.Errorf("siteConfig.kubeadminPasswordHash is required for mode %q", ModeSelfContained)
+	}
+	if !kubeadminPasswordHashRegex.MatchString(hash) {
+		return fmt.Errorf("siteConfig.kubeadminPasswordHash must be a bcrypt hash")
+	}
+	return nil
+}
+
+// validateSiteConfigKubeconfigCryptoRetention rejects partial retention before the
+// build can ship media that cannot authenticate the pre-generated kubeconfig.
+func (m *Manifest) validateSiteConfigKubeconfigCryptoRetention() error {
+	r := m.SiteConfig.KubeconfigCryptoRetention
+	if missing := r.MissingPEMFields(); len(missing) > 0 {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s is required for mode %q", missing[0], ModeSelfContained)
+	}
+	m.SiteConfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN = strings.TrimSpace(r.IngresssCrypto.IngressCertificateCN)
+	if m.SiteConfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN == "" {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.ingress_certificate_cn is required for mode %q", ModeSelfContained)
+	}
+	return validateKubeconfigCryptoRetentionPEMs(r)
+}
+
+// validateKubeconfigCryptoRetentionPEMs rejects non-PEM or unparseable material
+// before media is built. The values are written verbatim for recert, so invalid
+// input must fail at build time rather than after installation.
+func validateKubeconfigCryptoRetentionPEMs(r seedreconfig.KubeConfigCryptoRetention) error {
+	if err := validateCertificateBundlePEM(string(r.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate), "admin_ca_certificate"); err != nil {
+		return err
+	}
+	privateKeys := []struct {
+		name  string
+		value seedreconfig.PEM
+	}{
+		{"loadbalancer_external_signer_private_key", r.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey},
+		{"localhost_signer_private_key", r.KubeAPICrypto.ServingCrypto.LocalhostSignerPrivateKey},
+		{"service_network_signer_private_key", r.KubeAPICrypto.ServingCrypto.ServiceNetworkSignerPrivateKey},
+		{"ingress_ca", r.IngresssCrypto.IngressCAPrivateKey},
+	}
+	for _, key := range privateKeys {
+		if err := validatePrivateKeyPEM(string(key.value), key.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCertificateBundlePEM requires at least one parseable CERTIFICATE block
+// and rejects trailing non-PEM data.
+func validateCertificateBundlePEM(certPEM, field string) error {
+	rest := []byte(certPEM)
+	found := false
+	for {
+		trimmed := bytes.TrimLeft(rest, " \t\r\n")
+		if !bytes.HasPrefix(trimmed, []byte("-----BEGIN ")) {
+			break
+		}
+		block, remaining := pem.Decode(trimmed)
+		if block == nil {
+			break
+		}
+		rest = remaining
+		if block.Type != "CERTIFICATE" {
+			return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s must contain a CERTIFICATE PEM block", field)
+		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s contains an invalid certificate: %w", field, err)
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s must contain a CERTIFICATE PEM block", field)
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s contains non-PEM data", field)
+	}
+	return nil
+}
+
+// validatePrivateKeyPEM accepts the unencrypted private-key formats used by the
+// kubeconfig-retention secrets: PKCS#1, PKCS#8, and SEC 1 EC.
+func validatePrivateKeyPEM(keyPEM, field string) error {
+	trimmed := bytes.TrimLeft([]byte(keyPEM), " \t\r\n")
+	if !bytes.HasPrefix(trimmed, []byte("-----BEGIN ")) {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s must contain a private-key PEM block", field)
+	}
+	block, rest := pem.Decode(trimmed)
+	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s must contain a private-key PEM block", field)
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s contains non-PEM data", field)
+	}
+	if _, err := parsePrivateKey(block.Bytes); err != nil {
+		return fmt.Errorf("siteConfig.kubeconfigCryptoRetention.%s contains an invalid private key: %w", field, err)
+	}
+	return nil
+}
+
+func parsePrivateKey(der []byte) (any, error) {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return key, nil
+	}
+	return nil, fmt.Errorf("unsupported private-key format")
 }
 
 // parseSSHAuthorizedKeys returns the non-empty, non-comment public authorized key lines
