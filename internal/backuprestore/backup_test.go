@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
@@ -257,6 +258,33 @@ spec:
 	assert.Equal(t, []string{"configmaps"}, cfg.Entries[0].RestoreStatusResources)
 	assert.ElementsMatch(t, yamlNames, cfg.Entries[0].Files,
 		"the group config entry must reference exactly the backed-up resource files")
+
+	// The root-level version manifest is written beside checksums.sha256, covered
+	// by the checksum manifest, and records the backup metadata. Only one restore
+	// group exists here, so yamlNames is the full resource set.
+	backupRoot := filepath.Join(tmp, LocalBackupPath)
+	manifestData, err := os.ReadFile(filepath.Join(backupRoot, backupLayoutFileName))
+	assert.NoError(t, err)
+	manifest := &backupLayoutManifest{}
+	assert.NoError(t, json.Unmarshal(manifestData, manifest))
+	assert.Equal(t, currentLayoutVersion, manifest.LayoutVersion)
+	assert.Equal(t, []string{"b1"}, manifest.BackupSpecNames)
+	assert.Equal(t, len(yamlNames), manifest.ResourceCount,
+		"resourceCount must equal the number of backed-up resource files")
+	_, perr := time.Parse(time.RFC3339, manifest.Timestamp)
+	assert.NoError(t, perr, "timestamp must be RFC3339 parseable")
+
+	checksumData, err := os.ReadFile(filepath.Join(backupRoot, "checksums.sha256"))
+	assert.NoError(t, err)
+	assert.Contains(t, string(checksumData), backupLayoutFileName,
+		"the version manifest must be covered by checksums.sha256")
+
+	// The produced backup validates end to end: the checksums verify and the layout
+	// manifest is accepted by the restore side.
+	validated, err := validateChecksums(backupRoot)
+	assert.NoError(t, err)
+	_, err = loadAndValidateBackupLayout(backupRoot, validated, logr.Discard())
+	assert.NoError(t, err)
 }
 
 func TestGetObjsFromApplyLabel(t *testing.T) {

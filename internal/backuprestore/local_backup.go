@@ -223,6 +223,22 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		checksums = append(checksums, groupChecksums...)
 	}
 
+	// Write the root-level version manifest beside checksums.sha256 and include it
+	// in the checksum manifest. The resource count and backup spec names are taken
+	// from the collected backups (every written resource file corresponds to one
+	// collected resource). See the layout contract in local_layout.go.
+	totalResources := 0
+	specNames := make([]string, 0, len(collected))
+	for _, c := range collected {
+		totalResources += len(c.resources)
+		specNames = append(specNames, c.spec.Name)
+	}
+	layoutChecksum, err := writeBackupLayoutManifest(backupDir, totalResources, specNames)
+	if err != nil {
+		return bt, err
+	}
+	checksums = append(checksums, layoutChecksum)
+
 	checksumContent := strings.Join(checksums, "\n") + "\n"
 	checksumPath := filepath.Join(backupDir, "checksums.sha256")
 	if err := os.WriteFile(checksumPath, []byte(checksumContent), 0o600); err != nil {
