@@ -113,6 +113,14 @@ func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapR
 			fmt.Sprintf("backup checksum validation failed: %s", err.Error()))
 	}
 
+	// A local backup is expected at this point (the directory exists and its
+	// checksums validated), so the version manifest must be present, intact, and a
+	// layout version this LCA can read. This runs before loading any resources and
+	// returns a terminal BRFailedError on any incompatibility.
+	if _, err := loadAndValidateBackupLayout(backupPath, validatedFiles, h.Log); err != nil {
+		return rt, err
+	}
+
 	waveGroups, err := loadBackupResourcesByWave(backupPath, validatedFiles, h.Log)
 	if err != nil {
 		return rt, NewBRFailedError("Restore",
