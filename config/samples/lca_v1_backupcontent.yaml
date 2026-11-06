@@ -1,0 +1,34 @@
+apiVersion: lca.openshift.io/v1
+kind: BackupContent
+metadata:
+  name: ibu-platform-and-apps
+  namespace: openshift-lifecycle-agent
+spec:
+  backupWave: 2
+  restoreWave: 2
+  namespaces:
+  - open-cluster-management-agent
+  namespacedResources:
+  - kind: deployments.apps
+    names:
+    - klusterlet
+  - kind: secrets
+    names:
+    - bootstrap-hub-kubeconfig
+  - kind: routes.route.openshift.io
+  - kind: configmaps
+  excludedNamespacedResources:
+  - kind: secrets
+    names:
+    - do-not-restore
+  clusterScopedResources:
+  - kind: clusterroles.rbac.authorization.k8s.io
+    names:
+    - klusterlet
+  excludedClusterScopedResources:
+  - kind: clusterroles.rbac.authorization.k8s.io
+    names:
+    - do-not-restore
+  labelSelector:
+    matchLabels:
+      app: acm

@@ -31,6 +31,7 @@ import (
 // +kubebuilder:validation:XValidation:message="ibu is a singleton, metadata.name must be 'upgrade'", rule="self.metadata.name == 'upgrade'"
 // +kubebuilder:validation:XValidation:message="can not change spec.seedImageRef while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || self.spec.stage=='Idle' || has(oldSelf.spec.seedImageRef) && has(self.spec.seedImageRef) && oldSelf.spec.seedImageRef==self.spec.seedImageRef || !has(self.spec.seedImageRef) && !has(oldSelf.spec.seedImageRef)"
 // +kubebuilder:validation:XValidation:message="can not change spec.oadpContent while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || self.spec.stage=='Idle' || has(oldSelf.spec.oadpContent) && has(self.spec.oadpContent) && oldSelf.spec.oadpContent==self.spec.oadpContent || !has(self.spec.oadpContent) && !has(oldSelf.spec.oadpContent)"
+// +kubebuilder:validation:XValidation:message="can not change spec.backupContent while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || self.spec.stage=='Idle' || has(oldSelf.spec.backupContent) && has(self.spec.backupContent) && oldSelf.spec.backupContent==self.spec.backupContent || !has(self.spec.backupContent) && !has(oldSelf.spec.backupContent)"
 // +kubebuilder:validation:XValidation:message="can not change spec.extraManifests while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || self.spec.stage=='Idle' || has(oldSelf.spec.extraManifests) && has(self.spec.extraManifests) && oldSelf.spec.extraManifests==self.spec.extraManifests || !has(self.spec.extraManifests) && !has(oldSelf.spec.extraManifests)"
 // +kubebuilder:validation:XValidation:message="can not change spec.autoRollbackOnFailure while ibu is in progress", rule="!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type=='Idle' && c.status=='True') || self.spec.stage=='Idle' || has(oldSelf.spec.autoRollbackOnFailure) && has(self.spec.autoRollbackOnFailure) && oldSelf.spec.autoRollbackOnFailure==self.spec.autoRollbackOnFailure || !has(self.spec.autoRollbackOnFailure) && !has(oldSelf.spec.autoRollbackOnFailure)"
 // +kubebuilder:validation:XValidation:message="the stage transition is not permitted. Please refer to status.validNextStages for valid transitions. If status.validNextStages is not present, it indicates that no transitions are currently allowed", rule="!has(oldSelf.status) || has(oldSelf.status.validNextStages) && self.spec.stage in oldSelf.status.validNextStages || has(oldSelf.spec.stage) && has(self.spec.stage) && oldSelf.spec.stage==self.spec.stage"
@@ -107,15 +108,29 @@ var ConditionTypes = struct {
 }
 
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
+//
+// The mutual-exclusion rule below is placed on this spec type rather than on the
+// ImageBasedUpgrade object so that the IBGU CRD, which embeds this struct,
+// inherits it on regeneration and the hub rejects a bad IBGU at creation rather
+// than at spoke Prep.
+// +kubebuilder:validation:XValidation:message="oadpContent and backupContent are mutually exclusive",rule="!(has(self.oadpContent) && size(self.oadpContent) > 0 && has(self.backupContent) && size(self.backupContent) > 0)"
 type ImageBasedUpgradeSpec struct {
 	//+kubebuilder:validation:Enum=Idle;Prep;Upgrade;Rollback
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Stage"
 	Stage ImageBasedUpgradeStage `json:"stage,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Seed Image Reference"
 	SeedImageRef SeedImageRef `json:"seedImageRef,omitempty"`
-	// OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
-	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content"
+	// Deprecated: OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
+	// Use BackupContent instead. OADPContent remains honoured for backward compatibility; the release that removes it
+	// is TBD. OADPContent and BackupContent are mutually exclusive on a single IBU.
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content (Deprecated)"
 	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`
+	// BackupContent defines the list of name-only references to BackupContent CRs that declare the backup/restore
+	// content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
+	// github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
+	// BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Backup Content"
+	BackupContent []BackupContentRef `json:"backupContent,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Extra Manifests"
 	// ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
 	// applied during the upgrade post-pivot stage.
@@ -165,6 +180,16 @@ type ConfigMapRef struct {
 
 // PullSecretRef defines a reference to a secret with credentials for pulling container images
 type PullSecretRef struct {
+	// +kubebuilder:validation:Required
+	// +required
+	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
+	Name string `json:"name"`
+}
+
+// BackupContentRef defines a name-only reference to a BackupContent CR. The
+// referenced CR is always resolved in the LCA namespace, so the reference carries
+// no namespace (unlike ConfigMapRef).
+type BackupContentRef struct {
 	// +kubebuilder:validation:Required
 	// +required
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}

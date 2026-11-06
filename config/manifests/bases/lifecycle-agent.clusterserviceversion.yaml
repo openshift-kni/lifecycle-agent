@@ -144,6 +144,26 @@ spec:
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1
+    - description: |-
+        BackupContent is the Schema for the backupcontents API. It is LCA's declarative
+        backup/restore input, replacing the Velero Backup and Restore CRs that were
+        previously embedded in the ConfigMaps referenced by IBU spec.oadpContent.
+
+        BackupContent CRs are inert data: nothing reconciles them, they carry no status
+        subresource, and they are applied directly to the cluster (not embedded inside
+        ConfigMaps). An IBU references them by name through spec.backupContent; the
+        reference carries no namespace and is always resolved in the LCA namespace (see
+        Namespace). The backup/restore engine that honours this input is implemented
+        separately (CNF-29691).
+
+        Note the deliberate absence of a +kubebuilder:subresource:status marker:
+        BackupContent has no status subresource. The Status field below is an empty
+        placeholder that exists only because operator-sdk's CSV generator requires every
+        owned CRD type to declare a status; nothing ever reports into it.
+      displayName: Backup Content
+      kind: BackupContent
+      name: backupcontents.lca.openshift.io
+      version: v1
     - description: ImageBasedUpgrade is the Schema for the ImageBasedUpgrades API
       displayName: Image-based Cluster Upgrade
       kind: ImageBasedUpgrade
@@ -166,6 +186,17 @@ spec:
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:number
       - description: |-
+          BackupContent defines the list of name-only references to BackupContent CRs that declare the backup/restore
+          content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
+          github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
+          BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
+        displayName: Backup Content
+        path: backupContent
+      - displayName: Name
+        path: backupContent[0].name
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: |-
           ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
           applied during the upgrade post-pivot stage.
           Users can also add their custom catalog sources that may want to retain after the upgrade.
@@ -179,9 +210,11 @@ spec:
         path: extraManifests[0].namespace
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:text
-      - description: OADPContent defines the list of ConfigMap resources that contain
-          the OADP Backup and Restore CRs.
-        displayName: OADP Content
+      - description: |-
+          Deprecated: OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
+          Use BackupContent instead. OADPContent remains honoured for backward compatibility; the release that removes it
+          is TBD. OADPContent and BackupContent are mutually exclusive on a single IBU.
+        displayName: OADP Content (Deprecated)
         path: oadpContent
       - displayName: Name
         path: oadpContent[0].name

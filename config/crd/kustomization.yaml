@@ -5,6 +5,7 @@ resources:
 - bases/lca.openshift.io_imagebasedupgrades.yaml
 - bases/lca.openshift.io_seedgenerators.yaml
 - bases/lca.openshift.io_ipconfigs.yaml
+- bases/lca.openshift.io_backupcontents.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patchesStrategicMerge:

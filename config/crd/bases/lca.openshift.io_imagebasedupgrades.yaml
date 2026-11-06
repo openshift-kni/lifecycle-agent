@@ -52,7 +52,13 @@ spec:
           metadata:
             type: object
           spec:
-            description: ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
+            description: |-
+              ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
+
+              The mutual-exclusion rule below is placed on this spec type rather than on the
+              ImageBasedUpgrade object so that the IBGU CRD, which embeds this struct,
+              inherits it on regeneration and the hub rejects a bad IBGU at creation rather
+              than at spoke Prep.
             properties:
               autoRollbackOnFailure:
                 description: |-
@@ -66,6 +72,24 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              backupContent:
+                description: |-
+                  BackupContent defines the list of name-only references to BackupContent CRs that declare the backup/restore
+                  content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
+                  github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
+                  BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
+                items:
+                  description: |-
+                    BackupContentRef defines a name-only reference to a BackupContent CR. The
+                    referenced CR is always resolved in the LCA namespace, so the reference carries
+                    no namespace (unlike ConfigMapRef).
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               extraManifests:
                 description: |-
                   ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
@@ -84,8 +108,10 @@ spec:
                   type: object
                 type: array
               oadpContent:
-                description: OADPContent defines the list of ConfigMap resources that
-                  contain the OADP Backup and Restore CRs.
+                description: |-
+                  Deprecated: OADPContent defines the list of ConfigMap resources that contain the OADP Backup and Restore CRs.
+                  Use BackupContent instead. OADPContent remains honoured for backward compatibility; the release that removes it
+                  is TBD. OADPContent and BackupContent are mutually exclusive on a single IBU.
                 items:
                   description: ConfigMapRef defines a reference to a config map
                   properties:
@@ -132,6 +158,10 @@ spec:
                 - Rollback
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: oadpContent and backupContent are mutually exclusive
+              rule: '!(has(self.oadpContent) && size(self.oadpContent) > 0 && has(self.backupContent)
+                && size(self.backupContent) > 0)'
           status:
             description: ImageBasedUpgradeStatus defines the observed state of ImageBasedUpgrade
             properties:
@@ -263,6 +293,11 @@ spec:
             && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.oadpContent)
             && has(self.spec.oadpContent) && oldSelf.spec.oadpContent==self.spec.oadpContent
             || !has(self.spec.oadpContent) && !has(oldSelf.spec.oadpContent)'
+        - message: can not change spec.backupContent while ibu is in progress
+          rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
+            && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.backupContent)
+            && has(self.spec.backupContent) && oldSelf.spec.backupContent==self.spec.backupContent
+            || !has(self.spec.backupContent) && !has(oldSelf.spec.backupContent)'
         - message: can not change spec.extraManifests while ibu is in progress
           rule: '!has(oldSelf.status) || oldSelf.status.conditions.exists(c, c.type==''Idle''
             && c.status==''True'') || self.spec.stage==''Idle'' || has(oldSelf.spec.extraManifests)

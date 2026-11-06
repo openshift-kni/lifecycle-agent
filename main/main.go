@@ -47,6 +47,7 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	backupcontentv1 "github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1"
 	ipcv1 "github.com/openshift-kni/lifecycle-agent/api/ipconfig/v1"
 	seedgenv1 "github.com/openshift-kni/lifecycle-agent/api/seedgenerator/v1"
 	ocpv1 "github.com/openshift/api/config/v1"
@@ -102,6 +103,7 @@ const (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(ibuv1.AddToScheme(scheme))
+	utilruntime.Must(backupcontentv1.AddToScheme(scheme))
 	utilruntime.Must(seedgenv1.AddToScheme(scheme))
 	utilruntime.Must(ipcv1.AddToScheme(scheme))
 	utilruntime.Must(ocpv1.AddToScheme(scheme))
