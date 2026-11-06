@@ -26,6 +26,14 @@ import (
 // consumers (TALM/IBGU) can rely on the same value rather than hard-coding it.
 const Namespace = "openshift-lifecycle-agent"
 
+// Developer note (not part of the user-facing API description; kept in a separate
+// comment block so controller-gen does not emit it into the CRD/CSV): the
+// backup/restore engine that honours this input is implemented separately
+// (CNF-29691). BackupContent deliberately has no +kubebuilder:subresource:status
+// marker; the Status field below is an empty placeholder that exists only because
+// operator-sdk's CSV generator requires every owned CRD type to declare a status,
+// and nothing ever reports into it.
+
 //+kubebuilder:object:root=true
 //+kubebuilder:resource:path=backupcontents,scope=Namespaced,shortName=bkc
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -38,13 +46,7 @@ const Namespace = "openshift-lifecycle-agent"
 // subresource, and they are applied directly to the cluster (not embedded inside
 // ConfigMaps). An IBU references them by name through spec.backupContent; the
 // reference carries no namespace and is always resolved in the LCA namespace (see
-// Namespace). The backup/restore engine that honours this input is implemented
-// separately (CNF-29691).
-//
-// Note the deliberate absence of a +kubebuilder:subresource:status marker:
-// BackupContent has no status subresource. The Status field below is an empty
-// placeholder that exists only because operator-sdk's CSV generator requires every
-// owned CRD type to declare a status; nothing ever reports into it.
+// Namespace).
 type BackupContent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -53,11 +55,15 @@ type BackupContent struct {
 	Status BackupContentStatus `json:"status,omitempty"`
 }
 
+// Developer note (not part of the user-facing API description; kept in a separate
+// comment block so controller-gen does not emit it into the CRD/CSV): this type
+// exists solely to satisfy operator-sdk's CSV generator, which requires every owned
+// CRD type to declare a status. Do not add fields or a
+// +kubebuilder:subresource:status marker.
+
 // BackupContentStatus is intentionally empty. BackupContent is inert, pure
 // declarative input with no status subresource; backup and restore outcomes are
-// reported through IBU status and LCA logs only. This type exists solely to
-// satisfy operator-sdk's CSV generator, which requires every owned CRD type to
-// declare a status. Do not add fields or a +kubebuilder:subresource:status marker.
+// reported through IBU status and LCA logs only.
 type BackupContentStatus struct {
 }
 
@@ -71,14 +77,16 @@ type BackupContentSpec struct {
 	// BackupContent is processed in the last backup wave, after all explicitly
 	// numbered waves.
 	// +kubebuilder:validation:Minimum=0
-	BackupWave *int `json:"backupWave,omitempty"`
+	// +kubebuilder:validation:Maximum=100
+	BackupWave *int32 `json:"backupWave,omitempty"`
 
 	// RestoreWave is the order in which this BackupContent is processed during
 	// restore. It is optional and independent of BackupWave. When omitted, this
 	// BackupContent is processed in the last restore wave, after all explicitly
 	// numbered waves.
 	// +kubebuilder:validation:Minimum=0
-	RestoreWave *int `json:"restoreWave,omitempty"`
+	// +kubebuilder:validation:Maximum=100
+	RestoreWave *int32 `json:"restoreWave,omitempty"`
 
 	// Namespaces is the list of namespaces in scope for the namespaced-resource
 	// entries of this BackupContent.

@@ -107,12 +107,14 @@ var ConditionTypes = struct {
 	ConfigCompleted:    "ConfigCompleted",
 }
 
+// Developer note (not part of the user-facing API description; kept in a separate
+// comment block so controller-gen does not emit it into the CRD/CSV): the
+// mutual-exclusion rule below is placed on this spec type rather than on the
+// ImageBasedUpgrade object so that the IBGU CRD, which embeds this struct, inherits
+// it on regeneration and the hub rejects a bad IBGU at creation rather than at
+// spoke Prep.
+
 // ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
-//
-// The mutual-exclusion rule below is placed on this spec type rather than on the
-// ImageBasedUpgrade object so that the IBGU CRD, which embeds this struct,
-// inherits it on regeneration and the hub rejects a bad IBGU at creation rather
-// than at spoke Prep.
 // +kubebuilder:validation:XValidation:message="oadpContent and backupContent are mutually exclusive",rule="!(has(self.oadpContent) && size(self.oadpContent) > 0 && has(self.backupContent) && size(self.backupContent) > 0)"
 type ImageBasedUpgradeSpec struct {
 	//+kubebuilder:validation:Enum=Idle;Prep;Upgrade;Rollback
@@ -129,7 +131,10 @@ type ImageBasedUpgradeSpec struct {
 	// content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
 	// github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
 	// BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
+	// Entries are keyed by name: duplicate references are rejected at admission.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Backup Content"
+	// +listType=map
+	// +listMapKey=name
 	BackupContent []BackupContentRef `json:"backupContent,omitempty"`
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Extra Manifests"
 	// ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be
@@ -191,6 +196,7 @@ type PullSecretRef struct {
 // no namespace (unlike ConfigMapRef).
 type BackupContentRef struct {
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	// +required
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:text"}
 	Name string `json:"name"`

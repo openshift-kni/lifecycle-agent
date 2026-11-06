@@ -89,12 +89,12 @@ func (in *BackupContentSpec) DeepCopyInto(out *BackupContentSpec) {
 	*out = *in
 	if in.BackupWave != nil {
 		in, out := &in.BackupWave, &out.BackupWave
-		*out = new(int)
+		*out = new(int32)
 		**out = **in
 	}
 	if in.RestoreWave != nil {
 		in, out := &in.RestoreWave, &out.RestoreWave
-		*out = new(int)
+		*out = new(int32)
 		**out = **in
 	}
 	if in.Namespaces != nil {

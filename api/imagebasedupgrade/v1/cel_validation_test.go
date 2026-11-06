@@ -209,6 +209,20 @@ func TestBackupContentImmutableWhileInProgress(t *testing.T) {
 		}
 	})
 
+	// Isolates the oldSelf.status Idle=True clause of the immutability rule. The
+	// new stage is Prep (not Idle), so the self.spec.stage=='Idle' clause cannot
+	// satisfy the rule on its own; only the old-status-Idle clause can permit the
+	// backupContent change. The previous "change while Idle" case leaves both
+	// clauses true, so it never exercises this one in isolation.
+	t.Run("change with old status Idle and new stage Prep is accepted", func(t *testing.T) {
+		oldObj := withStatus(ibu("Idle", map[string]interface{}{"backupContent": backupRef("old")}), idleStatus)
+		newObj := withStatus(ibu("Prep", map[string]interface{}{"backupContent": backupRef("new")}), idleStatus)
+		errs := validateCEL(root, newObj, oldObj)
+		if hasMessage(errs, backupContentImmutableMsg) {
+			t.Errorf("did not expect rejection changing backupContent when old status is Idle, got errs: %v", errs)
+		}
+	})
+
 	t.Run("unchanged while in progress is accepted", func(t *testing.T) {
 		oldObj := withStatus(ibu("Upgrade", map[string]interface{}{"backupContent": backupRef("same")}), inProgressStatus)
 		newObj := withStatus(ibu("Upgrade", map[string]interface{}{"backupContent": backupRef("same")}), inProgressStatus)

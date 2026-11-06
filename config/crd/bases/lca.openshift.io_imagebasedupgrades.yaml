@@ -52,13 +52,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
-
-              The mutual-exclusion rule below is placed on this spec type rather than on the
-              ImageBasedUpgrade object so that the IBGU CRD, which embeds this struct,
-              inherits it on regeneration and the hub rejects a bad IBGU at creation rather
-              than at spoke Prep.
+            description: ImageBasedUpgradeSpec defines the desired state of ImageBasedUpgrade
             properties:
               autoRollbackOnFailure:
                 description: |-
@@ -78,6 +72,7 @@ spec:
                   content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
                   github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
                   BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
+                  Entries are keyed by name: duplicate references are rejected at admission.
                 items:
                   description: |-
                     BackupContentRef defines a name-only reference to a BackupContent CR. The
@@ -85,11 +80,15 @@ spec:
                     no namespace (unlike ConfigMapRef).
                   properties:
                     name:
+                      minLength: 1
                       type: string
                   required:
                   - name
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               extraManifests:
                 description: |-
                   ExtraManifests defines the list of ConfigMap resources that contain the user-specific extra manifests to be

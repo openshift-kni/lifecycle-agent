@@ -32,13 +32,7 @@ spec:
           subresource, and they are applied directly to the cluster (not embedded inside
           ConfigMaps). An IBU references them by name through spec.backupContent; the
           reference carries no namespace and is always resolved in the LCA namespace (see
-          Namespace). The backup/restore engine that honours this input is implemented
-          separately (CNF-29691).
-
-          Note the deliberate absence of a +kubebuilder:subresource:status marker:
-          BackupContent has no status subresource. The Status field below is an empty
-          placeholder that exists only because operator-sdk's CSV generator requires every
-          owned CRD type to declare a status; nothing ever reports into it.
+          Namespace).
         properties:
           apiVersion:
             description: |-
@@ -70,6 +64,8 @@ spec:
                   backup. It is optional and independent of RestoreWave. When omitted, this
                   BackupContent is processed in the last backup wave, after all explicitly
                   numbered waves.
+                format: int32
+                maximum: 100
                 minimum: 0
                 type: integer
               clusterScopedResources:
@@ -256,6 +252,8 @@ spec:
                   restore. It is optional and independent of BackupWave. When omitted, this
                   BackupContent is processed in the last restore wave, after all explicitly
                   numbered waves.
+                format: int32
+                maximum: 100
                 minimum: 0
                 type: integer
             type: object
@@ -263,9 +261,7 @@ spec:
             description: |-
               BackupContentStatus is intentionally empty. BackupContent is inert, pure
               declarative input with no status subresource; backup and restore outcomes are
-              reported through IBU status and LCA logs only. This type exists solely to
-              satisfy operator-sdk's CSV generator, which requires every owned CRD type to
-              declare a status. Do not add fields or a +kubebuilder:subresource:status marker.
+              reported through IBU status and LCA logs only.
             type: object
         type: object
     served: true

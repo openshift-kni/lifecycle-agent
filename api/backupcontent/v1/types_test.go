@@ -37,7 +37,7 @@ func TestNamespaceConstant(t *testing.T) {
 // as the hub requires. If any of these types stopped being exported, this file
 // would not compile.
 func TestBackupContentSpecExported(t *testing.T) {
-	wave := 3
+	wave := int32(3)
 	var spec BackupContentSpec = BackupContentSpec{
 		BackupWave:          &wave,
 		RestoreWave:         &wave,
@@ -57,8 +57,8 @@ func TestBackupContentSpecExported(t *testing.T) {
 // BackupContentSpec across its pointer, slice and LabelSelector fields, and
 // confirms the copy is deep (mutating the copy does not affect the original).
 func TestBackupContentSpecDeepCopy(t *testing.T) {
-	backupWave := 1
-	restoreWave := 2
+	backupWave := int32(1)
+	restoreWave := int32(2)
 	original := &BackupContentSpec{
 		BackupWave:  &backupWave,
 		RestoreWave: &restoreWave,
