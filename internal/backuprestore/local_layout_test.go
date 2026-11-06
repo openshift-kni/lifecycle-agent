@@ -48,7 +48,7 @@ func TestIsAcceptedLayoutVersion(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.accepted, isAcceptedLayoutVersion(tc.version))
+			assert.Equal(t, tc.accepted, isAcceptedLayoutVersion(tc.version, logr.Discard()))
 		})
 	}
 }
@@ -74,7 +74,7 @@ func TestWriteBackupLayoutManifest(t *testing.T) {
 	assert.Equal(t, version.Version, manifest.LCAVersion)
 	assert.Equal(t, 7, manifest.ResourceCount)
 	assert.Equal(t, []string{"b1", "b2"}, manifest.BackupSpecNames)
-	_, perr := time.Parse(time.RFC3339, manifest.Timestamp)
+	_, perr := time.Parse(time.RFC3339, manifest.BackupCreationTimestamp)
 	assert.NoError(t, perr, "timestamp must be RFC3339 parseable")
 
 	// The manifest written round-trips through the restore-side validation.
@@ -120,11 +120,11 @@ func TestLoadAndValidateBackupLayout(t *testing.T) {
 	t.Run("unknown/future layout version is rejected", func(t *testing.T) {
 		dir := t.TempDir()
 		data, err := json.Marshal(backupLayoutManifest{
-			LayoutVersion:   "2.0.0",
-			LCAVersion:      "test",
-			Timestamp:       time.Now().UTC().Format(time.RFC3339),
-			ResourceCount:   1,
-			BackupSpecNames: []string{"b1"},
+			LayoutVersion:           "2.0.0",
+			LCAVersion:              "test",
+			BackupCreationTimestamp: time.Now().UTC().Format(time.RFC3339),
+			ResourceCount:           1,
+			BackupSpecNames:         []string{"b1"},
 		})
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, backupLayoutFileName), data, 0o600))
