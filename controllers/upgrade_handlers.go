@@ -255,6 +255,7 @@ func (u *UpgHandler) PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade)
 
 // exportOadpConfigurationAndRestore exports OADP configuration and restore CRs to the new stateroot
 func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, ostreeVarDir string) error {
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
 	if len(ibu.Spec.OADPContent) == 0 {
 		u.Log.Info("spec.oadpContent is empty. Skipping exporting OADP configuration and restore CRs")
 		return nil
@@ -266,6 +267,7 @@ func (u *UpgHandler) exportOadpConfigurationAndRestore(ctx context.Context, ibu 
 	}
 
 	u.Log.Info("Writing Restore CRs into new stateroot")
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
 	if err := u.BackupRestore.ExportRestoresToDir(ctx, ibu.Spec.OADPContent, ostreeVarDir); err != nil {
 		return fmt.Errorf("failed to export restores: %w", err)
 	}
@@ -482,6 +484,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 
 // HandleBackup manages backup flow and returns with possible requeue
 func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
 	sortedBackupGroups, err := u.BackupRestore.GetSortedBackupsFromConfigmap(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while getting sorted backups from configmap: %w", err))

@@ -2,4 +2,5 @@
 resources:
 - lca_v1_imagebasedupgrade.yaml
 - lca_v1_seedgenerator.yaml
+- lca_v1_backupcontent.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples
