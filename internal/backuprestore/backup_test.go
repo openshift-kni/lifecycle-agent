@@ -271,7 +271,7 @@ spec:
 	assert.Equal(t, []string{"b1"}, manifest.BackupSpecNames)
 	assert.Equal(t, len(yamlNames), manifest.ResourceCount,
 		"resourceCount must equal the number of backed-up resource files")
-	_, perr := time.Parse(time.RFC3339, manifest.Timestamp)
+	_, perr := time.Parse(time.RFC3339, manifest.BackupCreationTimestamp)
 	assert.NoError(t, perr, "timestamp must be RFC3339 parseable")
 
 	checksumData, err := os.ReadFile(filepath.Join(backupRoot, "checksums.sha256"))

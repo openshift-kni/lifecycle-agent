@@ -80,9 +80,9 @@ type backupLayoutManifest struct {
 	LayoutVersion string `json:"layoutVersion"`
 	// LCAVersion is the canonical version of the LCA that wrote the backup.
 	LCAVersion string `json:"lcaVersion"`
-	// Timestamp is the backup creation time, in UTC RFC3339 (human readable and
-	// machine parseable).
-	Timestamp string `json:"timestamp"`
+	// BackupCreationTimestamp is the backup creation time, in UTC RFC3339 (human
+	// readable and machine parseable).
+	BackupCreationTimestamp string `json:"backupCreationTimestamp"`
 	// ResourceCount is the total number of resource files in the backup.
 	ResourceCount int `json:"resourceCount"`
 	// BackupSpecNames lists the names of the backup specs that contributed to the
@@ -100,9 +100,11 @@ type backupLayoutManifest struct {
 //   - it must not be newer than the current layout version, so a backup written
 //     by a newer LCA whose layout this code does not understand is rejected as a
 //     future/unknown version.
-func isAcceptedLayoutVersion(layoutVersion string) bool {
+func isAcceptedLayoutVersion(layoutVersion string, log logr.Logger) bool {
 	v, err := semver.NewVersion(layoutVersion)
 	if err != nil {
+		log.Info("WARNING: backup layout version is not valid semver; rejecting",
+			"layoutVersion", layoutVersion, "error", err.Error())
 		return false
 	}
 	// currentLayoutVersion is a compile-time constant we control, so it always
@@ -122,16 +124,17 @@ func isAcceptedLayoutVersion(layoutVersion string) bool {
 // fails rather than recording an incomplete backup as successful.
 func writeBackupLayoutManifest(backupDir string, resourceCount int, specNames []string) (string, error) {
 	manifest := backupLayoutManifest{
-		LayoutVersion:   currentLayoutVersion,
-		LCAVersion:      version.Version,
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
-		ResourceCount:   resourceCount,
-		BackupSpecNames: specNames,
+		LayoutVersion:           currentLayoutVersion,
+		LCAVersion:              version.Version,
+		BackupCreationTimestamp: time.Now().UTC().Format(time.RFC3339),
+		ResourceCount:           resourceCount,
+		BackupSpecNames:         specNames,
 	}
 
 	data, err := json.Marshal(manifest)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal backup layout manifest: %w", err)
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to marshal backup layout manifest: %s", err.Error()))
 	}
 
 	manifestPath := filepath.Join(backupDir, backupLayoutFileName)
@@ -177,7 +180,7 @@ func loadAndValidateBackupLayout(backupPath string, validatedFiles map[string]bo
 			fmt.Sprintf("backup layout manifest %s is malformed: %s", backupLayoutFileName, err.Error()))
 	}
 
-	if !isAcceptedLayoutVersion(manifest.LayoutVersion) {
+	if !isAcceptedLayoutVersion(manifest.LayoutVersion, log) {
 		return nil, NewBRFailedError("Restore",
 			fmt.Sprintf("backup layout version %q is not supported by this LCA (current layout version %q); refusing to restore",
 				manifest.LayoutVersion, currentLayoutVersion))
@@ -186,7 +189,7 @@ func loadAndValidateBackupLayout(backupPath string, validatedFiles map[string]bo
 	log.Info("Backup layout manifest validated",
 		"layoutVersion", manifest.LayoutVersion,
 		"lcaVersion", manifest.LCAVersion,
-		"timestamp", manifest.Timestamp,
+		"backupCreationTimestamp", manifest.BackupCreationTimestamp,
 		"resourceCount", manifest.ResourceCount,
 		"backupSpecNames", manifest.BackupSpecNames)
 
