@@ -21,6 +21,16 @@ import (
 	"testing"
 )
 
+// TestDefaultNamespaceConstant locks the exact value of the exported
+// DefaultNamespace constant. The hub (TALM/IBGU) relies on this value to know
+// LCA's default install namespace (where BackupContent CRs and pull secrets are
+// resolved), so an accidental change here would silently break it.
+func TestDefaultNamespaceConstant(t *testing.T) {
+	if DefaultNamespace != "openshift-lifecycle-agent" {
+		t.Errorf("DefaultNamespace = %q, want %q", DefaultNamespace, "openshift-lifecycle-agent")
+	}
+}
+
 // conditionTypeCase pairs a ConditionTypes field with its expected string value.
 type conditionTypeCase struct {
 	name string

@@ -74,7 +74,7 @@ func backupContent(spec map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"apiVersion": "lca.openshift.io/v1",
 		"kind":       "BackupContent",
-		"metadata":   map[string]interface{}{"name": "sample", "namespace": Namespace},
+		"metadata":   map[string]interface{}{"name": "sample", "namespace": "openshift-lifecycle-agent"},
 		"spec":       spec,
 	}
 }

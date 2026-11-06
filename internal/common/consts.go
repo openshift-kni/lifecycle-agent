@@ -22,7 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	backupcontentv1 "github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 )
 
 // Common constants mainly used by packages in lca-cli
@@ -120,8 +120,8 @@ const (
 	ImageCleanupDisabledValue = "Disabled"
 
 	// DefaultOperatorNamespace is used when MY_POD_NAMESPACE is unset (e.g. local dev).
-	// It references the exported BackupContent API constant so both stay in sync.
-	DefaultOperatorNamespace = backupcontentv1.Namespace
+	// It aliases the exported IBU API constant so both stay in sync.
+	DefaultOperatorNamespace = ibuv1.DefaultNamespace
 	// OperatorDeploymentName is the OLM-managed operator Deployment name.
 	OperatorDeploymentName = "lifecycle-agent-controller-manager"
 	// OperatorNamespaceEnvVar is set on the operator Deployment via downward API.

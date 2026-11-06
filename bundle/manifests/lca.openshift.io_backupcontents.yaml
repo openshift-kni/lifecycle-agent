@@ -31,8 +31,7 @@ spec:
           BackupContent CRs are inert data: nothing reconciles them, they carry no status
           subresource, and they are applied directly to the cluster (not embedded inside
           ConfigMaps). An IBU references them by name through spec.backupContent; the
-          reference carries no namespace and is always resolved in the LCA namespace (see
-          Namespace).
+          reference carries no namespace and is resolved in LCA's install namespace.
         properties:
           apiVersion:
             description: |-

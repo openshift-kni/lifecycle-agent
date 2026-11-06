@@ -20,12 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Namespace is the namespace LCA reads BackupContent CRs from. The IBU
-// spec.backupContent list references BackupContent CRs by name only; LCA always
-// resolves those references in this namespace. It is exported so that hub
-// consumers (TALM/IBGU) can rely on the same value rather than hard-coding it.
-const Namespace = "openshift-lifecycle-agent"
-
 // Developer note (not part of the user-facing API description; kept in a separate
 // comment block so controller-gen does not emit it into the CRD/CSV): the
 // backup/restore engine that honours this input is implemented separately
@@ -45,8 +39,7 @@ const Namespace = "openshift-lifecycle-agent"
 // BackupContent CRs are inert data: nothing reconciles them, they carry no status
 // subresource, and they are applied directly to the cluster (not embedded inside
 // ConfigMaps). An IBU references them by name through spec.backupContent; the
-// reference carries no namespace and is always resolved in the LCA namespace (see
-// Namespace).
+// reference carries no namespace and is resolved in LCA's install namespace.
 type BackupContent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

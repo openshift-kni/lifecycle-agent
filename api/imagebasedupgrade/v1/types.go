@@ -20,6 +20,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// DefaultNamespace is LCA's default install namespace: the namespace the
+// telco-reference configuration installs LCA into, and the one TALM copies
+// BackupContent CRs and pull secrets into on the spoke. LCA resolves the
+// name-only references in an IBU spec (spec.seedImageRef.pullSecretRef and
+// spec.backupContent) in its own install namespace, which defaults to this value
+// (see common.OperatorNamespace). It is exported so that hub consumers
+// (TALM/IBGU) can rely on the same value rather than hard-coding it.
+const DefaultNamespace = "openshift-lifecycle-agent"
+
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -128,8 +137,8 @@ type ImageBasedUpgradeSpec struct {
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="OADP Content (Deprecated)"
 	OADPContent []ConfigMapRef `json:"oadpContent,omitempty"`
 	// BackupContent defines the list of name-only references to BackupContent CRs that declare the backup/restore
-	// content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
-	// github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
+	// content for the upgrade. The referenced BackupContent CRs are read from LCA's install namespace; the references
+	// carry no namespace.
 	// BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
 	// Entries are keyed by name: duplicate references are rejected at admission.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Backup Content"
@@ -155,7 +164,8 @@ type SeedImageRef struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern="^([a-z0-9]+://)?[\\S]+$"
 	Image string `json:"image,omitempty"`
-	// PullSecretRef defines the reference to a secret with credentials to pull container images.
+	// PullSecretRef defines the name-only reference to a secret with credentials to pull container images. The
+	// referenced secret is read from LCA's install namespace; the reference carries no namespace.
 	//+operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Pull Secret Reference"
 	PullSecretRef *PullSecretRef `json:"pullSecretRef,omitempty"`
 }
@@ -192,7 +202,7 @@ type PullSecretRef struct {
 }
 
 // BackupContentRef defines a name-only reference to a BackupContent CR. The
-// referenced CR is always resolved in the LCA namespace, so the reference carries
+// referenced CR is resolved in LCA's install namespace, so the reference carries
 // no namespace (unlike ConfigMapRef).
 type BackupContentRef struct {
 	// +kubebuilder:validation:Required

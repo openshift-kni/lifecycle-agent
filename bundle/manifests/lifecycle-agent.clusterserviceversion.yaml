@@ -158,8 +158,7 @@ spec:
         BackupContent CRs are inert data: nothing reconciles them, they carry no status
         subresource, and they are applied directly to the cluster (not embedded inside
         ConfigMaps). An IBU references them by name through spec.backupContent; the
-        reference carries no namespace and is always resolved in the LCA namespace (see
-        Namespace).
+        reference carries no namespace and is resolved in LCA's install namespace.
       displayName: Backup Content
       kind: BackupContent
       name: backupcontents.lca.openshift.io
@@ -187,8 +186,8 @@ spec:
         - urn:alm:descriptor:com.tectonic.ui:number
       - description: |-
           BackupContent defines the list of name-only references to BackupContent CRs that declare the backup/restore
-          content for the upgrade. The referenced BackupContent CRs are read from the LCA namespace (see
-          github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1.Namespace); the references carry no namespace.
+          content for the upgrade. The referenced BackupContent CRs are read from LCA's install namespace; the references
+          carry no namespace.
           BackupContent is the replacement for the deprecated OADPContent; the two are mutually exclusive on a single IBU.
           Entries are keyed by name: duplicate references are rejected at admission.
         displayName: Backup Content
@@ -233,8 +232,9 @@ spec:
         path: seedImageRef.image
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:text
-      - description: PullSecretRef defines the reference to a secret with credentials
-          to pull container images.
+      - description: |-
+          PullSecretRef defines the name-only reference to a secret with credentials to pull container images. The
+          referenced secret is read from LCA's install namespace; the reference carries no namespace.
         displayName: Pull Secret Reference
         path: seedImageRef.pullSecretRef
       - displayName: Name

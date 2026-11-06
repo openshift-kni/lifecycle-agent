@@ -23,15 +23,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestNamespaceConstant locks the exact value of the exported Namespace constant.
-// The hub (TALM/IBGU) relies on this value to know which namespace LCA reads
-// BackupContent CRs from, so an accidental change here would silently break it.
-func TestNamespaceConstant(t *testing.T) {
-	if Namespace != "openshift-lifecycle-agent" {
-		t.Errorf("Namespace = %q, want %q", Namespace, "openshift-lifecycle-agent")
-	}
-}
-
 // TestBackupContentSpecExported is a compile-time assertion that BackupContentSpec
 // and its field types are importable and embeddable from the public API package,
 // as the hub requires. If any of these types stopped being exported, this file
