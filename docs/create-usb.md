@@ -298,8 +298,9 @@ consumes on the node:
 
 - **`cluster-configuration/manifest.json`** is the `SeedReconfiguration` built from
   `siteConfig` (clusterName, baseDomain, hostname, nodeIPs, machineNetworks,
-  rawNMStateConfig, sshKey, pullSecret). `api_version` is set to the only version post-pivot
-  accepts, so its version check passes.
+  rawNMStateConfig, sshKey, pullSecret, kubeadminPasswordHash, and
+  kubeconfigCryptoRetention). `api_version` is set to the only version post-pivot accepts,
+  so its version check passes.
 - **`cluster-configuration/manifests/`** and **`extra-manifests/`** are rendered from the
   `clusterManifests` / `extraManifests` sources.
 
@@ -308,6 +309,86 @@ current inputs, and the scan, digest-pin, and mirror-resource passes operate onl
 files it just wrote — so a manifest left over in a reused tree would never be scanned or
 pinned, yet post-pivot would still apply it from the media. A nonempty destination therefore
 **fails the build** rather than shipping a stale manifest alongside the current ones.
+
+### Kubeconfig data
+
+A self-contained manifest must carry the kubeconfig identity data generated before the
+target cluster exists. `siteConfig.kubeadminPasswordHash` keeps kubeadmin usable after
+recert, while `siteConfig.kubeconfigCryptoRetention` contains the CA and signer material
+recert needs to make the newly installed cluster trust the pre-generated kubeconfig.
+
+`siteConfig.kubeadminPasswordHash` must be the bcrypt hash emitted by the installer.
+The crypto-retention set must include the ingress certificate CN as well as the five PEM
+values. `lca-cli create-usb` rejects a missing, malformed, or unparseable identity set
+before rendering p3.
+
+`lca-cli create-usb` does **not** generate a kubeconfig. The tooling that produces
+`kubeadminPasswordHash` and `kubeconfigCryptoRetention` must also hand the matching
+kubeconfig to the user; those three values are generated together, and using a mismatched
+set can leave the installed cluster inaccessible. Both manifest fields are required for
+`mode: self-contained`. During the `create-usb` media-build operation, incomplete crypto
+retention fails manifest validation before p3 is rendered, rather than shipping media that
+cannot authenticate the kubeconfig.
+
+#### Generating the kubeconfig data
+
+Use the OpenShift installer version that matches the target cluster. The following example
+uses 4.22.16; replace the release tag with the version you are targeting.
+
+```bash
+mkdir -p /tmp/oi
+oc adm release extract \
+  -a /path/to/pull-secret.txt \
+  --command=openshift-install \
+  --to=/tmp/oi \
+  quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64
+```
+
+Create a working directory containing `install-config.yaml` and
+`image-based-config.yaml` for the intended target cluster, then generate the config image:
+
+```bash
+umask 077
+WORK=$(mktemp -d /tmp/ibi-auth.XXXXXX)
+install -m 600 /path/to/install-config.yaml "$WORK/install-config.yaml"
+install -m 600 /path/to/image-based-config.yaml "$WORK/image-based-config.yaml"
+/tmp/oi/openshift-install --dir="$WORK" image-based create config-image
+```
+
+The installer writes the user credentials to:
+
+```text
+$WORK/auth/kubeconfig
+$WORK/auth/kubeadmin-password
+```
+
+It also writes `imagebasedconfig.iso`, which contains the matching
+`cluster-configuration/manifest.json`. Extract that manifest:
+
+```bash
+umask 077
+bsdtar -xOf \
+  "$WORK/imagebasedconfig.iso" \
+  cluster-configuration/manifest.json \
+  > "$WORK/manifest.json"
+```
+
+Copy these two fields from `$WORK/manifest.json` into the `create-usb` manifest:
+
+```bash
+jq '{
+  kubeadminPasswordHash: .kubeadmin_password_hash,
+  kubeconfigCryptoRetention: .KubeconfigCryptoRetention
+}' "$WORK/manifest.json" \
+  > "$WORK/kubeconfig-identity.json"
+```
+
+Keep `auth/kubeconfig` and `auth/kubeadmin-password` as the user’s credentials. Do not put
+the kubeconfig itself on the USB media or in the `create-usb` manifest.
+
+`$WORK` is secret-bearing. Do not print `manifest.json` or
+`kubeconfig-identity.json` to the terminal, and remove `$WORK` when the media has been
+built and the credentials have been transferred securely.
 
 ### Deterministic, non-recursive expansion
 
@@ -576,8 +657,9 @@ read everything on it. The data partitions are **unencrypted**, so anyone with t
 - the on-media OCI image layout and `digests.json` (`ibi-images`), and the read-only durability
   `store/` on self-contained media;
 - the **self-contained `cluster-config` tree**, which contains the site configuration — including
-  the **pull secret** it ships for the node. On self-contained media the pull secret is therefore
-  present on the stick in the clear.
+  the **pull secret**, **kubeadmin password hash**, and **kubeconfig crypto retention** private
+  keys it ships for the node. On self-contained media those credentials are therefore present on
+  the stick in the clear.
 
 Protect the media accordingly: treat a self-contained stick as a secret-bearing credential, build
 it on a trusted workstation, hand it off over a trusted channel, and destroy or wipe it when the
