@@ -298,8 +298,20 @@ consumes on the node:
 
 - **`cluster-configuration/manifest.json`** is the `SeedReconfiguration` built from
   `siteConfig` (clusterName, baseDomain, hostname, nodeIPs, machineNetworks,
-  rawNMStateConfig, sshKey, pullSecret). `api_version` is set to the only version post-pivot
-  accepts, so its version check passes.
+  rawNMStateConfig, sshKey, pullSecret, chronyConfig, maxSeedAge). `api_version` is set to the
+  only version post-pivot accepts, so its version check passes.
+
+  The optional `chronyConfig` and `maxSeedAge` fields tune the post-pivot pre-recert clock
+  gate (see [post-pivot configuration](./post-pivot-configuration.md#offline-reconfigure-and-the-pre-recert-clock-gate)).
+  `chronyConfig` is the node's chrony configuration (chrony.conf contents); on the offline
+  self-contained profile it is the only way to make the gate's trusted-time path reachable, so
+  the node never auto-trusts inherited host chrony configuration. When set it must declare at
+  least one genuine time source (a `server`/`pool`/`peer` at a real address, or a non-RTC
+  hardware `refclock`); a config carrying only RTC-backed/local sources is **rejected at build
+  time**, because the gate cannot trust the very clock it exists to check. `maxSeedAge` is a Go
+  duration string (for example `4320h`) that widens the gate's plausibility window for
+  long-shelf deployments; a non-parseable, non-positive, or absurdly large value **fails the
+  build**.
 - **`cluster-configuration/manifests/`** and **`extra-manifests/`** are rendered from the
   `clusterManifests` / `extraManifests` sources.
 

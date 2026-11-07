@@ -50,6 +50,8 @@ func TestRenderP3Tree_SeedReconfiguration(t *testing.T) {
 	m.SiteConfig.MachineNetworks = []string{"192.0.2.0/24"}
 	m.SiteConfig.RawNMStateConfig = "interfaces: []"
 	m.SiteConfig.SSHKey = "ssh-ed25519 AAAA..."
+	m.SiteConfig.ChronyConfig = "server ntp.example.com iburst"
+	m.SiteConfig.MaxSeedAge = "4320h"
 	m.ClusterManifests = nil // focus on the manifest.json render
 
 	p3Root := t.TempDir()
@@ -72,6 +74,10 @@ func TestRenderP3Tree_SeedReconfiguration(t *testing.T) {
 	assert.Equal(t, "interfaces: []", sr.RawNMStateConfig)
 	assert.Equal(t, "ssh-ed25519 AAAA...", sr.SSHKey)
 	assert.Equal(t, validPullSecret, sr.PullSecret)
+	// The clock-gate knobs must survive the siteConfig -> SeedReconfiguration render so
+	// post-pivot's clock gate can reach the trusted-time path and the widened window.
+	assert.Equal(t, "server ntp.example.com iburst", sr.ChronyConfig)
+	assert.Equal(t, "4320h", sr.MaxSeedAge)
 }
 
 func TestRenderP3Tree_InstallOnlyRejected(t *testing.T) {

@@ -414,6 +414,45 @@ func TestValidateSiteConfigSSHKey(t *testing.T) {
 	})
 }
 
+func TestValidateSiteConfigClockGate(t *testing.T) {
+	t.Run("omitted knobs pass", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.MaxSeedAge = ""
+		m.SiteConfig.ChronyConfig = ""
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("valid maxSeedAge passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.MaxSeedAge = "4320h"
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("non-parseable maxSeedAge fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.MaxSeedAge = "180d"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.maxSeedAge is invalid")
+	})
+	t.Run("non-positive maxSeedAge fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.MaxSeedAge = "0h"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.maxSeedAge is invalid")
+	})
+	t.Run("absurdly large maxSeedAge fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.MaxSeedAge = "200000h"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.maxSeedAge is invalid")
+	})
+	t.Run("chronyConfig with a trusted source passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ChronyConfig = "server ntp.example.com iburst\nrtcsync"
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("chronyConfig with only local/RTC sources fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ChronyConfig = "refclock RTC /dev/rtc0:utc\nlocal stratum 10\nrtcsync"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.chronyConfig declares no trusted time source")
+	})
+}
+
 func TestValidateUnknownOrEmptyMode(t *testing.T) {
 	for _, mode := range []Mode{"", "bogus"} {
 		m := validInstallOnly()
