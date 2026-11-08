@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -927,6 +928,68 @@ func TestNetworkConfiguration(t *testing.T) {
 
 			err := pp.networkConfiguration(context.TODO(), seedReconfiguration)
 			assert.Equal(t, tc.expectedError, err != nil, err)
+		})
+	}
+}
+
+func TestRestoreNMConnectionFiles(t *testing.T) {
+	profile := "[connection]\nid=Wired connection 1\ninterface-name=enp1s0\n"
+
+	testcases := []struct {
+		name          string
+		provided      map[string]string
+		expectedFiles map[string]string
+	}{
+		{
+			name:          "Provided profiles are copied",
+			provided:      map[string]string{"Wired connection 1.nmconnection": profile},
+			expectedFiles: map[string]string{"Wired connection 1.nmconnection": profile},
+		},
+		{
+			name:          "No provided profiles",
+			provided:      nil,
+			expectedFiles: map[string]string{},
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			pp := NewPostPivot(nil, &logrus.Logger{}, mockOps, "", tmpDir, "")
+			nmConnectionFolder = path.Join(tmpDir, "nmfiles")
+			if err := os.MkdirAll(nmConnectionFolder, 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.provided != nil {
+				source := path.Join(tmpDir, common.NetworkDir, "system-connections")
+				if err := os.MkdirAll(source, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for name, content := range tc.provided {
+					if err := os.WriteFile(path.Join(source, name), []byte(content), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			if err := pp.RestoreNMConnectionFiles(); err != nil {
+				t.Fatal(err)
+			}
+
+			entries, err := os.ReadDir(nmConnectionFolder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Len(t, entries, len(tc.expectedFiles))
+			for name, content := range tc.expectedFiles {
+				data, err := os.ReadFile(path.Join(nmConnectionFolder, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.Equal(t, content, string(data))
+			}
 		})
 	}
 }
