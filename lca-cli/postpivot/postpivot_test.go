@@ -1702,12 +1702,12 @@ func TestRecertLocalImageHandling(t *testing.T) {
 				mockOps.EXPECT().LocalImageStoreEnabled().Return(tc.localStore).AnyTimes()
 			}
 			if tc.wantPull {
-				mockOps.EXPECT().RunBashInHostNamespace("podman", "pull", "--authfile", common.ImageRegistryAuthFile, image).Return("", nil)
+				mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", "--authfile", common.ImageRegistryAuthFile, image).Return("", nil)
 			}
 			if tc.wantErr == "" {
 				mockOps.EXPECT().RecertFullFlow(image, "", gomock.Any(), gomock.Any(), gomock.Any(), "-v", workingDir+":"+workingDir).Return(nil)
 			}
-			err := pp.recert(context.Background(), &clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
+			err := pp.recert(&clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				if tc.checkErr != nil {

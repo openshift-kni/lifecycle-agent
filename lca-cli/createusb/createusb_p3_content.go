@@ -165,6 +165,8 @@ func seedReconfigurationFromSiteConfig(sc *SiteConfig) *seedreconfig.SeedReconfi
 		RawNMStateConfig: sc.RawNMStateConfig,
 		SSHKey:           sc.SSHKey,
 		PullSecret:       sc.PullSecret,
+		ChronyConfig:     sc.ChronyConfig,
+		MaxSeedAge:       sc.MaxSeedAge,
 	}
 }
 

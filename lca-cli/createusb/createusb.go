@@ -41,6 +41,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"sigs.k8s.io/yaml"
+
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 )
 
 // Mode is the create-usb manifest profile. It is a create-usb concern only and is
@@ -96,6 +98,24 @@ type SiteConfig struct {
 	// live ISO core user and the installed node. Never provide a private key.
 	SSHKey     string `json:"sshKey,omitempty"`
 	PullSecret string `json:"pullSecret,omitempty"`
+
+	// ChronyConfig is the chrony configuration (chrony.conf contents) placed on the node. On
+	// the self-contained offline profile it is the only way to make the pre-recert clock
+	// gate's trusted-time path reachable: the gate confirms synchronization against the
+	// source(s) declared here before recert. It must be supplied explicitly here -- the node's
+	// inherited host chrony configuration is never auto-trusted. See
+	// docs/post-pivot-configuration.md. When set it must declare at least one genuine time
+	// source (a server/pool/peer at a real address, or a non-RTC hardware refclock);
+	// RTC-backed/local sources alone are rejected at build time because the gate cannot trust
+	// the very clock it exists to check.
+	ChronyConfig string `json:"chronyConfig,omitempty"`
+
+	// MaxSeedAge optionally widens the pre-recert clock gate's plausibility window for
+	// long-shelf deployments. It is a Go duration string (for example "4320h" for 180 days);
+	// the gate rejects a system clock later than the seed's creation time plus this bound. An
+	// empty value uses the default (180 days). It is validated at build time: a non-parseable,
+	// non-positive, or absurdly large value fails the build.
+	MaxSeedAge string `json:"maxSeedAge,omitempty"`
 }
 
 // Manifest is the §6.3 single-manifest schema for `lca-cli create-usb`.
@@ -330,6 +350,12 @@ func (m *Manifest) validateSelfContained() error {
 	if err := m.validateSiteConfigSSHKey(); err != nil {
 		return err
 	}
+	// Optional clock-gate knobs (maxSeedAge, chronyConfig) are rendered into manifest.json and
+	// consumed by post-pivot's pre-recert clock gate, so a value that the gate would reject at
+	// runtime must fail the build here instead of halting the node offline.
+	if err := m.validateSiteConfigClockGate(); err != nil {
+		return err
+	}
 
 	// The self-contained media carries the cluster's configuration on-media.
 	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
@@ -372,6 +398,27 @@ func (m *Manifest) validateSiteConfigNetworkFields() error {
 func (m *Manifest) validateSiteConfigSSHKey() error {
 	_, err := parseSSHAuthorizedKeys(m.SiteConfig.SSHKey)
 	return err
+}
+
+// validateSiteConfigClockGate validates the optional clock-gate tuning knobs so a value the
+// runtime clock gate would reject fails the build rather than halting the node offline. Both
+// fields are optional and share the same parsing/trust rules the gate applies, via the shared
+// api/seedreconfig helpers, so build-time and runtime acceptance cannot drift:
+//
+//   - maxSeedAge, when set, must be a positive Go duration string within the allowed bound.
+//   - chronyConfig, when set, must declare at least one genuine trusted time source. A config
+//     that carries only RTC-backed/local sources (or none) would silently fall through to the
+//     seed-age window at runtime, so rejecting it here keeps the trusted-time mitigation this
+//     field exists for actually reachable, without the node ever auto-trusting inherited host
+//     chrony configuration.
+func (m *Manifest) validateSiteConfigClockGate() error {
+	if _, err := seedreconfig.ParseMaxSeedAge(m.SiteConfig.MaxSeedAge); err != nil {
+		return fmt.Errorf("siteConfig.maxSeedAge is invalid: %w", err)
+	}
+	if strings.TrimSpace(m.SiteConfig.ChronyConfig) != "" && !seedreconfig.ChronyConfigHasTrustedSource(m.SiteConfig.ChronyConfig) {
+		return fmt.Errorf("siteConfig.chronyConfig declares no trusted time source for the pre-recert clock gate: provide a server/pool/peer pointing at a real address or a non-RTC hardware refclock (RTC-backed or local-only sources are not trusted), or omit chronyConfig to rely on the seed-age plausibility window")
+	}
+	return nil
 }
 
 // parseSSHAuthorizedKeys returns the non-empty, non-comment public authorized key lines

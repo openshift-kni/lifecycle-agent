@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	cp "github.com/otiai10/copy"
@@ -319,6 +320,9 @@ func (s *SeedCreator) gatherClusterInfo(ctx context.Context) error {
 		seedAdditionalTrustBundle,
 		containerStorageMountpointTarget,
 		clusterInfo.IngressCertificateCN,
+		// Stamp the seed's creation time so the post-pivot clock gate can bound the
+		// plausible system-clock window when personalizing the node offline.
+		time.Now().UTC().Format(time.RFC3339),
 	)
 
 	if err := os.MkdirAll(s.paths.SeedDataDir, 0700); err != nil {
