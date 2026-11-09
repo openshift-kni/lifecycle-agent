@@ -52,8 +52,9 @@ func PublishSeedFormatVersion(ctx context.Context, c runtimeclient.Client, log *
 		return nil
 	}
 
+	patch := runtimeclient.MergeFrom(ibu.DeepCopy())
 	ibu.Status.SeedFormatVersion = ibuv1.SeedFormatVersion
-	if err := c.Status().Update(ctx, ibu); err != nil {
+	if err := c.Status().Patch(ctx, ibu, patch); err != nil {
 		return fmt.Errorf("failed to update IBU status with seed format version: %w", err)
 	}
 
