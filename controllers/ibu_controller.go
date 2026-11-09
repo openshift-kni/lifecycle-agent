@@ -141,6 +141,7 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 //+kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+//+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=clusterclaims,verbs=get;create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -223,6 +224,13 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+
+	// While idle, re-assert the seed format ClusterClaim. This re-creates it if it
+	// was removed and catches the klusterlet's ClusterClaim CRD appearing shortly
+	// after a post-pivot ACM restore. It is a no-op when the CRD is absent.
+	if ibu.Spec.Stage == ibuv1.Stages.Idle {
+		r.ensureSeedFormatClaim(ctx)
+	}
 
 	// Update status
 	if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {

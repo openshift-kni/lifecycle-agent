@@ -61,6 +61,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	clusterclaimv1alpha1 "open-cluster-management.io/api/cluster/v1alpha1"
 
 	"github.com/go-logr/logr"
 	sriovv1 "github.com/k8snetworkplumbingwg/sriov-network-operator/api/v1"
@@ -112,6 +113,7 @@ func init() {
 	utilruntime.Must(operatorsv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.Install(scheme))
+	utilruntime.Must(clusterclaimv1alpha1.Install(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
 	utilruntime.Must(policyv1.AddToScheme(scheme))
@@ -255,6 +257,23 @@ func main() {
 	if err := lcautils.InitIBU(context.TODO(), mgr.GetClient(), &setupLog); err != nil {
 		setupLog.Error(err, "unable to initialize IBU CR")
 		os.Exit(1)
+	}
+
+	// Publish the seed format version this LCA expects, on every start and after
+	// InitIBU has run: InitIBU's post-pivot restore brings back a saved IBU whose
+	// status carries the previous LCA's value, so it must be rewritten here. These
+	// run before mgr.Start, so use the direct k8sClient, not the cache-backed
+	// mgr.GetClient(). The ClusterClaim helper tolerates the CRD being absent, so
+	// it is safe on seed clusters, non-ACM SNOs, and the post-pivot window.
+	if err := lcautils.PublishSeedFormatVersion(context.TODO(), k8sClient, &setupLog); err != nil {
+		setupLog.Error(err, "unable to publish seed format version to IBU status")
+		os.Exit(1)
+	}
+	// Best-effort: the hub falls back to the IBU status field when the claim is
+	// missing, so a transient claim API error must not crash-loop LCA at startup.
+	// The Idle reconcile and the post-pivot handler re-assert it later.
+	if err := lcautils.EnsureSeedFormatClaim(context.TODO(), k8sClient, k8sClient, &setupLog); err != nil {
+		setupLog.Error(err, "unable to ensure seed format ClusterClaim")
 	}
 
 	if err := initSeedGen(context.TODO(), mgr.GetClient(), &setupLog); err != nil {

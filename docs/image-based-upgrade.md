@@ -254,6 +254,60 @@ Things to note from about `.status.history`
     - `PostPivot`: Time taken complete all the steps after a reboot to a new stateroot.
     - TIP: Reboot time can be calculated using PrePivot completionTime and PostPivot startTime.
 
+### Published capability information
+
+LCA publishes the seed image format version it expects so that a hub consumer
+(for example TALM) can read what a spoke supports directly, instead of inferring
+it from the LCA version. The value is published in two places:
+
+- **IBU status field** `status.seedFormatVersion`: a typed integer on the IBU
+  singleton (`upgrade`). LCA rewrites it on every start, including after a
+  post-pivot restore of a saved IBU, so it always reflects the running LCA. The
+  hub reads it per cluster through a read-only `ManifestWork` (the OCM `ReadOnly`
+  update strategy with a status feedback rule keyed on the field name).
+
+  ```yaml
+  status:
+    seedFormatVersion: 4
+  ```
+
+- **ClusterClaim** `seedformatversion.lca.openshift.io`: a `ClusterClaim` CR
+  created on the managed cluster, whose `spec.value` is the decimal seed format
+  version. OCM's registration agent syncs it into
+  `ManagedCluster.status.clusterClaims` on the hub, so the hub can read the whole
+  fleet in a single `List`.
+
+  ```yaml
+  apiVersion: cluster.open-cluster-management.io/v1alpha1
+  kind: ClusterClaim
+  metadata:
+    name: seedformatversion.lca.openshift.io
+  spec:
+    value: "4"
+  ```
+
+The claim name, the status field name, and the value format are exported as
+constants from LCA's public API package (`api/imagebasedupgrade/v1`) so consumers
+depend on them by import rather than by copying literals.
+
+Notes for consumers:
+
+- The claim name's `.openshift.io` suffix is deliberate. On ACM 2.14 / MCE 2.9
+  and later the klusterlet reserves the `openshift.io` suffix, so the claim is
+  exempt from the per-spoke custom-claim cap and cannot be truncated or evicted
+  by unrelated operators' claims. On older hubs the claim is a custom claim and
+  may be truncated; the IBU status field is the fallback in that case.
+- The claim is spoke-reported and synced, so an unreachable spoke yields stale or
+  missing data. **Stale or missing data must be treated as unknown.**
+- An LCA that publishes **neither** the claim nor the status field predates this
+  contract: it is, by definition, on the old seed format and without
+  `backupContent` support, so the hub can treat "neither published" as "old seed
+  format" with certainty.
+- Once published, the claim name, the status field name, and the value format are
+  a public contract that LCA cannot casually change.
+- This is an input to a hub-side early-warning check, not a safety mechanism. The
+  spoke's own seed-format check in Prep still rejects an incompatible seed.
+
 ### Seed Image Pull Secret
 
 If the seed image is stored in a private registry not covered by the cluster's pull secrets, a separate pull secret must be defined and included in the IBU CR in order to access the image.

@@ -272,6 +272,14 @@ spec:
                   plane certificates.
                 format: date-time
                 type: string
+              seedFormatVersion:
+                description: |-
+                  SeedFormatVersion is the seed image format version this LCA expects
+                  (common.SeedFormatVersion). LCA rewrites it on every start, including after
+                  a post-pivot restore of a saved IBU, so a hub consumer can read a spoke's
+                  capability directly. The value is always >= 1, so an absent/zero field means
+                  the LCA predates this contract (old seed format, no backupContent support).
+                type: integer
               validNextStages:
                 items:
                   description: ImageBasedUpgradeStage defines the type for the IBU
