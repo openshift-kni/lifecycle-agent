@@ -230,6 +230,14 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// after a post-pivot ACM restore. It is a no-op when the CRD is absent.
 	if ibu.Spec.Stage == ibuv1.Stages.Idle {
 		r.ensureSeedFormatClaim(ctx)
+
+		// Re-assert the seed format version in the IBU status. main publishes it at
+		// startup, but an Idle IBU that is deleted and recreated while LCA keeps
+		// running (see the InitIBU recovery path above) comes back without it, and
+		// no later reconcile would otherwise restore it. Setting it here, persisted
+		// by the status update below, republishes it at runtime without an extra
+		// write; the retry on update failure comes from the normal reconcile requeue.
+		ibu.Status.SeedFormatVersion = ibuv1.SeedFormatVersion
 	}
 
 	// Update status
