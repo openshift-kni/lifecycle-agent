@@ -1675,6 +1675,8 @@ func TestRenderedManifestSuppliesNMState(t *testing.T) {
 	assert.Equal(t, rawNMState, string(applied))
 }
 
+// TestRecertLocalImageHandling proves that local-store failures close the pull fallback,
+// connected nodes can pull a missing image, and present images are reused without pulling.
 func TestRecertLocalImageHandling(t *testing.T) {
 	inspectionErr := errors.New("image inspection failed")
 	for _, tc := range []struct {
@@ -1702,7 +1704,7 @@ func TestRecertLocalImageHandling(t *testing.T) {
 				mockOps.EXPECT().LocalImageStoreEnabled().Return(tc.localStore).AnyTimes()
 			}
 			if tc.wantPull {
-				mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", "--authfile", common.ImageRegistryAuthFile, image).Return("", nil)
+				mockOps.EXPECT().RunInHostNamespace("env", append(expectedRecertPullArgs(), image)...).Return("", nil)
 			}
 			if tc.wantErr == "" {
 				mockOps.EXPECT().RecertFullFlow(image, "", gomock.Any(), gomock.Any(), gomock.Any(), "-v", workingDir+":"+workingDir).Return(nil)
