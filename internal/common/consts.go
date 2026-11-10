@@ -142,12 +142,12 @@ const (
 	// Env var to configure auto rollback for post-reboot config failure
 	IBUPostRebootConfigAutoRollbackOnFailureEnv = "LCA_IBU_AUTO_ROLLBACK_ON_CONFIG_FAILURE"
 
-	// SeedFormatVersion is re-exported from the public API package, which is the
-	// single source of truth (a hub consumer imports it from there). Bump it in
-	// api/imagebasedupgrade/v1 every time the seed format changes in a backwards
-	// incompatible way.
+	// SeedFormatVersion and SeedFormatOCILabel are re-exported from the public API
+	// package, which is the single source of truth (a hub consumer imports them
+	// from there). Bump SeedFormatVersion in api/imagebasedupgrade/v1 every time
+	// the seed format changes in a backwards incompatible way.
 	SeedFormatVersion  = ibuv1.SeedFormatVersion
-	SeedFormatOCILabel = "com.openshift.lifecycle-agent.seed_format_version"
+	SeedFormatOCILabel = ibuv1.SeedFormatOCILabel
 
 	SeedClusterInfoOCILabel = "com.openshift.lifecycle-agent.seed_cluster_info"
 
