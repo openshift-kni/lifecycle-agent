@@ -75,6 +75,15 @@ func newGatePostPivot(t *testing.T, mockOps ops.Ops) *PostPivot {
 	return NewPostPivot(nil, logrus.New(), mockOps, "", t.TempDir(), "")
 }
 
+// runClockGate runs the clock gate for tests that do not need to inspect whether its temporary
+// Chrony configuration remained active.
+func runClockGate(t *testing.T, pp *PostPivot, seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	t.Helper()
+	_, err := pp.clockGateWithChronyConfig(seedReconfiguration, seedClusterInfo)
+	return err
+}
+
 // TestClockGate_RecertAlreadyCompleted_NoOp proves that once recert has completed (recert.done
 // present), a later boot with a wildly implausible clock is a strict no-op: no p4 access, no
 // failure record, no halt.
@@ -91,7 +100,7 @@ func TestClockGate_RecertAlreadyCompleted_NoOp(t *testing.T) {
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
 
-	assert.NoError(t, pp.clockGate(seedReconfig, seedClusterInfo))
+	assert.NoError(t, runClockGate(t, pp, seedReconfig, seedClusterInfo))
 	assert.False(t, c.called, "the gate must not halt a converged node")
 }
 
@@ -107,7 +116,7 @@ func TestClockGate_NotSelfContained_Skipped(t *testing.T) {
 	pp := newGatePostPivot(t, mockOps)
 
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	assert.NoError(t, pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, seedClusterInfo))
+	assert.NoError(t, runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, seedClusterInfo))
 	assert.False(t, c.called)
 }
 
@@ -123,7 +132,7 @@ func TestClockGate_PlausibleClock_Proceeds(t *testing.T) {
 	pp := newGatePostPivot(t, mockOps)
 
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z", SeedClusterOCPVersion: "4.18.3"}
-	assert.NoError(t, pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, seedClusterInfo))
+	assert.NoError(t, runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, seedClusterInfo))
 }
 
 // TestClockGate_ClockBeforeSeed_Fails proves a clock earlier than the seed creation time halts
@@ -138,7 +147,7 @@ func TestClockGate_ClockBeforeSeed_Fails(t *testing.T) {
 	pp := newGatePostPivot(t, mockOps)
 
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z", SeedClusterOCPVersion: "4.18.3"}
-	err := pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, seedClusterInfo)
+	err := runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, seedClusterInfo)
 	require.Error(t, err)
 	require.True(t, c.called)
 	assert.Equal(t, ibistatus.ResultFailure, c.result.Result)
@@ -158,7 +167,7 @@ func TestClockGate_ClockAfterCeiling_Fails(t *testing.T) {
 	pp := newGatePostPivot(t, mockOps)
 
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	err := pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, seedClusterInfo)
+	err := runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, seedClusterInfo)
 	require.Error(t, err)
 	require.True(t, c.called)
 	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
@@ -177,7 +186,7 @@ func TestClockGate_ConfigurableMaxSeedAge(t *testing.T) {
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{MaxSeedAge: "17520h"} // 2 years
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	assert.NoError(t, pp.clockGate(seedReconfig, seedClusterInfo))
+	assert.NoError(t, runClockGate(t, pp, seedReconfig, seedClusterInfo))
 }
 
 // TestClockGate_InvalidMaxSeedAge_Fails proves a malformed maxSeedAge aborts the reconfigure
@@ -194,7 +203,7 @@ func TestClockGate_InvalidMaxSeedAge_Fails(t *testing.T) {
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{MaxSeedAge: "not-a-duration"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	err := pp.clockGate(seedReconfig, seedClusterInfo)
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "maxSeedAge")
 	assert.False(t, c.called, "a config-error must not halt the node powered-on")
@@ -219,12 +228,73 @@ func TestClockGate_SyncedLocalSource_Proceeds(t *testing.T) {
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	assert.NoError(t, pp.clockGate(seedReconfig, seedClusterInfo))
+	gateConfigActive, err := pp.clockGateWithChronyConfig(seedReconfig, seedClusterInfo)
+	require.NoError(t, err)
+	assert.True(t, gateConfigActive, "a synchronized trusted source must report the temporary config as active")
 
-	// The config was written for the early bring-up.
+	// The config was written for the early bring-up, with the gate's transient makestep policy.
 	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "server ntp.example.com")
+	assert.Contains(t, string(data), "makestep 1 -1")
+}
+
+// TestRestoreChronyConfigAfterGate proves the original configuration is restored and chronyd
+// is restarted after the gate's temporary makestep policy was installed.
+func TestRestoreChronyConfigAfterGate(t *testing.T) {
+	stubClockGateSeams(t)
+	originalConfig := "server 192.0.2.10 iburst\nmakestep 1 3\n"
+	require.NoError(t, os.WriteFile(chronyConfigFilePath, []byte("server 192.0.2.10 iburst\nmakestep 1 -1\n"), 0o644)) //nolint:gosec // test path
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	require.NoError(t, pp.restoreChronyConfigAfterGate(originalConfig))
+	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, originalConfig, string(data))
+}
+
+// TestRestoreChronyConfigAfterGate_EmptyConfig is a defensive test for a path that is currently
+// unreachable through the gate: only a configuration containing a trusted source can activate
+// the temporary policy. It proves that future callers cannot leave makestep-only content on
+// disk by restoring an empty operator configuration.
+func TestRestoreChronyConfigAfterGate_EmptyConfig(t *testing.T) {
+	stubClockGateSeams(t)
+	require.NoError(t, os.WriteFile(chronyConfigFilePath, []byte("makestep 1 -1\n"), 0o644)) //nolint:gosec // test path
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	require.NoError(t, pp.restoreChronyConfigAfterGate(""))
+	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Empty(t, data)
+}
+
+// TestBringChronyUpAndConfirmSync_RestartFails_RestoresConfig proves a chronyd restart failure
+// after the temporary write also restores the original configuration.
+func TestBringChronyUpAndConfirmSync_RestartFails_RestoresConfig(t *testing.T) {
+	stubClockGateSeams(t)
+	originalConfig := "server ntp.example.com iburst\nmakestep 1 3\n"
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", fmt.Errorf("unit failed")).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	err := pp.bringChronyUpAndConfirmSync(originalConfig)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unit failed")
+
+	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, originalConfig, string(data))
 }
 
 // TestClockGate_ConfiguredSourceUnavailable_FallsBackToWindow proves that a configured trusted
@@ -237,17 +307,55 @@ func TestClockGate_ConfiguredSourceUnavailable_FallsBackToWindow(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
-	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(2)
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").
 		Return("", fmt.Errorf("timeout")).Times(1)
 	pp := newGatePostPivot(t, mockOps)
 
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	err := pp.clockGate(seedReconfig, seedClusterInfo)
+	gateConfigActive, err := pp.clockGateWithChronyConfig(seedReconfig, seedClusterInfo)
 	require.Error(t, err)
+	assert.False(t, gateConfigActive, "a failed synchronization must not leave the gate config active")
 	require.True(t, c.called)
 	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+
+	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, seedReconfig.ChronyConfig, string(data))
+}
+
+// TestClockGate_ChronyRestorationFailure_Aborts proves a failure to restore the temporary
+// Chrony policy records a terminal config error and halts instead of falling back to the RTC
+// plausibility window.
+func TestClockGate_ChronyRestorationFailure_Aborts(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("2025-06-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").
+		Return("", fmt.Errorf("timeout")).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", fmt.Errorf("restore restart failed")).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	gateConfigActive, err := pp.clockGateWithChronyConfig(seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	assert.False(t, gateConfigActive)
+	assert.ErrorContains(t, err, "timeout")
+	assert.ErrorContains(t, err, "restore restart failed")
+	require.True(t, c.called, "a restoration failure must leave a technician-readable terminal record")
+	assert.Equal(t, ibistatus.ResultFailure, c.result.Result)
+	require.NotNil(t, c.result.Clock)
+	assert.Equal(t, ibistatus.DecisionConfigError, c.result.Clock.Decision)
+
+	data, readErr := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, readErr)
+	assert.Equal(t, seedReconfig.ChronyConfig, string(data))
 }
 
 // TestClockGate_SyncedLocalMode_FallsBackToWindow proves that a config which satisfies waitsync
@@ -261,7 +369,7 @@ func TestClockGate_SyncedLocalMode_FallsBackToWindow(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
-	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(2)
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
 	// chronyd reports synchronized, but to its own local clock (7F7F01xx) -- not a real source.
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
@@ -271,10 +379,14 @@ func TestClockGate_SyncedLocalMode_FallsBackToWindow(t *testing.T) {
 	// A mixed config: a reachable-looking server plus a local-stratum fallback.
 	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\nlocal stratum 10\n"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
-	err := pp.clockGate(seedReconfig, seedClusterInfo)
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
 	require.Error(t, err)
 	require.True(t, c.called)
 	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+
+	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, seedReconfig.ChronyConfig, string(data))
 }
 
 // TestClockGate_OldSeedNoTime_CertLowerBound proves the degraded old-seed path: with no
@@ -293,7 +405,7 @@ func TestClockGate_OldSeedNoTime_CertLowerBound(t *testing.T) {
 		mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 		pp := newGatePostPivot(t, mockOps)
 
-		err := pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{})
+		err := runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{})
 		require.Error(t, err)
 		require.True(t, c.called)
 		assert.Equal(t, ibistatus.DecisionCertLowerBound, c.result.Clock.Decision)
@@ -309,7 +421,7 @@ func TestClockGate_OldSeedNoTime_CertLowerBound(t *testing.T) {
 		mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 		pp := newGatePostPivot(t, mockOps)
 
-		assert.NoError(t, pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{}))
+		assert.NoError(t, runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{}))
 		assert.False(t, c.called)
 	})
 
@@ -323,8 +435,26 @@ func TestClockGate_OldSeedNoTime_CertLowerBound(t *testing.T) {
 		mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 		pp := newGatePostPivot(t, mockOps)
 
-		assert.NoError(t, pp.clockGate(&clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{}))
+		assert.NoError(t, runClockGate(t, pp, &clusterconfig_api.SeedReconfiguration{}, &seedclusterinfo.SeedClusterInfo{}))
 		assert.False(t, c.called)
+	})
+}
+
+func TestChronyConfigWithMakestep(t *testing.T) {
+	t.Run("appends makestep to a config without one", func(t *testing.T) {
+		got := chronyConfigWithMakestep("server ntp.example.com iburst\nrtcsync\n")
+		assert.Equal(t, "server ntp.example.com iburst\nrtcsync\nmakestep 1 -1\n", got)
+	})
+	t.Run("replaces an existing makestep directive", func(t *testing.T) {
+		got := chronyConfigWithMakestep("server ntp.example.com iburst\nmakestep 1 3\n")
+		assert.Equal(t, "server ntp.example.com iburst\nmakestep 1 -1\n", got)
+	})
+	t.Run("preserves comments and blank lines", func(t *testing.T) {
+		got := chronyConfigWithMakestep("# keep this comment\n\nserver ntp.example.com iburst\n")
+		assert.Equal(t, "# keep this comment\n\nserver ntp.example.com iburst\nmakestep 1 -1\n", got)
+	})
+	t.Run("empty config gets only makestep", func(t *testing.T) {
+		assert.Equal(t, "makestep 1 -1\n", chronyConfigWithMakestep(""))
 	})
 }
 

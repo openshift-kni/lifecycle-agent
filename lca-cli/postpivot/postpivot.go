@@ -123,6 +123,9 @@ func seedReconfigurationNodeIPs(seedReconfiguration *clusterconfig_api.SeedRecon
 	return []string{}
 }
 
+// PostPivotConfiguration personalizes the seed cluster after the pivot. It applies the saved
+// networking and cluster configuration, gates recert on a plausible system clock, runs recert,
+// and completes the remaining cluster and node customization.
 func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 
 	if err := p.waitForConfiguration(ctx, filepath.Join(common.OptOpenshift, common.ClusterConfigDir), blockDeviceMountFolder); err != nil {
@@ -175,19 +178,23 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	// Pre-recert clock/RTC plausibility gate (self-contained USB IBI only). It runs before
 	// recert so certificates are never minted with a bad validity window when the node is
 	// personalized offline; on an implausible clock it halts the node powered-on and recert
-	// never runs.
-	if err := p.clockGate(seedReconfiguration, seedClusterInfo); err != nil {
+	// never runs. gateChronyConfigActive means the gate wrote its temporary makestep policy;
+	// restore it if setup or recert fails before recert replaces the configuration.
+	gateChronyConfigActive, err := p.clockGateWithChronyConfig(seedReconfiguration, seedClusterInfo)
+	if err != nil {
 		return fmt.Errorf("pre-recert clock gate failed: %w", err)
 	}
 
 	// NOTE: This must be done before we run recert, as otherwise recert could
 	// fail to pull in absence of a precached recert image
 	if err := p.establishEarlyCertificateTrust(seedReconfiguration); err != nil {
-		return fmt.Errorf("failed copy cluster config files: %w", err)
+		return p.restoreChronyConfigForGateFailure(gateChronyConfigActive, seedReconfiguration.ChronyConfig,
+			fmt.Errorf("failed copy cluster config files: %w", err))
 	}
 
 	if err := utils.RunOnce("recert", p.workingDir, p.log, p.recert, seedReconfiguration, seedClusterInfo); err != nil {
-		return fmt.Errorf("failed to run once recert for post pivot: %w", err)
+		return p.restoreChronyConfigForGateFailure(gateChronyConfigActive, seedReconfiguration.ChronyConfig,
+			fmt.Errorf("failed to run once recert for post pivot: %w", err))
 	}
 
 	if err := p.restartChronydService(seedReconfiguration.ChronyConfig); err != nil {
@@ -268,6 +275,15 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	return p.cleanup()
+}
+
+// restoreChronyConfigForGateFailure restores the operator's Chrony configuration when a
+// post-gate failure occurs while the gate's temporary configuration is active.
+func (p *PostPivot) restoreChronyConfigForGateFailure(gateConfigActive bool, chronyConfig string, cause error) error {
+	if !gateConfigActive {
+		return cause
+	}
+	return p.restoreChronyConfigAfterGateError(chronyConfig, cause)
 }
 
 func (p *PostPivot) recert(seedReconfiguration *clusterconfig_api.SeedReconfiguration, seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
