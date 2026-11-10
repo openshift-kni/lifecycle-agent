@@ -40,6 +40,13 @@ func TestSeedFormatContractConstants(t *testing.T) {
 		t.Errorf("BackupContentFirstSeedFormatVersion = %d, want %d", BackupContentFirstSeedFormatVersion, 5)
 	}
 
+	// The OCI label key is stamped onto seed images already in the field, so it
+	// must never change.
+	if SeedFormatOCILabel != "com.openshift.lifecycle-agent.seed_format_version" {
+		t.Errorf("SeedFormatOCILabel = %q, want %q",
+			SeedFormatOCILabel, "com.openshift.lifecycle-agent.seed_format_version")
+	}
+
 	if SeedFormatClusterClaimName == "" {
 		t.Error("SeedFormatClusterClaimName must not be empty")
 	}
