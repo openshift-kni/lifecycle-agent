@@ -254,6 +254,14 @@ spec:
         path: conditions
         x-descriptors:
         - urn:alm:descriptor:io.kubernetes.conditions
+      - description: |-
+          SeedFormatVersion is the seed image format version this LCA expects
+          (common.SeedFormatVersion). LCA rewrites it on every start, including after
+          a post-pivot restore of a saved IBU, so a hub consumer can read a spoke's
+          capability directly. The value is always >= 1, so an absent/zero field means
+          the LCA predates this contract (old seed format, no backupContent support).
+        displayName: Seed Format Version
+        path: seedFormatVersion
       - displayName: Valid Next Stage
         path: validNextStages
       version: v1
@@ -515,6 +523,14 @@ spec:
           - get
           - list
           - watch
+        - apiGroups:
+          - cluster.open-cluster-management.io
+          resources:
+          - clusterclaims
+          verbs:
+          - create
+          - get
+          - patch
         - apiGroups:
           - config.openshift.io
           resources:

@@ -36,12 +36,25 @@ import (
 
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/controllers/utils"
+	lcautils "github.com/openshift-kni/lifecycle-agent/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 var osStat = os.Stat
 var osReadDir = os.ReadDir
 var osRemoveAll = os.RemoveAll
+
+// ensureSeedFormatClaim re-asserts the seed format ClusterClaim while the IBU is
+// idle. This catches the klusterlet's ClusterClaim CRD appearing shortly after a
+// post-pivot ACM restore, and re-creates the claim if it was removed. It is
+// best-effort (the hub falls back to the IBU status field when the claim is
+// missing) and a no-op when the CRD is absent, so its error is logged, not
+// returned.
+func (r *ImageBasedUpgradeReconciler) ensureSeedFormatClaim(ctx context.Context) {
+	if err := lcautils.EnsureSeedFormatClaim(ctx, r.NoncachedClient, r.Client, &r.Log); err != nil {
+		r.Log.Error(err, "failed to ensure seed format ClusterClaim")
+	}
+}
 
 func (r *ImageBasedUpgradeReconciler) resetStatusFields(ibu *ibuv1.ImageBasedUpgrade) {
 	ibu.Status.RollbackAvailabilityExpiration.Reset()

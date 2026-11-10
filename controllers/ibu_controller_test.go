@@ -855,6 +855,9 @@ func TestImageBasedUpgradeReconciler_Reconcile(t *testing.T) {
 			validateFunc: func(t *testing.T, result ctrl.Result, ibu *ibuv1.ImageBasedUpgrade) {
 				idleCondition := meta.FindStatusCondition(ibu.Status.Conditions, string(utils.ConditionTypes.Idle))
 				assert.Equal(t, idleCondition.Status, metav1.ConditionTrue)
+				// The seed format version is (re)published to the IBU status while idle,
+				// restoring it for an IBU recreated at runtime without it.
+				assert.Equal(t, ibuv1.SeedFormatVersion, ibu.Status.SeedFormatVersion)
 				if result != doNotRequeue() {
 					t.Errorf("expect no requeue")
 				}

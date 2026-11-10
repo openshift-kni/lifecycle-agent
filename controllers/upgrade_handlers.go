@@ -472,6 +472,15 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		u.Log.Error(err, "Unable to disable LCA init monitor")
 	}
 
+	// The restore above brings ACM (and the klusterlet's ClusterClaim CRD) back,
+	// so re-assert the seed format ClusterClaim now that it can be created. This is
+	// best-effort: the helper is a no-op if the CRD is still absent, and the hub
+	// falls back to the IBU status field when the claim is missing, so a failure
+	// must not fail the upgrade.
+	if err := lcautils.EnsureSeedFormatClaim(ctx, u.NoncachedClient, u.Client, &u.Log); err != nil {
+		u.Log.Error(err, "Unable to ensure seed format ClusterClaim post-pivot")
+	}
+
 	// stop post-pivot phase timer
 	utils.StopPhase(u.Client, u.Log, ibu, UpgradePhasePostpivot)
 	// stop Upgrade stage timer

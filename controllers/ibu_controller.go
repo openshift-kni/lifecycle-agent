@@ -141,6 +141,7 @@ func requeueWithCustomInterval(interval time.Duration) ctrl.Result {
 //+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 //+kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+//+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=clusterclaims,verbs=get;create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -223,6 +224,21 @@ func (r *ImageBasedUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	ibu.Status.ValidNextStages = getValidNextStageList(ibu, isAfterPivot)
+
+	// While idle, re-assert the seed format ClusterClaim. This re-creates it if it
+	// was removed and catches the klusterlet's ClusterClaim CRD appearing shortly
+	// after a post-pivot ACM restore. It is a no-op when the CRD is absent.
+	if ibu.Spec.Stage == ibuv1.Stages.Idle {
+		r.ensureSeedFormatClaim(ctx)
+
+		// Re-assert the seed format version in the IBU status. main publishes it at
+		// startup, but an Idle IBU that is deleted and recreated while LCA keeps
+		// running (see the InitIBU recovery path above) comes back without it, and
+		// no later reconcile would otherwise restore it. Setting it here, persisted
+		// by the status update below, republishes it at runtime without an extra
+		// write; the retry on update failure comes from the normal reconcile requeue.
+		ibu.Status.SeedFormatVersion = ibuv1.SeedFormatVersion
+	}
 
 	// Update status
 	if err = utils.UpdateIBUStatus(ctx, r.Client, ibu); err != nil {

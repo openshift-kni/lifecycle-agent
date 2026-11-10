@@ -123,6 +123,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - cluster.open-cluster-management.io
+  resources:
+  - clusterclaims
+  verbs:
+  - create
+  - get
+  - patch
+- apiGroups:
   - config.openshift.io
   resources:
   - apiservers
