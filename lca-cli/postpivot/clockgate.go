@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,11 @@ func (p *PostPivot) clockGateWithChronyConfig(seedReconfiguration *clusterconfig
 		return false, fmt.Errorf("invalid maxSeedAge configuration: %w", err)
 	}
 
+	// Capture the pre-chrony clock before the temporary makestep policy can step it. If
+	// synchronization is later rejected as untrusted, the fallback window must be evaluated
+	// against this original observation rather than a clock poisoned by an untrusted source.
+	now := nowUTC()
+
 	// Tier 1: a trusted, confirmed-synced local time source makes the clock authoritative.
 	// Presence of a chrony config alone is never enough -- the source must be a genuine
 	// external/on-link source and must actually confirm synchronization before recert.
@@ -136,7 +142,7 @@ func (p *PostPivot) clockGateWithChronyConfig(seedReconfiguration *clusterconfig
 			if errors.As(syncErr, &restorationErr) {
 				return false, p.failClockGate(seedClusterInfo,
 					&ibistatus.ClockGateResult{
-						ObservedTime: nowUTC().Format(time.RFC3339),
+						ObservedTime: now.Format(time.RFC3339),
 						Decision:     ibistatus.DecisionConfigError,
 					},
 					fmt.Errorf("failed to restore the original chrony configuration: %w", syncErr))
@@ -147,8 +153,6 @@ func (p *PostPivot) clockGateWithChronyConfig(seedReconfiguration *clusterconfig
 			return true, nil
 		}
 	}
-
-	now := nowUTC()
 
 	// Tier 2: full window gate for seeds carrying a creation timestamp.
 	if seedClusterInfo.SeedCreationTime != "" {
@@ -289,12 +293,12 @@ func (p *PostPivot) bringChronyUpAndConfirmSync(chronyConfig string) error {
 		return p.restoreChronyConfigAfterGateError(chronyConfig,
 			fmt.Errorf("chrony did not confirm synchronization: %w", err))
 	}
-	// waitsync confirms the clock is synchronized but not *which* source was selected. chronyd
-	// can report synchronized while running in local mode (its own clock, no real external
-	// source) -- e.g. a mixed config whose only reachable-looking `server` is offline falling
-	// back to `local stratum`. Verify the runtime-selected reference and reject local mode so
-	// such configs do not bypass the seed window via the very RTC the gate exists to distrust.
-	if err := p.confirmChronyReferenceNotLocal(); err != nil {
+	// waitsync confirms the clock is synchronized but not *which* source was selected. Verify
+	// both that chronyd is not in local mode and that the source it actually selected is one
+	// of the trusted sources declared by the operator. This prevents a mixed config from
+	// synchronizing through an RTC refclock or local fallback while a configured external
+	// server is unreachable.
+	if err := p.confirmChronyReferenceTrusted(chronyConfig); err != nil {
 		return p.restoreChronyConfigAfterGateError(chronyConfig, err)
 	}
 	return nil
@@ -339,24 +343,110 @@ func (p *PostPivot) restoreChronyConfigAfterGateError(chronyConfig string, cause
 	return cause
 }
 
-// confirmChronyReferenceNotLocal inspects the reference chronyd actually selected (via
-// `chronyc tracking`) and rejects local mode. It is deliberately strict: if the selected
-// reference cannot be determined, it returns an error so the caller falls back to the seed
-// plausibility window rather than treating an unverified clock as authoritative.
-func (p *PostPivot) confirmChronyReferenceNotLocal() error {
+// confirmChronyReferenceTrusted verifies that chronyd selected one of the configured trusted
+// sources. Tracking identifies the numeric address or refclock identifier that chronyd actually
+// selected. For a network source, `chronyc sourcename <address>` returns the original configured
+// name for that exact address, avoiding both a fresh DNS lookup and the race of comparing two
+// independent `sources` snapshots. The selected source must match the operator's configured
+// server/pool/peer or non-RTC refclock; otherwise the gate falls back to the seed-age window.
+func (p *PostPivot) confirmChronyReferenceTrusted(chronyConfig string) error {
 	// `-n` disables reverse-DNS lookups so the check does not depend on name resolution offline.
-	out, err := p.ops.RunInHostNamespace("chronyc", "-n", "tracking")
+	trackingOut, err := p.ops.RunInHostNamespace("chronyc", "-n", "tracking")
 	if err != nil {
 		return fmt.Errorf("failed to read chrony tracking state to verify the selected source: %w", err)
 	}
-	refID, ok := parseChronyReferenceID(out)
+	refID, ok := parseChronyReferenceID(trackingOut)
 	if !ok {
 		return fmt.Errorf("could not determine the synchronized chrony reference from tracking output")
 	}
 	if strings.HasPrefix(strings.ToUpper(refID), chronyLocalModeRefIDPrefix) {
 		return fmt.Errorf("chrony is synchronized in local mode (reference ID %s); no real external time source was selected", refID)
 	}
+
+	selectedAddress, ok := parseChronyTrackingSource(trackingOut)
+	if !ok || selectedAddress == "" {
+		return fmt.Errorf("could not determine the selected chrony source from tracking output")
+	}
+	selectedName := selectedAddress
+	if net.ParseIP(selectedAddress) != nil {
+		nameOut, err := p.ops.RunInHostNamespace("chronyc", "sourcename", selectedAddress)
+		if err != nil {
+			return fmt.Errorf("failed to read the configured name for chrony source %s: %w", selectedAddress, err)
+		}
+		selectedName, ok = parseChronySourceName(nameOut)
+		if !ok {
+			return fmt.Errorf("could not determine the configured name for chrony source %s", selectedAddress)
+		}
+	}
+	if !chronySelectedSourceIsTrusted(selectedName, selectedAddress,
+		clusterconfig_api.ChronyTrustedSources(chronyConfig),
+		clusterconfig_api.ChronyRTCRefclockRefIDs(chronyConfig)) {
+		return fmt.Errorf("chrony selected source %q (%s) is not one of the configured trusted sources", selectedName, selectedAddress)
+	}
 	return nil
+}
+
+// chronySelectedSourceIsTrusted reports whether chronyd's selected source matches one of the
+// configured trusted sources. selectedName is the original configured name returned by
+// `chronyc sourcename`; selectedAddress is the numeric address or refclock identifier from the
+// same tracking snapshot. Literal IPs are compared by parsed value, while hostnames and pools
+// are matched against the original name so DNS rotation after chronyd resolved the source
+// cannot reject a valid selection. Refclock identifiers are compared exactly; network
+// hostnames remain case-insensitive.
+func chronySelectedSourceIsTrusted(selectedName, selectedAddress string,
+	trusted []clusterconfig_api.ChronyTrustedSource, rtcRefIDs []clusterconfig_api.ChronyRefclockRefID) bool {
+	selectedIP := net.ParseIP(selectedAddress)
+	if selectedIP != nil && selectedIP.IsLoopback() {
+		return false
+	}
+	for _, rtcRefID := range rtcRefIDs {
+		if selectedIP != nil {
+			continue
+		}
+		if rtcRefID.ExplicitRefID {
+			if selectedName == rtcRefID.Value || selectedAddress == rtcRefID.Value {
+				return false
+			}
+		} else if chronyRefclockMatches(selectedName, rtcRefID.Value) ||
+			chronyRefclockMatches(selectedAddress, rtcRefID.Value) {
+			return false
+		}
+	}
+	for _, source := range trusted {
+		if source.Kind == "refclock" {
+			if selectedIP != nil {
+				continue
+			}
+			if source.ExplicitRefID {
+				if selectedName == source.Value || selectedAddress == source.Value {
+					return true
+				}
+			} else if chronyRefclockMatches(selectedName, source.Value) ||
+				chronyRefclockMatches(selectedAddress, source.Value) {
+				return true
+			}
+			continue
+		}
+
+		configuredIP := net.ParseIP(source.Value)
+		if configuredIP != nil {
+			if selectedIP != nil && configuredIP.Equal(selectedIP) {
+				return true
+			}
+			continue
+		}
+		if selectedIP != nil && strings.EqualFold(selectedName, source.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// chronyRefclockMatches reports whether chronyc's selected source names the configured
+// refclock identifier. Default identifiers include Chrony's global refclock number, and
+// explicit refids are already compared verbatim, so identifiers must match exactly.
+func chronyRefclockMatches(selected, identifier string) bool {
+	return selected != "" && identifier != "" && selected == identifier
 }
 
 // parseChronyReferenceID extracts the hexadecimal reference ID from `chronyc tracking` output.
@@ -378,6 +468,42 @@ func parseChronyReferenceID(trackingOutput string) (string, bool) {
 		return fields[0], true
 	}
 	return "", false
+}
+
+// parseChronyTrackingSource extracts the selected numeric address or refclock identifier from
+// the parenthesized value on a `chronyc -n tracking` Reference ID line.
+func parseChronyTrackingSource(trackingOutput string) (string, bool) {
+	for _, raw := range strings.Split(trackingOutput, "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "Reference ID") {
+			continue
+		}
+		_, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		open := strings.Index(value, "(")
+		closeIdx := strings.LastIndex(value, ")")
+		if open < 0 || closeIdx <= open {
+			continue
+		}
+		source := strings.TrimSpace(value[open+1 : closeIdx])
+		if source == "" {
+			continue
+		}
+		return source, true
+	}
+	return "", false
+}
+
+// parseChronySourceName extracts the single configured source name printed by
+// `chronyc sourcename <address>`.
+func parseChronySourceName(sourceNameOutput string) (string, bool) {
+	fields := strings.Fields(sourceNameOutput)
+	if len(fields) != 1 {
+		return "", false
+	}
+	return fields[0], true
 }
 
 // defaultSeedCertLowerBound returns the earliest NotBefore among the node's control-plane

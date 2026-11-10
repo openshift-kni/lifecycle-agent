@@ -221,12 +221,14 @@ func TestClockGate_SyncedLocalSource_Proceeds(t *testing.T) {
 	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
-	// The runtime-selected reference is a real external source (not local mode).
+	// The runtime-selected reference is a real external source (not local mode), and the
+	// selected source matches the configured trusted server.
 	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
-		Return("Reference ID    : 0A000005 (10.0.0.5)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+		Return("Reference ID    : C000020A (192.0.2.10)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "192.0.2.10").Return("192.0.2.10\n", nil).Times(1)
 	pp := newGatePostPivot(t, mockOps)
 
-	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server 192.0.2.10 iburst\n"}
 	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
 	gateConfigActive, err := pp.clockGateWithChronyConfig(seedReconfig, seedClusterInfo)
 	require.NoError(t, err)
@@ -235,7 +237,7 @@ func TestClockGate_SyncedLocalSource_Proceeds(t *testing.T) {
 	// The config was written for the early bring-up, with the gate's transient makestep policy.
 	data, err := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "server ntp.example.com")
+	assert.Contains(t, string(data), "server 192.0.2.10")
 	assert.Contains(t, string(data), "makestep 1 -1")
 }
 
@@ -389,6 +391,300 @@ func TestClockGate_SyncedLocalMode_FallsBackToWindow(t *testing.T) {
 	assert.Equal(t, seedReconfig.ChronyConfig, string(data))
 }
 
+// TestClockGate_ChronySourceNameUnavailable_FallsBackToWindow proves that an older chronyc
+// without sourcename support does not become an abort-to-trust path. The gate restores the
+// original chrony configuration and safely falls back to the seed-age plausibility window.
+func TestClockGate_ChronySourceNameUnavailable_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : C000020A (192.0.2.10)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "192.0.2.10").
+		Return("", fmt.Errorf("unknown command")).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	require.NotNil(t, c.result.Clock)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+
+	data, readErr := os.ReadFile(chronyConfigFilePath) //nolint:gosec // test path
+	require.NoError(t, readErr)
+	assert.Equal(t, seedReconfig.ChronyConfig, string(data))
+}
+
+// TestClockGate_SyncedRTCRefclock_FallsBackToWindow proves that RTC refclocks are not retained
+// as trusted sources. Explicit RTC-refid collision rejection is covered separately in
+// TestChronySelectedSourceIsTrusted.
+func TestClockGate_SyncedRTCRefclock_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 52544330 (RTC0)\nStratum         : 1\nLeap status     : Normal", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "server 192.0.2.10 iburst\nrefclock RTC /dev/rtc0\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_UnlockedSOCKWithLocalFallback_FallsBackToWindow proves that an unlocked SOCK
+// source cannot establish full-time trust merely from its configuration. NMEA-only sockets
+// must fall back to the seed-age plausibility window.
+func TestClockGate_UnlockedSOCKWithLocalFallback_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "refclock SOCK /var/run/chrony.ttyS0.sock\nlocal stratum 10\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_LocalRefclockWithLocalFallback_FallsBackToWindow proves that a refclock
+// marked as an unsynchronised local standard cannot satisfy the trusted-source predicate.
+func TestClockGate_LocalRefclockWithLocalFallback_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "refclock PHC /dev/ptp0 local\nlocal stratum 10\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_LockedSOCKToUntrustedRefclock_FallsBackToWindow proves that a lock option does
+// not make a SOCK source trustworthy when its target is an RTC-backed refclock.
+func TestClockGate_LockedSOCKToUntrustedRefclock_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "refclock RTC /dev/rtc0 refid BAD\nrefclock SOCK /var/run/chrony.sock lock BAD\nlocal stratum 10\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_UntrustedSourceStepCannotPoisonFallbackWindow proves that the seed-age window
+// uses the clock observed before the temporary makestep policy. An untrusted source may step
+// the runtime clock into the plausible window, but it cannot make the original implausible
+// observation pass.
+func TestClockGate_UntrustedSourceStepCannotPoisonFallbackWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	clockStepped := false
+	nowUTC = func() time.Time {
+		if clockStepped {
+			return rfc3339("2025-06-01T00:00:00Z")
+		}
+		return rfc3339("1970-01-01T00:00:00Z")
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").
+		DoAndReturn(func(string, ...string) (string, error) {
+			clockStepped = true
+			return "", nil
+		}).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 52544330 (RTC0)\nStratum         : 1\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "server ntp.example.com iburst\nrefclock RTC /dev/rtc0\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	require.NotNil(t, c.result.Clock)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+	assert.Equal(t, "1970-01-01T00:00:00Z", c.result.Clock.ObservedTime)
+}
+
+// TestClockGate_IncludedRefclockDefaultID_FallsBackToWindow proves that an inline default
+// refclock ID is not trusted when included configuration files may shift Chrony's global
+// refclock numbering. The gate must use the seed-age plausibility window.
+func TestClockGate_IncludedRefclockDefaultID_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "include /etc/chrony.d/*.conf\nrefclock PHC /dev/ptp0\nlocal stratum 10\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_PPSModePHCWithLocalFallback_FallsBackToWindow proves a PHC configured for
+// external PPS cannot establish full-time trust, even with local fallback available. The
+// gate must use the seed-age plausibility window instead of treating the clock as
+// authoritative.
+func TestClockGate_PPSModePHCWithLocalFallback_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		ChronyConfig: "refclock PHC /dev/ptp2:extpps:pin=1 width 0.2 poll 2\nlocal stratum 10\n",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_HardwareRefclockSelectedSource_Proceeds proves a trusted hardware refclock is
+// accepted directly from the tracking snapshot without a source-name lookup.
+func TestClockGate_HardwareRefclockSelectedSource_Proceeds(t *testing.T) {
+	stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 50484330 (PHC0)\nStratum         : 0\nLeap status     : Normal", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "refclock PHC /dev/ptp0\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	assert.NoError(t, runClockGate(t, pp, seedReconfig, seedClusterInfo))
+}
+
+// TestClockGate_HostnameResolvedToLoopback_FallsBackToWindow proves that a configured hostname
+// which chronyd actually resolved to loopback is not treated as a trusted external source,
+// even though the original configured name is preserved in `chronyc -N` output.
+func TestClockGate_HostnameResolvedToLoopback_FallsBackToWindow(t *testing.T) {
+	c := stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(2)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : 7F000001 (127.0.0.1)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "127.0.0.1").Return("ntp.example.com\n", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	err := runClockGate(t, pp, seedReconfig, seedClusterInfo)
+	require.Error(t, err)
+	require.True(t, c.called)
+	assert.Equal(t, ibistatus.DecisionRTCWindow, c.result.Clock.Decision)
+}
+
+// TestClockGate_HostnameSelectedSource_Proceeds proves a configured hostname is accepted using
+// chronyd's original source name and numeric selection, without a fresh DNS lookup whose answer
+// may have rotated since chronyd resolved the source.
+func TestClockGate_HostnameSelectedSource_Proceeds(t *testing.T) {
+	stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : C000020A (192.0.2.10)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "192.0.2.10").Return("ntp.example.com\n", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "server ntp.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	assert.NoError(t, runClockGate(t, pp, seedReconfig, seedClusterInfo))
+}
+
+// TestClockGate_PoolMemberSelectedSource_Proceeds proves a pool member is accepted by matching
+// the pool's original configured name; the numeric member address need not be re-resolved.
+func TestClockGate_PoolMemberSelectedSource_Proceeds(t *testing.T) {
+	stubClockGateSeams(t)
+	setNow(rfc3339("1970-01-01T00:00:00Z"))
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(p4Present(), nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("restart", "chronyd").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1").Return("", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+		Return("Reference ID    : C6336414 (198.51.100.20)\nStratum         : 2\nLeap status     : Normal", nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "198.51.100.20").Return("pool.example.com\n", nil).Times(1)
+	pp := newGatePostPivot(t, mockOps)
+
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{ChronyConfig: "pool pool.example.com iburst\n"}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedCreationTime: "2025-01-01T00:00:00Z"}
+	assert.NoError(t, runClockGate(t, pp, seedReconfig, seedClusterInfo))
+}
+
 // TestClockGate_OldSeedNoTime_CertLowerBound proves the degraded old-seed path: with no
 // SeedCreationTime, a clock before the cert lower bound fails, a clock after it proceeds, and an
 // underivable bound proceeds with a warning.
@@ -487,6 +783,209 @@ func TestParseChronyReferenceID(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// TestParseChronyTrackingSource proves that the selected numeric address or refclock
+// identifier is extracted from the same tracking snapshot used for the local-mode check.
+func TestParseChronyTrackingSource(t *testing.T) {
+	testcases := []struct {
+		name   string
+		output string
+		want   string
+		wantOk bool
+	}{
+		{
+			name:   "numeric IPv4 source",
+			output: "Reference ID    : C000020A (192.0.2.10)\nStratum         : 2",
+			want:   "192.0.2.10",
+			wantOk: true,
+		},
+		{
+			name:   "numeric IPv6 source",
+			output: "Reference ID    : 5B1C9A93 (2001:db8::1)\nStratum         : 2",
+			want:   "2001:db8::1",
+			wantOk: true,
+		},
+		{
+			name:   "refclock identifier",
+			output: "Reference ID    : 50484330 (PHC0)\nStratum         : 0",
+			want:   "PHC0",
+			wantOk: true,
+		},
+		{name: "empty local-mode source", output: "Reference ID    : 7F7F0101 ()\nStratum         : 10", wantOk: false},
+		{name: "no reference id line", output: "Stratum         : 2\nLeap status     : Normal", wantOk: false},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseChronyTrackingSource(tc.output)
+			assert.Equal(t, tc.wantOk, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestParseChronySourceName proves that only a single non-empty source-name token is accepted.
+func TestParseChronySourceName(t *testing.T) {
+	got, ok := parseChronySourceName("ntp.example.com\n")
+	assert.True(t, ok)
+	assert.Equal(t, "ntp.example.com", got)
+
+	_, ok = parseChronySourceName("")
+	assert.False(t, ok)
+	_, ok = parseChronySourceName("unexpected extra output\n")
+	assert.False(t, ok)
+}
+
+// TestConfirmChronyReferenceTrusted_ErrorPaths proves that every selected-source verification
+// failure fails closed with a descriptive error rather than treating the source as trusted.
+func TestConfirmChronyReferenceTrusted_ErrorPaths(t *testing.T) {
+	testcases := []struct {
+		name              string
+		trackingOutput    string
+		trackingErr       error
+		expectSourcename  bool
+		sourcenameOutput  string
+		sourcenameErr     error
+		wantErrorContains string
+	}{
+		{
+			name:              "tracking command fails",
+			trackingErr:       fmt.Errorf("connection refused"),
+			wantErrorContains: "failed to read chrony tracking state",
+		},
+		{
+			name:              "reference id is missing",
+			trackingOutput:    "Stratum         : 2\nLeap status     : Normal",
+			wantErrorContains: "could not determine the synchronized chrony reference",
+		},
+		{
+			name:              "selected source is missing",
+			trackingOutput:    "Reference ID    : C000020A ()\nStratum         : 2\nLeap status     : Normal",
+			wantErrorContains: "could not determine the selected chrony source",
+		},
+		{
+			name:              "source name command fails",
+			trackingOutput:    "Reference ID    : C000020A (192.0.2.10)\nStratum         : 2\nLeap status     : Normal",
+			expectSourcename:  true,
+			sourcenameErr:     fmt.Errorf("unknown command"),
+			wantErrorContains: "failed to read the configured name",
+		},
+		{
+			name:              "source name output is malformed",
+			trackingOutput:    "Reference ID    : C000020A (192.0.2.10)\nStratum         : 2\nLeap status     : Normal",
+			expectSourcename:  true,
+			sourcenameOutput:  "unexpected extra output\n",
+			wantErrorContains: "could not determine the configured name",
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			mockOps.EXPECT().RunInHostNamespace("chronyc", "-n", "tracking").
+				Return(tc.trackingOutput, tc.trackingErr).Times(1)
+			if tc.expectSourcename {
+				mockOps.EXPECT().RunInHostNamespace("chronyc", "sourcename", "192.0.2.10").
+					Return(tc.sourcenameOutput, tc.sourcenameErr).Times(1)
+			}
+			pp := newGatePostPivot(t, mockOps)
+
+			err := pp.confirmChronyReferenceTrusted("server 192.0.2.10 iburst\n")
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.wantErrorContains)
+		})
+	}
+}
+
+// chronySelectionIsTrusted is a test helper that invokes chronySelectedSourceIsTrusted with
+// no configured RTC refclock identifiers.
+func chronySelectionIsTrusted(selectedName, selectedAddress string, trusted []clusterconfig_api.ChronyTrustedSource) bool {
+	return chronySelectedSourceIsTrusted(selectedName, selectedAddress, trusted, nil)
+}
+
+// TestChronySelectedSourceIsTrusted proves that configured names, literal IPs, pools, and
+// refclock identifiers are matched without trusting loopback or unrelated selections.
+func TestChronySelectedSourceIsTrusted(t *testing.T) {
+	t.Run("literal IP matches", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("192.0.2.10", "192.0.2.10", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "192.0.2.10"}}))
+	})
+	t.Run("configured hostname matches original source name", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("ntp.example.com", "192.0.2.10", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "ntp.example.com"}}))
+	})
+	t.Run("configured hostname match is case-insensitive", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("NTP.Example.COM", "192.0.2.10", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "ntp.example.com"}}))
+	})
+	t.Run("dynamic pool member matches original pool name", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("pool.example.com", "198.51.100.20", []clusterconfig_api.ChronyTrustedSource{{Kind: "pool", Value: "pool.example.com"}}))
+	})
+	t.Run("refclock driver and unit match", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("PHC0", "PHC0", []clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC0"}}))
+	})
+	t.Run("custom refclock refid matches", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("PTP", "PTP", []clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PTP", ExplicitRefID: true}}))
+	})
+	t.Run("explicit refclock refid matches exactly", func(t *testing.T) {
+		assert.True(t, chronySelectionIsTrusted("RTC", "RTC", []clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "RTC", ExplicitRefID: true}}))
+	})
+	t.Run("explicit refclock refid does not accept a suffix", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("RTC0", "RTC0", []clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "RTC", ExplicitRefID: true}}))
+	})
+	t.Run("RTC is not trusted", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("RTC0", "RTC0", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "192.0.2.10"}}))
+	})
+	t.Run("refclock identifier does not match a network hostname", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("RTC0", "RTC0", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "rtc0"}}))
+	})
+	t.Run("loopback address is not trusted", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("ntp.example.com", "127.0.0.1", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "ntp.example.com"}}))
+	})
+	t.Run("unrelated source is not trusted", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("peer.example.com", "198.51.100.20", []clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "192.0.2.10"}}))
+	})
+	t.Run("pool does not accept an unconfigured peer", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("peer.example.com", "198.51.100.20", []clusterconfig_api.ChronyTrustedSource{{Kind: "pool", Value: "pool.example.com"}}))
+	})
+	t.Run("network source is not rejected by a colliding RTC refid", func(t *testing.T) {
+		assert.True(t, chronySelectedSourceIsTrusted("PHC1", "192.0.2.10",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "server", Value: "PHC1"}},
+			[]clusterconfig_api.ChronyRefclockRefID{{Value: "PHC1", ExplicitRefID: true}}))
+	})
+	t.Run("network source does not match a trusted refclock identifier", func(t *testing.T) {
+		assert.False(t, chronySelectedSourceIsTrusted("PHC1", "192.0.2.10",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC1"}}, nil))
+	})
+	t.Run("default refclock identifier comparison is case-sensitive", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("phc0", "phc0",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC0"}}))
+	})
+	t.Run("explicit refclock refid comparison is case-sensitive", func(t *testing.T) {
+		assert.False(t, chronySelectionIsTrusted("ptp", "ptp",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PTP", ExplicitRefID: true}}))
+	})
+	t.Run("explicit RTC refid rejection is case-sensitive", func(t *testing.T) {
+		assert.True(t, chronySelectedSourceIsTrusted("PHC1", "PHC1",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC1", ExplicitRefID: true}},
+			[]clusterconfig_api.ChronyRefclockRefID{{Value: "phc1", ExplicitRefID: true}}))
+	})
+	t.Run("excluded refclock does not match a retained default identifier", func(t *testing.T) {
+		trusted := clusterconfig_api.ChronyTrustedSources(
+			"refclock PHC /dev/ptp0 pps\nrefclock PHC /dev/ptp1\n")
+		require.Equal(t, []clusterconfig_api.ChronyTrustedSource{
+			{Kind: "refclock", Value: "PHC1"},
+		}, trusted)
+		assert.False(t, chronySelectedSourceIsTrusted("PHC0", "PHC0", trusted, nil))
+	})
+	t.Run("explicit RTC refid collision is rejected", func(t *testing.T) {
+		assert.False(t, chronySelectedSourceIsTrusted("PHC1", "PHC1",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC1"}},
+			[]clusterconfig_api.ChronyRefclockRefID{{Value: "PHC1", ExplicitRefID: true}}))
+	})
+	t.Run("default RTC identifier is rejected", func(t *testing.T) {
+		assert.False(t, chronySelectedSourceIsTrusted("RTC0", "RTC0",
+			[]clusterconfig_api.ChronyTrustedSource{{Kind: "refclock", Value: "PHC1"}},
+			[]clusterconfig_api.ChronyRefclockRefID{{Value: "RTC0"}}))
+	})
+
 }
 
 // TestDefaultSeedCertLowerBound proves the lower-bound helper reads the earliest NotBefore from
