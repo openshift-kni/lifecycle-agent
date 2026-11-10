@@ -18,10 +18,17 @@ package createusb
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +44,7 @@ import (
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/oci/layout"
 
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/localimages"
 )
 
@@ -77,6 +85,42 @@ func validInstallOnly() *Manifest {
 	}
 }
 
+const validKubeadminPasswordHash = "$2a$04$Ykm0CxvKvwedKPDc2j8xVe.ztV1L17ZRF.OJYFRIUtSoDyBGWWg7O"
+
+func mustGenerateCertificatePEM() seedreconfig.PEM {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-ca"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+
+	return seedreconfig.PEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+}
+
+func mustGeneratePrivateKeyPEM() seedreconfig.PEM {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		panic(err)
+	}
+
+	return seedreconfig.PEM(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+}
+
 // validSelfContained returns a fully valid self-contained manifest.
 func validSelfContained() *Manifest {
 	return &Manifest{
@@ -90,12 +134,43 @@ func validSelfContained() *Manifest {
 		RHCOSLiveISO:     RHCOSLiveISO{URL: testISOURL, SHA256: validSHA256},
 		ClusterManifests: &[]ManifestSource{{Path: "manifests/cluster.yaml"}},
 		SiteConfig: &SiteConfig{
-			ClusterName: "example",
-			BaseDomain:  "example.com",
-			Hostname:    "node0",
-			PullSecret:  validPullSecret,
+			ClusterName:               "example",
+			BaseDomain:                "example.com",
+			Hostname:                  "node0",
+			PullSecret:                validPullSecret,
+			KubeadminPasswordHash:     validKubeadminPasswordHash,
+			KubeconfigCryptoRetention: validKubeconfigCryptoRetention(),
 		},
 	}
+}
+
+var testKubeconfigCryptoRetention = mustGenerateKubeconfigCryptoRetention()
+
+func validKubeconfigCryptoRetention() seedreconfig.KubeConfigCryptoRetention {
+	return testKubeconfigCryptoRetention
+}
+
+func mustGenerateKubeconfigCryptoRetention() seedreconfig.KubeConfigCryptoRetention {
+	return seedreconfig.KubeConfigCryptoRetention{
+		KubeAPICrypto: seedreconfig.KubeAPICrypto{
+			ServingCrypto: seedreconfig.ServingCrypto{
+				LoadbalancerSignerPrivateKey:   mustGeneratePrivateKeyPEM(),
+				LocalhostSignerPrivateKey:      mustGeneratePrivateKeyPEM(),
+				ServiceNetworkSignerPrivateKey: mustGeneratePrivateKeyPEM(),
+			},
+			ClientAuthCrypto: seedreconfig.ClientAuthCrypto{
+				AdminCACertificate: mustGenerateCertificatePEM(),
+			},
+		},
+		IngresssCrypto: seedreconfig.IngresssCrypto{
+			IngressCAPrivateKey:  mustGeneratePrivateKeyPEM(),
+			IngressCertificateCN: "ingress-operator@1234",
+		},
+	}
+}
+
+func yamlQuotePEM(value seedreconfig.PEM) string {
+	return fmt.Sprintf("%q", string(value))
 }
 
 func TestParseManifestBothProfiles(t *testing.T) {
@@ -126,6 +201,7 @@ extraPrecacheImages:
 	assert.Equal(t, []string{"quay.io/example/extra@sha256:" + validSHA256}, *m.ExtraPrecacheImages)
 	assert.NoError(t, m.Validate())
 
+	retention := validKubeconfigCryptoRetention()
 	selfContained := `mode: self-contained
 seedImage: ` + testSeedImage + `
 seedVersion: ` + testSeedVersion + `
@@ -143,6 +219,18 @@ siteConfig:
   baseDomain: example.com
   hostname: node0
   pullSecret: '` + validPullSecret + `'
+  kubeadminPasswordHash: $2a$04$Ykm0CxvKvwedKPDc2j8xVe.ztV1L17ZRF.OJYFRIUtSoDyBGWWg7O
+  kubeconfigCryptoRetention:
+    kubeAPICrypto:
+      servingCrypto:
+        loadbalancer_external_signer_private_key: ` + yamlQuotePEM(retention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey) + `
+        localhost_signer_private_key: ` + yamlQuotePEM(retention.KubeAPICrypto.ServingCrypto.LocalhostSignerPrivateKey) + `
+        service_network_signer_private_key: ` + yamlQuotePEM(retention.KubeAPICrypto.ServingCrypto.ServiceNetworkSignerPrivateKey) + `
+      clientAuthCrypto:
+        admin_ca_certificate: ` + yamlQuotePEM(retention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate) + `
+    ingresssCrypto:
+      ingress_ca: ` + yamlQuotePEM(retention.IngresssCrypto.IngressCAPrivateKey) + `
+      ingress_certificate_cn: ingress-operator@1234
 `
 	m, err = ParseManifest(writeManifest(t, selfContained))
 	require.NoError(t, err)
@@ -459,6 +547,76 @@ func TestValidateUnknownOrEmptyMode(t *testing.T) {
 		m.Mode = mode
 		assert.ErrorContains(t, m.Validate(), "mode must be")
 	}
+}
+
+func TestValidateSelfContainedKubeconfigData(t *testing.T) {
+	t.Run("missing kubeadmin hash fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeadminPasswordHash = ""
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeadminPasswordHash is required")
+	})
+	t.Run("whitespace kubeadmin hash fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeadminPasswordHash = "   "
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeadminPasswordHash is required")
+	})
+	t.Run("malformed kubeadmin hash fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeadminPasswordHash = "$2a$10$truncated"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeadminPasswordHash must be a bcrypt hash")
+	})
+
+	t.Run("padded kubeadmin hash is normalized", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeadminPasswordHash = "  " + validKubeadminPasswordHash + "  "
+		assert.NoError(t, m.Validate())
+		assert.Equal(t, validKubeadminPasswordHash, m.SiteConfig.KubeadminPasswordHash)
+	})
+	t.Run("out-of-range bcrypt cost fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeadminPasswordHash = "$2a$00$" + strings.Repeat("A", 53)
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeadminPasswordHash must be a bcrypt hash")
+	})
+	t.Run("partial crypto retention fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate = ""
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.admin_ca_certificate is required")
+	})
+	t.Run("CN only is not crypto retention", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention = seedreconfig.KubeConfigCryptoRetention{
+			IngresssCrypto: seedreconfig.IngresssCrypto{IngressCertificateCN: "ingress-operator@1234"},
+		}
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.admin_ca_certificate is required")
+	})
+	t.Run("missing ingress CN fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.IngresssCrypto.IngressCertificateCN = ""
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.ingress_certificate_cn is required")
+	})
+
+	t.Run("invalid admin CA PEM fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate = "not-a-pem"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.admin_ca_certificate must contain a CERTIFICATE PEM block")
+	})
+	t.Run("leading junk before admin CA PEM fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate =
+			"junk before certificate\n" + testKubeconfigCryptoRetention.KubeAPICrypto.ClientAuthCrypto.AdminCACertificate
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.admin_ca_certificate must contain a CERTIFICATE PEM block")
+	})
+	t.Run("invalid private key PEM fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey = "not-a-pem"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.loadbalancer_external_signer_private_key must contain a private-key PEM block")
+	})
+	t.Run("leading junk before private key PEM fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.KubeconfigCryptoRetention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey =
+			"junk before key\n" + testKubeconfigCryptoRetention.KubeAPICrypto.ServingCrypto.LoadbalancerSignerPrivateKey
+		assert.ErrorContains(t, m.Validate(), "siteConfig.kubeconfigCryptoRetention.loadbalancer_external_signer_private_key must contain a private-key PEM block")
+	})
 }
 
 func TestValidateRequiredFields(t *testing.T) {

@@ -167,6 +167,9 @@ func seedReconfigurationFromSiteConfig(sc *SiteConfig) *seedreconfig.SeedReconfi
 		PullSecret:       sc.PullSecret,
 		ChronyConfig:     sc.ChronyConfig,
 		MaxSeedAge:       sc.MaxSeedAge,
+
+		KubeadminPasswordHash:     sc.KubeadminPasswordHash,
+		KubeconfigCryptoRetention: sc.KubeconfigCryptoRetention,
 	}
 }
 

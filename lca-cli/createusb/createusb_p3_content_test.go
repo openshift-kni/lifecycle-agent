@@ -78,6 +78,29 @@ func TestRenderP3Tree_SeedReconfiguration(t *testing.T) {
 	// post-pivot's clock gate can reach the trusted-time path and the widened window.
 	assert.Equal(t, "server ntp.example.com iburst", sr.ChronyConfig)
 	assert.Equal(t, "4320h", sr.MaxSeedAge)
+	assert.Equal(t, validKubeadminPasswordHash, sr.KubeadminPasswordHash)
+	assert.Equal(t, validKubeconfigCryptoRetention(), sr.KubeconfigCryptoRetention)
+}
+
+func TestRenderP3Tree_KubeconfigCryptoRetention(t *testing.T) {
+	m := validSelfContained()
+	m.ClusterManifests = nil
+
+	p3Root := t.TempDir()
+	_, err := RenderP3Tree(m, p3Root)
+	require.NoError(t, err)
+
+	manifestPath := filepath.Join(p3Root, common.ClusterConfigDir, common.SeedReconfigurationFileName)
+	sr, err := utils.ReadSeedReconfigurationFromFile(manifestPath)
+	require.NoError(t, err)
+
+	cryptoDir := filepath.Join(t.TempDir(), "kubeconfig-crypto")
+	require.NoError(t, utils.SeedReconfigurationKubeconfigRetentionToCryptoDir(cryptoDir, &sr.KubeconfigCryptoRetention))
+	assert.FileExists(t, filepath.Join(cryptoDir, "admin-kubeconfig-client-ca.crt"))
+	assert.FileExists(t, filepath.Join(cryptoDir, "loadbalancer-serving-signer.key"))
+	assert.FileExists(t, filepath.Join(cryptoDir, "localhost-serving-signer.key"))
+	assert.FileExists(t, filepath.Join(cryptoDir, "service-network-serving-signer.key"))
+	assert.FileExists(t, filepath.Join(cryptoDir, "ingresskey-ingress-operator.key"))
 }
 
 func TestRenderP3Tree_InstallOnlyRejected(t *testing.T) {
