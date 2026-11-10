@@ -25,17 +25,15 @@ import (
 // format capability contract. A hub consumer (TALM/IBGU) depends on these by
 // import, so an accidental change here would silently break the contract.
 func TestSeedFormatContractConstants(t *testing.T) {
-	// SeedFormatVersion stays 4 in this release: PR#7818 owns the bump to 5, so
-	// relocating the constant here must not change its value.
-	if SeedFormatVersion != 4 {
-		t.Errorf("SeedFormatVersion = %d, want %d", SeedFormatVersion, 4)
+	// SeedFormatVersion is 5 as of this release: PR#7818 bumped it from 4 to 5 for
+	// the OADP-removal / local backup format change.
+	if SeedFormatVersion != 5 {
+		t.Errorf("SeedFormatVersion = %d, want %d", SeedFormatVersion, 5)
 	}
 
-	// BackupContentFirstSeedFormatVersion is 5, not 4: backupContent ships in the
-	// same backport unit as the format bump, so 5 is the first format that
-	// supports it. It is intentionally NOT equal to (nor <=) SeedFormatVersion in
-	// this release; the equality against SeedFormatVersion is added by PR#7818 when
-	// it bumps SeedFormatVersion to 5.
+	// BackupContentFirstSeedFormatVersion is 5: backupContent ships in the same
+	// backport unit as the format bump, so 5 is the first format that supports it.
+	// With the bump now landed it equals SeedFormatVersion.
 	if BackupContentFirstSeedFormatVersion != 5 {
 		t.Errorf("BackupContentFirstSeedFormatVersion = %d, want %d", BackupContentFirstSeedFormatVersion, 5)
 	}
