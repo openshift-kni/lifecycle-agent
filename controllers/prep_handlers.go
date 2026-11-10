@@ -437,8 +437,9 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 	// spec.backupContent) but still honoured for backward compatibility, now backed by
 	// the local backup/restore mechanism instead of the OADP operator.
 	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-	if len(ibu.Spec.OADPContent) != 0 {
-		if err := r.BackupRestore.ValidateBackupConfigmaps(ctx, ibu.Spec.OADPContent); err != nil {
+	backupContent := ibu.Spec.OADPContent
+	if len(backupContent) != 0 {
+		if err := r.BackupRestore.ValidateBackupConfigmaps(ctx, backupContent); err != nil {
 			return fmt.Errorf("failed to validate backup configmaps: %w", err)
 		}
 	}

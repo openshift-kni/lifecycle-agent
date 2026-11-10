@@ -394,6 +394,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
 	result, err := u.HandleRestore(ctx, ibu.Spec.OADPContent)
 	if err != nil {
 		if backuprestore.IsBRFailedError(err) {
@@ -449,7 +450,8 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 // HandleBackup manages backup flow using local backup
 func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-	if len(ibu.Spec.OADPContent) == 0 {
+	backupContent := ibu.Spec.OADPContent
+	if len(backupContent) == 0 {
 		u.Log.Info("No backup requests, skipping")
 		return doNotRequeue(), nil
 	}
@@ -458,7 +460,7 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
 	}
 
-	backupTracker, err := u.BackupRestore.StartBackup(ctx, ibu.Spec.OADPContent)
+	backupTracker, err := u.BackupRestore.StartBackup(ctx, backupContent)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while running backup: %w", err))
 	}
