@@ -49,6 +49,9 @@ func (p *Progress) Update(success bool, image string) {
 }
 
 func (p *Progress) Log() {
+	p.mux.Lock()
+	defer p.mux.Unlock()
+
 	logrus.Infof("Total Images: %d", p.Total)
 	logrus.Infof("Images Pulled Successfully: %d", p.Pulled)
 	logrus.Infof("Images Failed to Pull: %d", p.Failed)
@@ -57,7 +60,12 @@ func (p *Progress) Log() {
 	}
 }
 
+// Persist writes the progress to filename. It holds the lock so concurrent pulls
+// cannot modify the progress while it is being marshaled or written.
 func (p *Progress) Persist(filename string) {
+	p.mux.Lock()
+	defer p.mux.Unlock()
+
 	data, _ := json.Marshal(p)
 	if err := os.WriteFile(filename, data, 0o600); err != nil {
 		logrus.Errorf("Failed to update progress file for precaching, err: %v", err)
