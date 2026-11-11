@@ -73,8 +73,15 @@ var resourceWaveOrder = map[string]int{
 	"Ingress":                  9,
 }
 
-func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error) {
+func (h *BRHandler) StartRestore(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*RestoreTracker, error) {
 	rt := &RestoreTracker{}
+
+	// Backup content is configured when either input source is set. At most one of
+	// them is populated (guaranteed by the IBU CEL mutual-exclusivity rule); the
+	// restore walks only the on-disk backup regardless of which source produced it,
+	// so the only thing the sources decide here is whether a missing backup
+	// directory is an error (configured) or expected (nothing configured).
+	configured := len(oadpContent) > 0 || len(backupContent) > 0
 
 	backupPath := filepath.Join(hostPath, LocalBackupPath)
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
@@ -83,7 +90,7 @@ func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapR
 		// exists on disk, the backup is gone (e.g. never taken, or wiped) and we
 		// must fail the restore hard rather than silently succeeding, otherwise
 		// the upgrade would complete without the user's application data.
-		if len(content) > 0 {
+		if configured {
 			return rt, NewBRFailedError("Restore",
 				fmt.Sprintf("backup content was configured but no local backup found at %s", backupPath))
 		}

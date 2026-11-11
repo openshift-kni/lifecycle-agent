@@ -93,7 +93,7 @@ spec:
 	h := &BRHandler{Client: c, Log: logr.Discard()}
 	_, err = h.StartBackup(context.Background(), []ibuv1.ConfigMapRef{
 		{Name: "backup-cm", Namespace: "openshift-adp"},
-	})
+	}, nil)
 	assert.Error(t, err)
 	assert.True(t, IsBRFailedError(err),
 		"filesystem error should be a terminal BRFailedError, got: %v", err)
@@ -203,7 +203,7 @@ spec:
 	h := &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
 	bt, err := h.StartBackup(context.Background(), []ibuv1.ConfigMapRef{
 		{Name: "backup-cm", Namespace: "openshift-adp"},
-	})
+	}, nil)
 	assert.NoError(t, err)
 	assert.Contains(t, bt.SucceededBackups, "b1")
 

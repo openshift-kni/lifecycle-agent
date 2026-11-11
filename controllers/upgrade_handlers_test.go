@@ -41,15 +41,28 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name       string
-		hasContent bool
-		tracker    func() (*backuprestore.BackupTracker, error)
-		wantCtlRes controllerruntime.Result
-		wantErr    assert.ErrorAssertionFunc
+		name             string
+		hasContent       bool
+		useBackupContent bool
+		tracker          func() (*backuprestore.BackupTracker, error)
+		wantCtlRes       controllerruntime.Result
+		wantErr          assert.ErrorAssertionFunc
 	}{
 		{
 			name:       "backup successful",
 			hasContent: true,
+			tracker: func() (*backuprestore.BackupTracker, error) {
+				return &backuprestore.BackupTracker{
+					SucceededBackups: []string{"name-successful"},
+				}, nil
+			},
+			wantCtlRes: doNotRequeue(),
+			wantErr:    assert.NoError,
+		},
+		{
+			name:             "backup content successful",
+			hasContent:       true,
+			useBackupContent: true,
 			tracker: func() (*backuprestore.BackupTracker, error) {
 				return &backuprestore.BackupTracker{
 					SucceededBackups: []string{"name-successful"},
@@ -70,7 +83,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			wantErr:    assert.Error,
 		},
 		{
-			name:       "no OADP content - skip",
+			name:       "no content - skip",
 			hasContent: false,
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.NoError,
@@ -80,9 +93,13 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ibu := &ibuv1.ImageBasedUpgrade{}
 			if tt.hasContent {
-				ibu.Spec.OADPContent = []ibuv1.ConfigMapRef{{Name: "test-cm"}}
+				if tt.useBackupContent {
+					ibu.Spec.BackupContent = []ibuv1.BackupContentRef{{Name: "test-bc"}}
+				} else {
+					ibu.Spec.OADPContent = []ibuv1.ConfigMapRef{{Name: "test-cm"}}
+				}
 				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
-				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any()).Return(tt.tracker())
+				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.tracker())
 			}
 
 			uph := &UpgHandler{
@@ -140,7 +157,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any()).Return(tt.tracker()).Times(1)
+			mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.tracker()).Times(1)
 
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
@@ -153,7 +170,12 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 				Log:             logr.Logger{},
 				BackupRestore:   mockBackuprestore,
 			}
-			got, err := uph.HandleRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}})
+			ibu := &ibuv1.ImageBasedUpgrade{
+				Spec: ibuv1.ImageBasedUpgradeSpec{
+					OADPContent: []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}},
+				},
+			}
+			got, err := uph.HandleRestore(context.Background(), ibu)
 			if !tt.wantErr(t, err, fmt.Sprintf("handleRestore")) {
 				return
 			}
@@ -405,7 +427,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(tt.getPatchPVsReclaimPolicyReturn())
 			}
 			if tt.getStartBackupReturn != nil {
-				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
+				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
@@ -756,7 +778,7 @@ func TestImageBasedUpgradeReconciler_postPivot(t *testing.T) {
 				mockExtramanifest.EXPECT().ApplyExtraManifests(gomock.Any(), common.PathOutsideChroot(extramanifest.CmManifestPath)).Return(tt.applyExtraManifestsReturn()).Times(1)
 			}
 			if tt.startRestoreReturn != nil {
-				mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any()).Return(tt.startRestoreReturn()).Times(1)
+				mockBackuprestore.EXPECT().StartRestore(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.startRestoreReturn()).Times(1)
 			}
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyReturn()).Times(1)

@@ -53,6 +53,11 @@ import (
 // objects legitimately requires.
 // +kubebuilder:rbac:groups="*",resources="*",verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;clusterroles,verbs=escalate;bind
+//
+// The engine reads the BackupContent CRs referenced by spec.backupContent from
+// LCA's install namespace. The wildcard above already permits this; the explicit
+// marker below documents the least-privilege access for the BackupContent input.
+// +kubebuilder:rbac:groups=lca.openshift.io,resources=backupcontents,verbs=get;list;watch
 
 const (
 	applyLabelAnn = "lca.openshift.io/apply-label"
@@ -93,8 +98,8 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	ValidateBackupConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
-	StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error)
-	StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error)
+	StartBackup(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*BackupTracker, error)
+	StartRestore(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*RestoreTracker, error)
 	MarkRestoreCompleted(ctx context.Context) error
 	CleanupBackups(ctx context.Context) error
 	PatchPVsReclaimPolicy(ctx context.Context) error
