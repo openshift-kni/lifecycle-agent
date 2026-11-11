@@ -433,19 +433,14 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 		return fmt.Errorf("failed to validate seed image OCP version: %w", err)
 	}
 
-	// If OADP configmap is provided, check if OADP operator is available, validate the configmap
-	// and remove stale Backups from object storage if any.
+	// Validate backup configmaps if provided. OADPContent is deprecated (replaced by
+	// spec.backupContent) but still honoured for backward compatibility, now backed by
+	// the local backup/restore mechanism instead of the OADP operator.
 	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-	if len(ibu.Spec.OADPContent) != 0 {
-		err := r.BackupRestore.CheckOadpOperatorAvailability(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check oadp operator availability: %w", err)
-		}
-
-		//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-		err = r.BackupRestore.ValidateOadpConfigmaps(ctx, ibu.Spec.OADPContent)
-		if err != nil {
-			return fmt.Errorf("failed to validate oadp configMap: %w", err)
+	backupContent := ibu.Spec.OADPContent
+	if len(backupContent) != 0 {
+		if err := r.BackupRestore.ValidateBackupConfigmaps(ctx, backupContent); err != nil {
+			return fmt.Errorf("failed to validate backup configmaps: %w", err)
 		}
 	}
 
