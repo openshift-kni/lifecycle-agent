@@ -10,42 +10,10 @@ entries:
     schema: olm.package
   # Channel entries for 'stable' channel
   - entries:
-      # v4.22.0
-      - name: lifecycle-agent.v4.22.0
-        skipRange: '>=4.20.0 <4.22.0'
-      # v4.22.1
-      - name: lifecycle-agent.v4.22.1
-        replaces: lifecycle-agent.v4.22.0
-        skipRange: '>=4.20.0 <4.22.1'
-      # v4.22.2
-      - name: lifecycle-agent.v4.22.2
-        replaces: lifecycle-agent.v4.22.1
-        skipRange: '>=4.20.0 <4.22.2'
       # v4.23.0
       - name: lifecycle-agent.v4.23.0
-        replaces: lifecycle-agent.v4.22.2
         skipRange: '>=4.22.0 <4.23.0'
-      # v4.23.1
-      - name: lifecycle-agent.v4.23.1
-        replaces: lifecycle-agent.v4.23.0
-        skipRange: '>=4.22.0 <4.23.1'
     name: stable
-    package: lifecycle-agent
-    schema: olm.channel
-  # Channel entries for '4.22' channel
-  - entries:
-      # v4.22.0
-      - name: lifecycle-agent.v4.22.0
-        skipRange: '>=4.20.0 <4.22.0'
-      # v4.22.1
-      - name: lifecycle-agent.v4.22.1
-        replaces: lifecycle-agent.v4.22.0
-        skipRange: '>=4.20.0 <4.22.1'
-      # v4.22.2
-      - name: lifecycle-agent.v4.22.2
-        replaces: lifecycle-agent.v4.22.1
-        skipRange: '>=4.20.0 <4.22.2'
-    name: "4.22"
     package: lifecycle-agent
     schema: olm.channel
   # Channel entries for '4.23' channel
@@ -53,26 +21,10 @@ entries:
       # v4.23.0
       - name: lifecycle-agent.v4.23.0
         skipRange: '>=4.22.0 <4.23.0'
-      # v4.23.1
-      - name: lifecycle-agent.v4.23.1
-        replaces: lifecycle-agent.v4.23.0
-        skipRange: '>=4.22.0 <4.23.1'
     name: "4.23"
     package: lifecycle-agent
     schema: olm.channel
-  # v4.22.0 bundle
-  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:0fb9fe40cff820fcbab5c925bafc1270ddbf3c552ae8fed648642bdd53bd716c
-    schema: olm.bundle
-  # v4.22.1 bundle
-  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:1d40848dd3fd0819b6e008d0345229c82a5af997e1096dc9851a5f664d206d7b
-    schema: olm.bundle
-  # v4.22.2 bundle
-  - image: registry.redhat.io/openshift4/lifecycle-agent-operator-bundle@sha256:5173c676811cc0986a619000092cc1209fc2bffc43def17d5fc52e6ff86055ab
-    schema: olm.bundle
   # v4.23.0 bundle
-  - image: registry.redhat.io/openshift5/lifecycle-agent-operator-bundle@sha256:090aec341fc541dafb32d50d30df34ee6ca7067dc44594a62c403ac60e7599ce
-    schema: olm.bundle
-  # v4.23.1 bundle
   # The url for this last entry is updated by telco5g-konflux/scripts/catalog/update-catalog-template.sh automatically
   - image: placeholder.will.be.updated.by.telco5g-konflux.scripts.catalog.update-catalog-template.sh
     schema: olm.bundle
