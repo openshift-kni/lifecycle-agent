@@ -629,7 +629,7 @@ konflux-compare-catalog: sync-git-submodules ## Compare generated catalog with u
 	$(MAKE) -C $(PROJECT_DIR)/telco5g-konflux/scripts/catalog konflux-compare-catalog \
 		CATALOG_KONFLUX=$(PROJECT_DIR)/$(CATALOG_KONFLUX) \
 		PACKAGE_NAME_KONFLUX=$(PACKAGE_NAME_KONFLUX) \
-		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-5-0:latest
+		UPSTREAM_FBC_IMAGE=quay.io/redhat-user-workloads/telco-5g-tenant/$(PACKAGE_NAME_KONFLUX)-fbc-4-23:latest
 
 .PHONY: konflux-all
 konflux-all: konflux-filter-unused-redhat-repos konflux-update-tekton-task-refs konflux-generate-catalog-production konflux-validate-catalog ## Run all Konflux-related targets
