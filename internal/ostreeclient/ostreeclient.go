@@ -85,7 +85,7 @@ func (c *Client) Deploy(osname, refsepc string, kargs []string, rpmOstreeClient 
 	// Run the command in bash to preserve the quoted kargs
 	args = append([]string{"ostree"}, args...)
 	if _, err := c.executor.Execute("bash", "-c", strings.Join(args, " ")); err != nil {
-		return fmt.Errorf("failed to run OSInit with args %s: %w", args, err)
+		return fmt.Errorf("failed to run ostree admin deploy with args %s: %w", args, err)
 	}
 
 	if !ibi {
