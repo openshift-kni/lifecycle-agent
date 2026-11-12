@@ -3,6 +3,7 @@ package postpivot
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,8 +23,10 @@ import (
 const (
 	// chronySyncMaxTries bounds `chronyc waitsync` so a configured-but-unreachable time source
 	// (the offline case) fails fast and the gate falls back to the RTC window instead of
-	// stalling the pre-recert path. At a 1s interval this is a few seconds at most.
-	chronySyncMaxTries = "3"
+	// stalling the pre-recert path. At a 1s interval this is a bounded 30s acquisition window,
+	// long enough for a reachable NTP source to be selected and synchronized, while still
+	// keeping the offline path from waiting indefinitely.
+	chronySyncMaxTries = "30"
 
 	// chronySyncMaxCorrection is the maximum remaining clock correction (in seconds) that
 	// `chronyc waitsync` will accept as synchronized. It must be non-zero: a value of "0" tells
@@ -71,13 +74,13 @@ var controlPlaneCertFiles = []string{
 	"/var/lib/kubelet/pki/kubelet-server-current.pem",
 }
 
-// clockGate is the pre-recert clock/RTC plausibility gate (USB-based IBI proposal §7.1). It
-// runs in PostPivotConfiguration immediately before recert so certificates are never minted
-// with a bad validity window when the node is personalized offline.
+// clockGateWithChronyConfig is the pre-recert clock/RTC plausibility gate (USB-based IBI
+// proposal §7.1). It runs in PostPivotConfiguration immediately before recert so certificates
+// are never minted with a bad validity window when the node is personalized offline.
 //
 // It applies only to the self-contained USB-based IBI profile, detected by the presence of
-// the writable ibi-status (p4) partition -- install-only media and IBU personalize without a
-// p4 partition and are skipped. It is also a strict no-op once recert has already completed,
+// the writable ibi-status (p4) partition -- install-only media and IBU personalize without
+// a p4 partition and are skipped. It is also a strict no-op once recert has already completed,
 // so a later reboot of a converged node is never halted for a clock that now looks implausible.
 //
 // When it does apply, it decides plausibility in three tiers:
@@ -90,15 +93,17 @@ var controlPlaneCertFiles = []string{
 //     fails, otherwise the gate proceeds with a warning. This is a documented limitation and
 //     is not the full plausibility gate.
 //
-// On failure it writes a terminal reconfigure.json failure record to p4 and halts the node
-// powered-on via emergency.target; recert never runs.
-func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
-	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+// It returns true only when synchronization to a trusted source succeeded and the gate's
+// temporary makestep configuration is active. On failure it writes a terminal
+// reconfigure.json failure record to p4 and halts the node powered-on via emergency.target;
+// recert never runs.
+func (p *PostPivot) clockGateWithChronyConfig(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedClusterInfo *seedclusterinfo.SeedClusterInfo) (bool, error) {
 	// Idempotent across reboots: once recert has completed, the clock is no longer gated --
 	// the node is converged and must not be halted even if its clock now looks implausible.
 	if p.recertAlreadyCompleted() {
 		p.log.Info("Clock gate: recert already completed, skipping the pre-recert clock check")
-		return nil
+		return false, nil
 	}
 
 	// Scope to the self-contained USB-based IBI profile: without a p4 partition this is
@@ -106,11 +111,11 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 	// halted here.
 	present, err := ibistatus.StatusPartitionPresent(p.ops)
 	if err != nil {
-		return fmt.Errorf("clock gate: failed to detect the ibi-status partition: %w", err)
+		return false, fmt.Errorf("clock gate: failed to detect the ibi-status partition: %w", err)
 	}
 	if !present {
 		p.log.Info("Clock gate: no ibi-status (p4) partition present; not the self-contained USB IBI profile, skipping the clock gate")
-		return nil
+		return false, nil
 	}
 
 	maxSeedAge, err := clusterconfig_api.ParseMaxSeedAge(seedReconfiguration.MaxSeedAge)
@@ -119,7 +124,7 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 		// implausible clock. Fail the reconfigure with a plain error (which aborts before recert,
 		// so no certificates are minted) rather than halting the node powered-on: the operator
 		// fixes the value and reboots. recert still never runs.
-		return fmt.Errorf("invalid maxSeedAge configuration: %w", err)
+		return false, fmt.Errorf("invalid maxSeedAge configuration: %w", err)
 	}
 
 	// Tier 1: a trusted, confirmed-synced local time source makes the clock authoritative.
@@ -127,10 +132,19 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 	// external/on-link source and must actually confirm synchronization before recert.
 	if clusterconfig_api.ChronyConfigHasTrustedSource(seedReconfiguration.ChronyConfig) {
 		if syncErr := p.bringChronyUpAndConfirmSync(seedReconfiguration.ChronyConfig); syncErr != nil {
+			var restorationErr *chronyConfigRestorationError
+			if errors.As(syncErr, &restorationErr) {
+				return false, p.failClockGate(seedClusterInfo,
+					&ibistatus.ClockGateResult{
+						ObservedTime: nowUTC().Format(time.RFC3339),
+						Decision:     ibistatus.DecisionConfigError,
+					},
+					fmt.Errorf("failed to restore the original chrony configuration: %w", syncErr))
+			}
 			p.log.Warnf("Clock gate: a trusted chrony source is configured but synchronization was not confirmed (%v); falling back to the RTC plausibility window", syncErr)
 		} else {
 			p.log.Info("Clock gate: chrony synchronized to a trusted source before recert; the system clock is authoritative")
-			return nil
+			return true, nil
 		}
 	}
 
@@ -140,7 +154,7 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 	if seedClusterInfo.SeedCreationTime != "" {
 		seedCreation, perr := time.Parse(time.RFC3339, seedClusterInfo.SeedCreationTime)
 		if perr != nil {
-			return p.failClockGate(seedClusterInfo,
+			return false, p.failClockGate(seedClusterInfo,
 				&ibistatus.ClockGateResult{ObservedTime: now.Format(time.RFC3339), Decision: ibistatus.DecisionConfigError},
 				fmt.Errorf("failed to parse seed creation time %q: %w", seedClusterInfo.SeedCreationTime, perr))
 		}
@@ -154,17 +168,17 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 		}
 		switch {
 		case now.Before(windowStart):
-			return p.failClockGate(seedClusterInfo, clk,
+			return false, p.failClockGate(seedClusterInfo, clk,
 				fmt.Errorf("system clock %s is earlier than the seed creation time %s; a node cannot be personalized before its seed existed",
 					now.Format(time.RFC3339), windowStart.Format(time.RFC3339)))
 		case now.After(windowEnd):
-			return p.failClockGate(seedClusterInfo, clk,
+			return false, p.failClockGate(seedClusterInfo, clk,
 				fmt.Errorf("system clock %s is later than the plausibility ceiling %s (seed creation + %s); configure a trusted local time source or widen maxSeedAge",
 					now.Format(time.RFC3339), windowEnd.Format(time.RFC3339), maxSeedAge))
 		default:
 			p.log.Infof("Clock gate: system clock %s is within the plausible window [%s, %s]; proceeding to recert",
 				now.Format(time.RFC3339), windowStart.Format(time.RFC3339), windowEnd.Format(time.RFC3339))
-			return nil
+			return false, nil
 		}
 	}
 
@@ -172,7 +186,7 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 	lower, ok := seedCertLowerBound(p.log)
 	if !ok {
 		p.log.Warn("Clock gate: seed carries no creation time and no control-plane certificate lower bound could be derived; proceeding without the full plausibility gate (documented limitation for pre-SeedCreationTime seeds)")
-		return nil
+		return false, nil
 	}
 	if now.Before(lower) {
 		clk := &ibistatus.ClockGateResult{
@@ -180,13 +194,13 @@ func (p *PostPivot) clockGate(seedReconfiguration *clusterconfig_api.SeedReconfi
 			WindowStart:  lower.Format(time.RFC3339),
 			Decision:     ibistatus.DecisionCertLowerBound,
 		}
-		return p.failClockGate(seedClusterInfo, clk,
+		return false, p.failClockGate(seedClusterInfo, clk,
 			fmt.Errorf("system clock %s is earlier than the earliest seed control-plane certificate validity %s; the clock is grossly implausible",
 				now.Format(time.RFC3339), lower.Format(time.RFC3339)))
 	}
 	p.log.Warnf("Clock gate: seed carries no creation time; applied a degraded lower-bound-only check against %s (not the full plausibility gate); proceeding to recert",
 		lower.Format(time.RFC3339))
-	return nil
+	return false, nil
 }
 
 // recertAlreadyCompleted reports whether recert has already run, in which case the clock gate
@@ -222,6 +236,34 @@ func (p *PostPivot) failClockGate(seedClusterInfo *seedclusterinfo.SeedClusterIn
 	return writeReconfigureFailureAndHalt(p.ops, p.log, result, fmt.Errorf("pre-recert clock gate failed: %w", cause))
 }
 
+// chronyConfigWithMakestep returns chronyConfig with the gate's transient makestep policy.
+// A bad RTC can leave the clock far enough off that chronyd would otherwise slew slowly;
+// makestep 1 -1 lets chronyd step the clock as soon as a trusted source is selected. Any
+// existing makestep directive is replaced so the gate's transient config always uses the
+// unrestricted-step policy needed before recert.
+func chronyConfigWithMakestep(chronyConfig string) string {
+	if strings.TrimSpace(chronyConfig) == "" {
+		return "makestep 1 -1\n"
+	}
+	lines := strings.Split(chronyConfig, "\n")
+	kept := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			fields := strings.Fields(trimmed)
+			if len(fields) > 0 && strings.EqualFold(fields[0], "makestep") {
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	joined := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	if joined != "" {
+		joined += "\n"
+	}
+	return joined + "makestep 1 -1\n"
+}
+
 // bringChronyUpAndConfirmSync places the user's chrony configuration and (re)starts chronyd
 // before recert, then waits a bounded time for synchronization. Today chronyd is only
 // restarted after recert, too late to correct the clock before certs are minted; bringing it
@@ -230,19 +272,22 @@ func (p *PostPivot) failClockGate(seedClusterInfo *seedclusterinfo.SeedClusterIn
 // transient. A configured-but-unreachable source (offline) times out quickly and surfaces as
 // an error so the caller falls back to the RTC window.
 func (p *PostPivot) bringChronyUpAndConfirmSync(chronyConfig string) error {
+	gateConfig := chronyConfigWithMakestep(chronyConfig)
 	//nolint:gosec // chrony.conf is a non-secret config normally world-readable; this is a transient pre-recert write recert overwrites.
-	if err := os.WriteFile(chronyConfigFilePath, []byte(chronyConfig), 0o644); err != nil {
+	if err := os.WriteFile(chronyConfigFilePath, []byte(gateConfig), 0o644); err != nil {
 		return fmt.Errorf("failed to write chrony config %s: %w", chronyConfigFilePath, err)
 	}
 	if _, err := p.ops.SystemctlAction("restart", "chronyd"); err != nil {
-		return fmt.Errorf("failed to restart chronyd: %w", err)
+		return p.restoreChronyConfigAfterGateError(chronyConfig,
+			fmt.Errorf("failed to restart chronyd: %w", err))
 	}
-	// `chronyc waitsync <max-tries> <max-correction> <max-skew> <interval>`: a small max-tries
-	// at a 1s interval bounds the wait so an unreachable source does not stall the gate, and a
-	// bounded max-correction (non-zero) ensures the remaining clock correction is actually small
-	// before we treat the source as authoritative — "0" would disable that check entirely.
+	// `chronyc waitsync <max-tries> <max-correction> <max-skew> <interval>`: the bounded
+	// acquisition window gives a reachable source time to be selected and corrected, while a
+	// bounded max-correction (non-zero) ensures the remaining clock correction is actually
+	// small before we treat the source as authoritative — "0" would disable that check entirely.
 	if _, err := p.ops.RunInHostNamespace("chronyc", "waitsync", chronySyncMaxTries, chronySyncMaxCorrection, "0", "1"); err != nil {
-		return fmt.Errorf("chrony did not confirm synchronization: %w", err)
+		return p.restoreChronyConfigAfterGateError(chronyConfig,
+			fmt.Errorf("chrony did not confirm synchronization: %w", err))
 	}
 	// waitsync confirms the clock is synchronized but not *which* source was selected. chronyd
 	// can report synchronized while running in local mode (its own clock, no real external
@@ -250,9 +295,48 @@ func (p *PostPivot) bringChronyUpAndConfirmSync(chronyConfig string) error {
 	// back to `local stratum`. Verify the runtime-selected reference and reject local mode so
 	// such configs do not bypass the seed window via the very RTC the gate exists to distrust.
 	if err := p.confirmChronyReferenceNotLocal(); err != nil {
-		return err
+		return p.restoreChronyConfigAfterGateError(chronyConfig, err)
 	}
 	return nil
+}
+
+// restoreChronyConfigAfterGate writes the operator's original Chrony configuration and restarts
+// chronyd. PostPivotConfiguration calls it when setup or recert fails after the gate installed
+// its temporary unrestricted makestep policy but before recert has replaced the configuration.
+func (p *PostPivot) restoreChronyConfigAfterGate(chronyConfig string) error {
+	//nolint:gosec // chrony.conf is a non-secret config normally world-readable.
+	if err := os.WriteFile(chronyConfigFilePath, []byte(chronyConfig), 0o644); err != nil {
+		return fmt.Errorf("failed to restore chrony config %s: %w", chronyConfigFilePath, err)
+	}
+	if _, err := p.ops.SystemctlAction("restart", "chronyd"); err != nil {
+		return fmt.Errorf("failed to restart chronyd after restoring its config: %w", err)
+	}
+	return nil
+}
+
+// chronyConfigRestorationError marks a failure to restore the gate's temporary Chrony
+// configuration. It wraps both the triggering failure and the restoration failure.
+type chronyConfigRestorationError struct {
+	cause      error
+	restoreErr error
+}
+
+func (e *chronyConfigRestorationError) Error() string {
+	return fmt.Sprintf("%v; additionally failed to restore the original chrony configuration: %v", e.cause, e.restoreErr)
+}
+
+func (e *chronyConfigRestorationError) Unwrap() []error {
+	return []error{e.cause, e.restoreErr}
+}
+
+// restoreChronyConfigAfterGateError restores the original Chrony configuration after a failure
+// that occurred while the gate's temporary configuration was active. The original cause remains
+// the primary wrapped error; a restoration failure is appended as a second wrapped error.
+func (p *PostPivot) restoreChronyConfigAfterGateError(chronyConfig string, cause error) error {
+	if restoreErr := p.restoreChronyConfigAfterGate(chronyConfig); restoreErr != nil {
+		return &chronyConfigRestorationError{cause: cause, restoreErr: restoreErr}
+	}
+	return cause
 }
 
 // confirmChronyReferenceNotLocal inspects the reference chronyd actually selected (via

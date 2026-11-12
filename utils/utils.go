@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -153,12 +154,18 @@ func CreateKubeClientFromBytes(scheme *runtime.Scheme, kubeconfigData []byte) (r
 	return rc, nil
 }
 
+// RunOnce invokes f with args only when name's done marker is absent. Existing markers make the
+// operation idempotent; unexpected marker-check failures are returned instead of being treated
+// as a completed run.
 func RunOnce(name, directory string, log *logrus.Logger, f any, args ...any) error {
 	doneFile := path.Join(directory, name+".done")
 	_, err := os.Stat(doneFile)
-	if err == nil || !os.IsNotExist(err) {
+	if err == nil {
 		log.Info(fmt.Sprintf("%s already exists, skipping", doneFile))
 		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to check RunOnce file %s: %w", doneFile, err)
 	}
 
 	fValue := reflect.ValueOf(f)
