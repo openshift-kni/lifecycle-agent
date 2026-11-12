@@ -87,22 +87,46 @@ type statusPartition struct {
 	unmount    func() error
 }
 
-// StatusPartitionPresent reports whether a writable ibi-status (p4) partition is attached.
+// StatusPartitionPresent reports whether a valid writable ibi-status (p4) partition is attached.
 // The post-pivot flow uses this to detect that it is running the self-contained USB-based IBI
-// profile -- install-only media and IBU personalize the node without a p4 partition, so the
-// pre-recert clock gate must not apply (and must never try to halt powered-on) there. A
-// listing error is returned so a transient failure is not silently read as "absent".
+// profile. A listing error, multiple labelled devices, or a mislabeled non-ext4 device is
+// returned as an error so it is not silently read as "absent"; a clean absence returns false.
+// Invalid labelled media fails closed even on otherwise non-USB profiles: a label collision
+// means the environment or media is malformed and must not silently disable status handling.
 func StatusPartitionPresent(o ops.Ops) (bool, error) {
 	blockDevices, err := o.ListBlockDevices()
 	if err != nil {
 		return false, fmt.Errorf("failed to list block devices: %w", err)
 	}
+	_, present, err := findStatusPartition(blockDevices)
+	if err != nil {
+		return false, err
+	}
+	return present, nil
+}
+
+// findStatusPartition returns the unique ibi-status device, whether one is present, and any
+// validation error. Zero matches are a clean absence; more than one match or a non-ext4
+// filesystem is an error because the label is ambiguous or invalid.
+func findStatusPartition(blockDevices []ops.BlockDevice) (ops.BlockDevice, bool, error) {
+	matches := make([]ops.BlockDevice, 0, 1)
 	for _, bd := range blockDevices {
 		if bd.Label == common.IBIStatusFSLabel {
-			return true, nil
+			matches = append(matches, bd)
 		}
 	}
-	return false, nil
+	if len(matches) == 0 {
+		return ops.BlockDevice{}, false, nil
+	}
+	if len(matches) != 1 {
+		return ops.BlockDevice{}, false, fmt.Errorf("expected exactly one block device labelled %q, found %d",
+			common.IBIStatusFSLabel, len(matches))
+	}
+	if matches[0].FSType != fsTypeExt4 {
+		return ops.BlockDevice{}, false, fmt.Errorf("ibi-status device %s must use the %q filesystem, found %q",
+			matches[0].Name, fsTypeExt4, matches[0].FSType)
+	}
+	return matches[0], true, nil
 }
 
 // WriteFailureAndHalt records a terminal reconfigure failure on the ibi-status partition and
@@ -148,21 +172,14 @@ func mountStatusPartition(o ops.Ops) (*statusPartition, error) {
 		return nil, fmt.Errorf("failed to list block devices: %w", err)
 	}
 
-	matches := make([]ops.BlockDevice, 0, 1)
-	for _, bd := range blockDevices {
-		if bd.Label == common.IBIStatusFSLabel {
-			matches = append(matches, bd)
-		}
+	device, present, err := findStatusPartition(blockDevices)
+	if err != nil {
+		return nil, err
 	}
-	if len(matches) != 1 {
-		return nil, fmt.Errorf("expected exactly one block device labelled %q, found %d",
-			common.IBIStatusFSLabel, len(matches))
+	if !present {
+		return nil, fmt.Errorf("no block device labelled %q was found", common.IBIStatusFSLabel)
 	}
-	if matches[0].FSType != fsTypeExt4 {
-		return nil, fmt.Errorf("ibi-status device %s must use the %q filesystem, found %q",
-			matches[0].Name, fsTypeExt4, matches[0].FSType)
-	}
-	deviceName := matches[0].Name
+	deviceName := device.Name
 
 	if err := o.Mount(deviceName, statusMountDir); err != nil {
 		return nil, fmt.Errorf("failed to mount ibi-status device %s: %w", deviceName, err)

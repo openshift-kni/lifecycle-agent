@@ -36,6 +36,7 @@ func useTempStatusPartition(t *testing.T) string {
 	return dir
 }
 
+// readReconfigureResult loads and unmarshals the reconfigure result from dir.
 func readReconfigureResult(t *testing.T, dir string) *ReconfigureResult {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, common.ReconfigureResultFileName)) //nolint:gosec // test path
@@ -45,6 +46,8 @@ func readReconfigureResult(t *testing.T, dir string) *ReconfigureResult {
 	return &r
 }
 
+// TestStatusPartitionPresent proves that presence detection cleanly distinguishes absence
+// from an ambiguous or invalid ibi-status partition.
 func TestStatusPartitionPresent(t *testing.T) {
 	testcases := []struct {
 		name    string
@@ -55,6 +58,21 @@ func TestStatusPartitionPresent(t *testing.T) {
 	}{
 		{name: "present", devices: statusDevices("/dev/sdb4"), want: true},
 		{name: "absent", devices: []ops.BlockDevice{{Name: "/dev/sda", Label: "root", FSType: "xfs"}}, want: false},
+		{
+			name: "multiple labelled devices are invalid",
+			devices: []ops.BlockDevice{
+				{Name: "/dev/sdb4", Label: common.IBIStatusFSLabel, FSType: "ext4"},
+				{Name: "/dev/sdc4", Label: common.IBIStatusFSLabel, FSType: "ext4"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-ext4 labelled device is invalid",
+			devices: []ops.BlockDevice{
+				{Name: "/dev/sdb4", Label: common.IBIStatusFSLabel, FSType: "vfat"},
+			},
+			wantErr: true,
+		},
 		{name: "list error", listErr: fmt.Errorf("boom"), wantErr: true},
 	}
 	for _, tc := range testcases {
@@ -72,6 +90,18 @@ func TestStatusPartitionPresent(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// TestMountStatusPartitionAbsent proves the mount path reports a clean absence as an explicit
+// missing-label error rather than treating it as an ambiguous zero-match count.
+func TestMountStatusPartitionAbsent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: "/dev/sda", Label: "root", FSType: "xfs"}}, nil).Times(1)
+
+	_, err := mountStatusPartition(mockOps)
+	require.Error(t, err)
+	assert.Equal(t, fmt.Sprintf("no block device labelled %q was found", common.IBIStatusFSLabel), err.Error())
 }
 
 // TestWriteFailureAndHalt proves the failure path mounts p4, writes a well-formed durable
