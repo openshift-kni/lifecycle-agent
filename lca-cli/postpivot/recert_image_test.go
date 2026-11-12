@@ -9,17 +9,18 @@ import (
 	"go.uber.org/mock/gomock"
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 )
 
 const testRecertImage = "quay.io/openshift/recert@sha256:abc"
 
-// expectedRecertPullCommand is the bash command string ensureRecertImageAvailable builds for a
-// no-proxy pull: podman wrapped in coreutils `timeout` so a stalled pull cannot block offline
-// reconfigure indefinitely.
-func expectedRecertPullCommand() string {
-	return fmt.Sprintf("timeout %d podman", int(recertImagePullAttemptTimeout.Seconds()))
+// expectedRecertPullArgs returns the argument vector ensureRecertImageAvailable builds for a
+// no-proxy pull. Using `env` with discrete arguments avoids shell interpolation of operator
+// supplied proxy and image values.
+func expectedRecertPullArgs() []any {
+	return []any{"timeout", fmt.Sprintf("%d", int(recertImagePullAttemptTimeout.Seconds())), "podman", "pull", "--authfile", common.ImageRegistryAuthFile}
 }
 
 // TestEnsureRecertImageAvailable_PresentNoPull proves that when the recert image is precached
@@ -30,7 +31,7 @@ func TestEnsureRecertImageAvailable_PresentNoPull(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ImageExists(testRecertImage).Return(true, nil).Times(1)
 	// No pull must be issued.
-	mockOps.EXPECT().RunBashInHostNamespace(gomock.Any(), gomock.Any()).Times(0)
+	mockOps.EXPECT().RunInHostNamespace(gomock.Any(), gomock.Any()).Times(0)
 
 	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
 	err := pp.ensureRecertImageAvailable(
@@ -53,7 +54,7 @@ func TestEnsureRecertImageAvailable_MissingOffline_FailsFast(t *testing.T) {
 	// Connected node (no local image store): the missing image falls through to the bounded pull.
 	mockOps.EXPECT().LocalImageStoreEnabled().Return(false).Times(1)
 	// A bounded number of pull attempts, then fail fast.
-	mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", gomock.Any(), gomock.Any(), testRecertImage).
+	mockOps.EXPECT().RunInHostNamespace("env", append(expectedRecertPullArgs(), testRecertImage)...).
 		Return("", fmt.Errorf("no route to host")).Times(recertImagePullAttempts)
 
 	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
@@ -72,12 +73,48 @@ func TestEnsureRecertImageAvailable_MissingPullSucceeds(t *testing.T) {
 	mockOps.EXPECT().ImageExists(testRecertImage).Return(false, nil).Times(1)
 	// Connected node (no local image store): the missing image is pulled.
 	mockOps.EXPECT().LocalImageStoreEnabled().Return(false).Times(1)
-	mockOps.EXPECT().RunBashInHostNamespace(expectedRecertPullCommand(), "pull", gomock.Any(), gomock.Any(), testRecertImage).
+	mockOps.EXPECT().RunInHostNamespace("env", append(expectedRecertPullArgs(), testRecertImage)...).
 		Return("", nil).Times(1)
 
 	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
 	err := pp.ensureRecertImageAvailable(
 		&clusterconfig_api.SeedReconfiguration{},
 		&seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: testRecertImage})
+	assert.NoError(t, err)
+}
+
+// TestEnsureRecertImageAvailable_ProxyAndImageMetacharactersAreNotShellInterpolated proves the
+// pull is executed as an argument vector. Operator-supplied proxy and image values containing
+// shell metacharacters must be passed verbatim to env/podman rather than interpreted by a shell.
+func TestEnsureRecertImageAvailable_ProxyAndImageMetacharactersAreNotShellInterpolated(t *testing.T) {
+	image := "quay.io/example/recert:test;touch,/tmp/pwned"
+	proxy := &clusterconfig_api.Proxy{
+		HTTPProxy:  "http://user:pass;rm|/tmp@example.com",
+		HTTPSProxy: "https://user:pass;rm|/tmp@example.com",
+		NoProxy:    ".example.com;rm|/tmp",
+	}
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ImageExists(image).Return(false, nil).Times(1)
+	mockOps.EXPECT().LocalImageStoreEnabled().Return(false).Times(1)
+	mockOps.EXPECT().RunInHostNamespace(
+		"env",
+		"HTTP_PROXY="+proxy.HTTPProxy,
+		"HTTPS_PROXY="+proxy.HTTPSProxy,
+		"NO_PROXY="+proxy.NoProxy,
+		"timeout",
+		fmt.Sprintf("%d", int(recertImagePullAttemptTimeout.Seconds())),
+		"podman",
+		"pull",
+		"--authfile",
+		common.ImageRegistryAuthFile,
+		image,
+	).Return("", nil).Times(1)
+
+	pp := NewPostPivot(nil, logrus.New(), mockOps, "", "", "")
+	err := pp.ensureRecertImageAvailable(
+		&clusterconfig_api.SeedReconfiguration{Proxy: proxy},
+		&seedclusterinfo.SeedClusterInfo{RecertImagePullSpec: image})
 	assert.NoError(t, err)
 }
