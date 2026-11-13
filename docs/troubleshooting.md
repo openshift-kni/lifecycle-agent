@@ -129,15 +129,18 @@ handoff that gates the result-writer. Run these **on the node**:
    sudo systemctl reboot
    ```
 
-   If a reboot is undesirable, return to `multi-user.target` in place, re-run post-pivot, then
-   start the writer (its `After=` ordering only sequences the boot job; it does not activate the
-   unit):
+   If a reboot is undesirable, return to `multi-user.target` in place. Because
+   `installation-configuration.service` is still enabled, isolating the target re-runs post-pivot
+   **once**; on success post-pivot writes the handoff and completion marker and then starts the
+   result-writer itself, so no further commands are needed:
 
    ```console
    sudo systemctl isolate multi-user.target
-   sudo systemctl restart installation-configuration.service
-   sudo systemctl start lca-reconfigure-result-writer.service
    ```
+
+   Do **not** run `sudo systemctl restart installation-configuration.service` afterward. That first
+   post-pivot run completes and its cleanup removes the configuration directory, so a second run
+   would find no configuration and wait indefinitely, blocking recovery.
 
 **Convergence timeout (after recert — handoff exists).** Clearing the failure is not enough. The
 convergence deadline is anchored **write-once** at `postPivotStartTime` in the durable handoff, so

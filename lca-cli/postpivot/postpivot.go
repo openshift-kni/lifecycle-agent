@@ -273,6 +273,14 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
 	}
 
+	// Persist the durable completion marker (self-contained USB IBI only) and kick the result-writer
+	// BEFORE disabling installation-configuration.service. Writing the marker first means a
+	// marker-write failure returns here with post-pivot boot activation still enabled, so the node
+	// auto-retries post-pivot on the next boot instead of being stranded with no terminal verdict.
+	if err := p.completeReconfigure(seedReconfiguration); err != nil {
+		return err
+	}
+
 	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
@@ -283,22 +291,37 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		p.log.Warnf("failed to disable %s, err: %v", nmConnectionRestoreService, err)
 	}
 
-	return p.completeReconfigureAndCleanup(seedReconfiguration)
+	return p.cleanup()
 }
 
-// completeReconfigureAndCleanup finalizes a successful post-pivot: it records the durable
-// completion marker (self-contained USB IBI only) that gates the reconfigure result-writer, then
-// runs cleanup. The marker is written here, after recert and manifests are applied, so the writer
-// never records a verdict against the still-healthy seed cluster if post-pivot fails before recert
-// finishes. It is kept out of PostPivotConfiguration so that function's cyclomatic complexity stays
-// within the linter budget.
-func (p *PostPivot) completeReconfigureAndCleanup(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
-	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
-		if err := p.writeReconfigureCompleted(); err != nil {
-			return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
-		}
+// completeReconfigure records the durable post-pivot completion marker (self-contained USB IBI
+// only) that gates the reconfigure result-writer, then kicks the writer so it runs for the current
+// post-pivot attempt without waiting for another reboot. The marker is written here -- after recert
+// and manifests are applied -- so the writer never records a verdict against the still-healthy seed
+// cluster if post-pivot fails before recert finishes; and the caller invokes this before disabling
+// installation-configuration.service, so a failed marker write preserves next-boot auto-recovery.
+// It is kept out of PostPivotConfiguration so that function's cyclomatic complexity stays within
+// the linter budget.
+func (p *PostPivot) completeReconfigure(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if seedReconfiguration.Profile != clusterconfig_api.ProfileSelfContained {
+		return nil
 	}
-	return p.cleanup()
+	if err := p.writeReconfigureCompleted(); err != nil {
+		return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
+	}
+	// The result-writer unit is WantedBy=multi-user.target and condition-gated on the completion
+	// marker, so it starts automatically at boot. But installation-configuration.service runs
+	// post-pivot with Restart=on-failure: a retry that writes the marker without an intervening
+	// reboot would leave the boot-only writer (already skipped earlier this boot, when the marker
+	// was still absent) un-triggered until the next reboot, so its convergence deadline and timeout
+	// halt would never run. Kick it here so this attempt is covered. --no-block is required because
+	// the unit is ordered After=installation-configuration.service, which is still active while this
+	// post-pivot runs -- a blocking start would deadlock on that ordering. A failed start is not
+	// fatal: the unit still runs on the next boot.
+	if _, err := p.ops.SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService); err != nil {
+		p.log.Warnf("failed to start %s, err: %v", common.ReconfigureResultWriterService, err)
+	}
+	return nil
 }
 
 // reconfigureHandoffFile is the path the self-contained reconfigure handoff is written to. It
