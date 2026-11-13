@@ -13,7 +13,8 @@ import (
 
 // TestReconfigureResultWriterServiceUnit asserts the shipped systemd unit has the ordering and
 // gating the design depends on: After= (ordering only, not Requires=/Requisite=),
-// WantedBy=multi-user.target, TimeoutStartSec=0, and ConditionPathExists on the handoff.
+// WantedBy=multi-user.target, TimeoutStartSec=0, and ConditionPathExists on both the handoff
+// and the post-pivot completion marker.
 func TestReconfigureResultWriterServiceUnit(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok)
@@ -24,6 +25,7 @@ func TestReconfigureResultWriterServiceUnit(t *testing.T) {
 
 	assert.Contains(t, unit, "After=installation-configuration.service")
 	assert.Contains(t, unit, "ConditionPathExists=/var/lib/lca/reconfigure-handoff.json")
+	assert.Contains(t, unit, "ConditionPathExists=/var/lib/lca/reconfigure-completed")
 	assert.Contains(t, unit, "Type=oneshot")
 	assert.Contains(t, unit, "TimeoutStartSec=0")
 	assert.Contains(t, unit, "ExecStart=/usr/local/bin/lca-cli init-monitor --reconfigure-result-writer")
