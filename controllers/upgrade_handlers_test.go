@@ -41,13 +41,15 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name                     string
-		hasContent               bool
-		useBackupContent         bool
-		tracker                  func() (*backuprestore.BackupTracker, error)
-		restoresPVsReclaimPolicy bool
-		wantCtlRes               controllerruntime.Result
-		wantErr                  assert.ErrorAssertionFunc
+		name                       string
+		hasContent                 bool
+		useBackupContent           bool
+		tracker                    func() (*backuprestore.BackupTracker, error)
+		restoresPVsReclaimPolicy   bool
+		restorePVsReclaimPolicyErr error
+		wantRetryable              bool
+		wantCtlRes                 controllerruntime.Result
+		wantErr                    assert.ErrorAssertionFunc
 	}{
 		{
 			name:       "backup successful",
@@ -87,6 +89,22 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			wantErr:                  assert.Error,
 		},
 		{
+			name:       "backup failed terminally, PV reclaim policy restore also fails - stays retryable",
+			hasContent: true,
+			tracker: func() (*backuprestore.BackupTracker, error) {
+				return nil, backuprestore.NewBRFailedError("Backup", "terminal backup failure")
+			},
+			// The backup error is terminal, so RestorePVsReclaimPolicy is attempted. When
+			// that cleanup itself fails, the returned error must NOT wrap the terminal
+			// backup error, so PrePivot requeues and retries the cleanup instead of marking
+			// the upgrade failed with PV reclaim policies left at Retain.
+			restoresPVsReclaimPolicy:   true,
+			restorePVsReclaimPolicyErr: assert.AnError,
+			wantRetryable:              true,
+			wantCtlRes:                 doNotRequeue(),
+			wantErr:                    assert.Error,
+		},
+		{
 			name:       "no content - skip",
 			hasContent: false,
 			wantCtlRes: doNotRequeue(),
@@ -106,7 +124,7 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.tracker())
 			}
 			if tt.restoresPVsReclaimPolicy {
-				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyErr).Times(1)
 			}
 
 			uph := &UpgHandler{
@@ -118,6 +136,12 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 			got, err := uph.HandleBackup(context.Background(), ibu)
 			if !tt.wantErr(t, err, fmt.Sprintf("handleBackup")) {
 				return
+			}
+			if tt.wantRetryable {
+				// A retryable error must not be classified as a terminal backup failure,
+				// otherwise PrePivot marks the upgrade failed instead of requeueing.
+				assert.Falsef(t, backuprestore.IsBRFailedError(err) || backuprestore.IsBRFailedValidationError(err),
+					"expected a retryable (non-terminal) error, got: %v", err)
 			}
 			assert.Equalf(t, tt.wantCtlRes.RequeueAfter, got.RequeueAfter, "ctl interval: handleBackup")
 		})

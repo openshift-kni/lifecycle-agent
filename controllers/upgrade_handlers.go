@@ -473,7 +473,12 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 		// the policies are intentionally left in place for that case.
 		if backuprestore.IsBRFailedValidationError(err) || backuprestore.IsBRFailedError(err) {
 			if restoreErr := u.BackupRestore.RestorePVsReclaimPolicy(ctx); restoreErr != nil {
-				return requeueWithError(fmt.Errorf("backup failed (%w); additionally failed to restore LVMS PV reclaim policies: %w", err, restoreErr))
+				// Wrap only restoreErr: the cleanup failure is transient and must stay
+				// retryable. If the terminal backup error were wrapped too, PrePivot's
+				// IsBRFailedError/IsBRFailedValidationError check would classify this as
+				// terminal and stop retrying, leaving the remaining PV reclaim policies at
+				// Retain. Rendering the backup failure as text preserves it in the message.
+				return requeueWithError(fmt.Errorf("backup failed (%s); additionally failed to restore LVMS PV reclaim policies: %w", err.Error(), restoreErr))
 			}
 		}
 		return requeueWithError(fmt.Errorf("error while running backup: %w", err))
