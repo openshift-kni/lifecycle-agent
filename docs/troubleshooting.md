@@ -144,12 +144,14 @@ handoff that gates the result-writer. Run these **on the node**:
 
 **Convergence timeout (after recert — handoff exists).** Clearing the failure is not enough. The
 convergence deadline is anchored **write-once** at `postPivotStartTime` in the durable handoff, so
-simply re-running the writer keeps the original, now-expired deadline by design — it would
-immediately record `failure` again without ever polling convergence, even if the node has since
-converged. The result-writer unit also disables itself after writing a terminal verdict. A
-supported recovery therefore resolves the cause, grants the writer a **new** anchor, clears the
-verdict, and re-enables the unit. Run these **on the node** (a `failure` halts it powered-on, so it
-stays reachable):
+simply re-running the writer keeps the original, now-expired deadline by design. Past that deadline
+the writer makes a single live convergence recheck before deciding: if the node has **already**
+converged it records `success`, but if convergence is still pending it records `failure` without
+polling, so a node that only converges a little after you clear the blocker would still be failed.
+The result-writer unit also disables itself after writing a terminal verdict. A supported recovery
+therefore resolves the cause, grants the writer a **new** anchor (so it polls afresh instead of
+relying on the one-shot recheck), clears the verdict, and re-enables the unit. Run these **on the
+node** (a `failure` halts it powered-on, so it stays reachable):
 
 1. Resolve what blocked convergence.
 2. Renew the convergence anchor by setting `postPivotStartTime` to the current time in the
