@@ -93,6 +93,12 @@ const (
 	IPCInitMonitorService                           = "lca-init-monitor.service"
 	IPConfigurationService                          = "ip-configuration.service"
 	IPCFilePath                                     = LCAConfigDir + "/ipc.json"
+	// ReconfigureHandoffFile is the write-once durable handoff the self-contained post-pivot
+	// writes for the reconfigure result-writer (CNF-27173). It is rooted under LCAConfigDir
+	// (which post-pivot cleanup never touches, unlike the working dir), so it survives
+	// installation-configuration.service Restart=on-failure retries and carries the
+	// convergence-timeout anchor (post-pivot start time) captured on the first run.
+	ReconfigureHandoffFile = LCAConfigDir + "/reconfigure-handoff.json"
 	// InitMonitorModeFile configures which mode the init-monitor should operate in ("ibu" or "ipconfig")
 	InitMonitorModeFile = LCAWorkspaceDir + "/initmonitor_mode"
 	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.
@@ -229,6 +235,12 @@ const (
 	// node before recert runs); the reconfigure result-writer (CNF-27173) owns the final
 	// success record.
 	ReconfigureResultFileName = "reconfigure.json"
+
+	// ReconfigureResultWriterService is the dedicated systemd unit that runs the
+	// self-contained reconfigure result-writer (CNF-27173). It is ordered after
+	// installation-configuration.service and gated on the durable handoff via
+	// ConditionPathExists, so it is a clean no-op on IBU/install-only.
+	ReconfigureResultWriterService = "lca-reconfigure-result-writer.service"
 
 	// IBIStatusLogsDir is the directory, relative to the ibi-status (p4) root, under
 	// which the compact diagnostic log bundle is written.

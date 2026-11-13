@@ -299,8 +299,10 @@ consumes on the node:
 - **`cluster-configuration/manifest.json`** is the `SeedReconfiguration` built from
   `siteConfig` (clusterName, baseDomain, hostname, nodeIPs, machineNetworks,
   rawNMStateConfig, sshKey, pullSecret, chronyConfig, maxSeedAge,
-  kubeadminPasswordHash, and kubeconfigCryptoRetention). `api_version` is set to the
-  only version post-pivot accepts, so its version check passes.
+  reconfigureConvergenceTimeout, kubeadminPasswordHash, and kubeconfigCryptoRetention).
+  `api_version` is set to the only version post-pivot accepts, so its version check passes.
+  The explicit media `profile` (`self-contained`) is also stamped here; it is the signal the
+  post-install reconfigure result-writer gates on.
 
   The optional `chronyConfig` and `maxSeedAge` fields tune the post-pivot pre-recert clock
   gate (see [post-pivot configuration](./post-pivot-configuration.md#offline-reconfigure-and-the-pre-recert-clock-gate)).
@@ -313,6 +315,15 @@ consumes on the node:
   duration string (for example `4320h`) that widens the gate's plausibility window for
   long-shelf deployments; a non-parseable, non-positive, or absurdly large value **fails the
   build**.
+
+  The optional `reconfigureConvergenceTimeout` field tunes the post-install reconfigure
+  result-writer (see [post-pivot configuration](./post-pivot-configuration.md#offline-reconfigure-and-the-pre-recert-clock-gate)).
+  It is a Go duration string (for example `90m`) bounding how long the node has to converge
+  (node `Ready` and all cluster operators settled) before the result-writer records a failure
+  and halts the node powered-on. The deadline is anchored at **post-pivot start** and is
+  captured **write-once** on the node (under `/var/lib/lca`), so it survives post-pivot
+  retries. An empty value uses the default (**60 minutes**); a non-parseable, non-positive, or
+  absurdly large value (over 24h) **fails the build**.
 - **`cluster-configuration/manifests/`** and **`extra-manifests/`** are rendered from the
   `clusterManifests` / `extraManifests` sources.
 

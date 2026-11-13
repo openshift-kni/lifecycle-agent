@@ -63,6 +63,57 @@ USB stick (or the node's p4 partition) to a workstation.
 See [create-usb.md](./create-usb.md#the-ibi-status-p4-partition-and-per-phase-results) for
 the full p4 contract and schema.
 
+### The reconfigure result (`reconfigure.json`)
+
+On **self-contained** media the same `ibi-status` (p4) partition also records the
+**reconfigure convergence verdict** at `reconfigure.json`, written after the node pivots into
+the installed disk and reconfigures itself. Two independent writers may produce it, but it is
+single-owner per outcome:
+
+- The **pre-recert clock gate** writes a `failure` (with a `clock` section) if the system clock
+  is implausible before recert — the node halts powered-on and recert never runs.
+- The **reconfigure result-writer** (a dedicated `lca-reconfigure-result-writer.service` unit)
+  owns the convergence verdict after recert: `success` once the node is `Ready` and all cluster
+  operators have converged, or `failure` if that criterion is not met within the convergence
+  timeout (default **60 minutes**, configurable via `siteConfig.reconfigureConvergenceTimeout`).
+
+Read it the same way as `prepare.json`:
+
+```console
+cat /mnt/ibi-status/reconfigure.json
+```
+
+- `result: "success"` — the node converged; it keeps running and the result-writer unit
+  disables itself. Nothing to do.
+- `result: "failure"` — convergence was not reached in time (or the clock gate failed before
+  recert); `error` carries the message. The node **halts powered-on** (emergency target) so it
+  stays reachable.
+
+> **Keep the USB inserted during reconfigure.** The result-writer writes `reconfigure.json`
+> to the USB's p4 partition after the pivot, so the stick must remain inserted until a terminal
+> verdict is recorded. Only stop booting from the USB (change the boot order) rather than
+> physically removing it before the verdict lands.
+
+Both verdicts are **idempotent**: an existing terminal `success` or `failure` is never
+overwritten across reboots, so a later boot cannot flip a recorded verdict.
+
+**Recovery after a `failure`.** Clearing the failure is not enough — the result-writer unit
+disables itself after writing a terminal verdict, so it must be re-enabled:
+
+1. Resolve the underlying cause (fix the clock / trusted time source, or address what blocked
+   convergence).
+2. Clear the recorded verdict so the writers no longer treat it as terminal:
+
+   ```console
+   sudo rm -f /mnt/ibi-status/reconfigure.json
+   ```
+
+3. Re-enable and start the result-writer unit on the node:
+
+   ```console
+   sudo systemctl enable --now lca-reconfigure-result-writer.service
+   ```
+
 ## Manual cleanup
 
 During Abort/Finalize LCA performs a cleanup. This includes:

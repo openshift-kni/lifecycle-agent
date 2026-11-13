@@ -10,6 +10,19 @@ const (
 	BlockDeviceLabel = "cluster-config"
 )
 
+const (
+	// ProfileInstallOnly media installs the seed and powers the node off on success.
+	ProfileInstallOnly = "install-only"
+	// ProfileSelfContained media installs the seed and then reconfigures the node from
+	// an on-media site configuration without contacting the network.
+	//
+	// These profile-marker constants live here (rather than in api/ibiconfig, which
+	// imports this package) so both the build-time create-usb flow and the runtime
+	// reconfigure result-writer can gate on the explicit profile without an import
+	// cycle. api/ibiconfig re-exports them as aliases for backward compatibility.
+	ProfileSelfContained = "self-contained"
+)
+
 // SeedReconfiguration contains all the information that is required to
 // transform a machine started from a SNO seed image (which contains dummy seed
 // configuration) into a SNO cluster with a desired configuration. During an
@@ -177,10 +190,27 @@ type SeedReconfiguration struct {
 	// available.
 	MaxSeedAge string `json:"max_seed_age,omitempty"`
 
+	// ReconfigureConvergenceTimeout optionally overrides the default deadline the
+	// self-contained reconfigure result-writer (see lca-cli/initmonitor) waits for the
+	// node to converge (node Ready and all cluster operators settled) before recording a
+	// failure verdict and halting the node powered-on. It is a Go duration string (for
+	// example "90m"). An empty value uses the default (60 minutes); non-parseable,
+	// non-positive, or absurdly large values are rejected with a config error. It lets
+	// slow hardware or large operator sets widen the window.
+	ReconfigureConvergenceTimeout string `json:"reconfigure_convergence_timeout,omitempty"`
+
 	AdditionalTrustBundle AdditionalTrustBundle `json:"additionalTrustBundle,omitempty"`
 
 	// The desired node labels for the SNO node.
 	NodeLabels map[string]string `json:"node_labels,omitempty"`
+
+	// Profile records the USB-based IBI media profile that produced this configuration:
+	// ProfileInstallOnly or ProfileSelfContained. It is the explicit self-contained signal
+	// the reconfigure result-writer gates on (rather than inferring the profile from the
+	// writable ibi-status (p4) partition's presence, which install-only media also carries).
+	// create-usb stamps it from its build Mode; it is additive and omitempty, so it is
+	// backward compatible with existing media.
+	Profile string `json:"profile,omitempty"`
 }
 
 type KubeConfigCryptoRetention struct {

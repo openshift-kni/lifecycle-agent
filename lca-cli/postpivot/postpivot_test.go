@@ -30,12 +30,62 @@ import (
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/reconfigure"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
+
+// TestWriteReconfigureHandoff_WriteOnce proves the self-contained handoff is written with the
+// post-pivot start anchor on the first run and preserved across a restart (Codex #1 +
+// Steven #2), and that it lives outside the two directories post-pivot cleanup() removes
+// (p.workingDir and common.SeedDataDir) and under common.LCAConfigDir -- so it survives the
+// Restart=on-failure retries and cleanup.
+func TestWriteReconfigureHandoff_WriteOnce(t *testing.T) {
+	handoffDir := t.TempDir()
+	origPath := reconfigureHandoffFile
+	reconfigureHandoffFile = filepath.Join(handoffDir, "reconfigure-handoff.json")
+	t.Cleanup(func() { reconfigureHandoffFile = origPath })
+
+	origNow := nowUTC
+	t.Cleanup(func() { nowUTC = origNow })
+
+	workingDir := t.TempDir()
+	pp := NewPostPivot(nil, logrus.New(), nil, "", workingDir, "")
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		Profile:                       clusterconfig_api.ProfileSelfContained,
+		ReconfigureConvergenceTimeout: "90m",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedClusterOCPVersion: "4.18.3"}
+
+	// First post-pivot run captures the anchor.
+	nowUTC = func() time.Time { return rfc3339("2026-01-01T00:00:00Z") }
+	require.NoError(t, pp.writeReconfigureHandoff(seedReconfig, seedClusterInfo))
+
+	first, err := reconfigure.ReadHandoff(reconfigureHandoffFile)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, clusterconfig_api.ProfileSelfContained, first.Profile)
+	assert.Equal(t, "90m", first.ConvergenceTimeout)
+	assert.Equal(t, "2026-01-01T00:00:00Z", first.PostPivotStartTime)
+	assert.Equal(t, "4.18.3", first.SeedVersion)
+
+	// A restarted post-pivot re-runs the write; the original anchor must be preserved.
+	nowUTC = func() time.Time { return rfc3339("2026-06-01T12:00:00Z") }
+	require.NoError(t, pp.writeReconfigureHandoff(seedReconfig, seedClusterInfo))
+	second, err := reconfigure.ReadHandoff(reconfigureHandoffFile)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.Equal(t, "2026-01-01T00:00:00Z", second.PostPivotStartTime)
+
+	// cleanup() removes only p.workingDir and common.SeedDataDir; the real handoff path is
+	// rooted under common.LCAConfigDir, which is neither, so the handoff survives.
+	assert.True(t, strings.HasPrefix(common.ReconfigureHandoffFile, common.LCAConfigDir))
+	assert.False(t, strings.HasPrefix(common.ReconfigureHandoffFile, workingDir))
+	assert.False(t, strings.HasPrefix(common.ReconfigureHandoffFile, common.SeedDataDir))
+}
 
 func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
 	pp := NewPostPivot(nil, logrus.New(), nil, "", "", "")

@@ -1,0 +1,21 @@
+[Unit]
+Description=Lifecycle Agent reconfigure result-writer (self-contained USB IBI)
+# Ordering only, NOT Requires=/Requisite=: installation-configuration.service is
+# RemainAfterExit=no, so a successful post-pivot goes inactive, which a hard
+# dependency would misread as a failure. The result-writer observes live cluster
+# state across post-pivot restarts rather than depending on its unit state.
+After=installation-configuration.service
+# Only the self-contained post-pivot writes the durable handoff, so this gates the
+# unit to the self-contained profile: it does not run at all on IBU/install-only.
+ConditionPathExists=/var/lib/lca/reconfigure-handoff.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The writer may poll up to the full convergence timeout; disable systemd's start
+# timeout so it is never killed before its own deadline.
+TimeoutStartSec=0
+ExecStart=/usr/local/bin/lca-cli init-monitor --reconfigure-result-writer
+
+[Install]
+WantedBy=multi-user.target

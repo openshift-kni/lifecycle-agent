@@ -541,6 +541,34 @@ func TestValidateSiteConfigClockGate(t *testing.T) {
 	})
 }
 
+func TestValidateSiteConfigReconfigureConvergenceTimeout(t *testing.T) {
+	t.Run("omitted passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ReconfigureConvergenceTimeout = ""
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("valid duration passes", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ReconfigureConvergenceTimeout = "90m"
+		assert.NoError(t, m.Validate())
+	})
+	t.Run("non-parseable fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ReconfigureConvergenceTimeout = "90"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.reconfigureConvergenceTimeout is invalid")
+	})
+	t.Run("non-positive fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ReconfigureConvergenceTimeout = "0m"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.reconfigureConvergenceTimeout is invalid")
+	})
+	t.Run("absurdly large fails", func(t *testing.T) {
+		m := validSelfContained()
+		m.SiteConfig.ReconfigureConvergenceTimeout = "48h"
+		assert.ErrorContains(t, m.Validate(), "siteConfig.reconfigureConvergenceTimeout is invalid")
+	})
+}
+
 func TestValidateUnknownOrEmptyMode(t *testing.T) {
 	for _, mode := range []Mode{"", "bogus"} {
 		m := validInstallOnly()

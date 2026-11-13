@@ -25,6 +25,7 @@ import (
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
+	"github.com/openshift-kni/lifecycle-agent/internal/reconfigure"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -147,6 +148,19 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	seedReconfiguration.NodeIPs = seedReconfigurationNodeIPs(seedReconfiguration)
 	p.log.Infof("Seed reconfiguration node IPs: %v", seedReconfiguration.NodeIPs)
 
+	// Reconfigure result-writer handoff (self-contained USB IBI only): write the write-once
+	// durable handoff that anchors the convergence-timeout deadline at the first post-pivot
+	// start and gates the dedicated result-writer unit via ConditionPathExists. It is written
+	// before the clock gate and cleanup, under common.LCAConfigDir (which cleanup() never
+	// touches), so installation-configuration.service Restart=on-failure retries never reset
+	// the anchor. Only self-contained media carries the profile; IBU and install-only skip it,
+	// so the result-writer unit never starts on those profiles.
+	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
+		if err := p.writeReconfigureHandoff(seedReconfiguration, seedClusterInfo); err != nil {
+			return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+		}
+	}
+
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
 		seedReconfiguration.SSHKey, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
@@ -265,6 +279,30 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	}
 
 	return p.cleanup()
+}
+
+// reconfigureHandoffFile is the path the self-contained reconfigure handoff is written to. It
+// is a package var so unit tests can redirect the write to a temp file.
+var reconfigureHandoffFile = common.ReconfigureHandoffFile
+
+// writeReconfigureHandoff writes the write-once durable handoff that drives the self-contained
+// reconfigure result-writer. The timestamp is captured from nowUTC (a package var) so the
+// first post-pivot run anchors the convergence-timeout deadline; the write-once semantics
+// preserve that anchor across Restart=on-failure retries.
+func (p *PostPivot) writeReconfigureHandoff(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	handoff := &reconfigure.Handoff{
+		Profile:            seedReconfiguration.Profile,
+		ConvergenceTimeout: seedReconfiguration.ReconfigureConvergenceTimeout,
+		PostPivotStartTime: nowUTC().Format(time.RFC3339),
+		SeedVersion:        seedClusterInfo.SeedClusterOCPVersion,
+	}
+	p.log.Infof("Writing reconfigure result-writer handoff to %s (anchor %s, timeout %q)",
+		reconfigureHandoffFile, handoff.PostPivotStartTime, handoff.ConvergenceTimeout)
+	if err := reconfigure.WriteHandoffOnce(reconfigureHandoffFile, handoff); err != nil {
+		return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+	}
+	return nil
 }
 
 // restoreChronyConfigForGateFailure restores the operator's Chrony configuration when a
