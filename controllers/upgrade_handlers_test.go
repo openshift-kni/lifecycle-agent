@@ -261,6 +261,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		getStartBackupReturn                            func() (*backuprestore.BackupTracker, error)
 		getPatchPVsReclaimPolicyReturn                  func() error
 		restoresPVsReclaimPolicyOnBackupFailure         bool
+		restorePVsReclaimPolicyErr                      error
 		getValidateBackupConfigmapsReturn               func() error
 		remountSysrootReturn                            func() error
 		exportExtraManifestToDirReturn                  func() error
@@ -357,6 +358,40 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 					Reason:  string(utils.ConditionReasons.Failed),
 					Status:  metav1.ConditionFalse,
 					Message: "error while running backup: this is a test - FailedValidation",
+				},
+			},
+		},
+		{
+			// The backup fails terminally, so HandleBackup attempts to restore the LVMS PV
+			// reclaim policies it patched to Retain. When that cleanup itself fails,
+			// HandleBackup must return a non-terminal error so PrePivot requeues and retries
+			// (re-entering HandleBackup, which re-patches and re-attempts the cleanup) rather
+			// than marking the Upgrade failed with PV reclaim policies left at Retain. PrePivot
+			// therefore returns an error (retry) and leaves the status InProgress, never Failed.
+			name: "backup failed terminally but PV reclaim policy restore also fails - retry, do not mark upgrade failed",
+			args: args{
+				ibu: ibuv1.ImageBasedUpgrade{
+					Spec: ibuv1.ImageBasedUpgradeSpec{
+						OADPContent: []ibuv1.ConfigMapRef{{Name: "test-cm"}},
+					},
+				},
+			},
+			getPatchPVsReclaimPolicyReturn: func() error {
+				return nil
+			},
+			getStartBackupReturn: func() (*backuprestore.BackupTracker, error) {
+				return nil, backuprestore.NewBRFailedError("Backup", "this is a test - error")
+			},
+			restoresPVsReclaimPolicyOnBackupFailure: true,
+			restorePVsReclaimPolicyErr:              fmt.Errorf("reclaim policy restore failed"),
+			want:                                    doNotRequeue(),
+			wantErr:                                 assert.Error,
+			wantConditions: []metav1.Condition{
+				{
+					Type:    string(utils.ConditionTypes.UpgradeInProgress),
+					Reason:  string(utils.ConditionReasons.InProgress),
+					Status:  metav1.ConditionTrue,
+					Message: "Backing up Application Data",
 				},
 			},
 		},
@@ -481,7 +516,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
 			}
 			if tt.restoresPVsReclaimPolicyOnBackupFailure {
-				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(tt.restorePVsReclaimPolicyErr).Times(1)
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
