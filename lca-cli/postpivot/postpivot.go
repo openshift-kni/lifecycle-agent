@@ -273,26 +273,42 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
 	}
 
-	// Persist the durable completion marker (self-contained USB IBI only) and kick the result-writer
-	// BEFORE disabling installation-configuration.service. Writing the marker first means a
-	// marker-write failure returns here with post-pivot boot activation still enabled, so the node
-	// auto-retries post-pivot on the next boot instead of being stranded with no terminal verdict.
+	return p.finalizePostPivot(seedReconfiguration)
+}
+
+// finalizePostPivot wraps up a successful post-pivot run: it persists the durable completion marker
+// and kicks the result-writer (self-contained USB IBI only), disables the one-shot post-pivot
+// services, and runs cleanup. completeReconfigure runs BEFORE disabling
+// installation-configuration.service so a marker-write failure returns with post-pivot boot
+// activation still enabled, leaving the node to auto-retry on the next boot rather than being
+// stranded with no terminal verdict. It is split out of PostPivotConfiguration to keep that
+// function's cyclomatic complexity within the linter budget.
+func (p *PostPivot) finalizePostPivot(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
 	if err := p.completeReconfigure(seedReconfiguration); err != nil {
 		return err
 	}
 
-	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
+	if _, err := p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
 
 	// The restore service is a no-op once cleanup removes the working dir, so failing to disable it
 	// is not worth failing the upgrade for
-	if _, err = p.ops.SystemctlAction("disable", nmConnectionRestoreService); err != nil {
+	if _, err := p.ops.SystemctlAction("disable", nmConnectionRestoreService); err != nil {
 		p.log.Warnf("failed to disable %s, err: %v", nmConnectionRestoreService, err)
 	}
 
 	return p.cleanup()
 }
+
+// reconfigureResultWriterStartAttempts bounds how many times post-pivot kicks the result-writer
+// in-boot before giving up for this attempt. A small bound rides out a transient systemd blip
+// without blocking post-pivot; the unit still runs on the next boot if every attempt fails.
+const reconfigureResultWriterStartAttempts = 3
+
+// reconfigureResultWriterStartRetryDelay is the delay between result-writer start attempts. It is
+// a package var so unit tests can set it to zero.
+var reconfigureResultWriterStartRetryDelay = 2 * time.Second
 
 // completeReconfigure records the durable post-pivot completion marker (self-contained USB IBI
 // only) that gates the reconfigure result-writer, then kicks the writer so it runs for the current
@@ -316,11 +332,23 @@ func (p *PostPivot) completeReconfigure(seedReconfiguration *clusterconfig_api.S
 	// was still absent) un-triggered until the next reboot, so its convergence deadline and timeout
 	// halt would never run. Kick it here so this attempt is covered. --no-block is required because
 	// the unit is ordered After=installation-configuration.service, which is still active while this
-	// post-pivot runs -- a blocking start would deadlock on that ordering. A failed start is not
-	// fatal: the unit still runs on the next boot.
-	if _, err := p.ops.SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService); err != nil {
-		p.log.Warnf("failed to start %s, err: %v", common.ReconfigureResultWriterService, err)
+	// post-pivot runs -- a blocking start would deadlock on that ordering. The start is retried a
+	// few times so a transient systemd failure does not silently defer deadline enforcement to the
+	// next reboot. It stays non-fatal: if every attempt fails the unit still runs on the next boot,
+	// so a start hiccup must not strand post-pivot.
+	var lastErr error
+	for attempt := 1; attempt <= reconfigureResultWriterStartAttempts; attempt++ {
+		if _, lastErr = p.ops.SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService); lastErr == nil {
+			return nil
+		}
+		p.log.Warnf("failed to start %s (attempt %d/%d), err: %v",
+			common.ReconfigureResultWriterService, attempt, reconfigureResultWriterStartAttempts, lastErr)
+		if attempt < reconfigureResultWriterStartAttempts {
+			time.Sleep(reconfigureResultWriterStartRetryDelay)
+		}
 	}
+	p.log.Warnf("giving up starting %s in-boot after %d attempts; it will still run on the next boot: %v",
+		common.ReconfigureResultWriterService, reconfigureResultWriterStartAttempts, lastErr)
 	return nil
 }
 

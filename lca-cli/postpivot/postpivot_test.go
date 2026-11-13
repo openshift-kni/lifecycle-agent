@@ -109,6 +109,78 @@ func TestWriteReconfigureCompleted(t *testing.T) {
 	assert.True(t, strings.HasPrefix(common.ReconfigureCompletedFile, common.LCAConfigDir))
 }
 
+// TestCompleteReconfigure proves completeReconfigure writes the marker and kicks the result-writer
+// for the current boot. The in-boot start is retried on transient failure but stays non-fatal --
+// a start that never succeeds must not strand post-pivot, since the unit still runs on the next
+// boot via its boot-time activation and condition gate. Non-self-contained profiles are a no-op.
+func TestCompleteReconfigure(t *testing.T) {
+	origDelay := reconfigureResultWriterStartRetryDelay
+	reconfigureResultWriterStartRetryDelay = 0
+	t.Cleanup(func() { reconfigureResultWriterStartRetryDelay = origDelay })
+
+	testcases := []struct {
+		name         string
+		profile      string
+		startErrs    []error // one entry per expected start attempt
+		expectMarker bool
+		expectErr    bool
+	}{
+		{
+			name:         "non-self-contained is a no-op",
+			profile:      clusterconfig_api.ProfileInstallOnly,
+			startErrs:    nil,
+			expectMarker: false,
+			expectErr:    false,
+		},
+		{
+			name:         "self-contained writes marker and starts writer first try",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{nil},
+			expectMarker: true,
+			expectErr:    false,
+		},
+		{
+			name:         "transient start failure is retried then succeeds",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{fmt.Errorf("transient"), nil},
+			expectMarker: true,
+			expectErr:    false,
+		},
+		{
+			name:         "start failing every attempt stays non-fatal",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{fmt.Errorf("boom"), fmt.Errorf("boom"), fmt.Errorf("boom")},
+			expectMarker: true,
+			expectErr:    false,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			markerDir := t.TempDir()
+			origPath := reconfigureCompletedFile
+			reconfigureCompletedFile = filepath.Join(markerDir, "reconfigure-completed")
+			t.Cleanup(func() { reconfigureCompletedFile = origPath })
+
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			pp := NewPostPivot(nil, logrus.New(), mockOps, "", t.TempDir(), "")
+
+			for _, err := range tc.startErrs {
+				mockOps.EXPECT().
+					SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService).
+					Return("", err).
+					Times(1)
+			}
+
+			err := pp.completeReconfigure(&clusterconfig_api.SeedReconfiguration{Profile: tc.profile})
+			assert.Equal(t, tc.expectErr, err != nil, err)
+
+			_, statErr := os.Stat(reconfigureCompletedFile)
+			assert.Equal(t, tc.expectMarker, statErr == nil)
+		})
+	}
+}
+
 func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
 	pp := NewPostPivot(nil, logrus.New(), nil, "", "", "")
 	sshKeyFile := filepath.Join(t.TempDir(), "authorized_keys")
