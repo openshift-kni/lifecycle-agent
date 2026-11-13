@@ -118,11 +118,23 @@ handoff that gates the result-writer. Run these **on the node**:
    sudo umount /mnt/ibi-status
    ```
 
-3. Re-run post-pivot so the gate re-evaluates the corrected clock and, on success, writes the
-   handoff, then start the result-writer (restarting the service above only orders the writer's
-   boot job via `After=`; it does not activate the unit):
+3. Return the node to normal operation and re-run post-pivot. A clock-gate `failure` halts the
+   node by isolating `emergency.target`, so cluster services are stopped.
+   `installation-configuration.service` is still enabled (post-pivot halted before disabling it),
+   so the cleanest recovery is a **reboot** — the node comes up in `multi-user.target`, the gate
+   re-evaluates the corrected clock, and on success post-pivot writes the handoff **and the
+   completion marker** that let the result-writer start automatically:
 
    ```console
+   sudo systemctl reboot
+   ```
+
+   If a reboot is undesirable, return to `multi-user.target` in place, re-run post-pivot, then
+   start the writer (its `After=` ordering only sequences the boot job; it does not activate the
+   unit):
+
+   ```console
+   sudo systemctl isolate multi-user.target
    sudo systemctl restart installation-configuration.service
    sudo systemctl start lca-reconfigure-result-writer.service
    ```
@@ -155,11 +167,26 @@ stays reachable):
    sudo umount /mnt/ibi-status
    ```
 
-4. Re-enable and start the result-writer unit:
+4. Restore normal operation **before** starting the writer. A `failure` halts the node by
+   isolating `emergency.target`, which stops the cluster services (kubelet, CRI-O, the control
+   plane) the node needs in order to converge. Starting the writer while the node is still in
+   `emergency.target` leaves those services stopped, so it would only time out again. Return the
+   node to `multi-user.target` first, then run the writer. Either:
 
-   ```console
-   sudo systemctl enable --now lca-reconfigure-result-writer.service
-   ```
+   - **Reboot** (recommended — restores `multi-user.target` and all cluster services cleanly; the
+     condition-gated writer then runs automatically once it is enabled):
+
+     ```console
+     sudo systemctl enable lca-reconfigure-result-writer.service
+     sudo systemctl reboot
+     ```
+
+   - **or** switch targets in place without rebooting, then start the writer:
+
+     ```console
+     sudo systemctl isolate multi-user.target
+     sudo systemctl enable --now lca-reconfigure-result-writer.service
+     ```
 
 > Only this explicit operator recovery renews the anchor. Automatic
 > `installation-configuration.service` `Restart=on-failure` retries deliberately keep the original

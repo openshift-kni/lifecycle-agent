@@ -99,6 +99,16 @@ const (
 	// installation-configuration.service Restart=on-failure retries and carries the
 	// convergence-timeout anchor (post-pivot start time) captured on the first run.
 	ReconfigureHandoffFile = LCAConfigDir + "/reconfigure-handoff.json"
+	// ReconfigureCompletedFile is the durable marker the self-contained post-pivot writes once
+	// reconfiguration has actually finished (recert and manifests applied). It gates the
+	// reconfigure result-writer (CNF-27173): the handoff is written early -- right after the
+	// pre-recert clock gate, before recert -- to anchor the convergence deadline, so its presence
+	// alone does not mean reconfiguration completed. If installation-configuration.service fails
+	// after the handoff is written but before recert finishes, systemd can still start the
+	// (After=-ordered) writer, which would poll the still-healthy seed cluster and record a false
+	// success. Gating on this completion marker instead closes that race. It is rooted under
+	// LCAConfigDir (which post-pivot cleanup never touches), alongside the handoff.
+	ReconfigureCompletedFile = LCAConfigDir + "/reconfigure-completed"
 	// InitMonitorModeFile configures which mode the init-monitor should operate in ("ibu" or "ipconfig")
 	InitMonitorModeFile = LCAWorkspaceDir + "/initmonitor_mode"
 	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.

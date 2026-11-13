@@ -68,6 +68,32 @@ func WriteHandoffOnce(path string, h *Handoff) error {
 	return nil
 }
 
+// WriteCompletionMarker durably records that post-pivot reconfiguration has finished. The
+// reconfigure result-writer gates on this marker, not merely the handoff (which is written early,
+// right after the clock gate and before recert, to anchor the deadline): if
+// installation-configuration.service fails after the handoff is written but before recert
+// completes, the After=-ordered writer could otherwise start and record a false success against
+// the still-healthy seed cluster. It is idempotent -- an existing marker is left untouched -- and
+// the parent directory is created if needed. The content is a human-readable note for a
+// technician inspecting the node; only the file's existence is load-bearing.
+func WriteCompletionMarker(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		// Reconfiguration already marked complete; nothing to do.
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to check reconfigure completion marker %s: %w", path, err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("failed to create reconfigure completion marker directory %s: %w", dir, err)
+	}
+	if err := writeFileDurable(path, []byte("post-pivot reconfiguration completed\n")); err != nil {
+		return fmt.Errorf("failed to write reconfigure completion marker %s: %w", path, err)
+	}
+	return nil
+}
+
 // ReadHandoff reads and parses the handoff at path. An absent file returns (nil, nil) -- a
 // clean "not the self-contained reconfigure path" signal. An IO error or malformed JSON is
 // returned as an error so the caller can fail safe (no-op) rather than acting on a partial

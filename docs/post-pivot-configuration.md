@@ -133,8 +133,14 @@ dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside p
 - **Gating.** The unit is ordered `After=installation-configuration.service` (ordering only,
   never `Requires=`/`Requisite=`, because the `RemainAfterExit=no` post-pivot goes inactive on
   success) and `WantedBy=multi-user.target`. It runs with `TimeoutStartSec=0` so systemd never
-  kills it before its own deadline, and a `ConditionPathExists` on the durable handoff plus an
-  in-code **explicit self-contained profile** check make it a clean no-op on IBU/install-only.
+  kills it before its own deadline. A `ConditionPathExists` on the **post-pivot completion marker**
+  (`/var/lib/lca/reconfigure-completed`, written only once recert and manifests are applied) plus
+  the durable handoff, together with an in-code **explicit self-contained profile** check and a
+  completion re-check, make it a clean no-op on IBU/install-only and prevent it from recording a
+  verdict against the still-healthy seed cluster if post-pivot fails before recert completes
+  (`After=` ordering alone would otherwise let it start). The handoff is written *early* (right
+  after the clock gate, before recert) to anchor the deadline, so it cannot double as the
+  completion gate.
 - **Idempotence and self-disable.** After writing either terminal verdict the unit disables
   itself (best-effort — a failed disable never demotes a success or skips the halt). An existing
   terminal verdict is never overwritten, so a reboot that re-runs the unit is a no-op. The
@@ -143,9 +149,11 @@ dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside p
 
 Recovery after a timeout failure requires **renewing the write-once convergence anchor** — so the
 writer gets a fresh deadline and polls convergence again instead of re-failing on the expired
-one — then clearing `reconfigure.json` **and** re-enabling the self-disabled unit. Automatic
-`installation-configuration.service` retries deliberately keep the original deadline, so only this
-explicit operator recovery grants a new anchor; see the
+one — then clearing `reconfigure.json`, **restoring the node to `multi-user.target`** (a `failure`
+isolates `emergency.target`, which stops the cluster services the node needs to converge), **and**
+re-enabling the self-disabled unit. Automatic `installation-configuration.service` retries
+deliberately keep the original deadline, so only this explicit operator recovery grants a new
+anchor; see the
 [troubleshooting guide](./troubleshooting.md#the-reconfigure-result-reconfigurejson) for the exact
 steps.
 

@@ -87,6 +87,28 @@ func TestWriteReconfigureHandoff_WriteOnce(t *testing.T) {
 	assert.False(t, strings.HasPrefix(common.ReconfigureHandoffFile, common.SeedDataDir))
 }
 
+// TestWriteReconfigureCompleted proves the post-pivot completion marker is written (idempotently)
+// and that it lives under common.LCAConfigDir -- which post-pivot cleanup() never touches -- so it
+// survives alongside the handoff and durably gates the result-writer.
+func TestWriteReconfigureCompleted(t *testing.T) {
+	markerDir := t.TempDir()
+	origPath := reconfigureCompletedFile
+	reconfigureCompletedFile = filepath.Join(markerDir, "reconfigure-completed")
+	t.Cleanup(func() { reconfigureCompletedFile = origPath })
+
+	pp := NewPostPivot(nil, logrus.New(), nil, "", t.TempDir(), "")
+
+	require.NoError(t, pp.writeReconfigureCompleted())
+	_, err := os.Stat(reconfigureCompletedFile)
+	require.NoError(t, err)
+
+	// Idempotent: a second call on a restarted post-pivot is a clean no-op.
+	require.NoError(t, pp.writeReconfigureCompleted())
+
+	// The real marker path is rooted under common.LCAConfigDir (which cleanup() never touches).
+	assert.True(t, strings.HasPrefix(common.ReconfigureCompletedFile, common.LCAConfigDir))
+}
+
 func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
 	pp := NewPostPivot(nil, logrus.New(), nil, "", "", "")
 	sshKeyFile := filepath.Join(t.TempDir(), "authorized_keys")

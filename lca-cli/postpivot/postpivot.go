@@ -283,6 +283,21 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		p.log.Warnf("failed to disable %s, err: %v", nmConnectionRestoreService, err)
 	}
 
+	return p.completeReconfigureAndCleanup(seedReconfiguration)
+}
+
+// completeReconfigureAndCleanup finalizes a successful post-pivot: it records the durable
+// completion marker (self-contained USB IBI only) that gates the reconfigure result-writer, then
+// runs cleanup. The marker is written here, after recert and manifests are applied, so the writer
+// never records a verdict against the still-healthy seed cluster if post-pivot fails before recert
+// finishes. It is kept out of PostPivotConfiguration so that function's cyclomatic complexity stays
+// within the linter budget.
+func (p *PostPivot) completeReconfigureAndCleanup(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
+		if err := p.writeReconfigureCompleted(); err != nil {
+			return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
+		}
+	}
 	return p.cleanup()
 }
 
@@ -307,6 +322,22 @@ func (p *PostPivot) writeReconfigureHandoff(seedReconfiguration *clusterconfig_a
 		reconfigureHandoffFile, handoff.PostPivotStartTime, handoff.ConvergenceTimeout)
 	if err := reconfigure.WriteHandoffOnce(reconfigureHandoffFile, handoff); err != nil {
 		return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+	}
+	return nil
+}
+
+// reconfigureCompletedFile is the path the self-contained post-pivot completion marker is written
+// to. It is a package var so unit tests can redirect the write to a temp file.
+var reconfigureCompletedFile = common.ReconfigureCompletedFile
+
+// writeReconfigureCompleted records the durable post-pivot completion marker that gates the
+// reconfigure result-writer, so the writer only decides a verdict once reconfiguration has
+// actually finished (recert and manifests applied) rather than against the still-healthy seed
+// cluster. See the gate in lca-cli/initmonitor/reconfigure.go and common.ReconfigureCompletedFile.
+func (p *PostPivot) writeReconfigureCompleted() error {
+	p.log.Infof("Writing reconfigure completion marker to %s", reconfigureCompletedFile)
+	if err := reconfigure.WriteCompletionMarker(reconfigureCompletedFile); err != nil {
+		return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
 	}
 	return nil
 }

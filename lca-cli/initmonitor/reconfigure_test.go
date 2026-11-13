@@ -56,23 +56,26 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 	s := &reconfigureStub{now: mustParse(testAnchor)}
 
 	orig := struct {
-		now         func() time.Time
-		sleep       func(time.Duration)
-		interval    time.Duration
-		readHandoff func(string) (*reconfigure.Handoff, error)
-		readResult  func(ops.Ops, *logrus.Logger) (*ibistatus.ReconfigureResult, error)
-		writeSucc   func(ops.Ops, *logrus.Logger, *ibistatus.ReconfigureResult) error
-		writeFail   func(ops.Ops, *logrus.Logger, *ibistatus.ReconfigureResult) error
-		halt        func(ops.Ops, *logrus.Logger, error) error
-		build       func(*InitMonitor) (runtimeclient.Client, error)
-		converged   func(context.Context, runtimeclient.Client) bool
-		disable     func(ops.Ops, *logrus.Logger) error
-		handoffPath string
+		now               func() time.Time
+		sleep             func(time.Duration)
+		interval          time.Duration
+		readHandoff       func(string) (*reconfigure.Handoff, error)
+		readResult        func(ops.Ops, *logrus.Logger) (*ibistatus.ReconfigureResult, error)
+		writeSucc         func(ops.Ops, *logrus.Logger, *ibistatus.ReconfigureResult) error
+		writeFail         func(ops.Ops, *logrus.Logger, *ibistatus.ReconfigureResult) error
+		halt              func(ops.Ops, *logrus.Logger, error) error
+		build             func(*InitMonitor) (runtimeclient.Client, error)
+		converged         func(context.Context, runtimeclient.Client) bool
+		disable           func(ops.Ops, *logrus.Logger) error
+		handoffPath       string
+		completionPresent func(string) (bool, error)
+		completedPath     string
 	}{
 		reconfigureNowUTC, reconfigureSleep, reconfigurePollInterval, readReconfigureHandoff,
 		readReconfigureResult, writeReconfigureSuccess, writeReconfigureFailure,
 		haltReconfigurePoweredOn, reconfigureBuildClient, reconfigureConvergenceMet,
 		reconfigureDisableUnit, reconfigureHandoffFilePath,
+		reconfigureCompletionPresent, reconfigureCompletedFilePath,
 	}
 	t.Cleanup(func() {
 		reconfigureNowUTC = orig.now
@@ -87,6 +90,8 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 		reconfigureConvergenceMet = orig.converged
 		reconfigureDisableUnit = orig.disable
 		reconfigureHandoffFilePath = orig.handoffPath
+		reconfigureCompletionPresent = orig.completionPresent
+		reconfigureCompletedFilePath = orig.completedPath
 	})
 
 	reconfigurePollInterval = time.Minute
@@ -119,6 +124,8 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 		s.events = append(s.events, eventDisable)
 		return s.disableErr
 	}
+	// By default post-pivot reconfiguration has completed, so the completion gate is open.
+	reconfigureCompletionPresent = func(string) (bool, error) { return true, nil }
 	return s
 }
 
@@ -318,7 +325,9 @@ func TestReconfigureResultWriter_AlreadyTerminal_Idempotent(t *testing.T) {
 }
 
 // TestReconfigureResultWriter_StartAfterDeadline proves a writer that starts after the deadline
-// goes straight to the failure path (req #5).
+// does not enter the polling loop and, when the final recheck confirms the node is still not
+// converged, goes to the failure path (req #5). The single convergence call is the final recheck,
+// not the deadline-bounded poll loop.
 func TestReconfigureResultWriter_StartAfterDeadline(t *testing.T) {
 	s := stubReconfigureSeams(t)
 	readReconfigureHandoff = func(string) (*reconfigure.Handoff, error) {
@@ -331,7 +340,61 @@ func TestReconfigureResultWriter_StartAfterDeadline(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, s.halted)
 	require.NotNil(t, s.failureResult)
-	assert.Zero(t, s.polls, "must not poll when started after the deadline")
+	// Exactly one convergence check — the final recheck — and no deadline-bounded poll loop (the
+	// stub's reconfigureSleep would advance the clock if the loop ran; it never runs here).
+	assert.Equal(t, 1, s.polls, "started-after-deadline must do one final recheck, not the poll loop")
+}
+
+// TestReconfigureResultWriter_FalseFailureAfterConvergence proves the fix for the DoR's "false
+// failure after successful convergence": a writer that starts after the original deadline (e.g. a
+// prior boot observed convergence but its success write failed, then the node rebooted past the
+// deadline) must NOT record a failure or halt if the node already satisfies the criterion. The
+// final recheck records success instead.
+func TestReconfigureResultWriter_FalseFailureAfterConvergence(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	readReconfigureHandoff = func(string) (*reconfigure.Handoff, error) {
+		return &reconfigure.Handoff{Profile: "self-contained", PostPivotStartTime: testAnchor, ConvergenceTimeout: "10m", SeedVersion: "4.18.3"}, nil
+	}
+	// Started well past the deadline, but the node is converged now.
+	s.now = mustParse(testAnchor).Add(2 * time.Hour)
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
+
+	require.NoError(t, newTestMonitor().RunReconfigureResultWriter())
+	require.NotNil(t, s.successResult)
+	assert.Equal(t, ibistatus.ResultSuccess, s.successResult.Result)
+	assert.Nil(t, s.failureResult, "a node that already converged must not be recorded as a failure")
+	assert.False(t, s.halted, "a converged node must never be halted")
+	assert.Equal(t, 1, s.disableCalls)
+	assert.Equal(t, []string{eventWriteSuccess, eventDisable}, s.events)
+}
+
+// TestReconfigureResultWriter_NoCompletionMarker_NoOp proves the completion gate: if post-pivot
+// reconfiguration has not finished (no completion marker) the writer is a clean no-op even though
+// the handoff exists, so it never records a verdict against the still-healthy seed cluster.
+func TestReconfigureResultWriter_NoCompletionMarker_NoOp(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	reconfigureCompletionPresent = func(string) (bool, error) { return false, nil }
+	// Even a converged cluster must not produce a verdict while reconfiguration is unfinished.
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
+
+	require.NoError(t, newTestMonitor().RunReconfigureResultWriter())
+	assert.Nil(t, s.successResult)
+	assert.Nil(t, s.failureResult)
+	assert.False(t, s.halted)
+	assert.Zero(t, s.disableCalls)
+	assert.Zero(t, s.polls, "must not poll before reconfiguration has completed")
+}
+
+// TestReconfigureResultWriter_CompletionCheckError_NoOp proves a genuine IO error checking the
+// completion marker is a fail-safe no-op (never halts on an uncertain state).
+func TestReconfigureResultWriter_CompletionCheckError_NoOp(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	reconfigureCompletionPresent = func(string) (bool, error) { return false, fmt.Errorf("stat failed") }
+
+	require.NoError(t, newTestMonitor().RunReconfigureResultWriter())
+	assert.Nil(t, s.successResult)
+	assert.Nil(t, s.failureResult)
+	assert.False(t, s.halted)
 }
 
 // TestReconfigureResultWriter_TimeoutConfig proves the configured/default/invalid timeout
