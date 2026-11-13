@@ -97,17 +97,44 @@ cat /mnt/ibi-status/reconfigure.json
 Both verdicts are **idempotent**: an existing terminal `success` or `failure` is never
 overwritten across reboots, so a later boot cannot flip a recorded verdict.
 
-**Recovery after a `failure`.** Clearing the failure is not enough. The convergence deadline is
-anchored **write-once** at `postPivotStartTime` in the durable handoff
-(`/var/lib/lca/reconfigure-handoff.json`), so simply re-running the writer keeps the original,
-now-expired deadline by design — it would immediately record `failure` again without ever
-polling convergence, even if the node has since converged. The result-writer unit also disables
-itself after writing a terminal verdict. A supported recovery therefore resolves the cause,
-grants the writer a **new** anchor, clears the verdict, and re-enables the unit. Run these **on
-the node** (a `failure` halts it powered-on, so it stays reachable):
+**Recovery after a `failure`.** First identify *which* failure you hit — the two have different
+recoveries, distinguished by the `error` message and by whether the durable handoff
+(`/var/lib/lca/reconfigure-handoff.json`) exists. A clock-gate failure happens **before** the
+handoff is created; a convergence timeout happens **after** it exists.
 
-1. Resolve the underlying cause (fix the clock / trusted time source, or address what blocked
-   convergence).
+**Clock-gate failure (before recert — no handoff yet).** The pre-recert clock gate runs *before*
+post-pivot writes the handoff, so on an implausible clock it records the `failure` and halts the
+node before recert — the result-writer never runs and no convergence anchor was ever created
+(`/var/lib/lca/reconfigure-handoff.json` is absent). Do **not** try to renew an anchor; there is
+none. Correct the clock and re-run post-pivot so the gate re-evaluates and, on success, writes the
+handoff that gates the result-writer. Run these **on the node**:
+
+1. Fix the clock / trusted time source so the gate will pass.
+2. Clear the recorded verdict:
+
+   ```console
+   sudo mount /dev/disk/by-label/ibi-status /mnt/ibi-status
+   sudo rm -f /mnt/ibi-status/reconfigure.json
+   sudo umount /mnt/ibi-status
+   ```
+
+3. Re-run post-pivot so the gate re-evaluates the corrected clock and, on success, writes the
+   handoff:
+
+   ```console
+   sudo systemctl restart installation-configuration.service
+   ```
+
+**Convergence timeout (after recert — handoff exists).** Clearing the failure is not enough. The
+convergence deadline is anchored **write-once** at `postPivotStartTime` in the durable handoff, so
+simply re-running the writer keeps the original, now-expired deadline by design — it would
+immediately record `failure` again without ever polling convergence, even if the node has since
+converged. The result-writer unit also disables itself after writing a terminal verdict. A
+supported recovery therefore resolves the cause, grants the writer a **new** anchor, clears the
+verdict, and re-enables the unit. Run these **on the node** (a `failure` halts it powered-on, so it
+stays reachable):
+
+1. Resolve what blocked convergence.
 2. Renew the convergence anchor by setting `postPivotStartTime` to the current time in the
    durable handoff. Do **not** delete the handoff — a missing handoff makes the writer a no-op,
    so no verdict is ever recorded:
