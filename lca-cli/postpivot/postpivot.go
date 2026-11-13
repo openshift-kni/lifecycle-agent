@@ -148,19 +148,6 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	seedReconfiguration.NodeIPs = seedReconfigurationNodeIPs(seedReconfiguration)
 	p.log.Infof("Seed reconfiguration node IPs: %v", seedReconfiguration.NodeIPs)
 
-	// Reconfigure result-writer handoff (self-contained USB IBI only): write the write-once
-	// durable handoff that anchors the convergence-timeout deadline at the first post-pivot
-	// start and gates the dedicated result-writer unit via ConditionPathExists. It is written
-	// before the clock gate and cleanup, under common.LCAConfigDir (which cleanup() never
-	// touches), so installation-configuration.service Restart=on-failure retries never reset
-	// the anchor. Only self-contained media carries the profile; IBU and install-only skip it,
-	// so the result-writer unit never starts on those profiles.
-	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
-		if err := p.writeReconfigureHandoff(seedReconfiguration, seedClusterInfo); err != nil {
-			return fmt.Errorf("failed to write reconfigure handoff: %w", err)
-		}
-	}
-
 	if err := utils.RunOnce("setSSHKey", p.workingDir, p.log, p.setSSHKey,
 		seedReconfiguration.SSHKey, sshKeyEarlyAccessFile); err != nil {
 		return fmt.Errorf("failed to run once setSSHKey for post pivot: %w", err)
@@ -195,6 +182,24 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 	gateChronyConfigActive, err := p.clockGateWithChronyConfig(seedReconfiguration, seedClusterInfo)
 	if err != nil {
 		return fmt.Errorf("pre-recert clock gate failed: %w", err)
+	}
+
+	// Reconfigure result-writer handoff (self-contained USB IBI only): write the write-once
+	// durable handoff that anchors the convergence-timeout deadline and gates the dedicated
+	// result-writer unit via ConditionPathExists. It is written AFTER the clock gate so the
+	// PostPivotStartTime anchor reflects the post-step clock: the gate's transient makestep
+	// policy may step the system clock forward, and anchoring before that step could place the
+	// deadline in the past and send the writer straight to the failure/halt path without ever
+	// polling convergence. The gate halts the node on an implausible clock, so reaching this
+	// point means the clock is trustworthy. It is written under common.LCAConfigDir (which
+	// cleanup() never touches) and is write-once, so installation-configuration.service
+	// Restart=on-failure retries preserve the original post-gate anchor rather than resetting it.
+	// Only self-contained media carries the profile; IBU and install-only skip it, so the
+	// result-writer unit never starts on those profiles.
+	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
+		if err := p.writeReconfigureHandoff(seedReconfiguration, seedClusterInfo); err != nil {
+			return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+		}
 	}
 
 	// NOTE: This must be done before we run recert, as otherwise recert could
@@ -286,9 +291,10 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 var reconfigureHandoffFile = common.ReconfigureHandoffFile
 
 // writeReconfigureHandoff writes the write-once durable handoff that drives the self-contained
-// reconfigure result-writer. The timestamp is captured from nowUTC (a package var) so the
-// first post-pivot run anchors the convergence-timeout deadline; the write-once semantics
-// preserve that anchor across Restart=on-failure retries.
+// reconfigure result-writer. The timestamp is captured from nowUTC (a package var) at the point
+// this runs -- after the pre-recert clock gate -- so the anchor reflects the gate's post-step
+// clock. The first post-pivot run to reach this point establishes the convergence-timeout
+// anchor; the write-once semantics preserve it across Restart=on-failure retries.
 func (p *PostPivot) writeReconfigureHandoff(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
 	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
 	handoff := &reconfigure.Handoff{

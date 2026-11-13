@@ -127,8 +127,9 @@ dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside p
 - **Timeout.** If the criterion is not met within the convergence timeout it writes a `failure`
   and halts the node **powered-on** via `emergency.target`. The timeout defaults to **60
   minutes** and is configurable via `siteConfig.reconfigureConvergenceTimeout` (create-usb). The
-  deadline is anchored at **post-pivot start**, captured **write-once** under `/var/lib/lca`
-  (which post-pivot cleanup never touches), so post-pivot retries never reset it.
+  deadline is anchored at **post-pivot start — after the pre-recert clock gate, so the anchor
+  reflects any clock step the gate makes** — captured **write-once** under `/var/lib/lca` (which
+  post-pivot cleanup never touches), so post-pivot retries never reset it.
 - **Gating.** The unit is ordered `After=installation-configuration.service` (ordering only,
   never `Requires=`/`Requisite=`, because the `RemainAfterExit=no` post-pivot goes inactive on
   success) and `WantedBy=multi-user.target`. It runs with `TimeoutStartSec=0` so systemd never
@@ -140,8 +141,13 @@ dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside p
   pre-recert clock-gate carve-out is the one case the result-writer never runs: the halt before
   recert prevents the node from reaching `multi-user.target`.
 
-Recovery after a timeout failure requires clearing `reconfigure.json` **and** re-enabling the
-self-disabled unit; see the [troubleshooting guide](./troubleshooting.md#the-reconfigure-result-reconfigurejson).
+Recovery after a timeout failure requires **renewing the write-once convergence anchor** — so the
+writer gets a fresh deadline and polls convergence again instead of re-failing on the expired
+one — then clearing `reconfigure.json` **and** re-enabling the self-disabled unit. Automatic
+`installation-configuration.service` retries deliberately keep the original deadline, so only this
+explicit operator recovery grants a new anchor; see the
+[troubleshooting guide](./troubleshooting.md#the-reconfigure-result-reconfigurejson) for the exact
+steps.
 
 ## User specifications
 

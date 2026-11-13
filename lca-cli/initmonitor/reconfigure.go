@@ -194,16 +194,16 @@ func (m *InitMonitor) RunReconfigureResultWriter() error {
 		}
 	}
 
-	// 5. Success: record the verdict and keep the node running; self-disable is best-effort.
+	// 5. Success: record the verdict first, then keep the node running; self-disable is
+	// best-effort and runs ONLY after the verdict is persisted. Disabling before the verdict
+	// lands would defeat the next-boot retry promised on the write-failure path below.
 	if converged {
 		log.Info("reconfigure result-writer: convergence criterion met; recording success")
 		if werr := writeReconfigureSuccess(m.ops, log, m.reconfigureResult(handoff, ibistatus.ResultSuccess, nil)); werr != nil {
-			log.Errorf("reconfigure result-writer: failed to record the success verdict: %v", werr)
-			if derr := reconfigureDisableUnit(m.ops, log); derr != nil {
-				log.Errorf("reconfigure result-writer: failed to disable the unit after a failed success write: %v", derr)
-			}
-			// Surface the write error so the unit is retried on the next boot (the idempotence
-			// guard protects an already-recorded verdict).
+			// Do NOT disable the unit here: the verdict was not persisted, so the unit must stay
+			// enabled to re-run and record the verdict on the next boot. Surface the write error so
+			// systemd retries it (the idempotence guard protects an already-recorded verdict).
+			log.Errorf("reconfigure result-writer: failed to record the success verdict (unit left enabled for a next-boot retry): %v", werr)
 			return fmt.Errorf("failed to record reconfigure success: %w", werr)
 		}
 		if derr := reconfigureDisableUnit(m.ops, log); derr != nil {

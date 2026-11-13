@@ -97,22 +97,44 @@ cat /mnt/ibi-status/reconfigure.json
 Both verdicts are **idempotent**: an existing terminal `success` or `failure` is never
 overwritten across reboots, so a later boot cannot flip a recorded verdict.
 
-**Recovery after a `failure`.** Clearing the failure is not enough — the result-writer unit
-disables itself after writing a terminal verdict, so it must be re-enabled:
+**Recovery after a `failure`.** Clearing the failure is not enough. The convergence deadline is
+anchored **write-once** at `postPivotStartTime` in the durable handoff
+(`/var/lib/lca/reconfigure-handoff.json`), so simply re-running the writer keeps the original,
+now-expired deadline by design — it would immediately record `failure` again without ever
+polling convergence, even if the node has since converged. The result-writer unit also disables
+itself after writing a terminal verdict. A supported recovery therefore resolves the cause,
+grants the writer a **new** anchor, clears the verdict, and re-enables the unit. Run these **on
+the node** (a `failure` halts it powered-on, so it stays reachable):
 
 1. Resolve the underlying cause (fix the clock / trusted time source, or address what blocked
    convergence).
-2. Clear the recorded verdict so the writers no longer treat it as terminal:
+2. Renew the convergence anchor by setting `postPivotStartTime` to the current time in the
+   durable handoff. Do **not** delete the handoff — a missing handoff makes the writer a no-op,
+   so no verdict is ever recorded:
 
    ```console
-   sudo rm -f /mnt/ibi-status/reconfigure.json
+   sudo sed -i "s|\"postPivotStartTime\": \".*\"|\"postPivotStartTime\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"|" \
+     /var/lib/lca/reconfigure-handoff.json
    ```
 
-3. Re-enable and start the result-writer unit on the node:
+3. Clear the recorded verdict so the writers no longer treat it as terminal, then unmount so the
+   result-writer can remount the partition itself:
+
+   ```console
+   sudo mount /dev/disk/by-label/ibi-status /mnt/ibi-status
+   sudo rm -f /mnt/ibi-status/reconfigure.json
+   sudo umount /mnt/ibi-status
+   ```
+
+4. Re-enable and start the result-writer unit:
 
    ```console
    sudo systemctl enable --now lca-reconfigure-result-writer.service
    ```
+
+> Only this explicit operator recovery renews the anchor. Automatic
+> `installation-configuration.service` `Restart=on-failure` retries deliberately keep the original
+> write-once deadline unchanged, so they never silently extend the convergence window.
 
 ## Manual cleanup
 

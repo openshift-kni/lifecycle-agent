@@ -173,7 +173,12 @@ func writeTerminalResult(o ops.Ops, log *logrus.Logger, result *ReconfigureResul
 	}()
 
 	if existing, rerr := readReconfigureResultAt(log, sp.mountDir); rerr != nil {
-		log.Warnf("reconfigure: could not read the existing reconfigure result (proceeding to write): %v", rerr)
+		// A genuine IO read error (not a missing or malformed file -- both return (nil, nil)) means
+		// we cannot confirm whether a terminal verdict already exists. Return the error rather than
+		// writing: overwriting a verdict we could not read would violate the write-once guarantee
+		// and could replace a recorded failure with a success. The clock gate's WriteFailureAndHalt
+		// logs this error and halts regardless, so the pre-recert safety invariant is preserved.
+		return fmt.Errorf("could not read the existing reconfigure result (not overwriting): %w", rerr)
 	} else if existing.IsTerminal() {
 		log.Infof("reconfigure: reconfigure.json already records a terminal %q verdict; not overwriting", existing.Result)
 		return nil

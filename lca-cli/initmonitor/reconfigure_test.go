@@ -35,7 +35,18 @@ type reconfigureStub struct {
 	haltCause     error
 	polls         int
 	now           time.Time
+	// events records the terminal actions in the exact order they happened, so tests can assert
+	// the real write -> disable -> halt sequence rather than merely that each action occurred.
+	events []string
 }
+
+// Event names recorded in reconfigureStub.events, one per terminal action seam.
+const (
+	eventWriteSuccess = "write-success"
+	eventWriteFailure = "write-failure"
+	eventDisable      = "disable"
+	eventHalt         = "halt"
+)
 
 // stubReconfigureSeams installs recording/deterministic seams and restores the originals.
 // By default: no handoff on disk unless set, no existing result, convergence never met,
@@ -87,20 +98,27 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 	readReconfigureResult = func(ops.Ops, *logrus.Logger) (*ibistatus.ReconfigureResult, error) { return nil, nil }
 	writeReconfigureSuccess = func(_ ops.Ops, _ *logrus.Logger, r *ibistatus.ReconfigureResult) error {
 		s.successResult = r
+		s.events = append(s.events, eventWriteSuccess)
 		return s.writeSuccErr
 	}
 	writeReconfigureFailure = func(_ ops.Ops, _ *logrus.Logger, r *ibistatus.ReconfigureResult) error {
 		s.failureResult = r
+		s.events = append(s.events, eventWriteFailure)
 		return s.writeFailErr
 	}
 	haltReconfigurePoweredOn = func(_ ops.Ops, _ *logrus.Logger, cause error) error {
 		s.halted = true
 		s.haltCause = cause
+		s.events = append(s.events, eventHalt)
 		return cause
 	}
 	reconfigureBuildClient = func(*InitMonitor) (runtimeclient.Client, error) { return nil, nil }
 	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { s.polls++; return false }
-	reconfigureDisableUnit = func(ops.Ops, *logrus.Logger) error { s.disableCalls++; return s.disableErr }
+	reconfigureDisableUnit = func(ops.Ops, *logrus.Logger) error {
+		s.disableCalls++
+		s.events = append(s.events, eventDisable)
+		return s.disableErr
+	}
 	return s
 }
 
@@ -155,6 +173,26 @@ func TestReconfigureResultWriter_Success(t *testing.T) {
 	assert.Equal(t, 1, s.disableCalls)
 	assert.False(t, s.halted)
 	assert.Nil(t, s.failureResult)
+	// The verdict must be persisted before the unit self-disables, and no halt occurs on success.
+	assert.Equal(t, []string{eventWriteSuccess, eventDisable}, s.events)
+}
+
+// TestReconfigureResultWriter_SuccessWriteFailure_KeepsUnitEnabled proves that when the success
+// verdict cannot be persisted the writer does NOT disable the unit (so the next boot retries)
+// and returns the write error (CodeRabbit/codex: disable only after the verdict is persisted).
+func TestReconfigureResultWriter_SuccessWriteFailure_KeepsUnitEnabled(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	s.writeSuccErr = fmt.Errorf("p4 write failed")
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
+
+	err := newTestMonitor().RunReconfigureResultWriter()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, s.writeSuccErr)
+	require.NotNil(t, s.successResult)
+	assert.Zero(t, s.disableCalls, "unit must stay enabled so the next boot can retry the success write")
+	assert.False(t, s.halted, "a failed success write must never halt the node")
+	// Only the attempted write happened: no disable, no halt.
+	assert.Equal(t, []string{eventWriteSuccess}, s.events)
 }
 
 // TestReconfigureResultWriter_Timeout proves that when the criterion is never met the writer
@@ -175,6 +213,8 @@ func TestReconfigureResultWriter_Timeout(t *testing.T) {
 	assert.ErrorIs(t, err, s.haltCause)
 	assert.Contains(t, err.Error(), "3m")
 	assert.Positive(t, s.polls, "should have polled before the deadline")
+	// The failure path must run strictly in order: record the verdict, self-disable, then halt.
+	assert.Equal(t, []string{eventWriteFailure, eventDisable, eventHalt}, s.events)
 }
 
 // TestReconfigureResultWriter_WriteFailureStillHalts proves a failed failure-write never
@@ -190,6 +230,8 @@ func TestReconfigureResultWriter_WriteFailureStillHalts(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 1, s.disableCalls)
 	assert.True(t, s.halted)
+	// A failed failure-write still keeps the ordered write -> disable -> halt sequence.
+	assert.Equal(t, []string{eventWriteFailure, eventDisable, eventHalt}, s.events)
 }
 
 // TestReconfigureResultWriter_DisableFailureStillHalts proves a failed self-disable never
