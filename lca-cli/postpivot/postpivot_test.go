@@ -30,12 +30,156 @@ import (
 
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/openshift-kni/lifecycle-agent/internal/reconfigure"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/utils"
 )
+
+// TestWriteReconfigureHandoff_WriteOnce proves the self-contained handoff is written with the
+// post-pivot start anchor on the first run and preserved across a restart (Codex #1 +
+// Steven #2), and that it lives outside the two directories post-pivot cleanup() removes
+// (p.workingDir and common.SeedDataDir) and under common.LCAConfigDir -- so it survives the
+// Restart=on-failure retries and cleanup.
+func TestWriteReconfigureHandoff_WriteOnce(t *testing.T) {
+	handoffDir := t.TempDir()
+	origPath := reconfigureHandoffFile
+	reconfigureHandoffFile = filepath.Join(handoffDir, "reconfigure-handoff.json")
+	t.Cleanup(func() { reconfigureHandoffFile = origPath })
+
+	origNow := nowUTC
+	t.Cleanup(func() { nowUTC = origNow })
+
+	workingDir := t.TempDir()
+	pp := NewPostPivot(nil, logrus.New(), nil, "", workingDir, "")
+	seedReconfig := &clusterconfig_api.SeedReconfiguration{
+		Profile:                       clusterconfig_api.ProfileSelfContained,
+		ReconfigureConvergenceTimeout: "90m",
+	}
+	seedClusterInfo := &seedclusterinfo.SeedClusterInfo{SeedClusterOCPVersion: "4.18.3"}
+
+	// First post-pivot run captures the anchor.
+	nowUTC = func() time.Time { return rfc3339("2026-01-01T00:00:00Z") }
+	require.NoError(t, pp.writeReconfigureHandoff(seedReconfig, seedClusterInfo))
+
+	first, err := reconfigure.ReadHandoff(reconfigureHandoffFile)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, clusterconfig_api.ProfileSelfContained, first.Profile)
+	assert.Equal(t, "90m", first.ConvergenceTimeout)
+	assert.Equal(t, "2026-01-01T00:00:00Z", first.PostPivotStartTime)
+	assert.Equal(t, "4.18.3", first.SeedVersion)
+
+	// A restarted post-pivot re-runs the write; the original anchor must be preserved.
+	nowUTC = func() time.Time { return rfc3339("2026-06-01T12:00:00Z") }
+	require.NoError(t, pp.writeReconfigureHandoff(seedReconfig, seedClusterInfo))
+	second, err := reconfigure.ReadHandoff(reconfigureHandoffFile)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.Equal(t, "2026-01-01T00:00:00Z", second.PostPivotStartTime)
+
+	// cleanup() removes only p.workingDir and common.SeedDataDir; the real handoff path is
+	// rooted under common.LCAConfigDir, which is neither, so the handoff survives.
+	assert.True(t, strings.HasPrefix(common.ReconfigureHandoffFile, common.LCAConfigDir))
+	assert.False(t, strings.HasPrefix(common.ReconfigureHandoffFile, workingDir))
+	assert.False(t, strings.HasPrefix(common.ReconfigureHandoffFile, common.SeedDataDir))
+}
+
+// TestWriteReconfigureCompleted proves the post-pivot completion marker is written (idempotently)
+// and that it lives under common.LCAConfigDir -- which post-pivot cleanup() never touches -- so it
+// survives alongside the handoff and durably gates the result-writer.
+func TestWriteReconfigureCompleted(t *testing.T) {
+	markerDir := t.TempDir()
+	origPath := reconfigureCompletedFile
+	reconfigureCompletedFile = filepath.Join(markerDir, "reconfigure-completed")
+	t.Cleanup(func() { reconfigureCompletedFile = origPath })
+
+	pp := NewPostPivot(nil, logrus.New(), nil, "", t.TempDir(), "")
+
+	require.NoError(t, pp.writeReconfigureCompleted())
+	_, err := os.Stat(reconfigureCompletedFile)
+	require.NoError(t, err)
+
+	// Idempotent: a second call on a restarted post-pivot is a clean no-op.
+	require.NoError(t, pp.writeReconfigureCompleted())
+
+	// The real marker path is rooted under common.LCAConfigDir (which cleanup() never touches).
+	assert.True(t, strings.HasPrefix(common.ReconfigureCompletedFile, common.LCAConfigDir))
+}
+
+// TestCompleteReconfigure proves completeReconfigure writes the marker and kicks the result-writer
+// for the current boot. The in-boot start is retried on transient failure but stays non-fatal --
+// a start that never succeeds must not strand post-pivot, since the unit still runs on the next
+// boot via its boot-time activation and condition gate. Non-self-contained profiles are a no-op.
+func TestCompleteReconfigure(t *testing.T) {
+	origDelay := reconfigureResultWriterStartRetryDelay
+	reconfigureResultWriterStartRetryDelay = 0
+	t.Cleanup(func() { reconfigureResultWriterStartRetryDelay = origDelay })
+
+	testcases := []struct {
+		name         string
+		profile      string
+		startErrs    []error // one entry per expected start attempt
+		expectMarker bool
+		expectErr    bool
+	}{
+		{
+			name:         "non-self-contained is a no-op",
+			profile:      clusterconfig_api.ProfileInstallOnly,
+			startErrs:    nil,
+			expectMarker: false,
+			expectErr:    false,
+		},
+		{
+			name:         "self-contained writes marker and starts writer first try",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{nil},
+			expectMarker: true,
+			expectErr:    false,
+		},
+		{
+			name:         "transient start failure is retried then succeeds",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{fmt.Errorf("transient"), nil},
+			expectMarker: true,
+			expectErr:    false,
+		},
+		{
+			name:         "start failing every attempt stays non-fatal",
+			profile:      clusterconfig_api.ProfileSelfContained,
+			startErrs:    []error{fmt.Errorf("boom"), fmt.Errorf("boom"), fmt.Errorf("boom")},
+			expectMarker: true,
+			expectErr:    false,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			markerDir := t.TempDir()
+			origPath := reconfigureCompletedFile
+			reconfigureCompletedFile = filepath.Join(markerDir, "reconfigure-completed")
+			t.Cleanup(func() { reconfigureCompletedFile = origPath })
+
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			pp := NewPostPivot(nil, logrus.New(), mockOps, "", t.TempDir(), "")
+
+			for _, err := range tc.startErrs {
+				mockOps.EXPECT().
+					SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService).
+					Return("", err).
+					Times(1)
+			}
+
+			err := pp.completeReconfigure(&clusterconfig_api.SeedReconfiguration{Profile: tc.profile})
+			assert.Equal(t, tc.expectErr, err != nil, err)
+
+			_, statErr := os.Stat(reconfigureCompletedFile)
+			assert.Equal(t, tc.expectMarker, statErr == nil)
+		})
+	}
+}
 
 func TestSetSSHKeyWhitespaceIsOmitted(t *testing.T) {
 	pp := NewPostPivot(nil, logrus.New(), nil, "", "", "")

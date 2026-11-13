@@ -18,10 +18,14 @@ const ImageBasedInstallConfigVersion = "v1beta1"
 
 const (
 	// ProfileInstallOnly media installs the seed and powers the node off on success.
-	ProfileInstallOnly = "install-only"
+	//
+	// The profile-marker constants are owned by api/seedreconfig (the single source of
+	// truth, reachable without an import cycle by both the build-time and runtime flows);
+	// these aliases preserve every existing api/ibiconfig reference.
+	ProfileInstallOnly = seedreconfig.ProfileInstallOnly
 	// ProfileSelfContained media installs the seed and then reconfigures the node from
 	// an on-media site configuration without contacting the network.
-	ProfileSelfContained = "self-contained"
+	ProfileSelfContained = seedreconfig.ProfileSelfContained
 )
 
 const (

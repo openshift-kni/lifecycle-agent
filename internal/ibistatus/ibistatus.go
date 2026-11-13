@@ -129,44 +129,133 @@ func findStatusPartition(blockDevices []ops.BlockDevice) (ops.BlockDevice, bool,
 	return matches[0], true, nil
 }
 
-// WriteFailureAndHalt records a terminal reconfigure failure on the ibi-status partition and
-// halts the node powered-on. The fixed order mirrors the prepare phase's finalizeDisconnected:
-// mount p4 -> durable write of reconfigure.json -> sync -> unmount -> isolate emergency.target.
+// IsTerminal reports whether a result records a terminal reconfigure verdict (success or
+// failure). The idempotence guard never overwrites such a record.
+func (r *ReconfigureResult) IsTerminal() bool {
+	return r != nil && (r.Result == ResultSuccess || r.Result == ResultFailure)
+}
+
+// WriteSuccess records a terminal reconfigure success on the ibi-status partition and does
+// NOT halt. It is the reconfigure result-writer's success path: the node keeps running once
+// the convergence criterion is met. Like WriteFailure it is guarded by the write-only
+// idempotence check, so it never overwrites an existing terminal verdict.
+func WriteSuccess(o ops.Ops, log *logrus.Logger, result *ReconfigureResult) error {
+	return writeTerminalResult(o, log, result)
+}
+
+// WriteFailure records a terminal reconfigure failure on the ibi-status partition and does
+// NOT halt. It is the write-only half of WriteFailureAndHalt: the clock gate pairs it with an
+// unconditional halt, while the result-writer orders it before a best-effort unit-disable and
+// an unconditional halt. It returns any write/mount error (or nil when the idempotence guard
+// no-ops the write).
+func WriteFailure(o ops.Ops, log *logrus.Logger, result *ReconfigureResult) error {
+	return writeTerminalResult(o, log, result)
+}
+
+// writeTerminalResult mounts the ibi-status (p4) partition read-write and durably writes the
+// terminal reconfigure.json record (mount -> durable write -> sync -> unmount), with no halt.
 //
-// Safety takes precedence over recording: on a bad clock the invariant is that recert must
-// never run, so a failure to mount, write, sync, or unmount is logged but never prevents the
-// powered-on halt. The returned error is cause (wrapped if the isolate itself fails); the
-// caller returns it from the post-pivot flow so the process aborts before recert even if the
-// isolate did not take.
-func WriteFailureAndHalt(o ops.Ops, log *logrus.Logger, result *ReconfigureResult, cause error) error {
-	sp, err := mountStatusPartition(o)
+// Idempotence guard (global, write-only): if a terminal verdict (success or failure) is
+// already recorded it skips the write and returns nil, so neither verdict is ever overwritten
+// across reboots. The read happens under the same mount as the write, so there is no
+// read-then-write race. The guard lives here, inside the writers, so the clock gate (via
+// WriteFailureAndHalt) inherits it for free; crucially it suppresses only the p4 write and
+// never a terminal action (WriteFailureAndHalt halts regardless of what this returns).
+func writeTerminalResult(o ops.Ops, log *logrus.Logger, result *ReconfigureResult) error {
+	sp, err := mountStatusPartition(o, false)
 	if err != nil {
-		// p4 is unavailable; the failure cannot be recorded, but the node must still not
-		// proceed to recert: halt powered-on with the original cause.
-		log.Errorf("clock gate: failed to mount ibi-status partition to record the failure (halting powered-on regardless): %v", err)
-		return haltPoweredOn(o, log, cause)
+		return err
+	}
+	defer func() {
+		if uerr := sp.unmount(); uerr != nil {
+			log.Warnf("reconfigure: failed to unmount ibi-status partition: %v", uerr)
+		}
+	}()
+
+	if existing, rerr := readReconfigureResultAt(log, sp.mountDir); rerr != nil {
+		// A genuine IO read error (not a missing or malformed file -- both return (nil, nil)) means
+		// we cannot confirm whether a terminal verdict already exists. Return the error rather than
+		// writing: overwriting a verdict we could not read would violate the write-once guarantee
+		// and could replace a recorded failure with a success. The clock gate's WriteFailureAndHalt
+		// logs this error and halts regardless, so the pre-recert safety invariant is preserved.
+		return fmt.Errorf("could not read the existing reconfigure result (not overwriting): %w", rerr)
+	} else if existing.IsTerminal() {
+		log.Infof("reconfigure: reconfigure.json already records a terminal %q verdict; not overwriting", existing.Result)
+		return nil
 	}
 
 	if werr := sp.writeResult(result); werr != nil {
-		log.Errorf("clock gate: failed to write reconfigure failure record (halting powered-on regardless): %v", werr)
+		return werr
 	}
+	// Flush the whole filesystem so the record survives a power loss. Best-effort: a sync
+	// failure is logged but does not fail the write that already landed.
+	if _, serr := o.RunInHostNamespace("sync"); serr != nil {
+		log.Warnf("reconfigure: failed to sync filesystems after writing the result: %v", serr)
+	}
+	return nil
+}
 
-	// Flush the whole filesystem so the record survives a power loss, then unmount before the
-	// terminal action. Both are best-effort: a failure here never prevents the halt.
-	if _, err := o.RunInHostNamespace("sync"); err != nil {
-		log.Warnf("clock gate: failed to sync filesystems before halt: %v", err)
+// WriteFailureAndHalt records a terminal reconfigure failure on the ibi-status partition and
+// then ALWAYS halts the node powered-on. It is the clock gate's single caller: on a bad clock
+// the invariant is that recert must never run, so the write is best-effort while the halt is
+// mandatory.
+//
+// Explicitly NOT the anti-pattern `if err := WriteFailure(...); err != nil { return err }` --
+// that would let a p4 mount/write/sync/unmount failure, or an idempotence-guard no-op, skip
+// the halt and let the node proceed to recert on a bad clock. The returned error is cause
+// (wrapped if the isolate itself fails); the caller returns it from the post-pivot flow so the
+// process aborts before recert even if the isolate did not take.
+func WriteFailureAndHalt(o ops.Ops, log *logrus.Logger, result *ReconfigureResult, cause error) error {
+	if err := WriteFailure(o, log, result); err != nil {
+		// Logged but NEVER returned early -- safety invariant: halt regardless.
+		log.Errorf("clock gate: failed to record reconfigure failure (halting powered-on regardless): %v", err)
 	}
-	if err := sp.unmount(); err != nil {
-		log.Warnf("clock gate: failed to unmount ibi-status partition before halt: %v", err)
-	}
+	return HaltPoweredOn(o, log, cause)
+}
 
-	return haltPoweredOn(o, log, cause)
+// ReadReconfigureResult mounts the ibi-status (p4) partition read-only, reads reconfigure.json
+// if present, and unmounts. It returns the parsed result, or (nil, nil) when there is no valid
+// terminal verdict to honour: an absent file is a clean not-found, and a malformed/corrupt
+// file is treated as "no valid terminal verdict" (logged, not an error) so a bad file never
+// wedges the node. A genuine mount/IO failure is returned as an error.
+func ReadReconfigureResult(o ops.Ops, log *logrus.Logger) (*ReconfigureResult, error) {
+	sp, err := mountStatusPartition(o, true)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if uerr := sp.unmount(); uerr != nil {
+			log.Warnf("reconfigure: failed to unmount ibi-status partition after read: %v", uerr)
+		}
+	}()
+	return readReconfigureResultAt(log, sp.mountDir)
+}
+
+// readReconfigureResultAt reads and parses reconfigure.json from an already-mounted p4 root.
+// A missing file returns (nil, nil); a malformed file is logged and also returns (nil, nil) so
+// a corrupt record never wedges the node. Only an IO error other than not-exist is returned.
+func readReconfigureResultAt(log *logrus.Logger, mountDir string) (*ReconfigureResult, error) {
+	resultPath := filepath.Join(mountDir, common.ReconfigureResultFileName)
+	data, err := os.ReadFile(resultPath) //nolint:gosec // resultPath is the mounted p4 root the caller controls
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read reconfigure result %s: %w", resultPath, err)
+	}
+	var result ReconfigureResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		log.Warnf("reconfigure: ignoring malformed reconfigure result %s (treated as no verdict): %v", resultPath, err)
+		return nil, nil
+	}
+	return &result, nil
 }
 
 // mountStatusPartition discovers the writable ibi-status (p4) partition by its filesystem
-// label, requires exactly one such ext4 device, and mounts it read-write. It returns an
-// idempotent unmount closure.
-func mountStatusPartition(o ops.Ops) (*statusPartition, error) {
+// label, requires exactly one such ext4 device, and mounts it. When readOnly is set it mounts
+// read-only (used by the result reader); otherwise it mounts read-write (used by the writers).
+// It returns an idempotent unmount closure.
+func mountStatusPartition(o ops.Ops, readOnly bool) (*statusPartition, error) {
 	blockDevices, err := o.ListBlockDevices()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list block devices: %w", err)
@@ -181,7 +270,11 @@ func mountStatusPartition(o ops.Ops) (*statusPartition, error) {
 	}
 	deviceName := device.Name
 
-	if err := o.Mount(deviceName, statusMountDir); err != nil {
+	mount := o.Mount
+	if readOnly {
+		mount = o.MountReadOnly
+	}
+	if err := mount(deviceName, statusMountDir); err != nil {
 		return nil, fmt.Errorf("failed to mount ibi-status device %s: %w", deviceName, err)
 	}
 
@@ -200,10 +293,12 @@ func mountStatusPartition(o ops.Ops) (*statusPartition, error) {
 	return &statusPartition{deviceName: deviceName, mountDir: statusMountDir, unmount: unmount}, nil
 }
 
-// haltPoweredOn transitions the node to the emergency target, leaving it powered on and
-// reachable rather than powering it off, and returns cause.
-func haltPoweredOn(o ops.Ops, log *logrus.Logger, cause error) error {
-	log.Errorf("clock gate: halting node powered-on (%s): %v", emergencyTarget, cause)
+// HaltPoweredOn transitions the node to the emergency target, leaving it powered on and
+// reachable rather than powering it off, and returns cause. It is the shared terminal action
+// for both the clock gate (via WriteFailureAndHalt) and the reconfigure result-writer's
+// timeout path (write -> disable -> halt).
+func HaltPoweredOn(o ops.Ops, log *logrus.Logger, cause error) error {
+	log.Errorf("reconfigure: halting node powered-on (%s): %v", emergencyTarget, cause)
 	if _, err := o.SystemctlAction("isolate", emergencyTarget); err != nil {
 		return fmt.Errorf("%w; additionally failed to halt powered-on via %s: %s", cause, emergencyTarget, err.Error())
 	}
@@ -215,10 +310,11 @@ func haltPoweredOn(o ops.Ops, log *logrus.Logger, cause error) error {
 // directory fsync), so a reader never observes a half-written file and the record survives a
 // power loss before the terminal action.
 //
-// Unlike prepare.json, reconfigure.json has no "preserve success" guard: a reconfigure
-// failure is a recoverable condition (an operator fixes the clock or adds a trusted time
-// source and reboots), so the file always reflects the most recent attempt and a later
-// recovering boot overwrites a failure.
+// This is the unconditional low-level write: it always overwrites. The terminal-verdict
+// idempotence guard lives one level up, in writeTerminalResult, so an existing success or
+// failure is never overwritten across reboots. Recovery tooling that must force a rewrite
+// deletes reconfigure.json first (which makes the guard a clean no-op) and lets the next boot
+// record a fresh verdict.
 func (sp *statusPartition) writeResult(result *ReconfigureResult) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {

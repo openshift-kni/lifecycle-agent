@@ -63,6 +63,140 @@ USB stick (or the node's p4 partition) to a workstation.
 See [create-usb.md](./create-usb.md#the-ibi-status-p4-partition-and-per-phase-results) for
 the full p4 contract and schema.
 
+### The reconfigure result (`reconfigure.json`)
+
+On **self-contained** media the same `ibi-status` (p4) partition also records the
+**reconfigure convergence verdict** at `reconfigure.json`, written after the node pivots into
+the installed disk and reconfigures itself. Two independent writers may produce it, but it is
+single-owner per outcome:
+
+- The **pre-recert clock gate** writes a `failure` (with a `clock` section) if the system clock
+  is implausible before recert — the node halts powered-on and recert never runs.
+- The **reconfigure result-writer** (a dedicated `lca-reconfigure-result-writer.service` unit)
+  owns the convergence verdict after recert: `success` once the node is `Ready` and all cluster
+  operators have converged, or `failure` if that criterion is not met within the convergence
+  timeout (default **60 minutes**, configurable via `siteConfig.reconfigureConvergenceTimeout`).
+
+Read it the same way as `prepare.json`:
+
+```console
+cat /mnt/ibi-status/reconfigure.json
+```
+
+- `result: "success"` — the node converged; it keeps running and the result-writer unit
+  disables itself. Nothing to do.
+- `result: "failure"` — convergence was not reached in time (or the clock gate failed before
+  recert); `error` carries the message. The node **halts powered-on** (emergency target) so it
+  stays reachable.
+
+> **Keep the USB inserted during reconfigure.** The result-writer writes `reconfigure.json`
+> to the USB's p4 partition after the pivot, so the stick must remain inserted until a terminal
+> verdict is recorded. Only stop booting from the USB (change the boot order) rather than
+> physically removing it before the verdict lands.
+
+Both verdicts are **idempotent**: an existing terminal `success` or `failure` is never
+overwritten across reboots, so a later boot cannot flip a recorded verdict.
+
+**Recovery after a `failure`.** First identify *which* failure you hit — the two have different
+recoveries, distinguished by the `error` message and by whether the durable handoff
+(`/var/lib/lca/reconfigure-handoff.json`) exists. A clock-gate failure happens **before** the
+handoff is created; a convergence timeout happens **after** it exists.
+
+**Clock-gate failure (before recert — no handoff yet).** The pre-recert clock gate runs *before*
+post-pivot writes the handoff, so on an implausible clock it records the `failure` and halts the
+node before recert — the result-writer never runs and no convergence anchor was ever created
+(`/var/lib/lca/reconfigure-handoff.json` is absent). Do **not** try to renew an anchor; there is
+none. Correct the clock and re-run post-pivot so the gate re-evaluates and, on success, writes the
+handoff that gates the result-writer. Run these **on the node**:
+
+1. Fix the clock / trusted time source so the gate will pass.
+2. Clear the recorded verdict:
+
+   ```console
+   sudo mount /dev/disk/by-label/ibi-status /mnt/ibi-status
+   sudo rm -f /mnt/ibi-status/reconfigure.json
+   sudo umount /mnt/ibi-status
+   ```
+
+3. Return the node to normal operation and re-run post-pivot. A clock-gate `failure` halts the
+   node by isolating `emergency.target`, so cluster services are stopped.
+   `installation-configuration.service` is still enabled (post-pivot halted before disabling it),
+   so the cleanest recovery is a **reboot** — the node comes up in `multi-user.target`, the gate
+   re-evaluates the corrected clock, and on success post-pivot writes the handoff (which lets the
+   result-writer start) **and** the completion marker (which lets it record success):
+
+   ```console
+   sudo systemctl reboot
+   ```
+
+   If a reboot is undesirable, return to `multi-user.target` in place. Because
+   `installation-configuration.service` is still enabled, isolating the target re-runs post-pivot
+   **once**; on success post-pivot writes the handoff and completion marker and then starts the
+   result-writer itself, so no further commands are needed:
+
+   ```console
+   sudo systemctl isolate multi-user.target
+   ```
+
+   Do **not** run `sudo systemctl restart installation-configuration.service` afterward. That first
+   post-pivot run completes and its cleanup removes the configuration directory, so a second run
+   would find no configuration and wait indefinitely, blocking recovery.
+
+**Convergence timeout (after recert — handoff exists).** Clearing the failure is not enough. The
+convergence deadline is anchored **write-once** at `postPivotStartTime` in the durable handoff, so
+simply re-running the writer keeps the original, now-expired deadline by design. Past that deadline
+the writer makes a single live convergence recheck before deciding: if the node has **already**
+converged it records `success`, but if convergence is still pending it records `failure` without
+polling, so a node that only converges a little after you clear the blocker would still be failed.
+The result-writer unit also disables itself after writing a terminal verdict. A supported recovery
+therefore resolves the cause, grants the writer a **new** anchor (so it polls afresh instead of
+relying on the one-shot recheck), clears the verdict, and re-enables the unit. Run these **on the
+node** (a `failure` halts it powered-on, so it stays reachable):
+
+1. Resolve what blocked convergence.
+2. Renew the convergence anchor by setting `postPivotStartTime` to the current time in the
+   durable handoff. Do **not** delete the handoff — a missing handoff makes the writer a no-op,
+   so no verdict is ever recorded:
+
+   ```console
+   sudo sed -i "s|\"postPivotStartTime\": \".*\"|\"postPivotStartTime\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"|" \
+     /var/lib/lca/reconfigure-handoff.json
+   ```
+
+3. Clear the recorded verdict so the writers no longer treat it as terminal, then unmount so the
+   result-writer can remount the partition itself:
+
+   ```console
+   sudo mount /dev/disk/by-label/ibi-status /mnt/ibi-status
+   sudo rm -f /mnt/ibi-status/reconfigure.json
+   sudo umount /mnt/ibi-status
+   ```
+
+4. Restore normal operation **before** starting the writer. A `failure` halts the node by
+   isolating `emergency.target`, which stops the cluster services (kubelet, CRI-O, the control
+   plane) the node needs in order to converge. Starting the writer while the node is still in
+   `emergency.target` leaves those services stopped, so it would only time out again. Return the
+   node to `multi-user.target` first, then run the writer. Either:
+
+   - **Reboot** (recommended — restores `multi-user.target` and all cluster services cleanly; the
+     condition-gated writer then runs automatically once it is enabled):
+
+     ```console
+     sudo systemctl enable lca-reconfigure-result-writer.service
+     sudo systemctl reboot
+     ```
+
+   - **or** switch targets in place without rebooting, then start the writer:
+
+     ```console
+     sudo systemctl isolate multi-user.target
+     sudo systemctl enable --now lca-reconfigure-result-writer.service
+     ```
+
+> Only this explicit operator recovery renews the anchor. Automatic
+> `installation-configuration.service` `Restart=on-failure` retries deliberately keep the original
+> write-once deadline unchanged, so they never silently extend the convergence window.
+
 ## Manual cleanup
 
 During Abort/Finalize LCA performs a cleanup. This includes:

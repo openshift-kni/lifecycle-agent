@@ -46,6 +46,15 @@ func readReconfigureResult(t *testing.T, dir string) *ReconfigureResult {
 	return &r
 }
 
+// seedReconfigureResult writes a pre-existing reconfigure result into dir so the idempotence
+// guard has something to find.
+func seedReconfigureResult(t *testing.T, dir string, r *ReconfigureResult) {
+	t.Helper()
+	data, err := json.MarshalIndent(r, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, common.ReconfigureResultFileName), data, 0o600))
+}
+
 // TestStatusPartitionPresent proves that presence detection cleanly distinguishes absence
 // from an ambiguous or invalid ibi-status partition.
 func TestStatusPartitionPresent(t *testing.T) {
@@ -99,7 +108,7 @@ func TestMountStatusPartitionAbsent(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return([]ops.BlockDevice{{Name: "/dev/sda", Label: "root", FSType: "xfs"}}, nil).Times(1)
 
-	_, err := mountStatusPartition(mockOps)
+	_, err := mountStatusPartition(mockOps, false)
 	require.Error(t, err)
 	assert.Equal(t, fmt.Sprintf("no block device labelled %q was found", common.IBIStatusFSLabel), err.Error())
 }
@@ -183,13 +192,40 @@ func TestWriteFailureAndHalt_WriteFails_StillHalts(t *testing.T) {
 	mockOps := ops.NewMockOps(ctrl)
 	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
 	mockOps.EXPECT().Mount("/dev/sdb4", statusMountDir).Return(nil).Times(1)
-	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	// The durable write fails before the sync step, so no sync is attempted; the mount is
+	// still unmounted and the node still halts.
 	mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
 	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
 
 	cause := fmt.Errorf("implausible clock")
 	err := WriteFailureAndHalt(mockOps, logrus.New(), &ReconfigureResult{Result: ResultFailure}, cause)
 	assert.ErrorIs(t, err, cause)
+}
+
+// TestWriteFailureAndHalt_GuardNoOp_StillHalts proves that when a terminal verdict already
+// exists on p4 the idempotence guard suppresses the p4 write, yet the node is still halted
+// powered-on -- the guard never suppresses the terminal action.
+func TestWriteFailureAndHalt_GuardNoOp_StillHalts(t *testing.T) {
+	dir := useTempStatusPartition(t)
+	// Seed an existing terminal success record so the guard no-ops the write.
+	seedReconfigureResult(t, dir, &ReconfigureResult{Phase: PhaseReconfigure, Result: ResultSuccess})
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+	mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+	// No writeResult/sync: the guard skipped the write. The mount is still unmounted and the
+	// node still halts.
+	mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+
+	cause := fmt.Errorf("implausible clock")
+	err := WriteFailureAndHalt(mockOps, logrus.New(), &ReconfigureResult{Result: ResultFailure}, cause)
+	assert.ErrorIs(t, err, cause)
+
+	// The pre-existing success verdict is preserved untouched.
+	got := readReconfigureResult(t, dir)
+	assert.Equal(t, ResultSuccess, got.Result)
 }
 
 // TestWriteFailureAndHalt_IsolateFails proves that when the emergency-target isolation itself
@@ -210,6 +246,210 @@ func TestWriteFailureAndHalt_IsolateFails(t *testing.T) {
 	err := WriteFailureAndHalt(mockOps, logrus.New(), &ReconfigureResult{Result: ResultFailure}, cause)
 	assert.ErrorIs(t, err, cause)
 	assert.Contains(t, err.Error(), "isolate failed")
+}
+
+// TestWriteSuccess proves the success path mounts p4 read-write, writes a well-formed durable
+// reconfigure.json success record, syncs, and unmounts -- with no halt.
+func TestWriteSuccess(t *testing.T) {
+	dir := useTempStatusPartition(t)
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+	mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+	// No isolate: WriteSuccess never halts.
+
+	result := &ReconfigureResult{
+		Phase:       PhaseReconfigure,
+		Profile:     "self-contained",
+		Result:      ResultSuccess,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		SeedVersion: "4.18.3",
+	}
+	require.NoError(t, WriteSuccess(mockOps, logrus.New(), result))
+
+	got := readReconfigureResult(t, dir)
+	assert.Equal(t, ResultSuccess, got.Result)
+	assert.Equal(t, PhaseReconfigure, got.Phase)
+}
+
+// TestWriteFailure proves the write-only failure path writes the record and does not halt.
+func TestWriteFailure(t *testing.T) {
+	dir := useTempStatusPartition(t)
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+	mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+	mockOps.EXPECT().RunInHostNamespace("sync").Return("", nil).Times(1)
+	mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+	// No isolate: WriteFailure never halts.
+
+	msg := "convergence not reached"
+	require.NoError(t, WriteFailure(mockOps, logrus.New(), &ReconfigureResult{
+		Phase: PhaseReconfigure, Result: ResultFailure, Error: &msg,
+	}))
+
+	got := readReconfigureResult(t, dir)
+	assert.Equal(t, ResultFailure, got.Result)
+}
+
+// TestReadReconfigureResult proves the reader returns the parsed record when present, a clean
+// nil for an absent file, and a nil (treated as no verdict) for a malformed file.
+func TestReadReconfigureResult(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		dir := useTempStatusPartition(t)
+		seedReconfigureResult(t, dir, &ReconfigureResult{Phase: PhaseReconfigure, Result: ResultSuccess})
+
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+		mockOps.EXPECT().MountReadOnly("/dev/sdb4", dir).Return(nil).Times(1)
+		mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+
+		got, err := ReadReconfigureResult(mockOps, logrus.New())
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, ResultSuccess, got.Result)
+		assert.True(t, got.IsTerminal())
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		dir := useTempStatusPartition(t)
+
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+		mockOps.EXPECT().MountReadOnly("/dev/sdb4", dir).Return(nil).Times(1)
+		mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+
+		got, err := ReadReconfigureResult(mockOps, logrus.New())
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("malformed is treated as no verdict", func(t *testing.T) {
+		dir := useTempStatusPartition(t)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, common.ReconfigureResultFileName), []byte("{not json"), 0o600))
+
+		ctrl := gomock.NewController(t)
+		mockOps := ops.NewMockOps(ctrl)
+		mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+		mockOps.EXPECT().MountReadOnly("/dev/sdb4", dir).Return(nil).Times(1)
+		mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+
+		got, err := ReadReconfigureResult(mockOps, logrus.New())
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+}
+
+// TestWriters_Idempotent proves the write-only guard never overwrites an existing terminal
+// verdict (neither success nor failure), for both writers.
+func TestWriters_Idempotent(t *testing.T) {
+	testcases := []struct {
+		name     string
+		existing string
+		write    func(ops.Ops, *logrus.Logger, *ReconfigureResult) error
+		attempt  string
+	}{
+		{name: "success does not overwrite failure", existing: ResultFailure, write: WriteSuccess, attempt: ResultSuccess},
+		{name: "failure does not overwrite success", existing: ResultSuccess, write: WriteFailure, attempt: ResultFailure},
+		{name: "success does not overwrite success", existing: ResultSuccess, write: WriteSuccess, attempt: ResultSuccess},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := useTempStatusPartition(t)
+			seedReconfigureResult(t, dir, &ReconfigureResult{Phase: PhaseReconfigure, Result: tc.existing, SeedVersion: "original"})
+
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+			mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+			mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+			// No write/sync: the guard skipped the p4 write.
+
+			require.NoError(t, tc.write(mockOps, logrus.New(), &ReconfigureResult{
+				Phase: PhaseReconfigure, Result: tc.attempt, SeedVersion: "overwrite-attempt",
+			}))
+
+			// The original record is preserved untouched.
+			got := readReconfigureResult(t, dir)
+			assert.Equal(t, tc.existing, got.Result)
+			assert.Equal(t, "original", got.SeedVersion)
+		})
+	}
+}
+
+// seedUnreadableReconfigureResult makes reconfigure.json a directory so readReconfigureResultAt's
+// os.ReadFile returns a genuine IO error that is not os.IsNotExist -- the one case the writers
+// must treat as "cannot confirm the verdict" rather than "no verdict".
+func seedUnreadableReconfigureResult(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, common.ReconfigureResultFileName), 0o750))
+}
+
+// TestWriteTerminalResult_ReadError_DoesNotOverwrite proves that when the existing reconfigure
+// record cannot be read with a genuine IO error (not a missing or malformed file, both of which
+// read as "no verdict"), the writers return that error instead of falling through to the write.
+// A verdict that cannot be read is never overwritten, preserving the write-once guarantee.
+func TestWriteTerminalResult_ReadError_DoesNotOverwrite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(ops.Ops, *logrus.Logger, *ReconfigureResult) error
+	}{
+		{name: "WriteSuccess", write: WriteSuccess},
+		{name: "WriteFailure", write: WriteFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := useTempStatusPartition(t)
+			seedUnreadableReconfigureResult(t, dir)
+
+			ctrl := gomock.NewController(t)
+			mockOps := ops.NewMockOps(ctrl)
+			mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+			mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+			mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+			// No writeResult/sync: the read error must short-circuit before any write.
+
+			err := tc.write(mockOps, logrus.New(), &ReconfigureResult{Phase: PhaseReconfigure, Result: ResultSuccess})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "could not read the existing reconfigure result")
+
+			// The unreadable record is left untouched -- still a directory, never replaced by a file.
+			info, serr := os.Stat(filepath.Join(dir, common.ReconfigureResultFileName))
+			require.NoError(t, serr)
+			assert.True(t, info.IsDir())
+		})
+	}
+}
+
+// TestWriteFailureAndHalt_ReadError_StillHalts proves that when the existing record cannot be
+// read, the clock gate's WriteFailureAndHalt logs the read error, does not overwrite the
+// unreadable record, and still halts the node powered-on -- the pre-recert safety invariant
+// holds regardless of what the write returns.
+func TestWriteFailureAndHalt_ReadError_StillHalts(t *testing.T) {
+	dir := useTempStatusPartition(t)
+	seedUnreadableReconfigureResult(t, dir)
+
+	ctrl := gomock.NewController(t)
+	mockOps := ops.NewMockOps(ctrl)
+	mockOps.EXPECT().ListBlockDevices().Return(statusDevices("/dev/sdb4"), nil).Times(1)
+	mockOps.EXPECT().Mount("/dev/sdb4", dir).Return(nil).Times(1)
+	mockOps.EXPECT().Umount("/dev/sdb4").Return(nil).Times(1)
+	// No writeResult/sync: the read error short-circuits the write; the halt is still mandatory.
+	mockOps.EXPECT().SystemctlAction("isolate", emergencyTarget).Return("", nil).Times(1)
+
+	cause := fmt.Errorf("convergence timeout")
+	err := WriteFailureAndHalt(mockOps, logrus.New(), &ReconfigureResult{Result: ResultFailure}, cause)
+	assert.ErrorIs(t, err, cause)
+
+	// The unreadable record is left untouched.
+	info, serr := os.Stat(filepath.Join(dir, common.ReconfigureResultFileName))
+	require.NoError(t, serr)
+	assert.True(t, info.IsDir())
 }
 
 // TestWriteFileDurableAtomic proves the durable write publishes the file atomically via a temp
