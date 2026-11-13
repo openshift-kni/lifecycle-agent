@@ -106,9 +106,19 @@ const (
 	// alone does not mean reconfiguration completed. If installation-configuration.service fails
 	// after the handoff is written but before recert finishes, systemd can still start the
 	// (After=-ordered) writer, which would poll the still-healthy seed cluster and record a false
-	// success. Gating on this completion marker instead closes that race. It is rooted under
-	// LCAConfigDir (which post-pivot cleanup never touches), alongside the handoff.
+	// success. The writer gates only the SUCCESS verdict on this marker (not its own startup), so a
+	// stalled or failed post-pivot that never writes it cannot defer the convergence deadline: the
+	// writer still runs and still halts the node at the deadline. It is rooted under LCAConfigDir
+	// (which post-pivot cleanup never touches), alongside the handoff.
 	ReconfigureCompletedFile = LCAConfigDir + "/reconfigure-completed"
+	// ReconfigureSuccessPendingFile is the durable marker the reconfigure result-writer (CNF-27173)
+	// writes the moment it observes the convergence criterion, BEFORE it attempts to persist the
+	// terminal success verdict to the p4 partition. If that p4 write fails and the node reboots past
+	// the original (write-once) deadline, a later boot re-publishes the already-made success decision
+	// from this marker instead of re-deciding against possibly-transient live state -- which would
+	// otherwise risk recording a false failure for a node that already converged. It is rooted under
+	// LCAConfigDir (which post-pivot cleanup never touches), alongside the handoff.
+	ReconfigureSuccessPendingFile = LCAConfigDir + "/reconfigure-success-pending"
 	// InitMonitorModeFile configures which mode the init-monitor should operate in ("ibu" or "ipconfig")
 	InitMonitorModeFile = LCAWorkspaceDir + "/initmonitor_mode"
 	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.

@@ -5,16 +5,14 @@ Description=Lifecycle Agent reconfigure result-writer (self-contained USB IBI)
 # dependency would misread as a failure. The result-writer observes live cluster
 # state across post-pivot restarts rather than depending on its unit state.
 After=installation-configuration.service
-# Gate on the post-pivot completion marker, not merely the handoff. The handoff is
-# written early (right after the clock gate, before recert) to anchor the deadline, so
-# its presence alone does not mean reconfiguration finished: if post-pivot fails after
-# writing the handoff but before recert completes, this After=-ordered unit could start
-# and record a false success against the still-healthy seed cluster. The completion
-# marker is written only once reconfiguration actually finishes. Both conditions are
-# ANDed: only the self-contained post-pivot writes either file, so this also keeps the
-# unit from running at all on IBU/install-only.
+# Gate startup on the durable handoff only (written by the self-contained post-pivot), so
+# the unit never runs on IBU/install-only. Do NOT also gate startup on the post-pivot
+# completion marker: the writer must run to ENFORCE the convergence deadline even when
+# post-pivot stalls or fails and never writes that marker -- otherwise the node would hang
+# instead of halting at the deadline. The completion marker gates only the SUCCESS verdict,
+# enforced in code (successCriterionMet), so the writer still cannot record a false success
+# against the still-healthy seed cluster before reconfiguration finishes.
 ConditionPathExists=/var/lib/lca/reconfigure-handoff.json
-ConditionPathExists=/var/lib/lca/reconfigure-completed
 
 [Service]
 Type=oneshot

@@ -122,8 +122,8 @@ handoff that gates the result-writer. Run these **on the node**:
    node by isolating `emergency.target`, so cluster services are stopped.
    `installation-configuration.service` is still enabled (post-pivot halted before disabling it),
    so the cleanest recovery is a **reboot** — the node comes up in `multi-user.target`, the gate
-   re-evaluates the corrected clock, and on success post-pivot writes the handoff **and the
-   completion marker** that let the result-writer start automatically:
+   re-evaluates the corrected clock, and on success post-pivot writes the handoff (which lets the
+   result-writer start) **and** the completion marker (which lets it record success):
 
    ```console
    sudo systemctl reboot

@@ -35,6 +35,10 @@ type reconfigureStub struct {
 	haltCause     error
 	polls         int
 	now           time.Time
+	// pendingSuccessPresent is what the pending-success marker check reports; pendingSuccessWrites
+	// counts how many times the writer persisted the pending-success decision.
+	pendingSuccessPresent bool
+	pendingSuccessWrites  int
 	// events records the terminal actions in the exact order they happened, so tests can assert
 	// the real write -> disable -> halt sequence rather than merely that each action occurred.
 	events []string
@@ -70,12 +74,16 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 		handoffPath       string
 		completionPresent func(string) (bool, error)
 		completedPath     string
+		pendingPresent    func(string) (bool, error)
+		writePending      func(string) error
+		pendingPath       string
 	}{
 		reconfigureNowUTC, reconfigureSleep, reconfigurePollInterval, readReconfigureHandoff,
 		readReconfigureResult, writeReconfigureSuccess, writeReconfigureFailure,
 		haltReconfigurePoweredOn, reconfigureBuildClient, reconfigureConvergenceMet,
 		reconfigureDisableUnit, reconfigureHandoffFilePath,
 		reconfigureCompletionPresent, reconfigureCompletedFilePath,
+		reconfigurePendingSuccessPresent, writeReconfigurePendingSuccess, reconfigureSuccessPendingFilePath,
 	}
 	t.Cleanup(func() {
 		reconfigureNowUTC = orig.now
@@ -92,6 +100,9 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 		reconfigureHandoffFilePath = orig.handoffPath
 		reconfigureCompletionPresent = orig.completionPresent
 		reconfigureCompletedFilePath = orig.completedPath
+		reconfigurePendingSuccessPresent = orig.pendingPresent
+		writeReconfigurePendingSuccess = orig.writePending
+		reconfigureSuccessPendingFilePath = orig.pendingPath
 	})
 
 	reconfigurePollInterval = time.Minute
@@ -124,8 +135,12 @@ func stubReconfigureSeams(t *testing.T) *reconfigureStub {
 		s.events = append(s.events, eventDisable)
 		return s.disableErr
 	}
-	// By default post-pivot reconfiguration has completed, so the completion gate is open.
+	// By default post-pivot reconfiguration has completed, so the success criterion's completion
+	// requirement is satisfied.
 	reconfigureCompletionPresent = func(string) (bool, error) { return true, nil }
+	// By default no prior boot recorded a pending-success decision.
+	reconfigurePendingSuccessPresent = func(string) (bool, error) { return s.pendingSuccessPresent, nil }
+	writeReconfigurePendingSuccess = func(string) error { s.pendingSuccessWrites++; return nil }
 	return s
 }
 
@@ -368,33 +383,97 @@ func TestReconfigureResultWriter_FalseFailureAfterConvergence(t *testing.T) {
 	assert.Equal(t, []string{eventWriteSuccess, eventDisable}, s.events)
 }
 
-// TestReconfigureResultWriter_NoCompletionMarker_NoOp proves the completion gate: if post-pivot
-// reconfiguration has not finished (no completion marker) the writer is a clean no-op even though
-// the handoff exists, so it never records a verdict against the still-healthy seed cluster.
-func TestReconfigureResultWriter_NoCompletionMarker_NoOp(t *testing.T) {
+// TestReconfigureResultWriter_NoCompletionMarker_EnforcesDeadline proves the completion marker gates
+// only the SUCCESS verdict, not the writer's startup: with no completion marker the writer never
+// records success (even against a converged cluster) but still enforces the deadline, recording a
+// failure and halting. This is the fix for the DoR's "writer gated on reconfigure-completed cannot
+// enforce the convergence deadline while post-pivot is still running or stalled".
+func TestReconfigureResultWriter_NoCompletionMarker_EnforcesDeadline(t *testing.T) {
 	s := stubReconfigureSeams(t)
 	reconfigureCompletionPresent = func(string) (bool, error) { return false, nil }
-	// Even a converged cluster must not produce a verdict while reconfiguration is unfinished.
+	// Even a converged cluster must not produce a success while reconfiguration is unfinished.
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
+	readReconfigureHandoff = func(string) (*reconfigure.Handoff, error) {
+		return &reconfigure.Handoff{Profile: "self-contained", PostPivotStartTime: testAnchor, ConvergenceTimeout: "3m"}, nil
+	}
+
+	err := newTestMonitor().RunReconfigureResultWriter()
+	require.Error(t, err)
+	assert.Nil(t, s.successResult, "must not record success before reconfiguration completes")
+	require.NotNil(t, s.failureResult, "the deadline must be enforced even without a completion marker")
+	assert.True(t, s.halted)
+	assert.Zero(t, s.pendingSuccessWrites, "no success decision may be recorded without completion")
+	assert.Equal(t, []string{eventWriteFailure, eventDisable, eventHalt}, s.events)
+}
+
+// TestReconfigureResultWriter_CompletionCheckError_EnforcesDeadline proves a completion-marker check
+// that errors is treated as "cannot succeed" (never a false success) while the deadline is still
+// enforced: the writer records a failure and halts rather than hanging on an uncertain state.
+func TestReconfigureResultWriter_CompletionCheckError_EnforcesDeadline(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	reconfigureCompletionPresent = func(string) (bool, error) { return false, fmt.Errorf("stat failed") }
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
+	readReconfigureHandoff = func(string) (*reconfigure.Handoff, error) {
+		return &reconfigure.Handoff{Profile: "self-contained", PostPivotStartTime: testAnchor, ConvergenceTimeout: "3m"}, nil
+	}
+
+	err := newTestMonitor().RunReconfigureResultWriter()
+	require.Error(t, err)
+	assert.Nil(t, s.successResult)
+	require.NotNil(t, s.failureResult)
+	assert.True(t, s.halted)
+}
+
+// TestReconfigureResultWriter_Success_PersistsPendingDecision proves the writer durably records the
+// pending-success decision BEFORE it writes the success verdict, so a failed verdict write can be
+// re-published as success on a later boot.
+func TestReconfigureResultWriter_Success_PersistsPendingDecision(t *testing.T) {
+	s := stubReconfigureSeams(t)
 	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return true }
 
 	require.NoError(t, newTestMonitor().RunReconfigureResultWriter())
-	assert.Nil(t, s.successResult)
-	assert.Nil(t, s.failureResult)
-	assert.False(t, s.halted)
-	assert.Zero(t, s.disableCalls)
-	assert.Zero(t, s.polls, "must not poll before reconfiguration has completed")
+	require.NotNil(t, s.successResult)
+	assert.Equal(t, 1, s.pendingSuccessWrites, "the success decision must be persisted before the verdict write")
 }
 
-// TestReconfigureResultWriter_CompletionCheckError_NoOp proves a genuine IO error checking the
-// completion marker is a fail-safe no-op (never halts on an uncertain state).
-func TestReconfigureResultWriter_CompletionCheckError_NoOp(t *testing.T) {
+// TestReconfigureResultWriter_PendingSuccess_Republished proves the pending-success retry: if a prior
+// boot observed convergence and recorded a pending-success decision but its p4 write failed, a later
+// boot -- even one that starts past the original deadline with the cluster momentarily not converged
+// -- re-publishes success from the marker instead of re-deciding and recording a false failure.
+func TestReconfigureResultWriter_PendingSuccess_Republished(t *testing.T) {
 	s := stubReconfigureSeams(t)
-	reconfigureCompletionPresent = func(string) (bool, error) { return false, fmt.Errorf("stat failed") }
+	s.pendingSuccessPresent = true
+	readReconfigureHandoff = func(string) (*reconfigure.Handoff, error) {
+		return &reconfigure.Handoff{Profile: "self-contained", PostPivotStartTime: testAnchor, ConvergenceTimeout: "10m", SeedVersion: "4.18.3"}, nil
+	}
+	// Past the deadline and NOT converged now -- a fresh decision would record failure and halt.
+	s.now = mustParse(testAnchor).Add(2 * time.Hour)
+	reconfigureConvergenceMet = func(context.Context, runtimeclient.Client) bool { return false }
 
 	require.NoError(t, newTestMonitor().RunReconfigureResultWriter())
-	assert.Nil(t, s.successResult)
-	assert.Nil(t, s.failureResult)
+	require.NotNil(t, s.successResult)
+	assert.Equal(t, ibistatus.ResultSuccess, s.successResult.Result)
+	assert.Nil(t, s.failureResult, "a pending-success decision must never be downgraded to failure")
 	assert.False(t, s.halted)
+	assert.Equal(t, 1, s.disableCalls)
+	assert.Zero(t, s.polls, "a pending-success republish must not poll or recheck convergence")
+	assert.Equal(t, []string{eventWriteSuccess, eventDisable}, s.events)
+}
+
+// TestReconfigureResultWriter_PendingSuccess_WriteFailure_KeepsUnitEnabled proves that re-publishing a
+// pending-success decision whose verdict write still fails leaves the unit enabled (for another
+// retry) and never halts.
+func TestReconfigureResultWriter_PendingSuccess_WriteFailure_KeepsUnitEnabled(t *testing.T) {
+	s := stubReconfigureSeams(t)
+	s.pendingSuccessPresent = true
+	s.writeSuccErr = fmt.Errorf("p4 write failed")
+
+	err := newTestMonitor().RunReconfigureResultWriter()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, s.writeSuccErr)
+	assert.Zero(t, s.disableCalls, "unit must stay enabled so the next boot can retry publishing the success")
+	assert.False(t, s.halted, "a pending-success retry must never halt the node")
+	assert.Equal(t, []string{eventWriteSuccess}, s.events)
 }
 
 // TestReconfigureResultWriter_TimeoutConfig proves the configured/default/invalid timeout

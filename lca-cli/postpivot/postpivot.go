@@ -325,17 +325,18 @@ func (p *PostPivot) completeReconfigure(seedReconfiguration *clusterconfig_api.S
 	if err := p.writeReconfigureCompleted(); err != nil {
 		return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
 	}
-	// The result-writer unit is WantedBy=multi-user.target and condition-gated on the completion
-	// marker, so it starts automatically at boot. But installation-configuration.service runs
-	// post-pivot with Restart=on-failure: a retry that writes the marker without an intervening
-	// reboot would leave the boot-only writer (already skipped earlier this boot, when the marker
-	// was still absent) un-triggered until the next reboot, so its convergence deadline and timeout
-	// halt would never run. Kick it here so this attempt is covered. --no-block is required because
-	// the unit is ordered After=installation-configuration.service, which is still active while this
-	// post-pivot runs -- a blocking start would deadlock on that ordering. The start is retried a
-	// few times so a transient systemd failure does not silently defer deadline enforcement to the
-	// next reboot. It stays non-fatal: if every attempt fails the unit still runs on the next boot,
-	// so a start hiccup must not strand post-pivot.
+	// The result-writer unit is WantedBy=multi-user.target and condition-gated only on the durable
+	// handoff (not the completion marker), so it starts automatically at boot to enforce the
+	// convergence deadline. Kick it here anyway so this post-pivot attempt is covered without waiting
+	// for the boot-time job: installation-configuration.service runs post-pivot with
+	// Restart=on-failure, and a retry that writes the marker without an intervening reboot should
+	// publish the success promptly rather than only on the next reboot. If the writer is already
+	// running (started earlier this boot), this start is a harmless no-op. --no-block is required
+	// because the unit is ordered After=installation-configuration.service, which is still active
+	// while this post-pivot runs -- a blocking start would deadlock on that ordering. The start is
+	// retried a few times so a transient systemd failure does not silently defer the success publish
+	// to the next reboot. It stays non-fatal: if every attempt fails the unit still runs on the next
+	// boot, so a start hiccup must not strand post-pivot.
 	var lastErr error
 	for attempt := 1; attempt <= reconfigureResultWriterStartAttempts; attempt++ {
 		if _, lastErr = p.ops.SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService); lastErr == nil {
@@ -381,10 +382,12 @@ func (p *PostPivot) writeReconfigureHandoff(seedReconfiguration *clusterconfig_a
 // to. It is a package var so unit tests can redirect the write to a temp file.
 var reconfigureCompletedFile = common.ReconfigureCompletedFile
 
-// writeReconfigureCompleted records the durable post-pivot completion marker that gates the
-// reconfigure result-writer, so the writer only decides a verdict once reconfiguration has
-// actually finished (recert and manifests applied) rather than against the still-healthy seed
-// cluster. See the gate in lca-cli/initmonitor/reconfigure.go and common.ReconfigureCompletedFile.
+// writeReconfigureCompleted records the durable post-pivot completion marker that gates only the
+// SUCCESS verdict of the reconfigure result-writer, so the writer records success only once
+// reconfiguration has actually finished (recert and manifests applied) rather than against the
+// still-healthy seed cluster. The writer still runs and enforces the convergence deadline without
+// this marker. See successCriterionMet in lca-cli/initmonitor/reconfigure.go and
+// common.ReconfigureCompletedFile.
 func (p *PostPivot) writeReconfigureCompleted() error {
 	p.log.Infof("Writing reconfigure completion marker to %s", reconfigureCompletedFile)
 	if err := reconfigure.WriteCompletionMarker(reconfigureCompletedFile); err != nil {

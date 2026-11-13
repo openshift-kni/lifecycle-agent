@@ -94,6 +94,32 @@ func WriteCompletionMarker(path string) error {
 	return nil
 }
 
+// WritePendingSuccessMarker durably records that the reconfigure result-writer has observed the
+// convergence criterion, written BEFORE it attempts to persist the terminal success verdict to the
+// p4 partition. If the p4 write then fails and the node reboots past the write-once convergence
+// deadline, a later boot re-publishes this already-made success decision rather than re-deciding
+// against possibly-transient live state (which could record a false failure for a node that already
+// converged). It is idempotent -- an existing marker is left untouched -- and the parent directory
+// is created if needed. The content is a human-readable note for a technician; only the file's
+// existence is load-bearing.
+func WritePendingSuccessMarker(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		// A pending-success decision is already recorded; keep it.
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to check reconfigure pending-success marker %s: %w", path, err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("failed to create reconfigure pending-success marker directory %s: %w", dir, err)
+	}
+	if err := writeFileDurable(path, []byte("reconfigure convergence observed; success verdict pending\n")); err != nil {
+		return fmt.Errorf("failed to write reconfigure pending-success marker %s: %w", path, err)
+	}
+	return nil
+}
+
 // ReadHandoff reads and parses the handoff at path. An absent file returns (nil, nil) -- a
 // clean "not the self-contained reconfigure path" signal. An IO error or malformed JSON is
 // returned as an error so the caller can fail safe (no-op) rather than acting on a partial

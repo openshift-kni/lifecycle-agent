@@ -133,14 +133,22 @@ dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside p
 - **Gating.** The unit is ordered `After=installation-configuration.service` (ordering only,
   never `Requires=`/`Requisite=`, because the `RemainAfterExit=no` post-pivot goes inactive on
   success) and `WantedBy=multi-user.target`. It runs with `TimeoutStartSec=0` so systemd never
-  kills it before its own deadline. A `ConditionPathExists` on the **post-pivot completion marker**
-  (`/var/lib/lca/reconfigure-completed`, written only once recert and manifests are applied) plus
-  the durable handoff, together with an in-code **explicit self-contained profile** check and a
-  completion re-check, make it a clean no-op on IBU/install-only and prevent it from recording a
-  verdict against the still-healthy seed cluster if post-pivot fails before recert completes
-  (`After=` ordering alone would otherwise let it start). The handoff is written *early* (right
-  after the clock gate, before recert) to anchor the deadline, so it cannot double as the
-  completion gate.
+  kills it before its own deadline. A single `ConditionPathExists` on the **durable handoff**
+  (`/var/lib/lca/reconfigure-handoff.json`), plus an in-code **explicit self-contained profile**
+  check, make it a clean no-op on IBU/install-only. The **success verdict** is additionally gated —
+  in code, not by the unit condition — on the **post-pivot completion marker**
+  (`/var/lib/lca/reconfigure-completed`, written only once recert and manifests are applied), so the
+  writer never records a false success against the still-healthy seed cluster if post-pivot fails
+  before recert completes. Startup is deliberately **not** gated on that marker: the writer must run
+  to **enforce the deadline** even when post-pivot stalls or fails and never writes it — otherwise
+  the node would hang instead of halting. The handoff is written *early* (right after the clock gate,
+  before recert) to anchor the deadline, so it cannot double as the completion gate.
+- **Pending-success durability.** The moment the writer observes the criterion it durably records a
+  pending-success decision (`/var/lib/lca/reconfigure-success-pending`) *before* writing the terminal
+  verdict to p4. If that p4 write fails and the node reboots past the write-once deadline, a later
+  boot re-publishes the already-made success from this marker instead of re-deciding against
+  possibly-transient live state — so a node that already converged can never be recorded as a
+  failure by a failed write plus an ill-timed reboot.
 - **Idempotence and self-disable.** After writing either terminal verdict the unit disables
   itself (best-effort — a failed disable never demotes a success or skips the halt). An existing
   terminal verdict is never overwritten, so a reboot that re-runs the unit is a no-op. The

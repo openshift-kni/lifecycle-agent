@@ -74,6 +74,33 @@ func TestWriteCompletionMarker(t *testing.T) {
 	assert.Len(t, entries, 1)
 }
 
+// TestWritePendingSuccessMarker proves the pending-success marker is written durably and
+// idempotently: a first write creates it, a second write is a no-op, and no temp file is left behind.
+func TestWritePendingSuccessMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lca", "reconfigure-success-pending")
+
+	// Absent before the first write.
+	_, err := os.Stat(path)
+	require.True(t, os.IsNotExist(err))
+
+	require.NoError(t, WritePendingSuccessMarker(path))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	first, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	assert.NotEmpty(t, first)
+
+	// A second write is idempotent: the marker is left untouched and no temp file remains.
+	require.NoError(t, WritePendingSuccessMarker(path))
+	second, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+}
+
 // TestReadHandoff proves absent is a clean nil, present round-trips, and malformed is an error
 // the caller can fail safe on.
 func TestReadHandoff(t *testing.T) {
