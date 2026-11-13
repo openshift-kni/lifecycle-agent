@@ -119,10 +119,12 @@ handoff that gates the result-writer. Run these **on the node**:
    ```
 
 3. Re-run post-pivot so the gate re-evaluates the corrected clock and, on success, writes the
-   handoff:
+   handoff, then start the result-writer (restarting the service above only orders the writer's
+   boot job via `After=`; it does not activate the unit):
 
    ```console
    sudo systemctl restart installation-configuration.service
+   sudo systemctl start lca-reconfigure-result-writer.service
    ```
 
 **Convergence timeout (after recert — handoff exists).** Clearing the failure is not enough. The
