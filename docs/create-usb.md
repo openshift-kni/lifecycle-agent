@@ -334,18 +334,37 @@ The crypto-retention set must include the ingress certificate CN as well as the 
 values. `lca-cli create-usb` rejects a missing, malformed, or unparseable identity set
 before rendering p3.
 
-`lca-cli create-usb` does **not** generate a kubeconfig. The tooling that produces
-`kubeadminPasswordHash` and `kubeconfigCryptoRetention` must also hand the matching
-kubeconfig to the user; those three values are generated together, and using a mismatched
-set can leave the installed cluster inaccessible. Both manifest fields are required for
-`mode: self-contained`. During the `create-usb` media-build operation, incomplete crypto
-retention fails manifest validation before p3 is rendered, rather than shipping media that
-cannot authenticate the kubeconfig.
+The hash and the crypto retention are generated together with the matching kubeconfig; a
+mismatched set can leave the installed cluster inaccessible. For this reason `create-usb`
+treats the two fields as an all-or-nothing pair: supply **both** (operator-managed
+credentials) or **neither** (automatic generation, below). Supplying only one fails the
+build.
 
-#### Generating the kubeconfig data
+#### Automatic generation (default)
 
-Use the OpenShift installer version that matches the target cluster. The following example
-uses 4.22.16; replace the release tag with the version you are targeting.
+When a `mode: self-contained` manifest omits **both** `siteConfig.kubeadminPasswordHash`
+and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity for you.
+It derives `install-config.yaml` and `image-based-config.yaml` from `siteConfig`, shells
+out to the OpenShift installer's image-based config-image flow in a scrubbed, owner-only
+(`0700`) per-run temporary directory, reads the generated hash and crypto retention back,
+and renders them into the on-media manifest. There is no manual ISO unpacking, `bsdtar`,
+or `jq` field-copying.
+
+The matching **kubeconfig** and **kubeadmin password** are written as owner-only
+(`0600`) build-side artifacts:
+
+```text
+<--credentials-dir>/kubeconfig
+<--credentials-dir>/kubeadmin-password
+```
+
+`--credentials-dir` defaults to the directory of `--output`. These are the credentials the
+operator uses to reach the installed cluster; they are **never** placed on the media or in
+the manifest. Keep them secret.
+
+`create-usb` runs the installer via `--openshift-install` (default: `openshift-install`
+resolved on `PATH`). Use the installer version that matches the target cluster. For
+disconnected builders, source the matching binary from a release payload or mirror:
 
 ```bash
 mkdir -p /tmp/oi
@@ -354,10 +373,27 @@ oc adm release extract \
   --command=openshift-install \
   --to=/tmp/oi \
   quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64
+
+lca-cli create-usb -f manifest.yaml --output usb.img \
+  --openshift-install /tmp/oi/openshift-install \
+  --credentials-dir /path/to/secrets
 ```
 
-Create a working directory containing `install-config.yaml` and
-`image-based-config.yaml` for the intended target cluster, then generate the config image:
+**Rebuild behaviour.** Each generation run mints a fresh identity. Rebuilding the media
+therefore produces new credentials that replace the previous ones: any kubeconfig and
+password already distributed for the old media no longer authenticate. `create-usb` logs a
+loud warning when it overwrites existing artifacts in `--credentials-dir`. The per-run
+temporary working directory (which holds the pull secret and the generated secrets) is
+scrubbed on every exit path, so credential material from one build cannot leak into the
+next.
+
+#### Operator-managed credentials (override)
+
+To manage the identity yourself — for example to keep a stable, reproducible kubeconfig
+across rebuilds — supply **both** `siteConfig.kubeadminPasswordHash` and
+`siteConfig.kubeconfigCryptoRetention` in the manifest. When both are present `create-usb`
+validates them and uses them as-is, generating nothing and emitting no artifacts. Generate
+them once with the matching installer version:
 
 ```bash
 umask 077
@@ -367,40 +403,15 @@ install -m 600 /path/to/image-based-config.yaml "$WORK/image-based-config.yaml"
 /tmp/oi/openshift-install --dir="$WORK" image-based create config-image
 ```
 
-The installer writes the user credentials to:
+The installer writes the user credentials to `$WORK/auth/kubeconfig` and
+`$WORK/auth/kubeadmin-password`, and `imagebasedconfig.iso`, which contains the matching
+`cluster-configuration/manifest.json`. Copy `kubeadmin_password_hash` and
+`KubeconfigCryptoRetention` from that manifest into the `create-usb` manifest's
+`siteConfig`, and keep `auth/kubeconfig` and `auth/kubeadmin-password` as the user's
+credentials. Do not put the kubeconfig itself on the USB media or in the manifest.
 
-```text
-$WORK/auth/kubeconfig
-$WORK/auth/kubeadmin-password
-```
-
-It also writes `imagebasedconfig.iso`, which contains the matching
-`cluster-configuration/manifest.json`. Extract that manifest:
-
-```bash
-umask 077
-bsdtar -xOf \
-  "$WORK/imagebasedconfig.iso" \
-  cluster-configuration/manifest.json \
-  > "$WORK/manifest.json"
-```
-
-Copy these two fields from `$WORK/manifest.json` into the `create-usb` manifest:
-
-```bash
-jq '{
-  kubeadminPasswordHash: .kubeadmin_password_hash,
-  kubeconfigCryptoRetention: .KubeconfigCryptoRetention
-}' "$WORK/manifest.json" \
-  > "$WORK/kubeconfig-identity.json"
-```
-
-Keep `auth/kubeconfig` and `auth/kubeadmin-password` as the user’s credentials. Do not put
-the kubeconfig itself on the USB media or in the `create-usb` manifest.
-
-`$WORK` is secret-bearing. Do not print `manifest.json` or
-`kubeconfig-identity.json` to the terminal, and remove `$WORK` when the media has been
-built and the credentials have been transferred securely.
+`$WORK` is secret-bearing. Do not print its contents to the terminal, and remove it once
+the media has been built and the credentials have been transferred securely.
 
 ### Deterministic, non-recursive expansion
 
