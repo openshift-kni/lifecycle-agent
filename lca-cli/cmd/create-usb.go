@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,15 +40,17 @@ func init() {
 // fresh flag state, mirroring the ip-config command's NewIPConfigCmd pattern.
 func newCreateUsbCmd() *cobra.Command {
 	var (
-		manifestFile string
-		authFile     string
-		outputPath   string
-		writeDevice  string
-		rhcosLiveISO string
-		rhcosLiveSHA string
-		recertImage  string
-		lcaImage     string
-		usbSize      string
+		manifestFile     string
+		authFile         string
+		outputPath       string
+		writeDevice      string
+		rhcosLiveISO     string
+		rhcosLiveSHA     string
+		recertImage      string
+		lcaImage         string
+		usbSize          string
+		openshiftInstall string
+		credentialsDir   string
 	)
 
 	cmd := &cobra.Command{
@@ -65,15 +69,17 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreateUsb(createUsbOptions{
-				manifestFile: manifestFile,
-				authFile:     authFile,
-				outputPath:   outputPath,
-				writeDevice:  writeDevice,
-				rhcosLiveISO: rhcosLiveISO,
-				rhcosLiveSHA: rhcosLiveSHA,
-				recertImage:  recertImage,
-				lcaImage:     lcaImage,
-				usbSize:      usbSize,
+				manifestFile:     manifestFile,
+				authFile:         authFile,
+				outputPath:       outputPath,
+				writeDevice:      writeDevice,
+				rhcosLiveISO:     rhcosLiveISO,
+				rhcosLiveSHA:     rhcosLiveSHA,
+				recertImage:      recertImage,
+				lcaImage:         lcaImage,
+				usbSize:          usbSize,
+				openshiftInstall: openshiftInstall,
+				credentialsDir:   credentialsDir,
 			})
 		},
 	}
@@ -100,6 +106,17 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	// --usb-size is the whole-stick size budget (e.g. "14Gi", "32G"). When set, the build fails if
 	// the assembled media's final apparent size exceeds it. Empty disables the check.
 	cmd.Flags().StringVar(&usbSize, "usb-size", "", "USB-stick size budget (e.g. 14Gi, 32G). The build fails if the assembled media exceeds it. Empty disables the check.")
+	// --openshift-install enables automatic kubeconfig-identity generation for self-contained
+	// media when the manifest supplies neither siteConfig.kubeadminPasswordHash nor
+	// kubeconfigCryptoRetention. create-usb shells out to this binary's
+	// `image-based create config-image` flow in a scrubbed temp directory, populates the two
+	// fields, and emits the matching kubeconfig + kubeadmin password (see --credentials-dir).
+	// Source it for disconnected builders with `oc adm release extract --command=openshift-install`.
+	cmd.Flags().StringVar(&openshiftInstall, "openshift-install", "openshift-install", "openshift-install binary used to generate self-contained kubeconfig identity when the manifest omits it (path or name on PATH).")
+	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
+	// written (owner-only). Defaults to the --output directory. These secrets are never placed on
+	// the media.
+	cmd.Flags().StringVar(&credentialsDir, "credentials-dir", "", "Directory for the generated kubeconfig and kubeadmin-password when create-usb mints self-contained identity (defaults to the --output directory).")
 
 	_ = cmd.MarkFlagRequired("manifest")
 
@@ -119,15 +136,17 @@ func defaultRecertImage() string {
 
 // createUsbOptions carries the resolved create-usb flag values.
 type createUsbOptions struct {
-	manifestFile string
-	authFile     string
-	outputPath   string
-	writeDevice  string
-	rhcosLiveISO string
-	rhcosLiveSHA string
-	recertImage  string
-	lcaImage     string
-	usbSize      string
+	manifestFile     string
+	authFile         string
+	outputPath       string
+	writeDevice      string
+	rhcosLiveISO     string
+	rhcosLiveSHA     string
+	recertImage      string
+	lcaImage         string
+	usbSize          string
+	openshiftInstall string
+	credentialsDir   string
 }
 
 // runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse the
@@ -158,8 +177,22 @@ func runCreateUsb(opts createUsbOptions) error {
 		manifest.RHCOSLiveISO.SHA256 = opts.rhcosLiveSHA
 	}
 
+	// Generate the self-contained kubeconfig identity before validation when the manifest omits
+	// it, so Validate then checks the generated material exactly as it checks an operator-supplied
+	// override. The generated hash + crypto retention are populated into the manifest here; the
+	// matching kubeconfig + kubeadmin password are held and written only after Validate succeeds,
+	// so a build that fails validation for an unrelated field leaves no secret artifacts behind.
+	creds, err := generateCredentialsIfNeeded(opts, manifest)
+	if err != nil {
+		return fmt.Errorf("create-usb: %w", err)
+	}
+
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("create-usb: manifest validation failed: %w", err)
+	}
+
+	if err := writeGeneratedCredentials(opts, creds); err != nil {
+		return fmt.Errorf("create-usb: %w", err)
 	}
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
@@ -175,6 +208,53 @@ func runCreateUsb(opts createUsbOptions) error {
 		return fmt.Errorf("create-usb: %w", err)
 	}
 	return nil
+}
+
+// generateCredentialsIfNeeded mints the self-contained kubeconfig identity when the manifest omits
+// it and populates the manifest's hash + crypto-retention fields. It returns the generated bundle
+// (kubeconfig + kubeadmin password) for the caller to write after validation, or nil when the
+// operator supplied the credentials or the mode does not use them; a partially supplied pair is
+// rejected by GenerateSiteConfigCredentials.
+func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Manifest) (*createusb.GeneratedCredentials, error) {
+	var gen createusb.CredentialGenerator
+	if createusb.NeedsCredentialGeneration(manifest) {
+		if strings.TrimSpace(opts.openshiftInstall) == "" {
+			return nil, fmt.Errorf("self-contained manifest omits siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention; pass --openshift-install to generate them, or supply both in the manifest")
+		}
+		gen = createusb.NewInstallerConfigImageGenerator(log, opts.openshiftInstall)
+	}
+
+	creds, err := createusb.GenerateSiteConfigCredentials(context.Background(), log, manifest, gen)
+	if err != nil {
+		return nil, fmt.Errorf("generating self-contained credentials: %w", err)
+	}
+	return creds, nil
+}
+
+// writeGeneratedCredentials emits the generated kubeconfig + kubeadmin password as owner-only
+// build artifacts (never on the media). It runs only after manifest validation succeeds, so a
+// failed build does not leave secret artifacts on disk. It is a no-op when nothing was generated.
+func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.GeneratedCredentials) error {
+	if creds == nil {
+		return nil
+	}
+	dir := opts.credentialsDir
+	if dir == "" {
+		dir = credentialsOutputDir(opts.outputPath)
+	}
+	if err := createusb.WriteCredentialArtifacts(log, dir, creds); err != nil {
+		return fmt.Errorf("writing credential artifacts: %w", err)
+	}
+	return nil
+}
+
+// credentialsOutputDir resolves the default credentials directory: the --output file's directory,
+// or the current directory when writing to a device (no output file path to key off).
+func credentialsOutputDir(outputPath string) string {
+	if outputPath == "" {
+		return "."
+	}
+	return filepath.Dir(outputPath)
 }
 
 // parseUSBSize parses the --usb-size budget (e.g. "14Gi", "32G") into bytes using the standard
