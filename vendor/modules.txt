@@ -1017,7 +1017,7 @@ go.opentelemetry.io/proto/otlp/collector/trace/v1
 go.opentelemetry.io/proto/otlp/common/v1
 go.opentelemetry.io/proto/otlp/resource/v1
 go.opentelemetry.io/proto/otlp/trace/v1
-# go.podman.io/image/v5 v5.42.0
+# go.podman.io/image/v5 v5.42.1
 ## explicit; go 1.26.0
 go.podman.io/image/v5/copy
 go.podman.io/image/v5/directory/explicitfilepath
@@ -1074,7 +1074,7 @@ go.podman.io/image/v5/storage
 go.podman.io/image/v5/transports
 go.podman.io/image/v5/types
 go.podman.io/image/v5/version
-# go.podman.io/storage v1.65.0
+# go.podman.io/storage v1.65.1
 ## explicit; go 1.26.0
 go.podman.io/storage
 go.podman.io/storage/drivers
