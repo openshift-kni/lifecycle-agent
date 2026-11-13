@@ -59,9 +59,8 @@ The referenced `BackupContent` CRs are resolved **by name in LCA's install
 namespace** (the references carry no namespace), the same way
 `seedImageRef.pullSecretRef` is resolved. A reference that does not resolve there
 is a terminal Upgrade failure before the pivot — which also makes a hub/spoke
-namespace mismatch loud. The referenced CRs are read twice: once at Prep (for
-validation, tracked separately) and again at Upgrade pre-pivot, taking the backup
-from what is present at that moment.
+namespace mismatch loud. Prep does not validate the referenced CRs. The engine
+reads them at Upgrade pre-pivot and backs up what is present at that time.
 
 The engine honours the `BackupContent` field semantics as follows:
 

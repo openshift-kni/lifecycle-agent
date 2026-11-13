@@ -165,6 +165,11 @@ type BackupTracker struct {
 type RestoreTracker struct {
 	SucceededRestores []string
 	FailedRestores    []string
+	// NoBackupToRestore is set when StartRestore skipped the restore because no
+	// backup content was configured and no local backup exists on disk. There is no
+	// backup directory in that case, so the caller must bypass the restore-completed
+	// marker (which lives inside that directory) after the PV reclaim-policy cleanup.
+	NoBackupToRestore bool
 }
 
 func (e *BRStatusError) Error() string {

@@ -214,8 +214,21 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 	}
 
 	// Namespaced entries are fetched across the in-scope namespaces.
-	nsExcluded := h.buildExclusionSet(spec.ExcludedNamespacedResources, apiResourceLists)
+	nsExcluded, err := h.buildExclusionSet(spec.ExcludedNamespacedResources, apiResourceLists)
+	if err != nil {
+		return nil, err
+	}
 	for _, entry := range spec.NamespacedResources {
+		// A namespaced entry without names is backed up by listing its kind within the
+		// in-scope namespaces (spec.Namespaces). With no in-scope namespaces that
+		// listing covers zero scopes and silently selects nothing, so reject the
+		// ineffective selection instead of recording an empty backup as successful.
+		// This matches the oadpContent path, whose ValidateBackupSpecs rejects
+		// namespace-scoped resources configured without any included namespace.
+		if len(entry.Names) == 0 && len(spec.Namespaces) == 0 {
+			return nil, fmt.Errorf("namespaced resource %q selects nothing: an entry without names is only "+
+				"backed up within spec.namespaces, which is empty", entry.Kind)
+		}
 		gvr, namespaced, err := resolveRequiredGVR(entry.Kind, apiResourceLists, failedGroups)
 		if err != nil {
 			return nil, err
@@ -237,7 +250,10 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 
 	// Cluster-scoped entries are fetched in the single cluster scope (the empty
 	// namespace).
-	csExcluded := h.buildExclusionSet(spec.ExcludedClusterScopedResources, apiResourceLists)
+	csExcluded, err := h.buildExclusionSet(spec.ExcludedClusterScopedResources, apiResourceLists)
+	if err != nil {
+		return nil, err
+	}
 	for _, entry := range spec.ClusterScopedResources {
 		gvr, namespaced, err := resolveRequiredGVR(entry.Kind, apiResourceLists, failedGroups)
 		if err != nil {
@@ -365,22 +381,25 @@ type exclusionSet struct {
 
 // buildExclusionSet resolves each excluded selector through the discovery-backed
 // resolver and records whether the whole kind or only specific names are excluded.
-// An exclusion that cannot be resolved (an ambiguous bare name, or a kind absent
-// from discovery) is not applied, but it is logged: a resource absent from discovery
-// is never fetched (so it cannot be included either), yet an ambiguous bare-name
-// exclusion paired with a differently-qualified include of the same resource would
-// otherwise be silently ineffective. Logging keeps that diagnosable.
-func (h *BRHandler) buildExclusionSet(selectors []backupcontentv1.ResourceSelector, apiResourceLists []*metav1.APIResourceList) exclusionSet {
+//
+// An ambiguous bare-name exclusion (one that matches more than one API group)
+// cannot be applied reliably: a differently-qualified include of the same resource
+// could still fetch an object the user meant to exclude, so the excluded object
+// would be persisted and later restored. Fail the backup in that case rather than
+// silently dropping the exclusion.
+//
+// A kind absent from cluster API discovery is skipped (with a log line): it is never
+// fetched, so it cannot be included either, which makes dropping its exclusion safe.
+func (h *BRHandler) buildExclusionSet(selectors []backupcontentv1.ResourceSelector, apiResourceLists []*metav1.APIResourceList) (exclusionSet, error) {
 	es := exclusionSet{kinds: map[string]bool{}, names: map[string]map[string]bool{}}
 	for _, sel := range selectors {
 		gvr, _, found, err := resolveResourceGVR(sel.Kind, apiResourceLists)
-		if err != nil || !found {
-			reason := "kind not found in cluster API discovery"
-			if err != nil {
-				reason = err.Error()
-			}
-			h.Log.Info("WARNING: BackupContent exclusion could not be resolved; it will not be applied",
-				"kind", sel.Kind, "names", sel.Names, "reason", reason)
+		if err != nil {
+			return exclusionSet{}, fmt.Errorf("cannot apply BackupContent exclusion for %q: %w", sel.Kind, err)
+		}
+		if !found {
+			h.Log.Info("WARNING: BackupContent exclusion kind not found in cluster API discovery; it will not be applied",
+				"kind", sel.Kind, "names", sel.Names)
 			continue
 		}
 		gr := gvr.GroupResource().String()
@@ -395,7 +414,7 @@ func (h *BRHandler) buildExclusionSet(selectors []backupcontentv1.ResourceSelect
 			es.names[gr][name] = true
 		}
 	}
-	return es
+	return es, nil
 }
 
 // excludesKind reports whether the whole kind (canonical GroupResource) is excluded.

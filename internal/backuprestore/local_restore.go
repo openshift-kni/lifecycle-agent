@@ -95,6 +95,10 @@ func (h *BRHandler) StartRestore(ctx context.Context, oadpContent []ibuv1.Config
 				fmt.Sprintf("backup content was configured but no local backup found at %s", backupPath))
 		}
 		h.Log.Info("No backup content configured and no local backup found, skipping restore")
+		// Signal the caller that there is no backup directory, so it bypasses the
+		// restore-completed marker (which would otherwise fail to be created inside the
+		// absent directory and spuriously fail the upgrade).
+		rt.NoBackupToRestore = true
 		return rt, nil
 	}
 

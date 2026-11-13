@@ -44,6 +44,9 @@ func TestStartRestoreMissingBackup(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, rt)
 		assert.Empty(t, rt.FailedRestores)
+		// The caller must bypass the restore-completed marker: there is no backup
+		// directory to hold it.
+		assert.True(t, rt.NoBackupToRestore)
 	})
 
 	t.Run("content configured but no backup on disk fails hard", func(t *testing.T) {
@@ -51,6 +54,7 @@ func TestStartRestoreMissingBackup(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, IsBRFailedError(err))
 		assert.NotNil(t, rt)
+		assert.False(t, rt.NoBackupToRestore)
 	})
 }
 

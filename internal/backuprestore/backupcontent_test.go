@@ -354,6 +354,67 @@ func TestFetchResourcesFromBackupContentExclusions(t *testing.T) {
 	})
 }
 
+// TestFetchResourcesFromBackupContentAmbiguousExclusionFailsBackup verifies that an
+// exclusion whose bare kind name matches more than one API group fails the backup
+// instead of being silently dropped: a differently-qualified include of the same
+// resource could otherwise persist (and later restore) an object the user excluded.
+func TestFetchResourcesFromBackupContentAmbiguousExclusionFailsBackup(t *testing.T) {
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"v1": {GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "namespaces", SingularName: "namespace", Namespaced: false, Kind: "Namespace"},
+			{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
+		}},
+		"a.example.com/v1": {GroupVersion: "a.example.com/v1", APIResources: []metav1.APIResource{
+			{Name: "widgets", SingularName: "widget", Namespaced: true, Kind: "Widget"},
+		}},
+		"b.example.com/v1": {GroupVersion: "b.example.com/v1", APIResources: []metav1.APIResource{
+			{Name: "widgets", SingularName: "widget", Namespaced: true, Kind: "Widget"},
+		}},
+	}}
+	ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns)
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-exclusion"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces: []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "configmaps"},
+			},
+			ExcludedNamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "widgets"}, // bare name matches two API groups -> ambiguous
+			},
+		},
+	}
+	_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "widgets")
+	assert.Contains(t, err.Error(), "ambiguous")
+}
+
+// TestFetchResourcesFromBackupContentNamespacedWithoutNamespaces verifies that an
+// unnamed namespaced entry with no in-scope namespaces is rejected rather than
+// silently recording an empty backup as successful, matching the oadpContent path.
+func TestFetchResourcesFromBackupContentNamespacedWithoutNamespaces(t *testing.T) {
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme())
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns-scoped-no-namespaces"},
+		Spec: backupcontentv1.BackupContentSpec{
+			// No Namespaces configured.
+			NamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "configmaps"}, // unnamed -> would list nothing with no namespaces
+			},
+		},
+	}
+	_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "configmaps")
+	assert.Contains(t, err.Error(), "selects nothing")
+}
+
 // TestFetchResourcesFromBackupContentMissingNamespace verifies that an included
 // namespace that does not exist fails the backup (matching the oadpContent path).
 func TestFetchResourcesFromBackupContentMissingNamespace(t *testing.T) {

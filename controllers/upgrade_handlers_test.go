@@ -41,12 +41,13 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name             string
-		hasContent       bool
-		useBackupContent bool
-		tracker          func() (*backuprestore.BackupTracker, error)
-		wantCtlRes       controllerruntime.Result
-		wantErr          assert.ErrorAssertionFunc
+		name                     string
+		hasContent               bool
+		useBackupContent         bool
+		tracker                  func() (*backuprestore.BackupTracker, error)
+		restoresPVsReclaimPolicy bool
+		wantCtlRes               controllerruntime.Result
+		wantErr                  assert.ErrorAssertionFunc
 	}{
 		{
 			name:       "backup successful",
@@ -79,8 +80,11 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 					FailedBackups: []string{"name-failed"},
 				}, nil
 			},
-			wantCtlRes: doNotRequeue(),
-			wantErr:    assert.Error,
+			// A failed backup is terminal, so the PV reclaim policies patched to Retain
+			// are restored before the failure is returned.
+			restoresPVsReclaimPolicy: true,
+			wantCtlRes:               doNotRequeue(),
+			wantErr:                  assert.Error,
 		},
 		{
 			name:       "no content - skip",
@@ -100,6 +104,9 @@ func TestImageBasedUpgradeReconciler_handleBackup(t *testing.T) {
 				}
 				mockBackuprestore.EXPECT().PatchPVsReclaimPolicy(gomock.Any()).Return(nil)
 				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.tracker())
+			}
+			if tt.restoresPVsReclaimPolicy {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
 			}
 
 			uph := &UpgHandler{
@@ -128,6 +135,7 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 		name                          string
 		tracker                       func() (*backuprestore.RestoreTracker, error)
 		restorePVsReclaimPolicyReturn func() error
+		skipsMarker                   bool
 		wantCtlRes                    controllerruntime.Result
 		wantErr                       assert.ErrorAssertionFunc
 	}{
@@ -154,6 +162,20 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 			wantCtlRes: doNotRequeue(),
 			wantErr:    assert.Error,
 		},
+		{
+			name: "no backup to restore skips the completed marker",
+			tracker: func() (*backuprestore.RestoreTracker, error) {
+				return &backuprestore.RestoreTracker{
+					NoBackupToRestore: true,
+				}, nil
+			},
+			restorePVsReclaimPolicyReturn: func() error {
+				return nil
+			},
+			skipsMarker: true,
+			wantCtlRes:  doNotRequeue(),
+			wantErr:     assert.NoError,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,7 +183,9 @@ func TestImageBasedUpgradeReconciler_handleRestore(t *testing.T) {
 
 			if tt.restorePVsReclaimPolicyReturn != nil {
 				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
-				mockBackuprestore.EXPECT().MarkRestoreCompleted(gomock.Any()).Return(nil).Times(1)
+				if !tt.skipsMarker {
+					mockBackuprestore.EXPECT().MarkRestoreCompleted(gomock.Any()).Return(nil).Times(1)
+				}
 			}
 
 			uph := &UpgHandler{
@@ -212,6 +236,7 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 		healthCheckError                                error
 		getStartBackupReturn                            func() (*backuprestore.BackupTracker, error)
 		getPatchPVsReclaimPolicyReturn                  func() error
+		restoresPVsReclaimPolicyOnBackupFailure         bool
 		getValidateBackupConfigmapsReturn               func() error
 		remountSysrootReturn                            func() error
 		exportExtraManifestToDirReturn                  func() error
@@ -259,8 +284,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			getStartBackupReturn: func() (*backuprestore.BackupTracker, error) {
 				return nil, backuprestore.NewBRFailedError("Backup", "this is a test - error")
 			},
-			want:    doNotRequeue(),
-			wantErr: assert.NoError,
+			restoresPVsReclaimPolicyOnBackupFailure: true,
+			want:                                    doNotRequeue(),
+			wantErr:                                 assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
@@ -292,8 +318,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 				return nil,
 					backuprestore.NewBRFailedValidationError("Backup", "this is a test - FailedValidation")
 			},
-			want:    doNotRequeue(),
-			wantErr: assert.NoError,
+			restoresPVsReclaimPolicyOnBackupFailure: true,
+			want:                                    doNotRequeue(),
+			wantErr:                                 assert.NoError,
 			wantConditions: []metav1.Condition{
 				{
 					Type:    string(utils.ConditionTypes.UpgradeCompleted),
@@ -428,6 +455,9 @@ func TestImageBasedUpgradeReconciler_prePivot(t *testing.T) {
 			}
 			if tt.getStartBackupReturn != nil {
 				mockBackuprestore.EXPECT().StartBackup(gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.getStartBackupReturn())
+			}
+			if tt.restoresPVsReclaimPolicyOnBackupFailure {
+				mockBackuprestore.EXPECT().RestorePVsReclaimPolicy(gomock.Any()).Return(nil).Times(1)
 			}
 			if tt.remountSysrootReturn != nil {
 				mockOps.EXPECT().RemountSysroot().Return(tt.remountSysrootReturn())
