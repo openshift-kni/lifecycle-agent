@@ -573,6 +573,14 @@ spec:
         - apiGroups:
           - lca.openshift.io
           resources:
+          - backupcontents
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - lca.openshift.io
+          resources:
           - imagebasedupgrades
           - ipconfigs
           - seedgenerators

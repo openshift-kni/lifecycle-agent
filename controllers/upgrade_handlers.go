@@ -45,7 +45,7 @@ import (
 type (
 	UpgradeHandler interface {
 		HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
-		HandleRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (ctrl.Result, error)
+		HandleRestore(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 		PrePivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error)
 	}
@@ -394,8 +394,7 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 		u.Log.Error(updateErr, "failed to update IBU CR status")
 	}
 
-	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-	result, err := u.HandleRestore(ctx, ibu.Spec.OADPContent)
+	result, err := u.HandleRestore(ctx, ibu)
 	if err != nil {
 		if backuprestore.IsBRFailedError(err) {
 			u.Log.Error(err, "Failed to handle restore")
@@ -449,9 +448,13 @@ func (u *UpgHandler) PostPivot(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade
 
 // HandleBackup manages backup flow using local backup
 func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
-	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility; backupContent engine wiring is tracked in CNF-29691
-	backupContent := ibu.Spec.OADPContent
-	if len(backupContent) == 0 {
+	// backupContent is the replacement for the deprecated oadpContent; the two are
+	// mutually exclusive on a single IBU (enforced by the IBU CEL rule). The engine
+	// selects the input source and skips when neither is set.
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility
+	oadpContent := ibu.Spec.OADPContent
+	backupContent := ibu.Spec.BackupContent
+	if len(oadpContent) == 0 && len(backupContent) == 0 {
 		u.Log.Info("No backup requests, skipping")
 		return doNotRequeue(), nil
 	}
@@ -460,12 +463,34 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 		return requeueWithError(fmt.Errorf("failed to patch LVMS PVs with Retain as persistentVolumeReclaimPolicy: %w", err))
 	}
 
-	backupTracker, err := u.BackupRestore.StartBackup(ctx, backupContent)
+	backupTracker, err := u.BackupRestore.StartBackup(ctx, oadpContent, backupContent)
 	if err != nil {
+		// A terminal backup failure (BRFailedError/BRFailedValidationError) aborts the
+		// upgrade without a retry, so the LVMS PV reclaim policies patched to Retain
+		// above would otherwise stay changed until Idle cleanup runs. Restore them now
+		// so a PVC deleted in that interval is not retained instead of deleted. A
+		// non-terminal error requeues and re-enters HandleBackup (which re-patches), so
+		// the policies are intentionally left in place for that case.
+		if backuprestore.IsBRFailedValidationError(err) || backuprestore.IsBRFailedError(err) {
+			if restoreErr := u.BackupRestore.RestorePVsReclaimPolicy(ctx); restoreErr != nil {
+				// Wrap only restoreErr: the cleanup failure is transient and must stay
+				// retryable. If the terminal backup error were wrapped too, PrePivot's
+				// IsBRFailedError/IsBRFailedValidationError check would classify this as
+				// terminal and stop retrying, leaving the remaining PV reclaim policies at
+				// Retain. Rendering the backup failure as text preserves it in the message.
+				return requeueWithError(fmt.Errorf("backup failed (%s); additionally failed to restore LVMS PV reclaim policies: %w", err.Error(), restoreErr))
+			}
+		}
 		return requeueWithError(fmt.Errorf("error while running backup: %w", err))
 	}
 
 	if len(backupTracker.FailedBackups) > 0 {
+		// Failed backups are a terminal failure too; restore the PV reclaim policies
+		// before failing, for the same reason as the terminal error path above.
+		if restoreErr := u.BackupRestore.RestorePVsReclaimPolicy(ctx); restoreErr != nil {
+			return requeueWithError(fmt.Errorf("backup failed for %s; additionally failed to restore LVMS PV reclaim policies: %w",
+				strings.Join(backupTracker.FailedBackups, ","), restoreErr))
+		}
 		errMsg := fmt.Sprintf("Failed backups: %s", strings.Join(backupTracker.FailedBackups, ","))
 		return requeueWithError(backuprestore.NewBRFailedError("Backup", errMsg))
 	}
@@ -475,10 +500,18 @@ func (u *UpgHandler) HandleBackup(ctx context.Context, ibu *ibuv1.ImageBasedUpgr
 }
 
 // HandleRestore manages restore flow using local restore
-func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (ctrl.Result, error) {
+func (u *UpgHandler) HandleRestore(ctx context.Context, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	u.Log.Info("Handling local restore")
 
-	restoreTracker, err := u.BackupRestore.StartRestore(ctx, content)
+	// The restore walks only the on-disk backup; the configured input source (read
+	// post-pivot from the IBU) only decides whether a missing backup directory is a
+	// terminal error. Pass both sources so a configured-but-missing BackupContent
+	// backup fails the restore, matching the oadpContent path.
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility
+	oadpContent := ibu.Spec.OADPContent
+	backupContent := ibu.Spec.BackupContent
+
+	restoreTracker, err := u.BackupRestore.StartRestore(ctx, oadpContent, backupContent)
 	if err != nil {
 		return requeueWithError(fmt.Errorf("error while running restore: %w", err))
 	}
@@ -492,6 +525,16 @@ func (u *UpgHandler) HandleRestore(ctx context.Context, content []ibuv1.ConfigMa
 
 	if err := u.BackupRestore.RestorePVsReclaimPolicy(ctx); err != nil {
 		return requeueWithError(fmt.Errorf("failed to restore persistentVolumeReclaimPolicy in PVs created by LVMS: %w", err))
+	}
+
+	// When no backup content was configured and no backup exists on disk, StartRestore
+	// skipped the restore and there is no backup directory to hold the restore-completed
+	// marker. Bypass marker creation: the marker only guards against re-applying
+	// resources on a re-entrant PostPivot run, and nothing was applied here. The PV
+	// reclaim-policy cleanup above still runs (a no-op when nothing was patched).
+	if restoreTracker.NoBackupToRestore {
+		u.Log.Info("No backup to restore, skipping restore-completed marker")
+		return doNotRequeue(), nil
 	}
 
 	// Record that the restore fully completed (resources applied and PV reclaim

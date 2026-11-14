@@ -89,14 +89,30 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	return nil
 }
 
-func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error) {
+func (h *BRHandler) StartBackup(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*BackupTracker, error) {
 	bt := &BackupTracker{}
 
-	if len(content) == 0 {
+	// At most one of backupContent/oadpContent is set (guaranteed by the IBU CEL
+	// mutual-exclusivity rule). The BackupContent path is the replacement for the
+	// deprecated oadpContent path; both converge on the shared []collectedBackup
+	// representation and the same on-disk layout written by writeCollectedBackups.
+	switch {
+	case len(backupContent) > 0:
+		return h.startBackupFromBackupContent(ctx, backupContent, bt)
+	case len(oadpContent) > 0:
+		return h.startBackupFromConfigmaps(ctx, oadpContent, bt)
+	default:
 		h.Log.Info("No backup content provided, skipping")
 		return bt, nil
 	}
+}
 
+// startBackupFromConfigmaps runs the deprecated oadpContent backup path: it parses
+// the Velero Backup/Restore CRs out of the referenced ConfigMaps, validates them,
+// fetches the configured resources ordered by Backup apply-wave, and hands the
+// collected backups to the shared write pass (writeCollectedBackups). Its
+// behaviour is unchanged from before the BackupContent path was added.
+func (h *BRHandler) startBackupFromConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef, bt *BackupTracker) (*BackupTracker, error) {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -140,23 +156,9 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		return bt, fmt.Errorf("failed to sort backup specs: %w", err)
 	}
 
-	backupDir := filepath.Join(hostPath, LocalBackupPath)
-	// Clear any stale contents from a previous backup attempt before recreating
-	// the directory. PrePivot can re-enter and re-run the backup after a partial
-	// failure; if the resource set shrank between attempts, orphaned YAML files
-	// would otherwise survive while checksums.sha256 is rewritten without them,
-	// causing the post-pivot restore to hard-fail on the unlisted files.
-	// Filesystem errors below are returned as BRFailedError so the Upgrade stage
-	// fails terminally instead of requeuing forever: a backup that cannot write
-	// to local node storage will not succeed on retry, so human intervention
-	// (moving the IBU back to Idle and restarting) is required.
-	if err := os.RemoveAll(backupDir); err != nil {
-		return bt, NewBRFailedError("Backup",
-			fmt.Sprintf("failed to clear stale backup directory %s: %s", backupDir, err.Error()))
-	}
-	if err := os.MkdirAll(backupDir, 0o700); err != nil {
-		return bt, NewBRFailedError("Backup",
-			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
+	backupDir, err := prepareLocalBackupDir()
+	if err != nil {
+		return bt, err
 	}
 
 	// Fetch every backup's resources, processing lower Backup apply-waves first.
@@ -189,6 +191,43 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		}
 	}
 
+	if err := h.writeCollectedBackups(backupDir, collected, bt); err != nil {
+		return bt, err
+	}
+	return bt, nil
+}
+
+// prepareLocalBackupDir clears any stale contents from a previous backup attempt
+// and recreates the local backup directory, returning its path.
+//
+// PrePivot can re-enter and re-run the backup after a partial failure; if the
+// resource set shrank between attempts, orphaned YAML files would otherwise survive
+// while checksums.sha256 is rewritten without them, causing the post-pivot restore
+// to hard-fail on the unlisted files. Filesystem errors are returned as
+// BRFailedError so the Upgrade stage fails terminally instead of requeuing forever:
+// a backup that cannot write to local node storage will not succeed on retry, so
+// human intervention (moving the IBU back to Idle and restarting) is required.
+func prepareLocalBackupDir() (string, error) {
+	backupDir := filepath.Join(hostPath, LocalBackupPath)
+	if err := os.RemoveAll(backupDir); err != nil {
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to clear stale backup directory %s: %s", backupDir, err.Error()))
+	}
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
+	}
+	return backupDir, nil
+}
+
+// writeCollectedBackups is the shared write pass for both the oadpContent and
+// BackupContent input paths. Given the collected backups (each carrying its
+// resources and synthetic/parsed restore settings), it assigns restore ordinal
+// groups, writes the per-group resource files and restore config, the root-level
+// layout manifest, and the checksum manifest. Both paths produce the identical
+// layoutVersion 1.0.0 on-disk layout, consumable by the same post-pivot reader
+// without input-source-specific handling.
+func (h *BRHandler) writeCollectedBackups(backupDir string, collected []collectedBackup, bt *BackupTracker) error {
 	// Assign each backup to a 1-based restore ordinal group, ordered by the paired
 	// Restore CR's apply-wave (missing or empty last). Backups that share a restore
 	// wave share an ordinal. The ordinals are written as zero-padded directory names
@@ -212,13 +251,13 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		groupDirName := fmt.Sprintf("restore-%0*d", ordinalWidth, ordinal)
 		groupDir := filepath.Join(backupDir, groupDirName)
 		if err := os.MkdirAll(groupDir, 0o700); err != nil {
-			return bt, NewBRFailedError("Backup",
+			return NewBRFailedError("Backup",
 				fmt.Sprintf("failed to create restore group directory %s: %s", groupDir, err.Error()))
 		}
 
 		groupChecksums, err := h.writeRestoreGroup(groupDir, groupDirName, bucket, numDigits(total), bt)
 		if err != nil {
-			return bt, err
+			return err
 		}
 		checksums = append(checksums, groupChecksums...)
 	}
@@ -235,21 +274,21 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	}
 	layoutChecksum, err := writeBackupLayoutManifest(backupDir, totalResources, specNames)
 	if err != nil {
-		return bt, err
+		return err
 	}
 	checksums = append(checksums, layoutChecksum)
 
 	checksumContent := strings.Join(checksums, "\n") + "\n"
 	checksumPath := filepath.Join(backupDir, "checksums.sha256")
 	if err := os.WriteFile(checksumPath, []byte(checksumContent), 0o600); err != nil {
-		return bt, NewBRFailedError("Backup",
+		return NewBRFailedError("Backup",
 			fmt.Sprintf("failed to write checksum manifest %s: %s", checksumPath, err.Error()))
 	}
 
 	h.Log.Info("All backups completed successfully",
 		"succeeded", bt.SucceededBackups,
 		"targetDir", backupDir)
-	return bt, nil
+	return nil
 }
 
 // collectedBackup pairs a backup spec with its paired Restore CR and the already
