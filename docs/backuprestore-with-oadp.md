@@ -229,7 +229,7 @@ spec:
 ...
 ```
 
-*TODO*: Add the OADP CRs to [ZTP source-crs](https://github.com/openshift-kni/cnf-features-deploy/tree/master/ztp/source-crs)
+*TODO*: Add the OADP CRs to [ZTP source-crs](https://github.com/openshift-kni/telco-reference/tree/main/telco-ran/configuration/source-crs)
 
 ### Prepare DataProtectionApplication(DPA) CR and S3 secret
 
@@ -637,9 +637,9 @@ spec:
 
 #### Use ZTP GitOps
 
-The platform backup and restore CRs [PlatformBackupRestore.yaml](https://github.com/openshift-kni/cnf-features-deploy/blob/master/ztp/source-crs/ibu/PlatformBackupRestore.yaml) and
-[PlatformBackupRestoreLvms.yaml](https://github.com/openshift-kni/cnf-features-deploy/blob/master/ztp/source-crs/ibu/PlatformBackupRestoreLvms.yaml) are provided in the ZTP container.
-Follow the [instruction](https://github.com/openshift-kni/cnf-features-deploy/tree/master/ztp/gitops-subscriptions/argocd/example/image-based-upgrades#generating-the-oadp-configmap-and-policies) to create OADP configmap on target clusters using ACM policy.
+The platform backup and restore CRs [PlatformBackupRestore.yaml](https://github.com/openshift-kni/telco-reference/blob/main/telco-ran/configuration/source-crs/ibu/PlatformBackupRestore.yaml) and
+[PlatformBackupRestoreLvms.yaml](https://github.com/openshift-kni/telco-reference/blob/main/telco-ran/configuration/source-crs/ibu/PlatformBackupRestoreLvms.yaml) are provided in the ZTP container.
+Follow the [instruction](https://github.com/openshift-kni/telco-reference/tree/main/telco-ran/configuration/acmpolicygenerator/image-based-upgrades#generating-the-oadp-configmap-and-policies) to create OADP configmap on target clusters using ACM policy.
 
 #### Non-ZTP GitOps
 

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- go >=1.24
+- go >=1.26.3 (see `go.mod`)
 - Spoke SNO cluster with pull-secret containing credentials to quay.io/${MY_REPO_ID}/
 
 ## Makefile targets
@@ -11,11 +11,14 @@ To see all `make` targets, run `make help`
 
 ## Linter tests
 
-As of this writing, three linters are run by the `make ci-job` command:
+As of this writing, `make ci-job` runs code generation, formatting, `go vet`, the unit tests, and the following linters:
 
 - golangci-lint
 - shellcheck
 - bashate
+- yamllint
+- kustomize validation (`test-kustomize`)
+- bundle validation (`bundle-check`)
 
 These tests will be run automatically as part of the ci-job test post a pull request an update. Failures will mean your pull request
 cannot be merged. It is recommended that you run `make ci-job` regularly as part of development.
@@ -72,7 +75,7 @@ oc patch imagebasedupgrade upgrade -n openshift-lifecycle-agent --type='json' -p
       "oadpContent": [{"name": "oadp-cm", "namespace": "openshift-adp"}],
       "stage": "Idle",
       "seedImageRef": {
-        "version": "4.13.10",
+        "version": "5.1.0",
         "image": "quay.io/myrepo/upgbackup:lca-test-seed-v1",
         "pullSecretRef": {"name": "seed-pull-secret"}
       }
@@ -109,7 +112,7 @@ function get_deployment_id {
     done
 }
 
-stateroot=rhcos_4.13.9
+stateroot=rhcos_5.1.0
 deployment_id=$(get_deployment_id ${stateroot})
 if [ -n "${deployment_id}" ]; then
     ostree admin undeploy ${deployment_id} && unshare -m /bin/sh -c "mount -o remount,rw /sysroot && rm -rf /sysroot/ostree/deploy/${stateroot}"
@@ -158,7 +161,7 @@ perform some checks in the seed SNO cluster.
 
 ```shell
 skopeo copy docker://quay.io/edge-infrastructure/recert docker://${LOCAL_REGISTRY}/edge-infrastructure/recert
-````
+```
 
 ## Setup dev backup steps
 
