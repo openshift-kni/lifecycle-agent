@@ -145,6 +145,8 @@ func NewFromClusterInfo(clusterInfo *utils.ClusterInfo,
 		HasProxy:                 hasProxy,
 		HasFIPS:                  hasFIPS,
 		AdditionalTrustBundle:    additionalTrustBundle,
+		ClusterNetworks:          clusterInfo.ClusterNetworks,
+		ServiceNetworks:          clusterInfo.ServiceNetworks,
 		MachineNetworks:          clusterInfo.MachineNetworks,
 
 		ContainerStorageMountpointTarget: containerStorageMountpointTarget,
