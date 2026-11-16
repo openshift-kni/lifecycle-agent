@@ -369,10 +369,12 @@ The matching **kubeconfig** and **kubeadmin password** are written as owner-only
 <--credentials-dir>/kubeadmin-password
 ```
 
-`--credentials-dir` defaults to a per-image `<name>-credentials` directory alongside
-`--output` (for example `--output out/cluster-a.img` writes to `out/cluster-a-credentials/`),
-so building several images into the same parent directory does not make one image's
-credentials overwrite another's. When writing to a device, the default is a `credentials`
+`--credentials-dir` defaults to a per-image `<output-file-name>-credentials` directory
+alongside `--output` (for example `--output out/cluster-a.img` writes to
+`out/cluster-a.img-credentials/`), so building several images into the same parent directory
+does not make one image's credentials overwrite another's. The full output file name
+(including any extension) is used, so `out/cluster-a.img` and `out/cluster-a` do not collide.
+When writing to a device, the default is a `credentials`
 directory under the current directory. Pass `--credentials-dir` to choose an explicit
 location. These are the credentials the operator uses to reach the installed cluster; they
 are **never** placed on the media or in the manifest. Keep them secret.

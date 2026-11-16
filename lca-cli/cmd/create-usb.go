@@ -253,19 +253,20 @@ func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.Generated
 	return nil
 }
 
-// credentialsOutputDir resolves the default credentials directory. It keys off the --output image
-// name so distinct images built into the same parent directory (e.g. out/cluster-a.img and
-// out/cluster-b.img) get separate credential directories (out/cluster-a-credentials and
-// out/cluster-b-credentials) rather than overwriting each other's kubeconfig/password. When writing
-// to a device there is no output file path to key off, so a single "credentials" directory under
-// the current directory is used. An explicit --credentials-dir always overrides this default.
+// credentialsOutputDir resolves the default credentials directory. It keys off the full --output
+// image file name so distinct images built into the same parent directory (e.g. out/cluster-a.img
+// and out/cluster-b.img) get separate credential directories (out/cluster-a.img-credentials and
+// out/cluster-b.img-credentials) rather than overwriting each other's kubeconfig/password. The
+// extension is kept rather than stripped: an .img extension is not enforced, so stripping it would
+// make out/cluster-a.img and out/cluster-a collide on out/cluster-a-credentials. When writing to a
+// device there is no output file path to key off, so a single "credentials" directory under the
+// current directory is used. An explicit --credentials-dir always overrides this default.
 func credentialsOutputDir(outputPath string) string {
 	if outputPath == "" {
 		return "credentials"
 	}
 	base := filepath.Base(outputPath)
-	name := strings.TrimSuffix(base, filepath.Ext(base))
-	return filepath.Join(filepath.Dir(outputPath), name+"-credentials")
+	return filepath.Join(filepath.Dir(outputPath), base+"-credentials")
 }
 
 // parseUSBSize parses the --usb-size budget (e.g. "14Gi", "32G") into bytes using the standard
