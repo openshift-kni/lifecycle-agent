@@ -287,6 +287,28 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []byte("SECRET-KUBECONFIG-CONTENT"), data)
 	})
+
+	t.Run("overwriting a world-readable artifact leaves it owner-only", func(t *testing.T) {
+		dir := t.TempDir()
+		kubeconfig := filepath.Join(dir, KubeconfigArtifactName)
+		password := filepath.Join(dir, KubeadminPasswordArtifactName)
+		// Pre-create both artifacts with a permissive mode (as a prior tool or a different umask
+		// might have). os.WriteFile would preserve 0o644 and leak the secret; the atomic
+		// replace must land an owner-only file regardless of the pre-existing mode.
+		require.NoError(t, os.WriteFile(kubeconfig, []byte("old-kubeconfig"), 0o644))
+		require.NoError(t, os.WriteFile(password, []byte("old-password"), 0o644))
+
+		require.NoError(t, WriteCredentialArtifacts(discardLogger(), dir, generatedCreds()))
+
+		for _, p := range []string{kubeconfig, password} {
+			info, err := os.Stat(p)
+			require.NoError(t, err)
+			assert.Equal(t, credentialFileMode, info.Mode().Perm(), p)
+		}
+		data, err := os.ReadFile(kubeconfig)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("SECRET-KUBECONFIG-CONTENT"), data)
+	})
 }
 
 func TestRenderInstallConfig(t *testing.T) {

@@ -233,13 +233,48 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 		}
 	}
 
-	if err := os.WriteFile(kubeconfigPath, creds.Kubeconfig, credentialFileMode); err != nil {
+	if err := writeOwnerOnlyFile(kubeconfigPath, creds.Kubeconfig); err != nil {
 		return fmt.Errorf("writing kubeconfig artifact %q: %w", kubeconfigPath, err)
 	}
-	if err := os.WriteFile(passwordPath, creds.KubeadminPassword, credentialFileMode); err != nil {
+	if err := writeOwnerOnlyFile(passwordPath, creds.KubeadminPassword); err != nil {
 		return fmt.Errorf("writing kubeadmin-password artifact %q: %w", passwordPath, err)
 	}
 	log.Warnf("create-usb: wrote the matching kubeconfig and kubeadmin password to %s (owner-only). Keep them secret and never place them on the media; they are the only copy and a rebuild mints a new identity that replaces them.", dir)
+	return nil
+}
+
+// writeOwnerOnlyFile writes data to path as an owner-only (0600) file, replacing any existing file
+// atomically. It writes to a fresh owner-only temp file in the destination directory and renames it
+// over path: os.WriteFile would leave an already-existing file's mode untouched, so a pre-existing
+// world-readable (e.g. 0644) artifact would keep that mode and leak the secret. The rename also
+// means a failed write never leaves a partially written or mismatched artifact at path.
+func writeOwnerOnlyFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temporary file in %q: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if we return before the rename succeeds; after a successful rename
+	// tmpName no longer exists, so this is a harmless no-op.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	// os.CreateTemp already creates the file 0600, but set it explicitly so the owner-only
+	// guarantee does not depend on that implementation detail.
+	if err := tmp.Chmod(credentialFileMode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("securing temporary file %q: %w", tmpName, err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing temporary file %q: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temporary file %q: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replacing %q: %w", path, err)
+	}
 	return nil
 }
 

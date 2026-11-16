@@ -198,3 +198,18 @@ func TestCreateUsbInvalidManifestFailsValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "manifest validation failed")
 }
+
+func TestCredentialsOutputDir(t *testing.T) {
+	// The default credentials directory must key off the output image name so distinct images
+	// built into the same parent directory do not overwrite each other's credentials.
+	assert.Equal(t, filepath.Join("out", "cluster-a-credentials"), credentialsOutputDir(filepath.Join("out", "cluster-a.img")))
+	assert.Equal(t, filepath.Join("out", "cluster-b-credentials"), credentialsOutputDir(filepath.Join("out", "cluster-b.img")))
+
+	// Two distinct images in the same parent directory resolve to distinct credential directories.
+	a := credentialsOutputDir(filepath.Join("out", "cluster-a.img"))
+	b := credentialsOutputDir(filepath.Join("out", "cluster-b.img"))
+	assert.NotEqual(t, a, b)
+
+	// No output file path (device target) falls back to a fixed local directory.
+	assert.Equal(t, "credentials", credentialsOutputDir(""))
+}

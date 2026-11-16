@@ -369,9 +369,18 @@ The matching **kubeconfig** and **kubeadmin password** are written as owner-only
 <--credentials-dir>/kubeadmin-password
 ```
 
-`--credentials-dir` defaults to the directory of `--output`. These are the credentials the
-operator uses to reach the installed cluster; they are **never** placed on the media or in
-the manifest. Keep them secret.
+`--credentials-dir` defaults to a per-image `<name>-credentials` directory alongside
+`--output` (for example `--output out/cluster-a.img` writes to `out/cluster-a-credentials/`),
+so building several images into the same parent directory does not make one image's
+credentials overwrite another's. When writing to a device, the default is a `credentials`
+directory under the current directory. Pass `--credentials-dir` to choose an explicit
+location. These are the credentials the operator uses to reach the installed cluster; they
+are **never** placed on the media or in the manifest. Keep them secret.
+
+The artifacts are written only **after** the media build and assembly succeed, and each file
+is replaced atomically as an owner-only (`0600`) file. A failed build — including a rebuild
+that is rejected because the `--output` image still exists — therefore leaves any previously
+distributed kubeconfig and password untouched, so they keep matching the surviving image.
 
 `create-usb` runs the installer via `--openshift-install` (default: `openshift-install`
 resolved on `PATH`). Use the installer version that matches the target cluster. For
