@@ -221,3 +221,15 @@ func TestCredentialsOutputDir(t *testing.T) {
 	// No output file path (device target) falls back to a fixed local directory.
 	assert.Equal(t, "credentials", credentialsOutputDir(""))
 }
+
+func TestResolveCredentialsDir(t *testing.T) {
+	// An explicit --credentials-dir always wins over the per-output default.
+	opts := createUsbOptions{outputPath: filepath.Join("out", "cluster-a.img"), credentialsDir: filepath.Join("custom", "creds")}
+	assert.Equal(t, filepath.Join("custom", "creds"), resolveCredentialsDir(opts))
+
+	// With no override, it falls back to the per-output default (credentialsOutputDir). The pre-build
+	// preflight and the post-build publish must resolve to the same directory.
+	opts = createUsbOptions{outputPath: filepath.Join("out", "cluster-a.img")}
+	assert.Equal(t, credentialsOutputDir(filepath.Join("out", "cluster-a.img")), resolveCredentialsDir(opts))
+	assert.Equal(t, filepath.Join("out", "cluster-a.img-credentials"), resolveCredentialsDir(opts))
+}

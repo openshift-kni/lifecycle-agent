@@ -309,6 +309,32 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []byte("SECRET-KUBECONFIG-CONTENT"), data)
 	})
+
+	t.Run("a failed publication of the second artifact rolls back the first", func(t *testing.T) {
+		dir := t.TempDir()
+		kubeconfig := filepath.Join(dir, KubeconfigArtifactName)
+		password := filepath.Join(dir, KubeadminPasswordArtifactName)
+		// Seed an existing kubeconfig and make the kubeadmin-password destination a directory, so
+		// publishing the second artifact fails (rename cannot replace a directory) after the
+		// kubeconfig has already been replaced. This exercises the transactional rollback.
+		require.NoError(t, os.WriteFile(kubeconfig, []byte("old-kubeconfig"), 0o600))
+		require.NoError(t, os.Mkdir(password, 0o700))
+
+		err := WriteCredentialArtifacts(discardLogger(), dir, generatedCreds())
+		require.Error(t, err)
+
+		// The freshly minted kubeconfig must be rolled back rather than left on disk, so no
+		// mismatched new-kubeconfig/stale-password pair is published behind a successful build.
+		_, statErr := os.Stat(kubeconfig)
+		assert.True(t, os.IsNotExist(statErr), "partially published kubeconfig should be rolled back")
+
+		// No staging temp files should be left behind.
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		for _, e := range entries {
+			assert.NotContains(t, e.Name(), ".tmp-", "staging temp file left behind: %s", e.Name())
+		}
+	})
 }
 
 func TestRenderInstallConfig(t *testing.T) {

@@ -212,9 +212,14 @@ func GenerateSiteConfigCredentials(ctx context.Context, log *logrus.Logger, m *M
 }
 
 // WriteCredentialArtifacts writes the generated kubeconfig and kubeadmin password into dir as
-// owner-only files, creating dir 0700 if needed. A newly minted identity invalidates any
-// previously distributed kubeconfig, so an overwrite of pre-existing artifacts is surfaced
-// loudly rather than done silently. The secret bytes themselves are never logged.
+// owner-only files, creating dir 0700 if needed. The kubeconfig and kubeadmin password are a
+// matched pair, so they are published transactionally: both are first staged to owner-only temp
+// files in dir, and only once both are fully written are they renamed into place. A failure while
+// writing either artifact therefore never replaces one of the destinations while leaving the
+// other, which would leave a mismatched kubeconfig/password pair behind a successful media build.
+// A newly minted identity invalidates any previously distributed kubeconfig, so an overwrite of
+// pre-existing artifacts is surfaced loudly rather than done silently. The secret bytes themselves
+// are never logged.
 func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCredentials) error {
 	if creds == nil {
 		return nil
@@ -233,49 +238,70 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 		}
 	}
 
-	if err := writeOwnerOnlyFile(kubeconfigPath, creds.Kubeconfig); err != nil {
-		return fmt.Errorf("writing kubeconfig artifact %q: %w", kubeconfigPath, err)
+	// Stage both artifacts to owner-only temp files before publishing either. Staging both up
+	// front means the only operations left once the first destination is replaced are renames of
+	// already-written temp files in the same directory, so a mid-write failure (a short write, a
+	// full disk) on the second artifact can no longer leave a freshly published kubeconfig paired
+	// with a stale kubeadmin password (or vice versa).
+	kubeconfigTmp, err := stageOwnerOnlyFile(dir, KubeconfigArtifactName, creds.Kubeconfig)
+	if err != nil {
+		return fmt.Errorf("staging kubeconfig artifact: %w", err)
 	}
-	if err := writeOwnerOnlyFile(passwordPath, creds.KubeadminPassword); err != nil {
-		return fmt.Errorf("writing kubeadmin-password artifact %q: %w", passwordPath, err)
+	defer func() { _ = os.Remove(kubeconfigTmp) }()
+
+	passwordTmp, err := stageOwnerOnlyFile(dir, KubeadminPasswordArtifactName, creds.KubeadminPassword)
+	if err != nil {
+		return fmt.Errorf("staging kubeadmin-password artifact: %w", err)
+	}
+	defer func() { _ = os.Remove(passwordTmp) }()
+
+	// Publish both staged artifacts. Both temp files already live in dir (the same filesystem as
+	// their destinations), so the renames are atomic metadata operations. If the second rename
+	// still fails after the first succeeded, roll the first one back so a successful build never
+	// leaves a mismatched kubeconfig/password pair published on disk.
+	if err := os.Rename(kubeconfigTmp, kubeconfigPath); err != nil {
+		return fmt.Errorf("publishing kubeconfig artifact %q: %w", kubeconfigPath, err)
+	}
+	if err := os.Rename(passwordTmp, passwordPath); err != nil {
+		if rbErr := os.Remove(kubeconfigPath); rbErr != nil {
+			log.Warnf("create-usb: failed to roll back the partially published kubeconfig %s after the kubeadmin-password write failed: %v; the credential pair in %s may be inconsistent — rebuild to mint and publish a fresh pair", kubeconfigPath, rbErr, dir)
+		}
+		return fmt.Errorf("publishing kubeadmin-password artifact %q: %w", passwordPath, err)
 	}
 	log.Warnf("create-usb: wrote the matching kubeconfig and kubeadmin password to %s (owner-only). Keep them secret and never place them on the media; they are the only copy and a rebuild mints a new identity that replaces them.", dir)
 	return nil
 }
 
-// writeOwnerOnlyFile writes data to path as an owner-only (0600) file, replacing any existing file
-// atomically. It writes to a fresh owner-only temp file in the destination directory and renames it
-// over path: os.WriteFile would leave an already-existing file's mode untouched, so a pre-existing
-// world-readable (e.g. 0644) artifact would keep that mode and leak the secret. The rename also
-// means a failed write never leaves a partially written or mismatched artifact at path.
-func writeOwnerOnlyFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+// stageOwnerOnlyFile writes data to a fresh owner-only (0600) temp file in dir and returns its
+// path without publishing it; the caller renames the returned file over its destination to publish
+// it atomically. os.WriteFile would instead leave an already-existing file's mode untouched, so a
+// pre-existing world-readable (e.g. 0644) destination would keep that mode and leak the secret.
+// Writing the full contents here, before any rename, is what lets WriteCredentialArtifacts publish
+// the kubeconfig/password pair transactionally. The temp name is derived from name (and dot-
+// prefixed) so a failed run leaves an obviously-temporary artifact the caller cleans up.
+func stageOwnerOnlyFile(dir, name string, data []byte) (string, error) {
+	tmp, err := os.CreateTemp(dir, "."+name+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("creating temporary file in %q: %w", dir, err)
+		return "", fmt.Errorf("creating temporary file in %q: %w", dir, err)
 	}
 	tmpName := tmp.Name()
-	// Best-effort cleanup if we return before the rename succeeds; after a successful rename
-	// tmpName no longer exists, so this is a harmless no-op.
-	defer func() { _ = os.Remove(tmpName) }()
-
 	// os.CreateTemp already creates the file 0600, but set it explicitly so the owner-only
 	// guarantee does not depend on that implementation detail.
 	if err := tmp.Chmod(credentialFileMode); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("securing temporary file %q: %w", tmpName, err)
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("securing temporary file %q: %w", tmpName, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("writing temporary file %q: %w", tmpName, err)
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("writing temporary file %q: %w", tmpName, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing temporary file %q: %w", tmpName, err)
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("closing temporary file %q: %w", tmpName, err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replacing %q: %w", path, err)
-	}
-	return nil
+	return tmpName, nil
 }
 
 // installerConfigImageGenerator is the production CredentialGenerator: it shells out to

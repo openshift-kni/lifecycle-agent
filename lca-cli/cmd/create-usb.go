@@ -193,6 +193,20 @@ func runCreateUsb(opts createUsbOptions) error {
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
+	// Preflight the credentials directory before the expensive media build. The generated
+	// kubeconfig/password are held in memory and published only after Build succeeds; if the
+	// destination directory cannot be created (e.g. a parent path component is a regular file) we
+	// fail here rather than after assembling an image whose matching credentials could then never
+	// be written and would be lost when the command exits. Only the (empty) directory is created at
+	// this point — no secret material is written before the build. The mode matches createusb's
+	// credentialDirMode; WriteCredentialArtifacts re-creates the same directory with that mode when
+	// it publishes.
+	if creds != nil {
+		if err := os.MkdirAll(resolveCredentialsDir(opts), 0o700); err != nil {
+			return fmt.Errorf("create-usb: creating credentials directory: %w", err)
+		}
+	}
+
 	if err := createusb.Build(context.Background(), log, manifest, createusb.BuildOptions{
 		OutputPath:   opts.outputPath,
 		WriteDevice:  opts.writeDevice,
@@ -237,20 +251,30 @@ func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Mani
 }
 
 // writeGeneratedCredentials emits the generated kubeconfig + kubeadmin password as owner-only
-// build artifacts (never on the media). It runs only after manifest validation succeeds, so a
-// failed build does not leave secret artifacts on disk. It is a no-op when nothing was generated.
+// build artifacts (never on the media). It runs only after the media build and assembly succeed, so
+// a failed build leaves no secret artifacts on disk and leaves any previously distributed
+// credentials untouched. The destination directory is preflighted before the build (see
+// runCreateUsb) so this publishes into a directory already known to be creatable. It is a no-op when
+// nothing was generated.
 func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.GeneratedCredentials) error {
 	if creds == nil {
 		return nil
 	}
-	dir := opts.credentialsDir
-	if dir == "" {
-		dir = credentialsOutputDir(opts.outputPath)
-	}
-	if err := createusb.WriteCredentialArtifacts(log, dir, creds); err != nil {
+	if err := createusb.WriteCredentialArtifacts(log, resolveCredentialsDir(opts), creds); err != nil {
 		return fmt.Errorf("writing credential artifacts: %w", err)
 	}
 	return nil
+}
+
+// resolveCredentialsDir returns the directory the generated credential artifacts are written to:
+// the explicit --credentials-dir when set, otherwise the per-output default from
+// credentialsOutputDir. Both the pre-build preflight in runCreateUsb and writeGeneratedCredentials
+// use it so the directory checked up front is the same one the artifacts are later published to.
+func resolveCredentialsDir(opts createUsbOptions) string {
+	if opts.credentialsDir != "" {
+		return opts.credentialsDir
+	}
+	return credentialsOutputDir(opts.outputPath)
 }
 
 // credentialsOutputDir resolves the default credentials directory. It keys off the full --output
