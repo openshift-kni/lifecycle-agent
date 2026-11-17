@@ -123,6 +123,13 @@ type SiteConfig struct {
 	// empty value uses the default (180 days). It is validated at build time: a non-parseable,
 	// non-positive, or absurdly large value fails the build.
 	MaxSeedAge string `json:"maxSeedAge,omitempty"`
+
+	// ReconfigureConvergenceTimeout optionally overrides how long the post-install reconfigure
+	// result-writer waits for the node to converge (node Ready and all cluster operators
+	// settled) before recording a failure and halting the node powered-on. It is a Go duration
+	// string (for example "90m"); an empty value uses the default (60 minutes). It is validated
+	// at build time: a non-parseable, non-positive, or absurdly large value fails the build.
+	ReconfigureConvergenceTimeout string `json:"reconfigureConvergenceTimeout,omitempty"`
 	// KubeadminPasswordHash and KubeconfigCryptoRetention are generated in advance
 	// together with the kubeconfig handed to the user. The hash keeps kubeadmin usable
 	// after recert; the retention set makes the target cluster trust that kubeconfig.
@@ -378,6 +385,12 @@ func (m *Manifest) validateSelfContained() error {
 	if err := m.validateSiteConfigClockGate(); err != nil {
 		return err
 	}
+	// The optional reconfigure convergence timeout is rendered into manifest.json and consumed
+	// by the post-install result-writer, so a value it would reject must fail the build here
+	// rather than halting the node offline.
+	if err := m.validateSiteConfigReconfigureConvergenceTimeout(); err != nil {
+		return err
+	}
 
 	// The self-contained media carries the cluster's configuration on-media.
 	if m.ClusterManifests == nil || len(*m.ClusterManifests) == 0 {
@@ -439,6 +452,18 @@ func (m *Manifest) validateSiteConfigClockGate() error {
 	}
 	if strings.TrimSpace(m.SiteConfig.ChronyConfig) != "" && !seedreconfig.ChronyConfigHasTrustedSource(m.SiteConfig.ChronyConfig) {
 		return fmt.Errorf("siteConfig.chronyConfig declares no trusted time source for the pre-recert clock gate: provide a server/pool/peer pointing at a real address or a non-RTC hardware refclock (RTC-backed or local-only sources are not trusted), or omit chronyConfig to rely on the seed-age plausibility window")
+	}
+	return nil
+}
+
+// validateSiteConfigReconfigureConvergenceTimeout validates the optional result-writer
+// convergence timeout so a value the runtime result-writer would reject fails the build. It
+// shares api/seedreconfig.ParseReconfigureConvergenceTimeout with the runtime, so build-time
+// and runtime acceptance cannot drift: when set it must be a positive Go duration within the
+// allowed bound.
+func (m *Manifest) validateSiteConfigReconfigureConvergenceTimeout() error {
+	if _, err := seedreconfig.ParseReconfigureConvergenceTimeout(m.SiteConfig.ReconfigureConvergenceTimeout); err != nil {
+		return fmt.Errorf("siteConfig.reconfigureConvergenceTimeout is invalid: %w", err)
 	}
 	return nil
 }

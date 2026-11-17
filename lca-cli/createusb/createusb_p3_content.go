@@ -168,6 +168,11 @@ func seedReconfigurationFromSiteConfig(sc *SiteConfig) *seedreconfig.SeedReconfi
 		ChronyConfig:     sc.ChronyConfig,
 		MaxSeedAge:       sc.MaxSeedAge,
 
+		// Profile is the explicit self-contained signal the reconfigure result-writer gates on;
+		// the p3 config tree only exists under ModeSelfContained, so it is always stamped here.
+		Profile:                       seedreconfig.ProfileSelfContained,
+		ReconfigureConvergenceTimeout: sc.ReconfigureConvergenceTimeout,
+
 		KubeadminPasswordHash:     sc.KubeadminPasswordHash,
 		KubeconfigCryptoRetention: sc.KubeconfigCryptoRetention,
 	}

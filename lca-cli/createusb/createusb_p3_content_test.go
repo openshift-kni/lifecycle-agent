@@ -52,6 +52,7 @@ func TestRenderP3Tree_SeedReconfiguration(t *testing.T) {
 	m.SiteConfig.SSHKey = "ssh-ed25519 AAAA..."
 	m.SiteConfig.ChronyConfig = "server ntp.example.com iburst"
 	m.SiteConfig.MaxSeedAge = "4320h"
+	m.SiteConfig.ReconfigureConvergenceTimeout = "90m"
 	m.ClusterManifests = nil // focus on the manifest.json render
 
 	p3Root := t.TempDir()
@@ -78,6 +79,10 @@ func TestRenderP3Tree_SeedReconfiguration(t *testing.T) {
 	// post-pivot's clock gate can reach the trusted-time path and the widened window.
 	assert.Equal(t, "server ntp.example.com iburst", sr.ChronyConfig)
 	assert.Equal(t, "4320h", sr.MaxSeedAge)
+	// The explicit self-contained profile and the result-writer convergence timeout must survive
+	// the render so the reconfigure result-writer can gate on the profile and anchor its deadline.
+	assert.Equal(t, seedreconfig.ProfileSelfContained, sr.Profile)
+	assert.Equal(t, "90m", sr.ReconfigureConvergenceTimeout)
 	assert.Equal(t, validKubeadminPasswordHash, sr.KubeadminPasswordHash)
 	assert.Equal(t, validKubeconfigCryptoRetention(), sr.KubeconfigCryptoRetention)
 }

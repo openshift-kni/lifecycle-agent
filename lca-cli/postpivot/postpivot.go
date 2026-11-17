@@ -25,6 +25,7 @@ import (
 	clusterconfig_api "github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/recert"
+	"github.com/openshift-kni/lifecycle-agent/internal/reconfigure"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/seedclusterinfo"
 	"github.com/openshift-kni/lifecycle-agent/utils"
@@ -183,6 +184,24 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("pre-recert clock gate failed: %w", err)
 	}
 
+	// Reconfigure result-writer handoff (self-contained USB IBI only): write the write-once
+	// durable handoff that anchors the convergence-timeout deadline and gates the dedicated
+	// result-writer unit via ConditionPathExists. It is written AFTER the clock gate so the
+	// PostPivotStartTime anchor reflects the post-step clock: the gate's transient makestep
+	// policy may step the system clock forward, and anchoring before that step could place the
+	// deadline in the past and send the writer straight to the failure/halt path without ever
+	// polling convergence. The gate halts the node on an implausible clock, so reaching this
+	// point means the clock is trustworthy. It is written under common.LCAConfigDir (which
+	// cleanup() never touches) and is write-once, so installation-configuration.service
+	// Restart=on-failure retries preserve the original post-gate anchor rather than resetting it.
+	// Only self-contained media carries the profile; IBU and install-only skip it, so the
+	// result-writer unit never starts on those profiles.
+	if seedReconfiguration.Profile == clusterconfig_api.ProfileSelfContained {
+		if err := p.writeReconfigureHandoff(seedReconfiguration, seedClusterInfo); err != nil {
+			return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+		}
+	}
+
 	// NOTE: This must be done before we run recert, as otherwise recert could
 	// fail to pull in absence of a precached recert image
 	if err := p.establishEarlyCertificateTrust(seedReconfiguration); err != nil {
@@ -254,17 +273,127 @@ func (p *PostPivot) PostPivotConfiguration(ctx context.Context) error {
 		return fmt.Errorf("failed to run once recover_lvm_devices for post pivot: %w", err)
 	}
 
-	if _, err = p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
+	return p.finalizePostPivot(seedReconfiguration)
+}
+
+// finalizePostPivot wraps up a successful post-pivot run: it persists the durable completion marker
+// and kicks the result-writer (self-contained USB IBI only), disables the one-shot post-pivot
+// services, and runs cleanup. completeReconfigure runs BEFORE disabling
+// installation-configuration.service so a marker-write failure returns with post-pivot boot
+// activation still enabled, leaving the node to auto-retry on the next boot rather than being
+// stranded with no terminal verdict. It is split out of PostPivotConfiguration to keep that
+// function's cyclomatic complexity within the linter budget.
+func (p *PostPivot) finalizePostPivot(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if err := p.completeReconfigure(seedReconfiguration); err != nil {
+		return err
+	}
+
+	if _, err := p.ops.SystemctlAction("disable", "installation-configuration.service"); err != nil {
 		return fmt.Errorf("failed to disable installation-configuration.service, err: %w", err)
 	}
 
 	// The restore service is a no-op once cleanup removes the working dir, so failing to disable it
 	// is not worth failing the upgrade for
-	if _, err = p.ops.SystemctlAction("disable", nmConnectionRestoreService); err != nil {
+	if _, err := p.ops.SystemctlAction("disable", nmConnectionRestoreService); err != nil {
 		p.log.Warnf("failed to disable %s, err: %v", nmConnectionRestoreService, err)
 	}
 
 	return p.cleanup()
+}
+
+// reconfigureResultWriterStartAttempts bounds how many times post-pivot kicks the result-writer
+// in-boot before giving up for this attempt. A small bound rides out a transient systemd blip
+// without blocking post-pivot; the unit still runs on the next boot if every attempt fails.
+const reconfigureResultWriterStartAttempts = 3
+
+// reconfigureResultWriterStartRetryDelay is the delay between result-writer start attempts. It is
+// a package var so unit tests can set it to zero.
+var reconfigureResultWriterStartRetryDelay = 2 * time.Second
+
+// completeReconfigure records the durable post-pivot completion marker (self-contained USB IBI
+// only) that gates the reconfigure result-writer, then kicks the writer so it runs for the current
+// post-pivot attempt without waiting for another reboot. The marker is written here -- after recert
+// and manifests are applied -- so the writer never records a verdict against the still-healthy seed
+// cluster if post-pivot fails before recert finishes; and the caller invokes this before disabling
+// installation-configuration.service, so a failed marker write preserves next-boot auto-recovery.
+// It is kept out of PostPivotConfiguration so that function's cyclomatic complexity stays within
+// the linter budget.
+func (p *PostPivot) completeReconfigure(seedReconfiguration *clusterconfig_api.SeedReconfiguration) error {
+	if seedReconfiguration.Profile != clusterconfig_api.ProfileSelfContained {
+		return nil
+	}
+	if err := p.writeReconfigureCompleted(); err != nil {
+		return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
+	}
+	// The result-writer unit is WantedBy=multi-user.target and condition-gated only on the durable
+	// handoff (not the completion marker), so it starts automatically at boot to enforce the
+	// convergence deadline. Kick it here anyway so this post-pivot attempt is covered without waiting
+	// for the boot-time job: installation-configuration.service runs post-pivot with
+	// Restart=on-failure, and a retry that writes the marker without an intervening reboot should
+	// publish the success promptly rather than only on the next reboot. If the writer is already
+	// running (started earlier this boot), this start is a harmless no-op. --no-block is required
+	// because the unit is ordered After=installation-configuration.service, which is still active
+	// while this post-pivot runs -- a blocking start would deadlock on that ordering. The start is
+	// retried a few times so a transient systemd failure does not silently defer the success publish
+	// to the next reboot. It stays non-fatal: if every attempt fails the unit still runs on the next
+	// boot, so a start hiccup must not strand post-pivot.
+	var lastErr error
+	for attempt := 1; attempt <= reconfigureResultWriterStartAttempts; attempt++ {
+		if _, lastErr = p.ops.SystemctlAction("start", "--no-block", common.ReconfigureResultWriterService); lastErr == nil {
+			return nil
+		}
+		p.log.Warnf("failed to start %s (attempt %d/%d), err: %v",
+			common.ReconfigureResultWriterService, attempt, reconfigureResultWriterStartAttempts, lastErr)
+		if attempt < reconfigureResultWriterStartAttempts {
+			time.Sleep(reconfigureResultWriterStartRetryDelay)
+		}
+	}
+	p.log.Warnf("giving up starting %s in-boot after %d attempts; it will still run on the next boot: %v",
+		common.ReconfigureResultWriterService, reconfigureResultWriterStartAttempts, lastErr)
+	return nil
+}
+
+// reconfigureHandoffFile is the path the self-contained reconfigure handoff is written to. It
+// is a package var so unit tests can redirect the write to a temp file.
+var reconfigureHandoffFile = common.ReconfigureHandoffFile
+
+// writeReconfigureHandoff writes the write-once durable handoff that drives the self-contained
+// reconfigure result-writer. The timestamp is captured from nowUTC (a package var) at the point
+// this runs -- after the pre-recert clock gate -- so the anchor reflects the gate's post-step
+// clock. The first post-pivot run to reach this point establishes the convergence-timeout
+// anchor; the write-once semantics preserve it across Restart=on-failure retries.
+func (p *PostPivot) writeReconfigureHandoff(seedReconfiguration *clusterconfig_api.SeedReconfiguration,
+	seedClusterInfo *seedclusterinfo.SeedClusterInfo) error {
+	handoff := &reconfigure.Handoff{
+		Profile:            seedReconfiguration.Profile,
+		ConvergenceTimeout: seedReconfiguration.ReconfigureConvergenceTimeout,
+		PostPivotStartTime: nowUTC().Format(time.RFC3339),
+		SeedVersion:        seedClusterInfo.SeedClusterOCPVersion,
+	}
+	p.log.Infof("Writing reconfigure result-writer handoff to %s (anchor %s, timeout %q)",
+		reconfigureHandoffFile, handoff.PostPivotStartTime, handoff.ConvergenceTimeout)
+	if err := reconfigure.WriteHandoffOnce(reconfigureHandoffFile, handoff); err != nil {
+		return fmt.Errorf("failed to write reconfigure handoff: %w", err)
+	}
+	return nil
+}
+
+// reconfigureCompletedFile is the path the self-contained post-pivot completion marker is written
+// to. It is a package var so unit tests can redirect the write to a temp file.
+var reconfigureCompletedFile = common.ReconfigureCompletedFile
+
+// writeReconfigureCompleted records the durable post-pivot completion marker that gates only the
+// SUCCESS verdict of the reconfigure result-writer, so the writer records success only once
+// reconfiguration has actually finished (recert and manifests applied) rather than against the
+// still-healthy seed cluster. The writer still runs and enforces the convergence deadline without
+// this marker. See successCriterionMet in lca-cli/initmonitor/reconfigure.go and
+// common.ReconfigureCompletedFile.
+func (p *PostPivot) writeReconfigureCompleted() error {
+	p.log.Infof("Writing reconfigure completion marker to %s", reconfigureCompletedFile)
+	if err := reconfigure.WriteCompletionMarker(reconfigureCompletedFile); err != nil {
+		return fmt.Errorf("failed to write reconfigure completion marker: %w", err)
+	}
+	return nil
 }
 
 // restoreChronyConfigForGateFailure restores the operator's Chrony configuration when a

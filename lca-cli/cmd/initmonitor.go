@@ -40,6 +40,7 @@ var (
 	launchMonitor              bool
 	monitorSvcUnitComponentTag string
 	monitorMode                string
+	runReconfigureResultWriter bool
 )
 
 func init() {
@@ -50,7 +51,8 @@ func init() {
 	initMonitorCmd.Flags().BoolVar(&launchMonitor, "monitor", false, "Run LCA init monitor")
 	initMonitorCmd.Flags().StringVar(&monitorSvcUnitComponentTag, "exec-stop-post", "", "Run ExecStopPost, with specified component tag")
 	initMonitorCmd.Flags().StringVar(&monitorMode, "mode", "ibu", "Init monitor mode: 'ibu' or 'ipc'")
-	initMonitorCmd.MarkFlagsMutuallyExclusive("monitor", "exec-stop-post")
+	initMonitorCmd.Flags().BoolVar(&runReconfigureResultWriter, "reconfigure-result-writer", false, "Run the self-contained USB-based IBI reconfigure result-writer")
+	initMonitorCmd.MarkFlagsMutuallyExclusive("monitor", "exec-stop-post", "reconfigure-result-writer")
 }
 
 func initMonitor() error {
@@ -71,17 +73,23 @@ func initMonitor() error {
 		monitorSvcUnitComponentTag,
 		monitorMode,
 	)
-	if launchMonitor {
+	switch {
+	case launchMonitor:
 		if err := initMonitorRunner.RunInitMonitor(); err != nil {
 			return fmt.Errorf("failed to run init monitor: %w", err)
 		}
 		return nil
-	} else if monitorSvcUnitComponentTag != "" {
+	case monitorSvcUnitComponentTag != "":
 		if err := initMonitorRunner.RunExitStopPostCheck(); err != nil {
 			return fmt.Errorf("failed to run exit stop post check: %w", err)
 		}
 		return nil
+	case runReconfigureResultWriter:
+		if err := initMonitorRunner.RunReconfigureResultWriter(); err != nil {
+			return fmt.Errorf("failed to run reconfigure result writer: %w", err)
+		}
+		return nil
 	}
 
-	return fmt.Errorf("must specify either --monitor or --exec-stop-post")
+	return fmt.Errorf("must specify either --monitor, --exec-stop-post, or --reconfigure-result-writer")
 }

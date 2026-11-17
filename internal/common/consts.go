@@ -93,6 +93,32 @@ const (
 	IPCInitMonitorService                           = "lca-init-monitor.service"
 	IPConfigurationService                          = "ip-configuration.service"
 	IPCFilePath                                     = LCAConfigDir + "/ipc.json"
+	// ReconfigureHandoffFile is the write-once durable handoff the self-contained post-pivot
+	// writes for the reconfigure result-writer (CNF-27173). It is rooted under LCAConfigDir
+	// (which post-pivot cleanup never touches, unlike the working dir), so it survives
+	// installation-configuration.service Restart=on-failure retries and carries the
+	// convergence-timeout anchor (post-pivot start time) captured on the first run.
+	ReconfigureHandoffFile = LCAConfigDir + "/reconfigure-handoff.json"
+	// ReconfigureCompletedFile is the durable marker the self-contained post-pivot writes once
+	// reconfiguration has actually finished (recert and manifests applied). It gates the
+	// reconfigure result-writer (CNF-27173): the handoff is written early -- right after the
+	// pre-recert clock gate, before recert -- to anchor the convergence deadline, so its presence
+	// alone does not mean reconfiguration completed. If installation-configuration.service fails
+	// after the handoff is written but before recert finishes, systemd can still start the
+	// (After=-ordered) writer, which would poll the still-healthy seed cluster and record a false
+	// success. The writer gates only the SUCCESS verdict on this marker (not its own startup), so a
+	// stalled or failed post-pivot that never writes it cannot defer the convergence deadline: the
+	// writer still runs and still halts the node at the deadline. It is rooted under LCAConfigDir
+	// (which post-pivot cleanup never touches), alongside the handoff.
+	ReconfigureCompletedFile = LCAConfigDir + "/reconfigure-completed"
+	// ReconfigureSuccessPendingFile is the durable marker the reconfigure result-writer (CNF-27173)
+	// writes the moment it observes the convergence criterion, BEFORE it attempts to persist the
+	// terminal success verdict to the p4 partition. If that p4 write fails and the node reboots past
+	// the original (write-once) deadline, a later boot re-publishes the already-made success decision
+	// from this marker instead of re-deciding against possibly-transient live state -- which would
+	// otherwise risk recording a false failure for a node that already converged. It is rooted under
+	// LCAConfigDir (which post-pivot cleanup never touches), alongside the handoff.
+	ReconfigureSuccessPendingFile = LCAConfigDir + "/reconfigure-success-pending"
 	// InitMonitorModeFile configures which mode the init-monitor should operate in ("ibu" or "ipconfig")
 	InitMonitorModeFile = LCAWorkspaceDir + "/initmonitor_mode"
 	// AutoRollbackOnFailurePostRebootConfigAnnotation configure automatic rollback when the reconfiguration of the cluster fails upon the first reboot.
@@ -229,6 +255,12 @@ const (
 	// node before recert runs); the reconfigure result-writer (CNF-27173) owns the final
 	// success record.
 	ReconfigureResultFileName = "reconfigure.json"
+
+	// ReconfigureResultWriterService is the dedicated systemd unit that runs the
+	// self-contained reconfigure result-writer (CNF-27173). It is ordered after
+	// installation-configuration.service and gated on the durable handoff via
+	// ConditionPathExists, so it is a clean no-op on IBU/install-only.
+	ReconfigureResultWriterService = "lca-reconfigure-result-writer.service"
 
 	// IBIStatusLogsDir is the directory, relative to the ibi-status (p4) root, under
 	// which the compact diagnostic log bundle is written.

@@ -95,8 +95,11 @@ trusted source, and an out-of-range `maxSeedAge`, fail the build rather than the
 If neither holds, recert never runs: the gate writes a terminal `reconfigure.json` failure
 record to the `ibi-status` partition (recording the observed time, the plausible window, and
 which check failed) and halts the node **powered-on** via `emergency.target` so a technician can
-diagnose and correct the clock. A later boot with a corrected clock (or an added trusted time
-source) passes the gate and overwrites the failure record as it completes reconfigure.
+diagnose and correct the clock. The terminal verdict is **idempotent**: an existing terminal
+`reconfigure.json` (success or failure) is never overwritten, so a later boot with a corrected
+clock passes the gate and runs recert, but it does **not** silently flip the recorded verdict.
+To recover, clear `reconfigure.json` and re-enable the result-writer unit (see the convergence
+verdict below and the [troubleshooting guide](./troubleshooting.md#the-reconfigure-result-reconfigurejson)).
 
 **Accurate clock past the ceiling.** A node genuinely deployed more than `max_seed_age` after the
 seed was built, with an accurate clock and no trusted local time source, will fail the gate —
@@ -109,6 +112,58 @@ no timestamp. For those the gate applies only a degraded, lower-bound-only check
 the seed's control-plane certificate validity (it still rejects a grossly-past clock) and
 otherwise proceeds with a warning. This degraded path does **not** provide the full plausibility
 window and is not a substitute for a seed that carries `seed_creation_time`.
+
+### The reconfigure convergence verdict
+
+The clock gate decides only the pre-recert failure case. The **success** verdict — and the
+post-recert timeout failure — is owned by a separate, single-writer **reconfigure
+result-writer** so the long "operators Available" wait never blocks post-pivot. It runs as a
+dedicated `lca-reconfigure-result-writer.service` systemd unit, **not** inside post-pivot:
+
+- **Criterion.** Success is node `Ready` **and** all cluster operators converged (`Available`,
+  not `Progressing`, not `Degraded`). The writer polls live cluster state (~every 30s), so it
+  tolerates the `installation-configuration.service` restarts post-pivot goes through without
+  racing them.
+- **Timeout.** If the criterion is not met within the convergence timeout it writes a `failure`
+  and halts the node **powered-on** via `emergency.target`. The timeout defaults to **60
+  minutes** and is configurable via `siteConfig.reconfigureConvergenceTimeout` (create-usb). The
+  deadline is anchored at **post-pivot start — after the pre-recert clock gate, so the anchor
+  reflects any clock step the gate makes** — captured **write-once** under `/var/lib/lca` (which
+  post-pivot cleanup never touches), so post-pivot retries never reset it.
+- **Gating.** The unit is ordered `After=installation-configuration.service` (ordering only,
+  never `Requires=`/`Requisite=`, because the `RemainAfterExit=no` post-pivot goes inactive on
+  success) and `WantedBy=multi-user.target`. It runs with `TimeoutStartSec=0` so systemd never
+  kills it before its own deadline. A single `ConditionPathExists` on the **durable handoff**
+  (`/var/lib/lca/reconfigure-handoff.json`), plus an in-code **explicit self-contained profile**
+  check, make it a clean no-op on IBU/install-only. The **success verdict** is additionally gated —
+  in code, not by the unit condition — on the **post-pivot completion marker**
+  (`/var/lib/lca/reconfigure-completed`, written only once recert and manifests are applied), so the
+  writer never records a false success against the still-healthy seed cluster if post-pivot fails
+  before recert completes. Startup is deliberately **not** gated on that marker: the writer must run
+  to **enforce the deadline** even when post-pivot stalls or fails and never writes it — otherwise
+  the node would hang instead of halting. The handoff is written *early* (right after the clock gate,
+  before recert) to anchor the deadline, so it cannot double as the completion gate.
+- **Pending-success durability.** The moment the writer observes the criterion it durably records a
+  pending-success decision (`/var/lib/lca/reconfigure-success-pending`) *before* writing the terminal
+  verdict to p4. If that p4 write fails and the node reboots past the write-once deadline, a later
+  boot re-publishes the already-made success from this marker instead of re-deciding against
+  possibly-transient live state — so a node that already converged can never be recorded as a
+  failure by a failed write plus an ill-timed reboot.
+- **Idempotence and self-disable.** After writing either terminal verdict the unit disables
+  itself (best-effort — a failed disable never demotes a success or skips the halt). An existing
+  terminal verdict is never overwritten, so a reboot that re-runs the unit is a no-op. The
+  pre-recert clock-gate carve-out is the one case the result-writer never runs: the halt before
+  recert prevents the node from reaching `multi-user.target`.
+
+Recovery after a timeout failure requires **renewing the write-once convergence anchor** — so the
+writer gets a fresh deadline and polls convergence again instead of re-failing on the expired
+one — then clearing `reconfigure.json`, **restoring the node to `multi-user.target`** (a `failure`
+isolates `emergency.target`, which stops the cluster services the node needs to converge), **and**
+re-enabling the self-disabled unit. Automatic `installation-configuration.service` retries
+deliberately keep the original deadline, so only this explicit operator recovery grants a new
+anchor; see the
+[troubleshooting guide](./troubleshooting.md#the-reconfigure-result-reconfigurejson) for the exact
+steps.
 
 ## User specifications
 
