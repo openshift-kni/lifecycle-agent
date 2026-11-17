@@ -397,6 +397,7 @@ oc adm release extract \
   quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64
 
 lca-cli create-usb -f manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> \
   --openshift-install /tmp/oi/openshift-install \
   --credentials-dir /path/to/secrets
 ```
@@ -427,10 +428,19 @@ install -m 600 /path/to/image-based-config.yaml "$WORK/image-based-config.yaml"
 
 The installer writes the user credentials to `$WORK/auth/kubeconfig` and
 `$WORK/auth/kubeadmin-password`, and `imagebasedconfig.iso`, which contains the matching
-`cluster-configuration/manifest.json`. Copy `kubeadmin_password_hash` and
-`KubeconfigCryptoRetention` from that manifest into the `create-usb` manifest's
-`siteConfig`, and keep `auth/kubeconfig` and `auth/kubeadmin-password` as the user's
-credentials. Do not put the kubeconfig itself on the USB media or in the manifest.
+`cluster-configuration/manifest.json`. Extract that manifest from the ISO:
+
+```bash
+bsdtar -xOf \
+  "$WORK/imagebasedconfig.iso" \
+  cluster-configuration/manifest.json \
+  > "$WORK/manifest.json"
+```
+
+Copy `kubeadmin_password_hash` and `KubeconfigCryptoRetention` from `$WORK/manifest.json`
+into the `create-usb` manifest's `siteConfig`, and keep `auth/kubeconfig` and
+`auth/kubeadmin-password` as the user's credentials. Do not put the kubeconfig itself on the
+USB media or in the manifest.
 
 `$WORK` is secret-bearing. Do not print its contents to the terminal, and remove it once
 the media has been built and the credentials have been transferred securely.
