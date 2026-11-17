@@ -114,9 +114,10 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	// Source it for disconnected builders with `oc adm release extract --command=openshift-install`.
 	cmd.Flags().StringVar(&openshiftInstall, "openshift-install", "openshift-install", "openshift-install binary used to generate self-contained kubeconfig identity when the manifest omits it (path or name on PATH).")
 	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
-	// written (owner-only). Defaults to the --output directory. These secrets are never placed on
-	// the media.
-	cmd.Flags().StringVar(&credentialsDir, "credentials-dir", "", "Directory for the generated kubeconfig and kubeadmin-password when create-usb mints self-contained identity (defaults to the --output directory).")
+	// written (owner-only). Defaults to a per-output <output-file-name>-credentials directory next to
+	// --output (or a "credentials" directory when writing to a device). These secrets are never
+	// placed on the media.
+	cmd.Flags().StringVar(&credentialsDir, "credentials-dir", "", "Directory for the generated kubeconfig and kubeadmin-password when create-usb mints self-contained identity (defaults to a <output-file-name>-credentials directory next to --output, or ./credentials when writing to a device).")
 
 	_ = cmd.MarkFlagRequired("manifest")
 

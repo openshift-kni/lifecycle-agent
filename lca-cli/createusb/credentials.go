@@ -217,9 +217,11 @@ func GenerateSiteConfigCredentials(ctx context.Context, log *logrus.Logger, m *M
 // files in dir, and only once both are fully written are they renamed into place. A failure while
 // writing either artifact therefore never replaces one of the destinations while leaving the
 // other, which would leave a mismatched kubeconfig/password pair behind a successful media build.
-// A newly minted identity invalidates any previously distributed kubeconfig, so an overwrite of
-// pre-existing artifacts is surfaced loudly rather than done silently. The secret bytes themselves
-// are never logged.
+// Any pre-existing kubeconfig is moved aside before publishing and restored if publication fails, so
+// a failed build never destroys a previously published credential pair (which may still authenticate
+// an earlier cluster). A newly minted identity invalidates any previously distributed kubeconfig, so
+// an overwrite of pre-existing artifacts is surfaced loudly rather than done silently. The secret
+// bytes themselves are never logged.
 func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCredentials) error {
 	if creds == nil {
 		return nil
@@ -255,18 +257,42 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 	}
 	defer func() { _ = os.Remove(passwordTmp) }()
 
+	// Move any pre-existing kubeconfig aside before publishing so a failed publish can restore the
+	// previous kubeconfig rather than destroy it. The backup lives in the same directory as its
+	// source, so the move is an atomic metadata operation. A pre-existing kubeadmin-password is left
+	// in place: os.Rename is atomic, so a failed second rename leaves that destination untouched, and
+	// restoring the kubeconfig below keeps the prior kubeconfig/password pair recoverable.
+	kubeconfigBackup, err := stashExisting(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("preserving existing kubeconfig artifact %q: %w", kubeconfigPath, err)
+	}
+
 	// Publish both staged artifacts. Both temp files already live in dir (the same filesystem as
-	// their destinations), so the renames are atomic metadata operations. If the second rename
-	// still fails after the first succeeded, roll the first one back so a successful build never
-	// leaves a mismatched kubeconfig/password pair published on disk.
+	// their destinations), so the renames are atomic metadata operations.
 	if err := os.Rename(kubeconfigTmp, kubeconfigPath); err != nil {
+		// Nothing has replaced the destination yet; restore the previous kubeconfig if one was moved
+		// aside so a failed publish leaves the prior artifacts exactly as they were.
+		restoreStashedKubeconfig(log, kubeconfigBackup, kubeconfigPath, dir)
 		return fmt.Errorf("publishing kubeconfig artifact %q: %w", kubeconfigPath, err)
 	}
 	if err := os.Rename(passwordTmp, passwordPath); err != nil {
+		// The kubeconfig was published but the matching password was not. Discard the freshly
+		// published kubeconfig and restore the previous one, so a failed build never leaves a
+		// mismatched new-kubeconfig/stale-password pair and never destroys the prior credential pair.
 		if rbErr := os.Remove(kubeconfigPath); rbErr != nil {
 			log.Warnf("create-usb: failed to roll back the partially published kubeconfig %s after the kubeadmin-password write failed: %v; the credential pair in %s may be inconsistent — rebuild to mint and publish a fresh pair", kubeconfigPath, rbErr, dir)
+		} else {
+			restoreStashedKubeconfig(log, kubeconfigBackup, kubeconfigPath, dir)
 		}
 		return fmt.Errorf("publishing kubeadmin-password artifact %q: %w", passwordPath, err)
+	}
+
+	// Both artifacts published successfully. A newly minted identity invalidates the superseded
+	// kubeconfig, so discard the backup now that the fresh pair is in place.
+	if kubeconfigBackup != "" {
+		if rmErr := os.Remove(kubeconfigBackup); rmErr != nil {
+			log.Warnf("create-usb: failed to remove the superseded kubeconfig backup %s: %v", kubeconfigBackup, rmErr)
+		}
 	}
 	log.Warnf("create-usb: wrote the matching kubeconfig and kubeadmin password to %s (owner-only). Keep them secret and never place them on the media; they are the only copy and a rebuild mints a new identity that replaces them.", dir)
 	return nil
@@ -302,6 +328,45 @@ func stageOwnerOnlyFile(dir, name string, data []byte) (string, error) {
 		return "", fmt.Errorf("closing temporary file %q: %w", tmpName, err)
 	}
 	return tmpName, nil
+}
+
+// stashExisting moves an existing file at path aside to a sibling backup file and returns the backup
+// path, so a later publish failure can restore it. It returns ("", nil) when path does not exist.
+// The backup is created in the same directory as path (an atomic rename, same filesystem) and keeps
+// path's contents and mode untouched.
+func stashExisting(path string) (string, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("inspecting %q: %w", path, err)
+	}
+	// Reserve a unique backup name alongside path; os.Rename then replaces that placeholder with the
+	// existing file's contents and mode.
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".bak-*")
+	if err != nil {
+		return "", fmt.Errorf("creating backup file for %q: %w", path, err)
+	}
+	backup := f.Name()
+	_ = f.Close()
+	if err := os.Rename(path, backup); err != nil {
+		_ = os.Remove(backup)
+		return "", fmt.Errorf("moving %q aside: %w", path, err)
+	}
+	return backup, nil
+}
+
+// restoreStashedKubeconfig moves a kubeconfig previously stashed by stashExisting back to dest. It is
+// best-effort cleanup on a rollback path: a no-op when nothing was stashed, and a failed restore is
+// logged (leaving the original recoverable under the backup name) rather than returned, because the
+// caller is already returning the publication error that triggered the rollback.
+func restoreStashedKubeconfig(log *logrus.Logger, backup, dest, dir string) {
+	if backup == "" {
+		return
+	}
+	if err := os.Rename(backup, dest); err != nil {
+		log.Warnf("create-usb: failed to restore the previous kubeconfig to %s after a failed publish: %v; the prior kubeconfig is preserved at %s — move it back manually or rebuild to mint a fresh pair in %s", dest, err, backup, dir)
+	}
 }
 
 // installerConfigImageGenerator is the production CredentialGenerator: it shells out to

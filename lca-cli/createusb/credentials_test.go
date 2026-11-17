@@ -310,7 +310,7 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 		assert.Equal(t, []byte("SECRET-KUBECONFIG-CONTENT"), data)
 	})
 
-	t.Run("a failed publication of the second artifact rolls back the first", func(t *testing.T) {
+	t.Run("a failed publication of the second artifact restores the previous kubeconfig", func(t *testing.T) {
 		dir := t.TempDir()
 		kubeconfig := filepath.Join(dir, KubeconfigArtifactName)
 		password := filepath.Join(dir, KubeadminPasswordArtifactName)
@@ -323,16 +323,19 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 		err := WriteCredentialArtifacts(discardLogger(), dir, generatedCreds())
 		require.Error(t, err)
 
-		// The freshly minted kubeconfig must be rolled back rather than left on disk, so no
-		// mismatched new-kubeconfig/stale-password pair is published behind a successful build.
-		_, statErr := os.Stat(kubeconfig)
-		assert.True(t, os.IsNotExist(statErr), "partially published kubeconfig should be rolled back")
+		// The freshly minted kubeconfig must be rolled back and the previous kubeconfig restored,
+		// rather than leaving a mismatched new-kubeconfig/stale-password pair or destroying the prior
+		// kubeconfig (which may still authenticate an earlier cluster).
+		data, statErr := os.ReadFile(kubeconfig)
+		require.NoError(t, statErr, "previous kubeconfig should be restored, not deleted")
+		assert.Equal(t, []byte("old-kubeconfig"), data, "the original kubeconfig bytes must remain")
 
-		// No staging temp files should be left behind.
+		// No staging temp files or leftover backups should be left behind.
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err)
 		for _, e := range entries {
 			assert.NotContains(t, e.Name(), ".tmp-", "staging temp file left behind: %s", e.Name())
+			assert.NotContains(t, e.Name(), ".bak-", "backup file left behind: %s", e.Name())
 		}
 	})
 }
