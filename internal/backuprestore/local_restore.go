@@ -294,9 +294,15 @@ func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntr
 	}
 
 	if restoreStatus && hasStatus && savedStatus != nil {
+		// Status restoration is mandatory: a configured status that cannot be
+		// restored (after bounded conflict and transient retries) fails the restore
+		// rather than being logged and ignored, so the resource is not silently
+		// restored without its status.
 		if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
-			h.Log.Info("Failed to restore status subresource, continuing",
-				"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
+			rt.FailedRestores = append(rt.FailedRestores,
+				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+			return NewBRFailedError("Restore",
+				fmt.Sprintf("failed to restore status for %s %s/%s: %s", kind, namespace, name, err.Error()))
 		}
 	}
 
@@ -317,35 +323,68 @@ func isCRD(resource *unstructured.Unstructured) bool {
 	return resource.GetKind() == "CustomResourceDefinition"
 }
 
+// applyStatusSubresource restores a resource's saved status via the status
+// subresource. Status restoration is mandatory: a failure is never logged and
+// ignored, it is returned to the caller so the restore fails and is retried.
+//
+// A 409 Conflict (the object changed between the Get and the UpdateStatus) is
+// retried in place by re-reading the live object, re-applying the saved status, and
+// retrying the UpdateStatus, bounded by retry.DefaultRetry. A transient API error
+// (server timeout, throttling, service unavailable) on either the Get or the
+// UpdateStatus is retried with a bounded in-process backoff. If the retries are
+// exhausted the final error is returned; the caller records the resource as a
+// failed restore and fails the Upgrade terminally.
 func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstructured.Unstructured, status interface{}) error {
 	gvk := resource.GroupVersionKind()
 	gvr := h.resolveGVR(gvk)
 
 	name := resource.GetName()
 	namespace := resource.GetNamespace()
+	ri := h.resourceInterface(gvr, namespace)
 
-	var existing *unstructured.Unstructured
-	var err error
-	if namespace != "" {
-		existing, err = h.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	} else {
-		existing, err = h.DynamicClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get resource for status update: %w", err)
+	// apply performs one full status-restore attempt (Get live object, copy the
+	// saved status onto it, UpdateStatus), retrying only 409 Conflicts in place.
+	apply := func() error {
+		existing, err := ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get resource for status update: %w", err)
+		}
+		existing.Object["status"] = status
+
+		// updateErr is either nil or an error already wrapped inside the closure
+		// (RetryOnConflict returns the closure's own error verbatim).
+		updateErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if _, err := ri.UpdateStatus(ctx, existing, metav1.UpdateOptions{}); err != nil {
+				if !k8serrors.IsConflict(err) {
+					return fmt.Errorf("failed to update status subresource: %w", err)
+				}
+				// The live object changed since we read it. Re-fetch it, re-apply
+				// the saved status, and let RetryOnConflict retry the UpdateStatus.
+				// The returned error stays conflict-typed (errors.As unwraps it) so
+				// RetryOnConflict keeps retrying.
+				latest, getErr := ri.Get(ctx, name, metav1.GetOptions{})
+				if getErr != nil {
+					return fmt.Errorf("failed to re-fetch resource during status conflict retry: %w", getErr)
+				}
+				latest.Object["status"] = status
+				existing = latest
+				return fmt.Errorf("status update conflict, retrying: %w", err)
+			}
+			return nil
+		})
+		return updateErr //nolint:wrapcheck
 	}
 
-	existing.Object["status"] = status
-
-	if namespace != "" {
-		_, err = h.DynamicClient.Resource(gvr).Namespace(namespace).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
-	} else {
-		_, err = h.DynamicClient.Resource(gvr).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
+	err := apply()
+	if err == nil {
+		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("failed to update status subresource: %w", err)
+	if !isTransientError(err) {
+		return err
 	}
-	return nil
+	h.Log.Info("Transient error during status restore, retrying with backoff",
+		"kind", gvk.Kind, "name", name, "namespace", namespace, "error", err.Error())
+	return retryWithBackoff(ctx, apply)
 }
 
 func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Unstructured) error {
@@ -597,14 +636,17 @@ func isTransientError(err error) bool {
 	return k8serrors.IsServerTimeout(err) || k8serrors.IsTooManyRequests(err) || k8serrors.IsServiceUnavailable(err)
 }
 
-func retryWithBackoff(ctx context.Context, fn func() error) error {
-	backoff := wait.Backoff{
-		Duration: 1 * time.Second,
-		Factor:   2.0,
-		Steps:    3,
-	}
+// transientRetryBackoff bounds the in-process retry of a transient API error
+// (server timeout, throttling, service unavailable) during backup and restore. It
+// is a package variable rather than a constant so tests can shrink the delays.
+var transientRetryBackoff = wait.Backoff{
+	Duration: 1 * time.Second,
+	Factor:   2.0,
+	Steps:    3,
+}
 
-	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
+func retryWithBackoff(ctx context.Context, fn func() error) error {
+	return wait.ExponentialBackoffWithContext(ctx, transientRetryBackoff, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
 		err := fn()
 		if err == nil {
 			return true, nil
