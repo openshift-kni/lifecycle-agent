@@ -489,8 +489,8 @@ func (g *installerConfigImageGenerator) resolveReleaseImage(ctx context.Context,
 	return image, nil
 }
 
-// ocReleaseArch maps a GOARCH (as reported by oc image info) to the architecture suffix used in
-// ocp-release tags.
+// ocReleaseArch maps a GOARCH (as reported by oc image info or runtime.GOARCH) to the architecture
+// suffix (x86_64, aarch64, ...) used in ocp-release tags and RHCOS build paths.
 func ocReleaseArch(goarch string) (string, error) {
 	switch strings.TrimSpace(goarch) {
 	case "amd64":
