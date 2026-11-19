@@ -29,11 +29,13 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -236,6 +238,64 @@ func TestFetchResourcesFromBackupContentNamedUnnamedMix(t *testing.T) {
 	assert.Contains(t, names, "cm2")
 	assert.Contains(t, names, "s1", "a named secret must be fetched")
 	assert.NotContains(t, names, "s2", "an unnamed secret must not be fetched when the entry is named")
+}
+
+// TestFetchResourcesFromBackupContentRetriesTransientErrors verifies that the
+// BackupContent fetch path retries transient List errors with a bounded in-process
+// backoff: a single transient failure is retried and then succeeds, while a
+// persistent transient failure fails the backup after the retries are exhausted.
+func TestFetchResourcesFromBackupContentRetriesTransientErrors(t *testing.T) {
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces: []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "configmaps"}, // unnamed -> List
+			},
+		},
+	}
+
+	t.Run("a transient list error is retried then succeeds", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
+		cm := newUnstructuredWithLabels("ConfigMap", "cm1", "app-ns", nil)
+		dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns, cm)
+
+		var listAttempts int
+		dc.PrependReactor("list", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			listAttempts++
+			if listAttempts == 1 {
+				return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is temporarily unavailable")
+			}
+			return false, nil, nil
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+		resources, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, listAttempts, "a transient list error must be retried once then succeed")
+		names := resourceNames(resources)
+		assert.Contains(t, names, "app-ns")
+		assert.Contains(t, names, "cm1")
+	})
+
+	t.Run("a persistent transient list error fails the backup after retries", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
+		cm := newUnstructuredWithLabels("ConfigMap", "cm1", "app-ns", nil)
+		dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns, cm)
+
+		var listAttempts int
+		dc.PrependReactor("list", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			listAttempts++
+			return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is unavailable")
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+		_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+		assert.Error(t, err)
+		assert.Greater(t, listAttempts, 1, "a persistent transient list error must be retried before failing")
+	})
 }
 
 // TestFetchResourcesFromBackupContentLabelSelectorScope verifies that the

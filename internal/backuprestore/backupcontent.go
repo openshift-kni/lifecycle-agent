@@ -188,7 +188,7 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 	// configuration error (matching the oadpContent path).
 	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
 	for _, ns := range spec.Namespaces {
-		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
+		nsObj, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns)
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				return nil, fmt.Errorf("included namespace %q does not exist", ns)
@@ -201,7 +201,7 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 	// Discover the server's preferred API resources on every fetch so that CRDs
 	// installed after the controller started are visible and entry kinds resolve to
 	// their preferred GVR.
-	apiResourceLists, failedGroups, err := h.getServerPreferredResources()
+	apiResourceLists, failedGroups, err := h.getServerPreferredResources(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +298,7 @@ func (h *BRHandler) fetchEntry(ctx context.Context, gvr schema.GroupVersionResou
 
 	if len(entry.Names) == 0 {
 		for _, scope := range scopes {
-			list, err := h.resourceInterface(gvr, scope).List(ctx, metav1.ListOptions{LabelSelector: selectorString})
+			list, err := h.listResourcesWithRetry(ctx, h.resourceInterface(gvr, scope), metav1.ListOptions{LabelSelector: selectorString})
 			if err != nil {
 				return nil, fmt.Errorf("failed to list %s%s: %w", entry.Kind, scopeSuffix(scope), err)
 			}
@@ -319,7 +319,7 @@ func (h *BRHandler) fetchEntry(ctx context.Context, gvr schema.GroupVersionResou
 		}
 		found := false
 		for _, scope := range scopes {
-			obj, err := h.resourceInterface(gvr, scope).Get(ctx, name, metav1.GetOptions{})
+			obj, err := h.getResourceWithRetry(ctx, h.resourceInterface(gvr, scope), name)
 			if err != nil {
 				if k8serrors.IsNotFound(err) {
 					// Not in this scope; it may be in another in-scope namespace.

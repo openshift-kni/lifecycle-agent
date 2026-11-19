@@ -26,12 +26,117 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
+
+// flakyDiscovery wraps a fakeDiscovery so ServerPreferredResources fails with a
+// transient error for a bounded number of leading calls (or always, when
+// alwaysErr is set), letting tests exercise the discovery retry path.
+type flakyDiscovery struct {
+	*fakeDiscovery
+	transientLeadingFailures int
+	alwaysErr                error
+	calls                    int
+}
+
+func (f *flakyDiscovery) ServerPreferredResources() ([]*metav1.APIResourceList, error) {
+	f.calls++
+	if f.alwaysErr != nil {
+		return nil, f.alwaysErr
+	}
+	if f.calls <= f.transientLeadingFailures {
+		return nil, k8serrors.NewServiceUnavailable("discovery temporarily unavailable")
+	}
+	return f.fakeDiscovery.ServerPreferredResources()
+}
+
+// TestFetchResourcesRetriesTransientListErrors verifies that the oadpContent fetch
+// path retries a transient List error with a bounded in-process backoff before
+// giving up: a single transient failure is retried and then succeeds, while a
+// persistent transient failure fails the backup after the retries are exhausted.
+func TestFetchResourcesRetriesTransientListErrors(t *testing.T) {
+	disc := coreV1Discovery()
+	spec := BackupSpec{
+		Name:                             "backup-retry",
+		IncludedNamespaces:               []string{"app-ns"},
+		IncludedNamespaceScopedResources: []string{"configmaps"},
+	}
+
+	t.Run("a transient list error is retried then succeeds", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		dc := dynamicfake.NewSimpleDynamicClient(newNamespaceScheme(),
+			newNamespace("app-ns"), newConfigMap("cm1", "app-ns", "v"))
+
+		var listAttempts int
+		dc.PrependReactor("list", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			listAttempts++
+			if listAttempts == 1 {
+				return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is temporarily unavailable")
+			}
+			return false, nil, nil
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+		resources, err := h.fetchResources(context.Background(), spec)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, listAttempts, "a transient list error must be retried once then succeed")
+		names := resourceNames(resources)
+		assert.Contains(t, names, "app-ns")
+		assert.Contains(t, names, "cm1")
+	})
+
+	t.Run("a persistent transient list error fails the backup after retries", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		dc := dynamicfake.NewSimpleDynamicClient(newNamespaceScheme(),
+			newNamespace("app-ns"), newConfigMap("cm1", "app-ns", "v"))
+
+		var listAttempts int
+		dc.PrependReactor("list", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			listAttempts++
+			return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is unavailable")
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+		_, err := h.fetchResources(context.Background(), spec)
+		assert.Error(t, err)
+		assert.Greater(t, listAttempts, 1, "a persistent transient list error must be retried before failing")
+	})
+}
+
+// TestGetServerPreferredResourcesRetries verifies that a transient full discovery
+// failure is retried with a bounded in-process backoff and then succeeds, while a
+// persistent transient failure fails after the retries are exhausted. A partial
+// discovery failure is covered separately and is never retried.
+func TestGetServerPreferredResourcesRetries(t *testing.T) {
+	t.Run("transient discovery failure is retried then succeeds", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		fd := &flakyDiscovery{fakeDiscovery: coreV1Discovery(), transientLeadingFailures: 1}
+		h := &BRHandler{DiscoveryClient: fd, Log: logr.Discard()}
+
+		lists, failedGroups, err := h.getServerPreferredResources(context.Background())
+		assert.NoError(t, err)
+		assert.Empty(t, failedGroups)
+		assert.NotEmpty(t, lists, "the discovered resources must be returned after the retry succeeds")
+		assert.Equal(t, 2, fd.calls, "discovery must be retried once then succeed")
+	})
+
+	t.Run("persistent transient discovery failure fails after retries", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		fd := &flakyDiscovery{fakeDiscovery: coreV1Discovery(),
+			alwaysErr: k8serrors.NewServiceUnavailable("discovery unavailable")}
+		h := &BRHandler{DiscoveryClient: fd, Log: logr.Discard()}
+
+		_, _, err := h.getServerPreferredResources(context.Background())
+		assert.Error(t, err)
+		assert.Greater(t, fd.calls, 1, "a persistent transient discovery failure must be retried before failing")
+	})
+}
 
 func newNamespaceScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()

@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	k8syaml "sigs.k8s.io/yaml"
 )
 
@@ -522,7 +523,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// regardless of whether the apply-label annotation is used.
 	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
 	for _, ns := range spec.IncludedNamespaces {
-		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
+		nsObj, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns)
 		if err != nil {
 			// An explicitly included namespace that does not exist is a
 			// configuration error: fail the backup instead of silently skipping
@@ -562,7 +563,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// Discover the server's preferred API resources on every fetch so that CRDs
 	// installed after the controller started (e.g. lvmclusters) are visible and
 	// resources configured by name only can be resolved to their preferred GVR.
-	apiResourceLists, failedGroups, err := h.getServerPreferredResources()
+	apiResourceLists, failedGroups, err := h.getServerPreferredResources(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -596,26 +597,81 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 // can distinguish "resource type genuinely not registered" from "resource type
 // unknown because its API group could not be discovered" and avoid silently
 // omitting requested resources from the backup.
-func (h *BRHandler) getServerPreferredResources() ([]*metav1.APIResourceList, map[string]bool, error) {
+//
+// A transient full discovery failure (server timeout, throttling, service
+// unavailable) is retried with a bounded in-process backoff before failing, so a
+// momentarily unavailable API server does not fail an otherwise valid backup. A
+// partial failure is not retried.
+func (h *BRHandler) getServerPreferredResources(ctx context.Context) ([]*metav1.APIResourceList, map[string]bool, error) {
 	if h.DiscoveryClient == nil {
 		return nil, nil, fmt.Errorf("discovery client is not initialized")
 	}
 
 	failedGroups := map[string]bool{}
-	lists, err := h.DiscoveryClient.ServerPreferredResources()
-	if err != nil {
+	var lists []*metav1.APIResourceList
+
+	err := retryWithBackoff(ctx, func() error {
+		var discErr error
+		lists, discErr = h.DiscoveryClient.ServerPreferredResources()
+		if discErr == nil {
+			return nil
+		}
 		var groupErr *discovery.ErrGroupDiscoveryFailed
-		if errors.As(err, &groupErr) {
+		if errors.As(discErr, &groupErr) {
 			for gv := range groupErr.Groups {
 				failedGroups[gv.Group] = true
 			}
 			h.Log.Info("Partial API discovery failure, continuing with available resources",
-				"failedGroups", failedGroups, "error", err.Error())
-		} else {
-			return nil, nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
+				"failedGroups", failedGroups, "error", discErr.Error())
+			return nil
 		}
+		// A full discovery failure is retried only when transient (see
+		// retryWithBackoff); any other error stops the retry immediately.
+		return discErr //nolint:wrapcheck
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
 	}
 	return lists, failedGroups, nil
+}
+
+// getResourceWithRetry performs a dynamic-client Get, retrying transient API errors
+// (server timeout, throttling, service unavailable) with a bounded in-process
+// backoff so a flaky API server does not fail an otherwise valid backup. NotFound
+// and other non-transient errors are returned unchanged so the caller's existing
+// handling (e.g. treating NotFound as a configuration error) is preserved.
+func (h *BRHandler) getResourceWithRetry(ctx context.Context, ri dynamic.ResourceInterface, name string) (*unstructured.Unstructured, error) {
+	var result *unstructured.Unstructured
+	err := retryWithBackoff(ctx, func() error {
+		obj, getErr := ri.Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr //nolint:wrapcheck
+		}
+		result = obj
+		return nil
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return result, nil
+}
+
+// listResourcesWithRetry performs a dynamic-client List, retrying transient API
+// errors with a bounded in-process backoff before giving up.
+func (h *BRHandler) listResourcesWithRetry(ctx context.Context, ri dynamic.ResourceInterface, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	var result *unstructured.UnstructuredList
+	err := retryWithBackoff(ctx, func() error {
+		list, listErr := ri.List(ctx, opts)
+		if listErr != nil {
+			return listErr //nolint:wrapcheck
+		}
+		result = list
+		return nil
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return result, nil
 }
 
 func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata) (*unstructured.Unstructured, error) {
@@ -625,15 +681,7 @@ func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata)
 		Resource: obj.Resource,
 	}
 
-	var result *unstructured.Unstructured
-	var err error
-
-	if obj.Namespace != "" {
-		result, err = h.DynamicClient.Resource(gvr).Namespace(obj.Namespace).Get(ctx, obj.Name, metav1.GetOptions{})
-	} else {
-		result, err = h.DynamicClient.Resource(gvr).Get(ctx, obj.Name, metav1.GetOptions{})
-	}
-
+	result, err := h.getResourceWithRetry(ctx, h.resourceInterface(gvr, obj.Namespace), obj.Name)
 	if err != nil {
 		// An apply-label names an exact object the backup must capture. If it does
 		// not exist, the configuration is wrong: fail the backup instead of
@@ -734,7 +782,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 		// including NotFound or "not registered" — is a real error, not an absent
 		// type. A successful List that returns zero items is fine. Failing closed
 		// prevents recording an incomplete backup as successful.
-		list, err := h.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOpts)
+		list, err := h.listResourcesWithRetry(ctx, h.DynamicClient.Resource(gvr).Namespace(namespace), listOpts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list %s in namespace %s: %w", resourceType, namespace, err)
 		}
@@ -774,7 +822,7 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 	// The GVR was confirmed via discovery above, so any List failure here —
 	// including NotFound or "not registered" — is a real error, not an absent
 	// type. A successful List returning zero items is fine.
-	list, err := h.DynamicClient.Resource(gvr).List(ctx, listOpts)
+	list, err := h.listResourcesWithRetry(ctx, h.DynamicClient.Resource(gvr), listOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list cluster-scoped resource %s: %w", resourceType, err)
 	}
