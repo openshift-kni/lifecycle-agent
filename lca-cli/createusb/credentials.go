@@ -602,11 +602,12 @@ func (g *installerConfigImageGenerator) verifyInstallerVersion(ctx context.Conte
 }
 
 // parseInstallerVersion extracts the version token from `openshift-install version` output, whose
-// first line is "openshift-install <version>".
+// first line is "<openshift-install> <version>". The first token may be the bare command name or the
+// absolute path used to invoke the binary, so match on its base name.
 func parseInstallerVersion(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == installerBinaryName {
+		if len(fields) >= 2 && filepath.Base(fields[0]) == installerBinaryName {
 			return fields[1]
 		}
 	}

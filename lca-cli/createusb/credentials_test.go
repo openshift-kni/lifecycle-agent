@@ -698,6 +698,8 @@ func TestOCReleaseArch(t *testing.T) {
 func TestParseInstallerVersion(t *testing.T) {
 	assert.Equal(t, "4.20.0", parseInstallerVersion("openshift-install 4.20.0\nbuilt from commit abc123\nrelease image quay.io/x@sha256:y\n"))
 	assert.Equal(t, "4.22.16-x86_64", parseInstallerVersion("openshift-install 4.22.16-x86_64\n"))
+	// The binary reports the absolute path it was invoked with, not the bare command name.
+	assert.Equal(t, "5.0.0", parseInstallerVersion("/var/lib/containers/.../create-usb-identity-123/openshift-install 5.0.0\nbuilt from commit abc123\nrelease image quay.io/x@sha256:y\nrelease architecture amd64\n"))
 	assert.Equal(t, "", parseInstallerVersion("some other output\n"))
 	assert.Equal(t, "", parseInstallerVersion(""))
 }
