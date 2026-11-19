@@ -345,7 +345,7 @@ The crypto-retention set must include the ingress certificate CN as well as the 
 values. `lca-cli create-usb` rejects a missing, malformed, or unparseable identity set
 before rendering p3.
 
-The hash and the crypto retention are generated together with the matching kubeconfig; a
+The password hash and the crypto retention are generated together with the matching kubeconfig; a
 mismatched set can leave the installed cluster inaccessible. For this reason `create-usb`
 treats the two fields as an all-or-nothing pair: supply **both** (operator-managed
 credentials) or **neither** (automatic generation, below). Supplying only one fails the
@@ -358,11 +358,9 @@ and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity 
 It derives `install-config.yaml` and `image-based-config.yaml` from `siteConfig`, shells
 out to the OpenShift installer's image-based config-image flow in a scrubbed, owner-only
 (`0700`) per-run temporary directory, reads the generated hash and crypto retention back,
-and renders them into the on-media manifest. There is no manual ISO unpacking, `bsdtar`,
-or `jq` field-copying.
+and renders them into the on-media manifest.
 
-The matching **kubeconfig** and **kubeadmin password** are written as owner-only
-(`0600`) build-side artifacts:
+The matching **kubeconfig** and **kubeadmin password** are written to:
 
 ```text
 <--credentials-dir>/kubeconfig
@@ -371,18 +369,10 @@ The matching **kubeconfig** and **kubeadmin password** are written as owner-only
 
 `--credentials-dir` defaults to a per-image `<output-file-name>-credentials` directory
 alongside `--output` (for example `--output out/cluster-a.img` writes to
-`out/cluster-a.img-credentials/`), so building several images into the same parent directory
-does not make one image's credentials overwrite another's. The full output file name
-(including any extension) is used, so `out/cluster-a.img` and `out/cluster-a` do not collide.
-When writing to a device, the default is a `credentials`
-directory under the current directory. Pass `--credentials-dir` to choose an explicit
-location. These are the credentials the operator uses to reach the installed cluster; they
-are **never** placed on the media or in the manifest. Keep them secret.
-
-The artifacts are written only **after** the media build and assembly succeed, and each file
-is replaced atomically as an owner-only (`0600`) file. A failed build — including a rebuild
-that is rejected because the `--output` image still exists — therefore leaves any previously
-distributed kubeconfig and password untouched, so they keep matching the surviving image.
+`out/cluster-a.img-credentials/`). When writing to a block device with `--write-device`, the
+default is a `credentials` directory under the current directory. Pass `--credentials-dir` to
+choose an explicit location. These are the credentials the operator uses to reach the
+installed cluster; keep them secret, as you would the media itself.
 
 `create-usb` runs the installer via `--openshift-install` (default: `openshift-install`
 resolved on `PATH`). Use the installer version that matches the target cluster. For
@@ -415,8 +405,10 @@ next.
 To manage the identity yourself — for example to keep a stable, reproducible kubeconfig
 across rebuilds — supply **both** `siteConfig.kubeadminPasswordHash` and
 `siteConfig.kubeconfigCryptoRetention` in the manifest. When both are present `create-usb`
-validates them and uses them as-is, generating nothing and emitting no artifacts. Generate
-them once with the matching installer version:
+validates them and uses them as-is, generating nothing and emitting no artifacts. Reusing one
+identity across rebuilds is at your own risk: if the same credentials are used for more than
+one cluster, that single kubeconfig can access all of them. Generate the credential material
+once, up front, with the matching installer version:
 
 ```bash
 umask 077

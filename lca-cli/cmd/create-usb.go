@@ -114,9 +114,8 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	// Source it for disconnected builders with `oc adm release extract --command=openshift-install`.
 	cmd.Flags().StringVar(&openshiftInstall, "openshift-install", "openshift-install", "openshift-install binary used to generate self-contained kubeconfig identity when the manifest omits it (path or name on PATH).")
 	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
-	// written (owner-only). Defaults to a per-output <output-file-name>-credentials directory next to
-	// --output (or a "credentials" directory when writing to a device). These secrets are never
-	// placed on the media.
+	// written (owner-only), defaulting to a per-output <output-file-name>-credentials directory next
+	// to --output (or ./credentials when writing to a device).
 	cmd.Flags().StringVar(&credentialsDir, "credentials-dir", "", "Directory for the generated kubeconfig and kubeadmin-password when create-usb mints self-contained identity (defaults to a <output-file-name>-credentials directory next to --output, or ./credentials when writing to a device).")
 
 	_ = cmd.MarkFlagRequired("manifest")
@@ -178,11 +177,10 @@ func runCreateUsb(opts createUsbOptions) error {
 		manifest.RHCOSLiveISO.SHA256 = opts.rhcosLiveSHA
 	}
 
-	// Generate the self-contained kubeconfig identity before validation when the manifest omits
-	// it, so Validate then checks the generated material exactly as it checks an operator-supplied
-	// override. The generated hash + crypto retention are populated into the manifest here; the
-	// matching kubeconfig + kubeadmin password are held and written only after the media build and
-	// assembly succeed (see below).
+	// Generate the self-contained kubeconfig identity before validation so Validate checks the
+	// generated material like an operator-supplied override. The hash and crypto retention are
+	// populated into the manifest here; the matching kubeconfig and password are written only after
+	// the build succeeds (below).
 	creds, err := generateCredentialsIfNeeded(opts, manifest)
 	if err != nil {
 		return fmt.Errorf("create-usb: %w", err)
@@ -194,14 +192,9 @@ func runCreateUsb(opts createUsbOptions) error {
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
-	// Preflight the credentials directory before the expensive media build. The generated
-	// kubeconfig/password are held in memory and published only after Build succeeds; if the
-	// destination directory cannot be created (e.g. a parent path component is a regular file) we
-	// fail here rather than after assembling an image whose matching credentials could then never
-	// be written and would be lost when the command exits. Only the (empty) directory is created at
-	// this point — no secret material is written before the build. The mode matches createusb's
-	// credentialDirMode; WriteCredentialArtifacts re-creates the same directory with that mode when
-	// it publishes.
+	// Preflight the (empty) credentials directory before the expensive build: fail fast on an
+	// unusable path rather than after assembling an image whose credentials could then never be
+	// written. No secret material is written before the build.
 	if creds != nil {
 		if err := os.MkdirAll(resolveCredentialsDir(opts), 0o700); err != nil {
 			return fmt.Errorf("create-usb: creating credentials directory: %w", err)
@@ -219,11 +212,8 @@ func runCreateUsb(opts createUsbOptions) error {
 		return fmt.Errorf("create-usb: %w", err)
 	}
 
-	// Publish the generated credentials only after the media build and assembly succeed. The new
-	// identity is the one baked into the media that was just built, so a build that fails for any
-	// reason — including a rebuild where assembly's ensureOutputAbsent rejects the still-present
-	// --output image — leaves any previously distributed kubeconfig/password untouched and matching
-	// the surviving image.
+	// Publish the generated credentials only after the build succeeds, so a failed build leaves any
+	// previously distributed kubeconfig/password untouched and still matching the surviving image.
 	if err := writeGeneratedCredentials(opts, creds); err != nil {
 		return fmt.Errorf("create-usb: %w", err)
 	}
@@ -231,10 +221,9 @@ func runCreateUsb(opts createUsbOptions) error {
 }
 
 // generateCredentialsIfNeeded mints the self-contained kubeconfig identity when the manifest omits
-// it and populates the manifest's hash + crypto-retention fields. It returns the generated bundle
-// (kubeconfig + kubeadmin password) for the caller to write after validation, or nil when the
-// operator supplied the credentials or the mode does not use them; a partially supplied pair is
-// rejected by GenerateSiteConfigCredentials.
+// it, populating the manifest's hash and crypto-retention fields. It returns the generated bundle
+// for the caller to write after validation, or nil when the operator supplied the credentials or the
+// mode does not use them.
 func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Manifest) (*createusb.GeneratedCredentials, error) {
 	var gen createusb.CredentialGenerator
 	if createusb.NeedsCredentialGeneration(manifest) {
@@ -251,11 +240,8 @@ func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Mani
 	return creds, nil
 }
 
-// writeGeneratedCredentials emits the generated kubeconfig + kubeadmin password as owner-only
-// build artifacts (never on the media). It runs only after the media build and assembly succeed, so
-// a failed build leaves no secret artifacts on disk and leaves any previously distributed
-// credentials untouched. The destination directory is preflighted before the build (see
-// runCreateUsb) so this publishes into a directory already known to be creatable. It is a no-op when
+// writeGeneratedCredentials emits the generated kubeconfig and kubeadmin password as owner-only
+// build artifacts (never on the media). It runs only after the build succeeds and is a no-op when
 // nothing was generated.
 func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.GeneratedCredentials) error {
 	if creds == nil {
@@ -267,10 +253,9 @@ func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.Generated
 	return nil
 }
 
-// resolveCredentialsDir returns the directory the generated credential artifacts are written to:
-// the explicit --credentials-dir when set, otherwise the per-output default from
-// credentialsOutputDir. Both the pre-build preflight in runCreateUsb and writeGeneratedCredentials
-// use it so the directory checked up front is the same one the artifacts are later published to.
+// resolveCredentialsDir returns where credential artifacts are written: the explicit
+// --credentials-dir when set, otherwise the per-output default from credentialsOutputDir. The
+// pre-build preflight and the publish step share it so they target the same directory.
 func resolveCredentialsDir(opts createUsbOptions) string {
 	if opts.credentialsDir != "" {
 		return opts.credentialsDir
@@ -278,14 +263,10 @@ func resolveCredentialsDir(opts createUsbOptions) string {
 	return credentialsOutputDir(opts.outputPath)
 }
 
-// credentialsOutputDir resolves the default credentials directory. It keys off the full --output
-// image file name so distinct images built into the same parent directory (e.g. out/cluster-a.img
-// and out/cluster-b.img) get separate credential directories (out/cluster-a.img-credentials and
-// out/cluster-b.img-credentials) rather than overwriting each other's kubeconfig/password. The
-// extension is kept rather than stripped: an .img extension is not enforced, so stripping it would
-// make out/cluster-a.img and out/cluster-a collide on out/cluster-a-credentials. When writing to a
-// device there is no output file path to key off, so a single "credentials" directory under the
-// current directory is used. An explicit --credentials-dir always overrides this default.
+// credentialsOutputDir resolves the default credentials directory, keyed off the full --output file
+// name (extension kept, so out/cluster-a.img and out/cluster-a do not collide) so distinct images in
+// the same parent directory get separate credential directories. When writing to a device there is
+// no output path to key off, so a single "credentials" directory is used.
 func credentialsOutputDir(outputPath string) string {
 	if outputPath == "" {
 		return "credentials"

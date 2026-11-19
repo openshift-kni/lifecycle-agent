@@ -16,28 +16,15 @@ limitations under the License.
 
 package createusb
 
-// This file automates the self-contained kubeconfig-identity workflow that was previously
-// a manual, error-prone six-step procedure (extract openshift-install, hand-write installer
-// configs, generate a config ISO, bsdtar the manifest out of it, jq the fields into the
-// create-usb manifest, and keep the kubeconfig/password separately). See CNF-30028.
-//
-// The developer of record chose "Option B" (openshift-install subprocess): create-usb derives
-// the installer input files from siteConfig, shells out to
-//
-//	openshift-install --dir=<workDir> image-based create config-image
-//
-// in a scrubbed 0700 per-run working directory, and reads back the generated identity material
-// (auth/kubeconfig, auth/kubeadmin-password, and the kubeadmin_password_hash +
-// KubeconfigCryptoRetention fields from the generated cluster-configuration/manifest.json).
-// The hash and crypto retention are populated into m.SiteConfig so the existing p3 render and
-// the existing build-time validators consume them exactly as if the operator had supplied them;
-// the matching kubeconfig and kubeadmin password are emitted as build-side artifacts for the
-// operator and are deliberately never written to the media.
-//
-// Generation runs only in self-contained mode and only when neither field is supplied. An
-// operator-supplied pair remains a validated override (reproducibility); supplying exactly one
-// is an error. The generator is behind the CredentialGenerator interface so the orchestration
-// and the derived installer inputs are unit-tested without the installer binary.
+// This file automates self-contained kubeconfig-identity generation for create-usb (CNF-30028).
+// In self-contained mode, when the manifest supplies neither siteConfig.kubeadminPasswordHash nor
+// kubeconfigCryptoRetention, create-usb derives the installer inputs from siteConfig, shells out to
+// `openshift-install image-based create config-image` in a scrubbed per-run directory, and reads
+// back the identity material. The hash and crypto retention are populated into m.SiteConfig so the
+// existing render and validators consume them as if the operator had supplied them; the matching
+// kubeconfig and kubeadmin password are emitted as build-side artifacts and never written to the
+// media. An operator-supplied pair is a validated override; supplying exactly one is an error.
+// CredentialGenerator abstracts the installer so the orchestration is unit-tested without it.
 
 import (
 	"bytes"
@@ -211,17 +198,12 @@ func GenerateSiteConfigCredentials(ctx context.Context, log *logrus.Logger, m *M
 	return creds, nil
 }
 
-// WriteCredentialArtifacts writes the generated kubeconfig and kubeadmin password into dir as
-// owner-only files, creating dir 0700 if needed. The kubeconfig and kubeadmin password are a
-// matched pair, so they are published transactionally: both are first staged to owner-only temp
-// files in dir, and only once both are fully written are they renamed into place. A failure while
-// writing either artifact therefore never replaces one of the destinations while leaving the
-// other, which would leave a mismatched kubeconfig/password pair behind a successful media build.
-// Any pre-existing kubeconfig is moved aside before publishing and restored if publication fails, so
-// a failed build never destroys a previously published credential pair (which may still authenticate
-// an earlier cluster). A newly minted identity invalidates any previously distributed kubeconfig, so
-// an overwrite of pre-existing artifacts is surfaced loudly rather than done silently. The secret
-// bytes themselves are never logged.
+// WriteCredentialArtifacts publishes the generated kubeconfig and kubeadmin password into dir as
+// owner-only files. The pair is written transactionally: both are staged to owner-only temp files
+// and then renamed into place, so a failure never leaves a mismatched kubeconfig/password pair. Any
+// pre-existing kubeconfig is moved aside first and restored if publication fails, so a failed build
+// never destroys credentials that may still authenticate an earlier cluster. Overwriting existing
+// artifacts is logged loudly; the secret bytes are never logged.
 func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCredentials) error {
 	if creds == nil {
 		return nil
@@ -240,11 +222,9 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 		}
 	}
 
-	// Stage both artifacts to owner-only temp files before publishing either. Staging both up
-	// front means the only operations left once the first destination is replaced are renames of
-	// already-written temp files in the same directory, so a mid-write failure (a short write, a
-	// full disk) on the second artifact can no longer leave a freshly published kubeconfig paired
-	// with a stale kubeadmin password (or vice versa).
+	// Stage both artifacts to owner-only temp files before publishing either, so the only steps left
+	// after the first destination is replaced are renames within the same directory — a mid-write
+	// failure can no longer leave a mismatched kubeconfig/password pair.
 	kubeconfigTmp, err := stageOwnerOnlyFile(dir, KubeconfigArtifactName, creds.Kubeconfig)
 	if err != nil {
 		return fmt.Errorf("staging kubeconfig artifact: %w", err)
@@ -257,18 +237,15 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 	}
 	defer func() { _ = os.Remove(passwordTmp) }()
 
-	// Move any pre-existing kubeconfig aside before publishing so a failed publish can restore the
-	// previous kubeconfig rather than destroy it. The backup lives in the same directory as its
-	// source, so the move is an atomic metadata operation. A pre-existing kubeadmin-password is left
-	// in place: os.Rename is atomic, so a failed second rename leaves that destination untouched, and
-	// restoring the kubeconfig below keeps the prior kubeconfig/password pair recoverable.
+	// Move any pre-existing kubeconfig aside so a failed publish can restore it rather than destroy
+	// it. The pre-existing password is left in place: os.Rename leaves the destination untouched on
+	// failure, so restoring the kubeconfig keeps the prior pair recoverable.
 	kubeconfigBackup, err := stashExisting(kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("preserving existing kubeconfig artifact %q: %w", kubeconfigPath, err)
 	}
 
-	// Publish both staged artifacts. Both temp files already live in dir (the same filesystem as
-	// their destinations), so the renames are atomic metadata operations.
+	// Publish both staged artifacts with atomic same-directory renames.
 	if err := os.Rename(kubeconfigTmp, kubeconfigPath); err != nil {
 		// Nothing has replaced the destination yet; restore the previous kubeconfig if one was moved
 		// aside so a failed publish leaves the prior artifacts exactly as they were.
@@ -298,13 +275,10 @@ func WriteCredentialArtifacts(log *logrus.Logger, dir string, creds *GeneratedCr
 	return nil
 }
 
-// stageOwnerOnlyFile writes data to a fresh owner-only (0600) temp file in dir and returns its
-// path without publishing it; the caller renames the returned file over its destination to publish
-// it atomically. os.WriteFile would instead leave an already-existing file's mode untouched, so a
-// pre-existing world-readable (e.g. 0644) destination would keep that mode and leak the secret.
-// Writing the full contents here, before any rename, is what lets WriteCredentialArtifacts publish
-// the kubeconfig/password pair transactionally. The temp name is derived from name (and dot-
-// prefixed) so a failed run leaves an obviously-temporary artifact the caller cleans up.
+// stageOwnerOnlyFile writes data to a fresh owner-only (0600) temp file in dir and returns its path
+// without publishing it; the caller renames it over the destination. Writing to a new file (rather
+// than os.WriteFile over the destination, which leaves an existing file's mode untouched) guarantees
+// the result is owner-only even when a world-readable file was already there.
 func stageOwnerOnlyFile(dir, name string, data []byte) (string, error) {
 	tmp, err := os.CreateTemp(dir, "."+name+".tmp-*")
 	if err != nil {
@@ -432,12 +406,10 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 	return readGeneratedCredentials(workDir)
 }
 
-// runConfigImage executes `openshift-install --dir=<workDir> image-based create config-image`. The
-// combined stdout/stderr is captured and deliberately discarded (not logged, not folded into the
-// returned error): the installer can echo its input, and the input here is install-config.yaml,
+// runConfigImage executes `openshift-install --dir=<workDir> image-based create config-image`. Its
+// combined output is captured and discarded rather than logged: the installer can echo its input,
 // which carries the pull secret and SSH key. On failure the error reports the exit status only and
-// points the operator at the manual flow to reproduce it, so no credential material leaks through a
-// log or error string. Context cancellation terminates the subprocess.
+// points at the manual flow to reproduce it, so no credential material leaks.
 func (g *installerConfigImageGenerator) runConfigImage(ctx context.Context, log *logrus.Logger, workDir string) error {
 	log.Infof("create-usb: running %s %s %s %s", g.installerBinary,
 		installerSubcmdImageBased, installerSubcmdCreate, installerSubcmdConfigImage)
