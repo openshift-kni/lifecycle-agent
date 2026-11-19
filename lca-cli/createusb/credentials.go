@@ -28,6 +28,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +62,11 @@ const (
 
 	// installerBinaryName is the openshift-install binary extracted from the release image.
 	installerBinaryName = "openshift-install"
+
+	// defaultReleaseImageRepo is the canonical public ocp-release repository. When --release-image is
+	// unset, create-usb defaults to <repo>:<releaseVersion>-<arch>, so a connected build needs no
+	// release-image input.
+	defaultReleaseImageRepo = "quay.io/openshift-release-dev/ocp-release"
 
 	// UnsupportedInstallerBinaryOverrideEnv names the development-only escape hatch that bypasses
 	// sourcing openshift-install from the release image and uses the named binary as-is. It is
@@ -349,10 +355,12 @@ func restoreStashedKubeconfig(log *logrus.Logger, backup, dest, dir string) {
 }
 
 // InstallerConfig configures the production CredentialGenerator: the release image openshift-install
-// is sourced from, the build-time auth file used to pull it, and the release version the extracted
-// installer must match.
+// is sourced from (defaulted from ReleaseVersion and the SeedImage architecture when empty), the
+// seed image whose architecture that default is keyed off, the build-time auth file used to pull
+// them, and the release version the extracted installer must match.
 type InstallerConfig struct {
 	ReleaseImage   string
+	SeedImage      string
 	AuthFile       string
 	ReleaseVersion string
 }
@@ -360,6 +368,8 @@ type InstallerConfig struct {
 // installerExec abstracts the external installer operations so the generator is unit-tested without
 // oc or the installer binary.
 type installerExec interface {
+	// ImageArchitecture returns the GOARCH (e.g. "amd64") of the given single-arch image.
+	ImageArchitecture(ctx context.Context, log *logrus.Logger, image, authFile string) (string, error)
 	// ExtractInstaller extracts openshift-install from releaseImage into destDir, returning its path.
 	ExtractInstaller(ctx context.Context, log *logrus.Logger, releaseImage, authFile, destDir string) (string, error)
 	// InstallerVersion returns the raw output of the installer's `version` subcommand.
@@ -438,17 +448,62 @@ func (g *installerConfigImageGenerator) resolveInstaller(ctx context.Context, lo
 		log.Warnf("create-usb: %s is set; using the unsupported openshift-install override %q instead of extracting it from the release image. This is for development only and must not be used for production media.", UnsupportedInstallerBinaryOverrideEnv, override)
 		return override, nil
 	}
-	if strings.TrimSpace(g.cfg.ReleaseImage) == "" {
-		return "", fmt.Errorf("no release image configured to source openshift-install from")
-	}
-	installer, err := g.exec.ExtractInstaller(ctx, log, g.cfg.ReleaseImage, g.cfg.AuthFile, workDir)
+	releaseImage, err := g.resolveReleaseImage(ctx, log)
 	if err != nil {
-		return "", fmt.Errorf("extracting openshift-install from release image %q: %w", g.cfg.ReleaseImage, err)
+		return "", err
+	}
+	installer, err := g.exec.ExtractInstaller(ctx, log, releaseImage, g.cfg.AuthFile, workDir)
+	if err != nil {
+		return "", fmt.Errorf("extracting openshift-install from release image %q: %w", releaseImage, err)
 	}
 	if err := g.verifyInstallerVersion(ctx, installer); err != nil {
 		return "", err
 	}
 	return installer, nil
+}
+
+// resolveReleaseImage returns the release image to source openshift-install from: the explicit
+// cfg.ReleaseImage override when set, otherwise the canonical ocp-release image for cfg.ReleaseVersion
+// and the architecture read from the seed image.
+func (g *installerConfigImageGenerator) resolveReleaseImage(ctx context.Context, log *logrus.Logger) (string, error) {
+	if img := strings.TrimSpace(g.cfg.ReleaseImage); img != "" {
+		return img, nil
+	}
+	version := strings.TrimSpace(g.cfg.ReleaseVersion)
+	if version == "" {
+		return "", fmt.Errorf("cannot default the release image: manifest releaseVersion is empty; pass --release-image")
+	}
+	if strings.TrimSpace(g.cfg.SeedImage) == "" {
+		return "", fmt.Errorf("cannot default the release image: no seed image to read the architecture from; pass --release-image")
+	}
+	goarch, err := g.exec.ImageArchitecture(ctx, log, g.cfg.SeedImage, g.cfg.AuthFile)
+	if err != nil {
+		return "", fmt.Errorf("reading architecture from seed image %q (pass --release-image to skip this): %w", g.cfg.SeedImage, err)
+	}
+	arch, err := ocReleaseArch(goarch)
+	if err != nil {
+		return "", err
+	}
+	image := fmt.Sprintf("%s:%s-%s", defaultReleaseImageRepo, version, arch)
+	log.Infof("create-usb: defaulting release image to %s (override with --release-image)", image)
+	return image, nil
+}
+
+// ocReleaseArch maps a GOARCH (as reported by oc image info) to the architecture suffix used in
+// ocp-release tags.
+func ocReleaseArch(goarch string) (string, error) {
+	switch strings.TrimSpace(goarch) {
+	case "amd64":
+		return "x86_64", nil
+	case "arm64":
+		return "aarch64", nil
+	case "ppc64le":
+		return "ppc64le", nil
+	case "s390x":
+		return "s390x", nil
+	default:
+		return "", fmt.Errorf("unsupported seed image architecture %q; pass --release-image", goarch)
+	}
 }
 
 // verifyInstallerVersion fails unless the extracted installer reports the manifest release version.
@@ -487,6 +542,40 @@ func parseInstallerVersion(out string) string {
 // openshift-install from the release image, runs the binary to read its version, and runs the
 // image-based config-image flow.
 type ocInstallerExec struct{}
+
+// ImageArchitecture runs `oc image info <image> -o json` and returns its config.architecture (a
+// GOARCH value such as "amd64"). The seed image is single-arch, so no --filter-by-os is needed.
+func (ocInstallerExec) ImageArchitecture(ctx context.Context, log *logrus.Logger, image, authFile string) (string, error) {
+	log.Infof("create-usb: reading architecture from seed image %s", image)
+	args := []string{"image", "info", "-o", "json"}
+	if strings.TrimSpace(authFile) != "" {
+		args = append(args, "--registry-config="+authFile)
+	}
+	args = append(args, image)
+	cmd := exec.CommandContext(ctx, "oc", args...) //nolint:gosec // oc is a fixed command; args are the operator-supplied seed image and auth file
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			stderr = strings.TrimSpace(string(ee.Stderr))
+		}
+		return "", fmt.Errorf("oc image info failed: %w: %s", err, stderr)
+	}
+	var info struct {
+		Config struct {
+			Architecture string `json:"architecture"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return "", fmt.Errorf("parsing oc image info output: %w", err)
+	}
+	arch := strings.TrimSpace(info.Config.Architecture)
+	if arch == "" {
+		return "", fmt.Errorf("oc image info reported no architecture for %q", image)
+	}
+	return arch, nil
+}
 
 // ExtractInstaller runs `oc adm release extract --command=openshift-install --to=<destDir>` so the
 // installer always matches the release payload (it lives in a release-referenced image, not at a

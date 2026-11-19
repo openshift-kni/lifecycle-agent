@@ -226,8 +226,8 @@ func TestCredentialsOutputDir(t *testing.T) {
 }
 
 // selfContainedManifestYAML returns a self-contained manifest with the credential fields omitted,
-// so it needs automatic generation (which requires --release-image). It need not pass full
-// validation: the credential-sourcing check runs before manifest validation.
+// so it needs automatic generation. It need not pass full validation: credential generation runs
+// before manifest validation.
 func selfContainedManifestYAML() string {
 	return `mode: self-contained
 seedImage: quay.io/example/seed@sha256:` + testSHA256 + `
@@ -241,16 +241,22 @@ siteConfig:
 `
 }
 
-// TestCreateUsbRequiresReleaseImage verifies that a self-contained manifest needing credential
-// generation fails fast (before the build) when neither --release-image nor the unsupported override
-// is set to source openshift-install.
-func TestCreateUsbRequiresReleaseImage(t *testing.T) {
+// TestCreateUsbDefaultsReleaseImage verifies that a self-contained manifest needing credential
+// generation no longer fails for a missing --release-image: the release image now defaults from the
+// manifest release version and the seed image's architecture. The unsupported installer override
+// keeps the test hermetic (no oc, no release-image pull); the run still fails later because the fake
+// installer produces no identity material, but never on a missing --release-image.
+func TestCreateUsbDefaultsReleaseImage(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "openshift-install")
+	require.NoError(t, os.WriteFile(override, []byte("#!/bin/true\n"), 0o700))
+	t.Setenv(createusb.UnsupportedInstallerBinaryOverrideEnv, override)
+
 	manifest := filepath.Join(t.TempDir(), "m.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(selfContainedManifestYAML()), 0o600))
 
 	err := runCreateUsbCmd(t, "--manifest", manifest, "--output", filepath.Join(t.TempDir(), "out.img"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--release-image")
+	assert.NotContains(t, err.Error(), "--release-image")
 }
 
 func TestExistingCredentialArtifacts(t *testing.T) {

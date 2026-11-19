@@ -354,17 +354,30 @@ build.
 #### Automatic generation (default)
 
 When a `mode: self-contained` manifest omits **both** `siteConfig.kubeadminPasswordHash`
-and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity for you.
-Pass `--release-image`: `create-usb` extracts the matching `openshift-install` from that
-release image, runs its image-based config-image flow in a scrubbed per-run temporary
-directory, and renders the generated hash and crypto retention into the on-media manifest.
-The extracted installer must report the manifest's `releaseVersion`, or the build fails.
-`--auth-file` supplies the credentials used to pull the release image.
+and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity for you. It
+extracts the matching `openshift-install` from the release image, runs its image-based
+config-image flow in a scrubbed per-run temporary directory, and renders the generated hash
+and crypto retention into the on-media manifest. The extracted installer must report the
+manifest's `releaseVersion`, or the build fails. `--auth-file` supplies the credentials used
+to pull the images.
+
+The release image defaults to
+`quay.io/openshift-release-dev/ocp-release:<releaseVersion>-<arch>`, where the architecture is
+read from the seed image, so a connected build needs no extra input:
 
 ```bash
 lca-cli create-usb -f manifest.yaml --output usb.img \
   --lca-image <lca-cli-pullspec> \
-  --release-image quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64 \
+  --auth-file /path/to/pull-secret.json \
+  --credentials-dir /path/to/secrets
+```
+
+For a mirrored or disconnected build, pass `--release-image` to override the default:
+
+```bash
+lca-cli create-usb -f manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> \
+  --release-image registry.example.com/openshift-release-dev/ocp-release:4.22.16-x86_64 \
   --auth-file /path/to/pull-secret.json \
   --credentials-dir /path/to/secrets
 ```

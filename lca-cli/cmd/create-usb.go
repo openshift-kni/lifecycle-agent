@@ -112,9 +112,10 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	// the assembled media's final apparent size exceeds it. Empty disables the check.
 	cmd.Flags().StringVar(&usbSize, "usb-size", "", "USB-stick size budget (e.g. 14Gi, 32G). The build fails if the assembled media exceeds it. Empty disables the check.")
 	// --release-image is the OpenShift release image create-usb extracts openshift-install from to
-	// mint the self-contained kubeconfig identity when the manifest omits it. It is required in that
-	// case unless credentials are supplied in the manifest.
-	cmd.Flags().StringVar(&releaseImage, "release-image", "", "OpenShift release image to source openshift-install from when create-usb mints self-contained kubeconfig identity (required unless the manifest supplies the credentials).")
+	// mint the self-contained kubeconfig identity when the manifest omits it. When unset it defaults
+	// to the canonical ocp-release image for the manifest releaseVersion and the seed image's
+	// architecture; set it explicitly for mirrored or disconnected builds.
+	cmd.Flags().StringVar(&releaseImage, "release-image", "", "OpenShift release image to source openshift-install from when create-usb mints self-contained kubeconfig identity. Defaults to quay.io/openshift-release-dev/ocp-release:<releaseVersion>-<arch> (architecture read from the seed image); set it explicitly for mirrored or disconnected builds.")
 	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
 	// written (owner-only), defaulting to a per-output <output-file-name>-credentials directory next
 	// to --output (or ./credentials when writing to a device).
@@ -243,14 +244,11 @@ func runCreateUsb(opts createUsbOptions) error {
 func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Manifest) (*createusb.GeneratedCredentials, error) {
 	var gen createusb.CredentialGenerator
 	if createusb.NeedsCredentialGeneration(manifest) {
-		// --release-image is required to source openshift-install, except when the unsupported
-		// development override names a binary directly.
-		override := strings.TrimSpace(os.Getenv(createusb.UnsupportedInstallerBinaryOverrideEnv))
-		if override == "" && strings.TrimSpace(opts.releaseImage) == "" {
-			return nil, fmt.Errorf("self-contained manifest omits siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention; pass --release-image to generate them from the release payload, or supply both in the manifest")
-		}
+		// --release-image is optional: when unset, the generator defaults to the canonical ocp-release
+		// image for the manifest release version and the seed image's architecture.
 		gen = createusb.NewInstallerConfigImageGenerator(log, createusb.InstallerConfig{
 			ReleaseImage:   opts.releaseImage,
+			SeedImage:      manifest.SeedImage,
 			AuthFile:       opts.authFile,
 			ReleaseVersion: manifest.ReleaseVersion,
 		})
