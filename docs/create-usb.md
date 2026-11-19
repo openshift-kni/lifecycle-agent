@@ -372,15 +372,27 @@ lca-cli create-usb -f manifest.yaml --output usb.img \
   --credentials-dir /path/to/secrets
 ```
 
-Override the default when needed: `--release-image` sets the whole pullspec, `releaseVersion`
-in the manifest overrides just the version, and `--idms-file` points `oc` at an
-`ImageDigestMirrorSet` so a mirrored or disconnected build keeps the canonical pullspec and
-lets `oc` redirect to the mirror:
+The seed-recorded version also defaults the manifest's `releaseVersion`, so a self-contained
+manifest that relies on the derived release image may omit it.
+
+Override the default when needed: `--release-image` sets the whole pullspec and `releaseVersion`
+in the manifest overrides just the version:
 
 ```bash
 lca-cli create-usb -f manifest.yaml --output usb.img \
   --lca-image <lca-cli-pullspec> \
   --release-image registry.example.com/openshift-release-dev/ocp-release:4.22.16-x86_64 \
+  --auth-file /path/to/pull-secret.json \
+  --credentials-dir /path/to/secrets
+```
+
+For a mirrored or disconnected build, `--idms-file` points `oc` at an `ImageDigestMirrorSet` so
+the canonical release pullspec is kept and `oc` redirects to the mirror:
+
+```bash
+lca-cli create-usb -f manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> \
+  --idms-file /path/to/idms.yaml \
   --auth-file /path/to/pull-secret.json \
   --credentials-dir /path/to/secrets
 ```

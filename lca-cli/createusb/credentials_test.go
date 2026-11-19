@@ -148,6 +148,35 @@ func TestGenerateSiteConfigCredentials_PassesSSHKey(t *testing.T) {
 	assert.Equal(t, "ssh-ed25519 AAAAexample operator@host", fake.gotInputs.SSHKey)
 }
 
+func TestGenerateSiteConfigCredentials_DefaultsReleaseVersionFromSeed(t *testing.T) {
+	// A self-contained manifest may omit releaseVersion and rely on the seed-derived release image. The
+	// version the identity was generated against is written back so the "releaseVersion is required"
+	// manifest contract is satisfied without the operator restating it, and Validate then passes.
+	m := selfContainedWithoutCredentials()
+	m.ReleaseVersion = ""
+	creds := generatedCreds()
+	creds.ReleaseVersion = "4.20.0"
+	fake := &fakeCredentialGenerator{result: creds}
+
+	_, err := GenerateSiteConfigCredentials(context.Background(), discardLogger(), m, fake)
+	require.NoError(t, err)
+	assert.Equal(t, "4.20.0", m.ReleaseVersion)
+	assert.NoError(t, m.Validate())
+}
+
+func TestGenerateSiteConfigCredentials_KeepsExplicitReleaseVersion(t *testing.T) {
+	// An explicit releaseVersion is never overwritten by the generated/derived version.
+	m := selfContainedWithoutCredentials()
+	m.ReleaseVersion = "4.20.9"
+	creds := generatedCreds()
+	creds.ReleaseVersion = "4.20.0"
+	fake := &fakeCredentialGenerator{result: creds}
+
+	_, err := GenerateSiteConfigCredentials(context.Background(), discardLogger(), m, fake)
+	require.NoError(t, err)
+	assert.Equal(t, "4.20.9", m.ReleaseVersion)
+}
+
 func TestGenerateSiteConfigCredentials_SkipsWhenSupplied(t *testing.T) {
 	m := validSelfContained()
 	fake := &fakeCredentialGenerator{result: generatedCreds()}
@@ -340,6 +369,44 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 	})
 }
 
+func TestPreflightCredentialArtifacts(t *testing.T) {
+	t.Run("creates the directory owner-only and accepts a clean destination", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "creds")
+		require.NoError(t, PreflightCredentialArtifacts(dir))
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, credentialDirMode, info.Mode().Perm())
+	})
+
+	t.Run("leaves an existing artifact untouched and leaves no probe behind", func(t *testing.T) {
+		dir := t.TempDir()
+		kubeconfig := filepath.Join(dir, KubeconfigArtifactName)
+		require.NoError(t, os.WriteFile(kubeconfig, []byte("existing"), 0o600))
+
+		require.NoError(t, PreflightCredentialArtifacts(dir))
+
+		data, err := os.ReadFile(kubeconfig)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("existing"), data, "preflight must not overwrite or remove an existing artifact")
+
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		for _, e := range entries {
+			assert.NotContains(t, e.Name(), ".preflight-", "probe file left behind: %s", e.Name())
+		}
+	})
+
+	t.Run("rejects a destination that is not a regular file", func(t *testing.T) {
+		dir := t.TempDir()
+		// A directory at a destination cannot be replaced by the atomic-rename publish, so preflight must
+		// reject it before the expensive build rather than failing WriteCredentialArtifacts afterwards.
+		require.NoError(t, os.Mkdir(filepath.Join(dir, KubeadminPasswordArtifactName), 0o700))
+		err := PreflightCredentialArtifacts(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+	})
+}
+
 // fakeInstallerExec is a test double for installerExec: it records calls and simulates a successful
 // extraction, version query, and config-image run (populating the work directory the way the real
 // installer would) so the generator's sourcing logic is tested without oc or the installer binary.
@@ -488,6 +555,8 @@ func TestInstallerGenerator_DefaultsReleaseImageFromSeed(t *testing.T) {
 	assert.True(t, fake.inspectCalled, "the seed image must be inspected when --release-image is unset")
 	assert.Equal(t, "quay.io/example/seed@sha256:abc", fake.gotInspectImage)
 	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64", fake.gotReleaseImage)
+	// The resolved version is surfaced on the bundle so the caller can default manifest.releaseVersion.
+	assert.Equal(t, "4.20.0", creds.ReleaseVersion)
 }
 
 func TestInstallerGenerator_DefaultReleaseImageUsesSeedRegistry(t *testing.T) {

@@ -38,6 +38,10 @@ func init() {
 	rootCmd.AddCommand(newCreateUsbCmd())
 }
 
+// newCredentialGenerator builds the production credential generator. It is a package var so command
+// tests can inject a fake that does not shell out to oc or openshift-install.
+var newCredentialGenerator = createusb.NewInstallerConfigImageGenerator
+
 // newCreateUsbCmd builds the `create-usb` subcommand. It is constructed via a factory
 // (rather than package-level vars) so each invocation — including unit tests — gets
 // fresh flag state, mirroring the ip-config command's NewIPConfigCmd pattern.
@@ -216,12 +220,13 @@ func runCreateUsb(opts createUsbOptions) error {
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
-	// Preflight the (empty) credentials directory before the build: fail fast on an unusable path
-	// rather than after assembling an image whose credentials could then never be written. No secret
-	// material is written before the build.
+	// Preflight the credentials directory before the build: prove the directory is writable and that
+	// both artifact destinations can be replaced, so an unusable path fails fast rather than after
+	// assembling an image whose credentials could then never be written. No secret material is written
+	// before the build, and any existing artifacts are left untouched.
 	if creds != nil {
-		if err := os.MkdirAll(resolveCredentialsDir(opts), 0o700); err != nil {
-			return fmt.Errorf("create-usb: creating credentials directory: %w", err)
+		if err := createusb.PreflightCredentialArtifacts(resolveCredentialsDir(opts)); err != nil {
+			return fmt.Errorf("create-usb: %w", err)
 		}
 	}
 
@@ -253,7 +258,7 @@ func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Mani
 	if createusb.NeedsCredentialGeneration(manifest) {
 		// --release-image is optional: when unset, the generator derives the ocp-release image from the
 		// seed image's recorded OCP version, release registry, and architecture.
-		gen = createusb.NewInstallerConfigImageGenerator(log, createusb.InstallerConfig{
+		gen = newCredentialGenerator(log, createusb.InstallerConfig{
 			ReleaseImage:   opts.releaseImage,
 			SeedImage:      manifest.SeedImage,
 			AuthFile:       opts.authFile,

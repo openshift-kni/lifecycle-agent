@@ -103,6 +103,9 @@ type GeneratedCredentials struct {
 	KubeconfigCryptoRetention seedreconfig.KubeConfigCryptoRetention
 	Kubeconfig                []byte
 	KubeadminPassword         []byte
+	// ReleaseVersion is the OCP release version the identity was generated against (the seed-recorded
+	// version, or an explicit override). It defaults manifest.releaseVersion when the manifest omits it.
+	ReleaseVersion string
 }
 
 // CredentialInputs are the siteConfig-derived values the installer needs to mint a consistent
@@ -209,7 +212,53 @@ func GenerateSiteConfigCredentials(ctx context.Context, log *logrus.Logger, m *M
 
 	sc.KubeadminPasswordHash = creds.KubeadminPasswordHash
 	sc.KubeconfigCryptoRetention = creds.KubeconfigCryptoRetention
+	// Default the manifest's releaseVersion from the version the identity was generated against (the
+	// seed-recorded version) when the manifest omitted it, so a self-contained manifest can rely on the
+	// seed-derived release image without restating the version. An explicit releaseVersion is left as-is;
+	// when nothing could be derived (an explicit --release-image with no version), it stays empty and
+	// Validate still requires it.
+	if strings.TrimSpace(m.ReleaseVersion) == "" {
+		m.ReleaseVersion = creds.ReleaseVersion
+	}
 	return creds, nil
+}
+
+// PreflightCredentialArtifacts verifies, before the expensive media build, that the generated
+// kubeconfig and kubeadmin password can actually be published into dir: the directory exists and is
+// writable, and neither destination is a non-regular file (a directory, say) that the atomic-rename
+// publish could not replace. It only probes — it never overwrites or removes an existing artifact, so
+// the transactional publish can still preserve previously distributed credentials until the build
+// succeeds.
+func PreflightCredentialArtifacts(dir string) error {
+	if err := os.MkdirAll(dir, credentialDirMode); err != nil {
+		return fmt.Errorf("creating credentials output directory %q: %w", dir, err)
+	}
+	// Prove the directory is writable by staging and removing a throwaway probe file, so an unwritable
+	// directory fails here rather than after the media is built.
+	probe, err := os.CreateTemp(dir, ".preflight-*")
+	if err != nil {
+		return fmt.Errorf("credentials output directory %q is not writable: %w", dir, err)
+	}
+	probeName := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probeName)
+
+	// The publish replaces each destination with an atomic rename, which cannot replace a directory or
+	// other non-regular file, so reject one now rather than after the media is built.
+	for _, name := range []string{KubeconfigArtifactName, KubeadminPasswordArtifactName} {
+		p := filepath.Join(dir, name)
+		info, err := os.Lstat(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("checking credential artifact destination %q: %w", p, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("credential artifact destination %q is not a regular file; move it aside so the generated credentials can be written", p)
+		}
+	}
+	return nil
 }
 
 // WriteCredentialArtifacts publishes the generated kubeconfig and kubeadmin password into dir as
@@ -427,7 +476,7 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 		return nil, fmt.Errorf("securing credential working directory %q: %w", workDir, err)
 	}
 
-	installer, err := g.resolveInstaller(ctx, log, workDir)
+	installer, releaseVersion, err := g.resolveInstaller(ctx, log, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -451,24 +500,31 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 		return nil, fmt.Errorf("generating config image: %w", err)
 	}
 
-	return readGeneratedCredentials(workDir)
+	creds, err := readGeneratedCredentials(workDir)
+	if err != nil {
+		return nil, err
+	}
+	creds.ReleaseVersion = releaseVersion
+	return creds, nil
 }
 
 // resolveInstaller extracts openshift-install from the release image into workDir and verifies it
-// matches the expected release version.
-func (g *installerConfigImageGenerator) resolveInstaller(ctx context.Context, log *logrus.Logger, workDir string) (string, error) {
+// matches the expected release version. It returns the installer path and the resolved release
+// version (the seed-recorded version or an explicit override; empty only for an explicit
+// --release-image with no version), so the caller can default manifest.releaseVersion from it.
+func (g *installerConfigImageGenerator) resolveInstaller(ctx context.Context, log *logrus.Logger, workDir string) (string, string, error) {
 	releaseImage, version, err := g.resolveReleaseImage(ctx, log)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	installer, err := g.exec.ExtractInstaller(ctx, log, releaseImage, g.cfg.AuthFile, g.cfg.IDMSFile, workDir)
 	if err != nil {
-		return "", fmt.Errorf("extracting openshift-install from release image %q: %w", releaseImage, err)
+		return "", "", fmt.Errorf("extracting openshift-install from release image %q: %w", releaseImage, err)
 	}
 	if err := g.verifyInstallerVersion(ctx, installer, version); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return installer, nil
+	return installer, version, nil
 }
 
 // resolveReleaseImage returns the release image to source openshift-install from, together with the
