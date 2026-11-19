@@ -344,13 +344,15 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 // extraction, version query, and config-image run (populating the work directory the way the real
 // installer would) so the generator's sourcing logic is tested without oc or the installer binary.
 type fakeInstallerExec struct {
-	archCalled      bool
-	archOutput      string
-	archErr         error
-	gotArchImage    string
+	inspectCalled   bool
+	seedInfo        seedImageInfo
+	inspectErr      error
+	gotInspectImage string
+	gotInspectIDMS  string
 	extractCalled   bool
 	extractErr      error
 	gotReleaseImage string
+	gotExtractIDMS  string
 	versionOutput   string
 	versionErr      error
 	runCalled       bool
@@ -358,18 +360,20 @@ type fakeInstallerExec struct {
 	gotBinary       string
 }
 
-func (f *fakeInstallerExec) ImageArchitecture(_ context.Context, _ *logrus.Logger, image, _ string) (string, error) {
-	f.archCalled = true
-	f.gotArchImage = image
-	if f.archErr != nil {
-		return "", f.archErr
+func (f *fakeInstallerExec) InspectSeedImage(_ context.Context, _ *logrus.Logger, image, _, idmsFile string) (seedImageInfo, error) {
+	f.inspectCalled = true
+	f.gotInspectImage = image
+	f.gotInspectIDMS = idmsFile
+	if f.inspectErr != nil {
+		return seedImageInfo{}, f.inspectErr
 	}
-	return f.archOutput, nil
+	return f.seedInfo, nil
 }
 
-func (f *fakeInstallerExec) ExtractInstaller(_ context.Context, _ *logrus.Logger, releaseImage, _, destDir string) (string, error) {
+func (f *fakeInstallerExec) ExtractInstaller(_ context.Context, _ *logrus.Logger, releaseImage, _, idmsFile, destDir string) (string, error) {
 	f.extractCalled = true
 	f.gotReleaseImage = releaseImage
+	f.gotExtractIDMS = idmsFile
 	if f.extractErr != nil {
 		return "", f.extractErr
 	}
@@ -450,7 +454,7 @@ func TestInstallerGenerator_VersionMismatchFails(t *testing.T) {
 
 	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not match manifest releaseVersion")
+	assert.Contains(t, err.Error(), "does not match expected release version")
 	assert.False(t, fake.runCalled, "config-image must not run when the version check fails")
 }
 
@@ -466,47 +470,93 @@ func TestInstallerGenerator_UnparseableVersionFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "could not parse openshift-install version")
 }
 
-func TestInstallerGenerator_UnsupportedOverrideBypassesExtraction(t *testing.T) {
-	override := filepath.Join(t.TempDir(), "my-openshift-install")
-	require.NoError(t, os.WriteFile(override, []byte("#!/bin/true\n"), 0o700))
-	t.Setenv(UnsupportedInstallerBinaryOverrideEnv, override)
-
-	// extractErr/versionErr would surface if the override failed to bypass sourcing.
-	fake := &fakeInstallerExec{extractErr: assert.AnError, versionErr: assert.AnError}
-	g := &installerConfigImageGenerator{
-		cfg:  InstallerConfig{ReleaseVersion: "4.20.0"}, // no release image; the override wins
-		exec: fake,
+func TestInstallerGenerator_DefaultsReleaseImageFromSeed(t *testing.T) {
+	// With no --release-image and no releaseVersion override, the release image is derived entirely
+	// from the seed image's recorded version, registry, and architecture.
+	fake := &fakeInstallerExec{
+		seedInfo:      seedImageInfo{Architecture: "amd64", OCPVersion: "4.20.0", ReleaseRegistry: "quay.io"},
+		versionOutput: "openshift-install 4.20.0\n",
 	}
-	var buf bytes.Buffer
-	log := logrus.New()
-	log.SetOutput(&buf)
-
-	creds, err := g.Generate(context.Background(), log, sourcingInputs())
-	require.NoError(t, err)
-	require.NotNil(t, creds)
-	assert.False(t, fake.extractCalled, "the override must bypass release-image extraction")
-	assert.Equal(t, override, fake.gotBinary, "the config-image flow must run the override binary")
-	assert.Contains(t, buf.String(), UnsupportedInstallerBinaryOverrideEnv, "a loud warning must be logged")
-}
-
-func TestInstallerGenerator_DefaultsReleaseImageFromSeedArch(t *testing.T) {
-	fake := &fakeInstallerExec{archOutput: "amd64", versionOutput: "openshift-install 4.20.0\n"}
 	g := &installerConfigImageGenerator{
-		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc", ReleaseVersion: "4.20.0"},
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"},
 		exec: fake,
 	}
 
 	creds, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.NoError(t, err)
 	require.NotNil(t, creds)
-	assert.True(t, fake.archCalled, "the architecture must be read from the seed image when --release-image is unset")
-	assert.Equal(t, "quay.io/example/seed@sha256:abc", fake.gotArchImage)
-	// The default release image keys off the manifest release version and the ocp-release suffix for
-	// the seed's GOARCH.
+	assert.True(t, fake.inspectCalled, "the seed image must be inspected when --release-image is unset")
+	assert.Equal(t, "quay.io/example/seed@sha256:abc", fake.gotInspectImage)
 	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64", fake.gotReleaseImage)
 }
 
-func TestInstallerGenerator_ExplicitReleaseImageSkipsArchLookup(t *testing.T) {
+func TestInstallerGenerator_DefaultReleaseImageUsesSeedRegistry(t *testing.T) {
+	// A seed built from a mirror records that mirror as its release registry, so the default release
+	// image points at the mirror too.
+	fake := &fakeInstallerExec{
+		seedInfo:      seedImageInfo{Architecture: "arm64", OCPVersion: "4.21.3", ReleaseRegistry: "mirror.example.com:5000"},
+		versionOutput: "openshift-install 4.21.3\n",
+	}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{SeedImage: "mirror.example.com:5000/seed@sha256:abc"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.NoError(t, err)
+	assert.Equal(t, "mirror.example.com:5000/openshift-release-dev/ocp-release:4.21.3-aarch64", fake.gotReleaseImage)
+}
+
+func TestInstallerGenerator_ReleaseVersionOverridesSeedVersion(t *testing.T) {
+	// An explicit releaseVersion overrides the seed's own version in the default pullspec.
+	fake := &fakeInstallerExec{
+		seedInfo:      seedImageInfo{Architecture: "amd64", OCPVersion: "4.20.0", ReleaseRegistry: "quay.io"},
+		versionOutput: "openshift-install 4.20.5\n",
+	}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc", ReleaseVersion: "4.20.5"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.NoError(t, err)
+	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release:4.20.5-x86_64", fake.gotReleaseImage)
+}
+
+func TestInstallerGenerator_DefaultReleaseImageFallsBackToPublicRegistry(t *testing.T) {
+	// A seed that records no release registry falls back to the public ocp-release registry.
+	fake := &fakeInstallerExec{
+		seedInfo:      seedImageInfo{Architecture: "amd64", OCPVersion: "4.20.0"},
+		versionOutput: "openshift-install 4.20.0\n",
+	}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.NoError(t, err)
+	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64", fake.gotReleaseImage)
+}
+
+func TestInstallerGenerator_IDMSFileThreadedThroughOC(t *testing.T) {
+	// --idms-file reaches both the seed-image inspection and the installer extraction.
+	fake := &fakeInstallerExec{
+		seedInfo:      seedImageInfo{Architecture: "amd64", OCPVersion: "4.20.0", ReleaseRegistry: "quay.io"},
+		versionOutput: "openshift-install 4.20.0\n",
+	}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc", IDMSFile: "/path/to/idms.yaml"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.NoError(t, err)
+	assert.Equal(t, "/path/to/idms.yaml", fake.gotInspectIDMS, "the idms file must reach oc image info")
+	assert.Equal(t, "/path/to/idms.yaml", fake.gotExtractIDMS, "the idms file must reach oc adm release extract")
+}
+
+func TestInstallerGenerator_ExplicitReleaseImageSkipsSeedInspection(t *testing.T) {
 	fake := &fakeInstallerExec{versionOutput: "openshift-install 4.20.0\n"}
 	g := &installerConfigImageGenerator{
 		cfg: InstallerConfig{
@@ -519,27 +569,27 @@ func TestInstallerGenerator_ExplicitReleaseImageSkipsArchLookup(t *testing.T) {
 
 	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.NoError(t, err)
-	assert.False(t, fake.archCalled, "an explicit --release-image must not trigger a seed-image architecture lookup")
+	assert.False(t, fake.inspectCalled, "an explicit --release-image must not trigger a seed-image inspection")
 	assert.Equal(t, "quay.io/example/release@sha256:abc", fake.gotReleaseImage)
 }
 
-func TestInstallerGenerator_SeedArchLookupError(t *testing.T) {
-	fake := &fakeInstallerExec{archErr: assert.AnError}
+func TestInstallerGenerator_SeedInspectError(t *testing.T) {
+	fake := &fakeInstallerExec{inspectErr: assert.AnError}
 	g := &installerConfigImageGenerator{
-		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc", ReleaseVersion: "4.20.0"},
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"},
 		exec: fake,
 	}
 
 	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "reading architecture from seed image")
-	assert.False(t, fake.extractCalled, "extraction must not run when the architecture cannot be read")
+	assert.Contains(t, err.Error(), "reading release image details from seed image")
+	assert.False(t, fake.extractCalled, "extraction must not run when the seed image cannot be inspected")
 }
 
 func TestInstallerGenerator_UnsupportedSeedArchFails(t *testing.T) {
-	fake := &fakeInstallerExec{archOutput: "riscv64"}
+	fake := &fakeInstallerExec{seedInfo: seedImageInfo{Architecture: "riscv64", OCPVersion: "4.20.0"}}
 	g := &installerConfigImageGenerator{
-		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc", ReleaseVersion: "4.20.0"},
+		cfg:  InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"},
 		exec: fake,
 	}
 
@@ -552,14 +602,17 @@ func TestInstallerGenerator_NoReleaseImageNoSeedFails(t *testing.T) {
 	g := &installerConfigImageGenerator{cfg: InstallerConfig{ReleaseVersion: "4.20.0"}, exec: &fakeInstallerExec{}}
 	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no seed image to read the architecture from")
+	assert.Contains(t, err.Error(), "no seed image to read it from")
 }
 
-func TestInstallerGenerator_NoReleaseVersionFails(t *testing.T) {
-	g := &installerConfigImageGenerator{cfg: InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"}, exec: &fakeInstallerExec{}}
+func TestInstallerGenerator_NoVersionAnywhereFails(t *testing.T) {
+	// No --release-image, no releaseVersion override, and a seed that records no OCP version leaves
+	// nothing to build the default pullspec from.
+	fake := &fakeInstallerExec{seedInfo: seedImageInfo{Architecture: "amd64"}}
+	g := &installerConfigImageGenerator{cfg: InstallerConfig{SeedImage: "quay.io/example/seed@sha256:abc"}, exec: fake}
 	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "manifest releaseVersion is empty")
+	assert.Contains(t, err.Error(), "records no OCP version")
 }
 
 func TestOCReleaseArch(t *testing.T) {

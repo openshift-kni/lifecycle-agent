@@ -357,13 +357,13 @@ When a `mode: self-contained` manifest omits **both** `siteConfig.kubeadminPassw
 and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity for you. It
 extracts the matching `openshift-install` from the release image, runs its image-based
 config-image flow in a scrubbed per-run temporary directory, and renders the generated hash
-and crypto retention into the on-media manifest. The extracted installer must report the
-manifest's `releaseVersion`, or the build fails. `--auth-file` supplies the credentials used
+and crypto retention into the on-media manifest. `--auth-file` supplies the credentials used
 to pull the images.
 
 The release image defaults to
-`quay.io/openshift-release-dev/ocp-release:<releaseVersion>-<arch>`, where the architecture is
-read from the seed image, so a connected build needs no extra input:
+`<registry>/openshift-release-dev/ocp-release:<version>-<arch>`, derived from the seed image's
+recorded OCP version, release registry, and architecture, so a connected build needs no extra
+input:
 
 ```bash
 lca-cli create-usb -f manifest.yaml --output usb.img \
@@ -372,7 +372,10 @@ lca-cli create-usb -f manifest.yaml --output usb.img \
   --credentials-dir /path/to/secrets
 ```
 
-For a mirrored or disconnected build, pass `--release-image` to override the default:
+Override the default when needed: `--release-image` sets the whole pullspec, `releaseVersion`
+in the manifest overrides just the version, and `--idms-file` points `oc` at an
+`ImageDigestMirrorSet` so a mirrored or disconnected build keeps the canonical pullspec and
+lets `oc` redirect to the mirror:
 
 ```bash
 lca-cli create-usb -f manifest.yaml --output usb.img \

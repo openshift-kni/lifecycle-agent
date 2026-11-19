@@ -53,6 +53,7 @@ func newCreateUsbCmd() *cobra.Command {
 		lcaImage       string
 		usbSize        string
 		releaseImage   string
+		idmsFile       string
 		credentialsDir string
 		force          bool
 	)
@@ -83,6 +84,7 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 				lcaImage:       lcaImage,
 				usbSize:        usbSize,
 				releaseImage:   releaseImage,
+				idmsFile:       idmsFile,
 				credentialsDir: credentialsDir,
 				force:          force,
 			})
@@ -113,9 +115,13 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	cmd.Flags().StringVar(&usbSize, "usb-size", "", "USB-stick size budget (e.g. 14Gi, 32G). The build fails if the assembled media exceeds it. Empty disables the check.")
 	// --release-image is the OpenShift release image create-usb extracts openshift-install from to
 	// mint the self-contained kubeconfig identity when the manifest omits it. When unset it defaults
-	// to the canonical ocp-release image for the manifest releaseVersion and the seed image's
-	// architecture; set it explicitly for mirrored or disconnected builds.
-	cmd.Flags().StringVar(&releaseImage, "release-image", "", "OpenShift release image to source openshift-install from when create-usb mints self-contained kubeconfig identity. Defaults to quay.io/openshift-release-dev/ocp-release:<releaseVersion>-<arch> (architecture read from the seed image); set it explicitly for mirrored or disconnected builds.")
+	// to the ocp-release image derived from the seed image's recorded OCP version, release registry,
+	// and architecture; set it explicitly to override that default.
+	cmd.Flags().StringVar(&releaseImage, "release-image", "", "OpenShift release image to source openshift-install from when create-usb mints self-contained kubeconfig identity. Defaults to <registry>/openshift-release-dev/ocp-release:<version>-<arch> derived from the seed image; set it explicitly to override.")
+	// --idms-file is an optional ImageDigestMirrorSet file passed to the oc commands that read the seed
+	// image and extract openshift-install, so a mirrored or disconnected build can keep the canonical
+	// release pullspec and have oc redirect to the mirror.
+	cmd.Flags().StringVar(&idmsFile, "idms-file", "", "Optional ImageDigestMirrorSet file passed to oc when reading the seed image and extracting openshift-install (for mirrored/disconnected builds).")
 	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
 	// written (owner-only), defaulting to a per-output <output-file-name>-credentials directory next
 	// to --output (or ./credentials when writing to a device).
@@ -153,6 +159,7 @@ type createUsbOptions struct {
 	lcaImage       string
 	usbSize        string
 	releaseImage   string
+	idmsFile       string
 	credentialsDir string
 	force          bool
 }
@@ -244,12 +251,13 @@ func runCreateUsb(opts createUsbOptions) error {
 func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Manifest) (*createusb.GeneratedCredentials, error) {
 	var gen createusb.CredentialGenerator
 	if createusb.NeedsCredentialGeneration(manifest) {
-		// --release-image is optional: when unset, the generator defaults to the canonical ocp-release
-		// image for the manifest release version and the seed image's architecture.
+		// --release-image is optional: when unset, the generator derives the ocp-release image from the
+		// seed image's recorded OCP version, release registry, and architecture.
 		gen = createusb.NewInstallerConfigImageGenerator(log, createusb.InstallerConfig{
 			ReleaseImage:   opts.releaseImage,
 			SeedImage:      manifest.SeedImage,
 			AuthFile:       opts.authFile,
+			IDMSFile:       opts.idmsFile,
 			ReleaseVersion: manifest.ReleaseVersion,
 		})
 	}
