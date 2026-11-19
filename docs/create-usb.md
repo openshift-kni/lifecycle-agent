@@ -355,10 +355,19 @@ build.
 
 When a `mode: self-contained` manifest omits **both** `siteConfig.kubeadminPasswordHash`
 and `siteConfig.kubeconfigCryptoRetention`, `create-usb` generates the identity for you.
-It derives `install-config.yaml` and `image-based-config.yaml` from `siteConfig`, shells
-out to the OpenShift installer's image-based config-image flow in a scrubbed, owner-only
-(`0700`) per-run temporary directory, reads the generated hash and crypto retention back,
-and renders them into the on-media manifest.
+Pass `--release-image`: `create-usb` extracts the matching `openshift-install` from that
+release image, runs its image-based config-image flow in a scrubbed per-run temporary
+directory, and renders the generated hash and crypto retention into the on-media manifest.
+The extracted installer must report the manifest's `releaseVersion`, or the build fails.
+`--auth-file` supplies the credentials used to pull the release image.
+
+```bash
+lca-cli create-usb -f manifest.yaml --output usb.img \
+  --lca-image <lca-cli-pullspec> \
+  --release-image quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64 \
+  --auth-file /path/to/pull-secret.json \
+  --credentials-dir /path/to/secrets
+```
 
 The matching **kubeconfig** and **kubeadmin password** are written to:
 
@@ -370,35 +379,15 @@ The matching **kubeconfig** and **kubeadmin password** are written to:
 `--credentials-dir` defaults to a per-image `<output-file-name>-credentials` directory
 alongside `--output` (for example `--output out/cluster-a.img` writes to
 `out/cluster-a.img-credentials/`). When writing to a block device with `--write-device`, the
-default is a `credentials` directory under the current directory. Pass `--credentials-dir` to
-choose an explicit location. These are the credentials the operator uses to reach the
-installed cluster; keep them secret, as you would the media itself.
+default is a `credentials` directory under the current directory. These are the credentials
+the operator uses to reach the installed cluster; keep them secret, as you would the media
+itself.
 
-`create-usb` runs the installer via `--openshift-install` (default: `openshift-install`
-resolved on `PATH`). Use the installer version that matches the target cluster. For
-disconnected builders, source the matching binary from a release payload or mirror:
-
-```bash
-mkdir -p /tmp/oi
-oc adm release extract \
-  -a /path/to/pull-secret.txt \
-  --command=openshift-install \
-  --to=/tmp/oi \
-  quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64
-
-lca-cli create-usb -f manifest.yaml --output usb.img \
-  --lca-image <lca-cli-pullspec> \
-  --openshift-install /tmp/oi/openshift-install \
-  --credentials-dir /path/to/secrets
-```
-
-**Rebuild behaviour.** Each generation run mints a fresh identity. Rebuilding the media
-therefore produces new credentials that replace the previous ones: any kubeconfig and
-password already distributed for the old media no longer authenticate. `create-usb` logs a
-loud warning when it overwrites existing artifacts in `--credentials-dir`. The per-run
-temporary working directory (which holds the pull secret and the generated secrets) is
-scrubbed on every exit path, so credential material from one build cannot leak into the
-next.
+**Rebuild behaviour.** Each generation run mints a fresh identity, so a rebuild's credentials
+replace the previous ones: any kubeconfig and password already distributed for the old media
+no longer authenticate. If credential artifacts already exist in the credentials directory,
+`create-usb` prompts for confirmation on an interactive terminal and refuses a non-interactive
+run; pass `--force` to overwrite without prompting.
 
 #### Operator-managed credentials (override)
 
@@ -411,6 +400,10 @@ one cluster, that single kubeconfig can access all of them. Generate the credent
 once, up front, with the matching installer version:
 
 ```bash
+oc adm release extract --command=openshift-install --to=/tmp/oi \
+  -a /path/to/pull-secret.json \
+  quay.io/openshift-release-dev/ocp-release:4.22.16-x86_64
+
 umask 077
 WORK=$(mktemp -d /tmp/ibi-auth.XXXXXX)
 install -m 600 /path/to/install-config.yaml "$WORK/install-config.yaml"

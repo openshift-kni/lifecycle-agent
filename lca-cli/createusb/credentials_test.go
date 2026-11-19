@@ -340,6 +340,154 @@ func TestWriteCredentialArtifacts(t *testing.T) {
 	})
 }
 
+// fakeInstallerExec is a test double for installerExec: it records calls and simulates a successful
+// extraction, version query, and config-image run (populating the work directory the way the real
+// installer would) so the generator's sourcing logic is tested without oc or the installer binary.
+type fakeInstallerExec struct {
+	extractCalled bool
+	extractErr    error
+	versionOutput string
+	versionErr    error
+	runCalled     bool
+	runErr        error
+	gotBinary     string
+}
+
+func (f *fakeInstallerExec) ExtractInstaller(_ context.Context, _ *logrus.Logger, _, _, destDir string) (string, error) {
+	f.extractCalled = true
+	if f.extractErr != nil {
+		return "", f.extractErr
+	}
+	binary := filepath.Join(destDir, installerBinaryName)
+	if err := os.WriteFile(binary, []byte("#!/bin/true\n"), 0o700); err != nil {
+		return "", err
+	}
+	return binary, nil
+}
+
+func (f *fakeInstallerExec) InstallerVersion(_ context.Context, _ string) (string, error) {
+	if f.versionErr != nil {
+		return "", f.versionErr
+	}
+	return f.versionOutput, nil
+}
+
+func (f *fakeInstallerExec) RunConfigImage(_ context.Context, _ *logrus.Logger, binaryPath, workDir string) error {
+	f.runCalled = true
+	f.gotBinary = binaryPath
+	if f.runErr != nil {
+		return f.runErr
+	}
+	authDir := filepath.Join(workDir, "auth")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(authDir, KubeconfigArtifactName), []byte("generated-kubeconfig"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(authDir, KubeadminPasswordArtifactName), []byte("generated-password"), 0o600); err != nil {
+		return err
+	}
+	ccDir := filepath.Join(workDir, "cluster-configuration")
+	if err := os.MkdirAll(ccDir, 0o700); err != nil {
+		return err
+	}
+	sr := seedreconfig.SeedReconfiguration{
+		APIVersion:                seedreconfig.SeedReconfigurationVersion,
+		KubeadminPasswordHash:     validKubeadminPasswordHash,
+		KubeconfigCryptoRetention: validKubeconfigCryptoRetention(),
+	}
+	data, err := json.Marshal(sr)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(ccDir, "manifest.json"), data, 0o600)
+}
+
+func sourcingInputs() CredentialInputs {
+	return CredentialInputs{ClusterName: "c", BaseDomain: "d", PullSecret: validPullSecret}
+}
+
+func TestInstallerGenerator_ExtractsAndVerifies(t *testing.T) {
+	fake := &fakeInstallerExec{versionOutput: "openshift-install 4.20.0\nbuilt from commit abc123\n"}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{ReleaseImage: "quay.io/example/release@sha256:abc", ReleaseVersion: "4.20.0"},
+		exec: fake,
+	}
+
+	creds, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	assert.True(t, fake.extractCalled, "installer must be extracted from the release image")
+	assert.True(t, fake.runCalled)
+	assert.Equal(t, validKubeadminPasswordHash, creds.KubeadminPasswordHash)
+	assert.Equal(t, []byte("generated-kubeconfig"), creds.Kubeconfig)
+	// The config-image flow must run the extracted binary, not a PATH name.
+	assert.Equal(t, installerBinaryName, filepath.Base(fake.gotBinary))
+}
+
+func TestInstallerGenerator_VersionMismatchFails(t *testing.T) {
+	fake := &fakeInstallerExec{versionOutput: "openshift-install 4.19.0\n"}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{ReleaseImage: "quay.io/example/release@sha256:abc", ReleaseVersion: "4.20.0"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match manifest releaseVersion")
+	assert.False(t, fake.runCalled, "config-image must not run when the version check fails")
+}
+
+func TestInstallerGenerator_UnparseableVersionFails(t *testing.T) {
+	fake := &fakeInstallerExec{versionOutput: "some unexpected output\n"}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{ReleaseImage: "quay.io/example/release@sha256:abc", ReleaseVersion: "4.20.0"},
+		exec: fake,
+	}
+
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not parse openshift-install version")
+}
+
+func TestInstallerGenerator_UnsupportedOverrideBypassesExtraction(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "my-openshift-install")
+	require.NoError(t, os.WriteFile(override, []byte("#!/bin/true\n"), 0o700))
+	t.Setenv(UnsupportedInstallerBinaryOverrideEnv, override)
+
+	// extractErr/versionErr would surface if the override failed to bypass sourcing.
+	fake := &fakeInstallerExec{extractErr: assert.AnError, versionErr: assert.AnError}
+	g := &installerConfigImageGenerator{
+		cfg:  InstallerConfig{ReleaseVersion: "4.20.0"}, // no release image; the override wins
+		exec: fake,
+	}
+	var buf bytes.Buffer
+	log := logrus.New()
+	log.SetOutput(&buf)
+
+	creds, err := g.Generate(context.Background(), log, sourcingInputs())
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	assert.False(t, fake.extractCalled, "the override must bypass release-image extraction")
+	assert.Equal(t, override, fake.gotBinary, "the config-image flow must run the override binary")
+	assert.Contains(t, buf.String(), UnsupportedInstallerBinaryOverrideEnv, "a loud warning must be logged")
+}
+
+func TestInstallerGenerator_NoReleaseImageFails(t *testing.T) {
+	g := &installerConfigImageGenerator{cfg: InstallerConfig{}, exec: &fakeInstallerExec{}}
+	_, err := g.Generate(context.Background(), discardLogger(), sourcingInputs())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no release image configured")
+}
+
+func TestParseInstallerVersion(t *testing.T) {
+	assert.Equal(t, "4.20.0", parseInstallerVersion("openshift-install 4.20.0\nbuilt from commit abc123\nrelease image quay.io/x@sha256:y\n"))
+	assert.Equal(t, "4.22.16-x86_64", parseInstallerVersion("openshift-install 4.22.16-x86_64\n"))
+	assert.Equal(t, "", parseInstallerVersion("some other output\n"))
+	assert.Equal(t, "", parseInstallerVersion(""))
+}
+
 func TestRenderInstallConfig(t *testing.T) {
 	in := CredentialInputs{
 		ClusterName:     "example",

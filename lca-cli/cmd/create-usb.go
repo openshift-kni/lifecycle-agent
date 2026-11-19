@@ -17,8 +17,11 @@ limitations under the License.
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,17 +43,18 @@ func init() {
 // fresh flag state, mirroring the ip-config command's NewIPConfigCmd pattern.
 func newCreateUsbCmd() *cobra.Command {
 	var (
-		manifestFile     string
-		authFile         string
-		outputPath       string
-		writeDevice      string
-		rhcosLiveISO     string
-		rhcosLiveSHA     string
-		recertImage      string
-		lcaImage         string
-		usbSize          string
-		openshiftInstall string
-		credentialsDir   string
+		manifestFile   string
+		authFile       string
+		outputPath     string
+		writeDevice    string
+		rhcosLiveISO   string
+		rhcosLiveSHA   string
+		recertImage    string
+		lcaImage       string
+		usbSize        string
+		releaseImage   string
+		credentialsDir string
+		force          bool
 	)
 
 	cmd := &cobra.Command{
@@ -69,17 +73,18 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreateUsb(createUsbOptions{
-				manifestFile:     manifestFile,
-				authFile:         authFile,
-				outputPath:       outputPath,
-				writeDevice:      writeDevice,
-				rhcosLiveISO:     rhcosLiveISO,
-				rhcosLiveSHA:     rhcosLiveSHA,
-				recertImage:      recertImage,
-				lcaImage:         lcaImage,
-				usbSize:          usbSize,
-				openshiftInstall: openshiftInstall,
-				credentialsDir:   credentialsDir,
+				manifestFile:   manifestFile,
+				authFile:       authFile,
+				outputPath:     outputPath,
+				writeDevice:    writeDevice,
+				rhcosLiveISO:   rhcosLiveISO,
+				rhcosLiveSHA:   rhcosLiveSHA,
+				recertImage:    recertImage,
+				lcaImage:       lcaImage,
+				usbSize:        usbSize,
+				releaseImage:   releaseImage,
+				credentialsDir: credentialsDir,
+				force:          force,
 			})
 		},
 	}
@@ -106,17 +111,18 @@ the assembled media exceeds the budget. --write-device is deferred.`,
 	// --usb-size is the whole-stick size budget (e.g. "14Gi", "32G"). When set, the build fails if
 	// the assembled media's final apparent size exceeds it. Empty disables the check.
 	cmd.Flags().StringVar(&usbSize, "usb-size", "", "USB-stick size budget (e.g. 14Gi, 32G). The build fails if the assembled media exceeds it. Empty disables the check.")
-	// --openshift-install enables automatic kubeconfig-identity generation for self-contained
-	// media when the manifest supplies neither siteConfig.kubeadminPasswordHash nor
-	// kubeconfigCryptoRetention. create-usb shells out to this binary's
-	// `image-based create config-image` flow in a scrubbed temp directory, populates the two
-	// fields, and emits the matching kubeconfig + kubeadmin password (see --credentials-dir).
-	// Source it for disconnected builders with `oc adm release extract --command=openshift-install`.
-	cmd.Flags().StringVar(&openshiftInstall, "openshift-install", "openshift-install", "openshift-install binary used to generate self-contained kubeconfig identity when the manifest omits it (path or name on PATH).")
+	// --release-image is the OpenShift release image create-usb extracts openshift-install from to
+	// mint the self-contained kubeconfig identity when the manifest omits it. It is required in that
+	// case unless credentials are supplied in the manifest.
+	cmd.Flags().StringVar(&releaseImage, "release-image", "", "OpenShift release image to source openshift-install from when create-usb mints self-contained kubeconfig identity (required unless the manifest supplies the credentials).")
 	// --credentials-dir is where the generated kubeconfig and kubeadmin-password artifacts are
 	// written (owner-only), defaulting to a per-output <output-file-name>-credentials directory next
 	// to --output (or ./credentials when writing to a device).
 	cmd.Flags().StringVar(&credentialsDir, "credentials-dir", "", "Directory for the generated kubeconfig and kubeadmin-password when create-usb mints self-contained identity (defaults to a <output-file-name>-credentials directory next to --output, or ./credentials when writing to a device).")
+	// --force overwrites existing credential artifacts without prompting. Without it, an existing
+	// kubeconfig/kubeadmin-password in the credentials directory prompts on an interactive terminal
+	// and fails a non-interactive run, so a rebuild cannot silently replace distributed credentials.
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing credential artifacts in the credentials directory without prompting.")
 
 	_ = cmd.MarkFlagRequired("manifest")
 
@@ -136,17 +142,18 @@ func defaultRecertImage() string {
 
 // createUsbOptions carries the resolved create-usb flag values.
 type createUsbOptions struct {
-	manifestFile     string
-	authFile         string
-	outputPath       string
-	writeDevice      string
-	rhcosLiveISO     string
-	rhcosLiveSHA     string
-	recertImage      string
-	lcaImage         string
-	usbSize          string
-	openshiftInstall string
-	credentialsDir   string
+	manifestFile   string
+	authFile       string
+	outputPath     string
+	writeDevice    string
+	rhcosLiveISO   string
+	rhcosLiveSHA   string
+	recertImage    string
+	lcaImage       string
+	usbSize        string
+	releaseImage   string
+	credentialsDir string
+	force          bool
 }
 
 // runCreateUsb orchestrates the create-usb flow: validate the flag combinations, parse the
@@ -177,6 +184,15 @@ func runCreateUsb(opts createUsbOptions) error {
 		manifest.RHCOSLiveISO.SHA256 = opts.rhcosLiveSHA
 	}
 
+	// If create-usb will mint credentials, confirm any overwrite of existing artifacts before the
+	// expensive installer extraction and media build, so a rebuild cannot silently replace
+	// credentials that may still authenticate an earlier cluster.
+	if createusb.NeedsCredentialGeneration(manifest) {
+		if err := confirmCredentialOverwrite(resolveCredentialsDir(opts), opts.force); err != nil {
+			return fmt.Errorf("create-usb: %w", err)
+		}
+	}
+
 	// Generate the self-contained kubeconfig identity before validation so Validate checks the
 	// generated material like an operator-supplied override. The hash and crypto retention are
 	// populated into the manifest here; the matching kubeconfig and password are written only after
@@ -192,9 +208,9 @@ func runCreateUsb(opts createUsbOptions) error {
 
 	log.Infof("create-usb manifest validated (mode=%s)", manifest.Mode)
 
-	// Preflight the (empty) credentials directory before the expensive build: fail fast on an
-	// unusable path rather than after assembling an image whose credentials could then never be
-	// written. No secret material is written before the build.
+	// Preflight the (empty) credentials directory before the build: fail fast on an unusable path
+	// rather than after assembling an image whose credentials could then never be written. No secret
+	// material is written before the build.
 	if creds != nil {
 		if err := os.MkdirAll(resolveCredentialsDir(opts), 0o700); err != nil {
 			return fmt.Errorf("create-usb: creating credentials directory: %w", err)
@@ -227,10 +243,17 @@ func runCreateUsb(opts createUsbOptions) error {
 func generateCredentialsIfNeeded(opts createUsbOptions, manifest *createusb.Manifest) (*createusb.GeneratedCredentials, error) {
 	var gen createusb.CredentialGenerator
 	if createusb.NeedsCredentialGeneration(manifest) {
-		if strings.TrimSpace(opts.openshiftInstall) == "" {
-			return nil, fmt.Errorf("self-contained manifest omits siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention; pass --openshift-install to generate them, or supply both in the manifest")
+		// --release-image is required to source openshift-install, except when the unsupported
+		// development override names a binary directly.
+		override := strings.TrimSpace(os.Getenv(createusb.UnsupportedInstallerBinaryOverrideEnv))
+		if override == "" && strings.TrimSpace(opts.releaseImage) == "" {
+			return nil, fmt.Errorf("self-contained manifest omits siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention; pass --release-image to generate them from the release payload, or supply both in the manifest")
 		}
-		gen = createusb.NewInstallerConfigImageGenerator(log, opts.openshiftInstall)
+		gen = createusb.NewInstallerConfigImageGenerator(log, createusb.InstallerConfig{
+			ReleaseImage:   opts.releaseImage,
+			AuthFile:       opts.authFile,
+			ReleaseVersion: manifest.ReleaseVersion,
+		})
 	}
 
 	creds, err := createusb.GenerateSiteConfigCredentials(context.Background(), log, manifest, gen)
@@ -251,6 +274,68 @@ func writeGeneratedCredentials(opts createUsbOptions, creds *createusb.Generated
 		return fmt.Errorf("writing credential artifacts: %w", err)
 	}
 	return nil
+}
+
+// confirmCredentialOverwrite guards the credentials directory before the build: if credential
+// artifacts already exist there, it prompts on an interactive terminal and refuses a non-interactive
+// run, so a rebuild cannot silently replace credentials that may still authenticate an earlier
+// cluster. --force overwrites without prompting.
+func confirmCredentialOverwrite(dir string, force bool) error {
+	existing := existingCredentialArtifacts(dir)
+	if len(existing) == 0 {
+		return nil
+	}
+	proceed, err := resolveOverwriteConsent(dir, existing, force, stdinIsInteractive(), os.Stdin)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return fmt.Errorf("credential overwrite declined; aborting before build")
+	}
+	return nil
+}
+
+// existingCredentialArtifacts returns the credential artifact paths that already exist in dir.
+func existingCredentialArtifacts(dir string) []string {
+	var existing []string
+	for _, name := range []string{createusb.KubeconfigArtifactName, createusb.KubeadminPasswordArtifactName} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			existing = append(existing, p)
+		}
+	}
+	return existing
+}
+
+// resolveOverwriteConsent decides whether overwriting the existing artifacts may proceed: --force
+// always allows it, an interactive terminal is prompted, and a non-interactive run without --force is
+// refused with an actionable error.
+func resolveOverwriteConsent(dir string, existing []string, force, interactive bool, in io.Reader) (bool, error) {
+	if force {
+		log.Warnf("create-usb: overwriting existing credential artifacts in %s (--force); previously distributed credentials will no longer authenticate", dir)
+		return true, nil
+	}
+	if !interactive {
+		return false, fmt.Errorf("existing credential artifacts found in %s (%s); refusing to overwrite them in a non-interactive run -- re-run with --force to overwrite, or set --credentials-dir to a new location", dir, strings.Join(existing, ", "))
+	}
+	fmt.Fprintf(os.Stderr, "create-usb: existing credential artifacts found in %s (%s).\nOverwrite them? Previously distributed credentials will no longer authenticate [y/N]: ", dir, strings.Join(existing, ", "))
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("reading overwrite confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// stdinIsInteractive reports whether standard input is a terminal (character device), so create-usb
+// only prompts when a human can answer.
+func stdinIsInteractive() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // resolveCredentialsDir returns where credential artifacts are written: the explicit

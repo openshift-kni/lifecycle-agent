@@ -20,11 +20,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 )
 
 const (
@@ -220,6 +223,81 @@ func TestCredentialsOutputDir(t *testing.T) {
 
 	// No output file path (device target) falls back to a fixed local directory.
 	assert.Equal(t, "credentials", credentialsOutputDir(""))
+}
+
+// selfContainedManifestYAML returns a self-contained manifest with the credential fields omitted,
+// so it needs automatic generation (which requires --release-image). It need not pass full
+// validation: the credential-sourcing check runs before manifest validation.
+func selfContainedManifestYAML() string {
+	return `mode: self-contained
+seedImage: quay.io/example/seed@sha256:` + testSHA256 + `
+seedVersion: 4.20.0
+releaseVersion: 4.20.0
+installationDisk: /dev/disk/by-id/ata-example
+disconnected: true
+shutdown: false
+siteConfig:
+  clusterName: example
+`
+}
+
+// TestCreateUsbRequiresReleaseImage verifies that a self-contained manifest needing credential
+// generation fails fast (before the build) when neither --release-image nor the unsupported override
+// is set to source openshift-install.
+func TestCreateUsbRequiresReleaseImage(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "m.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte(selfContainedManifestYAML()), 0o600))
+
+	err := runCreateUsbCmd(t, "--manifest", manifest, "--output", filepath.Join(t.TempDir(), "out.img"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--release-image")
+}
+
+func TestExistingCredentialArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	assert.Empty(t, existingCredentialArtifacts(dir))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, createusb.KubeconfigArtifactName), []byte("x"), 0o600))
+	got := existingCredentialArtifacts(dir)
+	require.Len(t, got, 1)
+	assert.Equal(t, filepath.Join(dir, createusb.KubeconfigArtifactName), got[0])
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, createusb.KubeadminPasswordArtifactName), []byte("y"), 0o600))
+	assert.Len(t, existingCredentialArtifacts(dir), 2)
+}
+
+func TestResolveOverwriteConsent(t *testing.T) {
+	// The force branch logs via the package logger; initialize it as Execute() would.
+	log.SetFormatter(&logrus.TextFormatter{})
+	log.SetOutput(io.Discard)
+
+	existing := []string{"/creds/kubeconfig"}
+
+	t.Run("force overwrites without prompting", func(t *testing.T) {
+		proceed, err := resolveOverwriteConsent("/creds", existing, true, false, strings.NewReader(""))
+		require.NoError(t, err)
+		assert.True(t, proceed)
+	})
+	t.Run("non-interactive without force is refused", func(t *testing.T) {
+		proceed, err := resolveOverwriteConsent("/creds", existing, false, false, strings.NewReader(""))
+		require.Error(t, err)
+		assert.False(t, proceed)
+		assert.Contains(t, err.Error(), "--force")
+	})
+	t.Run("interactive yes proceeds", func(t *testing.T) {
+		for _, answer := range []string{"y\n", "yes\n", "Y\n"} {
+			proceed, err := resolveOverwriteConsent("/creds", existing, false, true, strings.NewReader(answer))
+			require.NoError(t, err, answer)
+			assert.True(t, proceed, answer)
+		}
+	})
+	t.Run("interactive no or empty declines", func(t *testing.T) {
+		for _, answer := range []string{"n\n", "\n", ""} {
+			proceed, err := resolveOverwriteConsent("/creds", existing, false, true, strings.NewReader(answer))
+			require.NoError(t, err, answer)
+			assert.False(t, proceed, answer)
+		}
+	})
 }
 
 func TestResolveCredentialsDir(t *testing.T) {

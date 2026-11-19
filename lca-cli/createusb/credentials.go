@@ -17,14 +17,12 @@ limitations under the License.
 package createusb
 
 // This file automates self-contained kubeconfig-identity generation for create-usb (CNF-30028).
-// In self-contained mode, when the manifest supplies neither siteConfig.kubeadminPasswordHash nor
-// kubeconfigCryptoRetention, create-usb derives the installer inputs from siteConfig, shells out to
-// `openshift-install image-based create config-image` in a scrubbed per-run directory, and reads
-// back the identity material. The hash and crypto retention are populated into m.SiteConfig so the
-// existing render and validators consume them as if the operator had supplied them; the matching
-// kubeconfig and kubeadmin password are emitted as build-side artifacts and never written to the
-// media. An operator-supplied pair is a validated override; supplying exactly one is an error.
-// CredentialGenerator abstracts the installer so the orchestration is unit-tested without it.
+// When a self-contained manifest supplies neither siteConfig.kubeadminPasswordHash nor
+// kubeconfigCryptoRetention, create-usb sources openshift-install from the release image, runs its
+// image-based config-image flow in a scrubbed per-run directory, and reads back the identity
+// material. The hash and crypto retention are rendered into m.SiteConfig; the matching kubeconfig
+// and kubeadmin password are emitted as owner-only build-side artifacts, never written to the media.
+// Supplying exactly one of the two fields is an error.
 
 import (
 	"bytes"
@@ -55,12 +53,19 @@ const (
 	// ovnNetworkType is the only supported SNO network type, matching IBIO's installer input.
 	ovnNetworkType = "OVNKubernetes"
 
-	// installerConfigImageCommand is the openshift-install subcommand that generates the
-	// config image (and the auth/ identity material) without producing a full install ISO.
-	// Passed as separate argv tokens to the executor.
+	// installerSubcmd* are the openshift-install subcommand tokens that generate the config image
+	// (and the auth/ identity material) without producing a full install ISO.
 	installerSubcmdImageBased  = "image-based"
 	installerSubcmdCreate      = "create"
 	installerSubcmdConfigImage = "config-image"
+
+	// installerBinaryName is the openshift-install binary extracted from the release image.
+	installerBinaryName = "openshift-install"
+
+	// UnsupportedInstallerBinaryOverrideEnv names the development-only escape hatch that bypasses
+	// sourcing openshift-install from the release image and uses the named binary as-is. It is
+	// unsupported; create-usb logs a loud warning when it is set and never verifies the version.
+	UnsupportedInstallerBinaryOverrideEnv = "UNSUPPORTED_DO_NOT_USE_OPENSHIFT_INSTALL_BINARY_OVERRIDE"
 
 	// installConfigFileName / imageBasedConfigFileName are the installer's expected input file
 	// names in the working directory.
@@ -167,7 +172,7 @@ func GenerateSiteConfigCredentials(ctx context.Context, log *logrus.Logger, m *M
 	}
 
 	if gen == nil {
-		return nil, fmt.Errorf("siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention are absent and no credential generator is configured; supply the credentials in the manifest or pass --openshift-install to generate them")
+		return nil, fmt.Errorf("siteConfig.kubeadminPasswordHash and siteConfig.kubeconfigCryptoRetention are absent and no credential generator is configured; supply the credentials in the manifest or pass --release-image to generate them")
 	}
 
 	// The generator needs a resolved pull secret; ResolvePullSecret is idempotent (Validate
@@ -343,28 +348,44 @@ func restoreStashedKubeconfig(log *logrus.Logger, backup, dest, dir string) {
 	}
 }
 
-// installerConfigImageGenerator is the production CredentialGenerator: it shells out to
-// openshift-install's image-based config-image flow in a scrubbed per-run working directory and
-// reads back the generated identity material. The installer binary is sourced by the operator
-// (for disconnected builders, via `oc adm release extract --command=openshift-install`).
+// InstallerConfig configures the production CredentialGenerator: the release image openshift-install
+// is sourced from, the build-time auth file used to pull it, and the release version the extracted
+// installer must match.
+type InstallerConfig struct {
+	ReleaseImage   string
+	AuthFile       string
+	ReleaseVersion string
+}
+
+// installerExec abstracts the external installer operations so the generator is unit-tested without
+// oc or the installer binary.
+type installerExec interface {
+	// ExtractInstaller extracts openshift-install from releaseImage into destDir, returning its path.
+	ExtractInstaller(ctx context.Context, log *logrus.Logger, releaseImage, authFile, destDir string) (string, error)
+	// InstallerVersion returns the raw output of the installer's `version` subcommand.
+	InstallerVersion(ctx context.Context, binaryPath string) (string, error)
+	// RunConfigImage runs the image-based config-image flow in workDir using binaryPath.
+	RunConfigImage(ctx context.Context, log *logrus.Logger, binaryPath, workDir string) error
+}
+
+// installerConfigImageGenerator is the production CredentialGenerator: it sources openshift-install
+// from the release image, runs its image-based config-image flow in a scrubbed per-run working
+// directory, and reads back the generated identity material.
 type installerConfigImageGenerator struct {
-	// installerBinary is the openshift-install path (or a name resolved on PATH).
-	installerBinary string
+	cfg  InstallerConfig
+	exec installerExec
 }
 
-// NewInstallerConfigImageGenerator returns the production CredentialGenerator backed by the
-// openshift-install binary at installerBinary (a path, or a name resolved on PATH).
-func NewInstallerConfigImageGenerator(_ *logrus.Logger, installerBinary string) CredentialGenerator {
-	return &installerConfigImageGenerator{installerBinary: installerBinary}
+// NewInstallerConfigImageGenerator returns the production CredentialGenerator that sources
+// openshift-install from cfg.ReleaseImage.
+func NewInstallerConfigImageGenerator(_ *logrus.Logger, cfg InstallerConfig) CredentialGenerator {
+	return &installerConfigImageGenerator{cfg: cfg, exec: &ocInstallerExec{}}
 }
 
-// Generate derives the installer input files from in, runs the config-image flow, and reads back
-// the identity bundle. The working directory is created 0700 and removed on return so no secret
-// material is left on disk after the build.
+// Generate sources the installer, derives the installer input files from in, runs the config-image
+// flow, and reads back the identity bundle. The working directory is created 0700 and removed on
+// return so no secret material (installer binary, pull secret, kubeconfig) outlives the build.
 func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logrus.Logger, in CredentialInputs) (*GeneratedCredentials, error) {
-	if strings.TrimSpace(g.installerBinary) == "" {
-		return nil, fmt.Errorf("no openshift-install binary configured")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("credential generation canceled: %w", err)
 	}
@@ -373,8 +394,6 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 	if err != nil {
 		return nil, fmt.Errorf("creating credential working directory: %w", err)
 	}
-	// The working directory holds the pull secret, the generated kubeconfig, and the kubeadmin
-	// password; scrub it on every return path so secret material never outlives the build.
 	defer func() {
 		if rerr := os.RemoveAll(workDir); rerr != nil {
 			log.Warnf("create-usb: removing credential working directory %s: %v", workDir, rerr)
@@ -382,6 +401,11 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 	}()
 	if err := os.Chmod(workDir, credentialDirMode); err != nil {
 		return nil, fmt.Errorf("securing credential working directory %q: %w", workDir, err)
+	}
+
+	installer, err := g.resolveInstaller(ctx, log, workDir)
+	if err != nil {
+		return nil, err
 	}
 
 	installConfig, err := renderInstallConfig(in)
@@ -399,27 +423,115 @@ func (g *installerConfigImageGenerator) Generate(ctx context.Context, log *logru
 		return nil, fmt.Errorf("writing %s: %w", imageBasedConfigFileName, err)
 	}
 
-	if err := g.runConfigImage(ctx, log, workDir); err != nil {
-		return nil, err
+	if err := g.exec.RunConfigImage(ctx, log, installer, workDir); err != nil {
+		return nil, fmt.Errorf("generating config image: %w", err)
 	}
 
 	return readGeneratedCredentials(workDir)
 }
 
-// runConfigImage executes `openshift-install --dir=<workDir> image-based create config-image`. Its
-// combined output is captured and discarded rather than logged: the installer can echo its input,
-// which carries the pull secret and SSH key. On failure the error reports the exit status only and
-// points at the manual flow to reproduce it, so no credential material leaks.
-func (g *installerConfigImageGenerator) runConfigImage(ctx context.Context, log *logrus.Logger, workDir string) error {
-	log.Infof("create-usb: running %s %s %s %s", g.installerBinary,
+// resolveInstaller returns the openshift-install binary to use. By default it extracts the binary
+// from the release image into workDir and verifies it matches the manifest release version. The
+// unsupported override env var bypasses both and uses the named binary as-is.
+func (g *installerConfigImageGenerator) resolveInstaller(ctx context.Context, log *logrus.Logger, workDir string) (string, error) {
+	if override := strings.TrimSpace(os.Getenv(UnsupportedInstallerBinaryOverrideEnv)); override != "" {
+		log.Warnf("create-usb: %s is set; using the unsupported openshift-install override %q instead of extracting it from the release image. This is for development only and must not be used for production media.", UnsupportedInstallerBinaryOverrideEnv, override)
+		return override, nil
+	}
+	if strings.TrimSpace(g.cfg.ReleaseImage) == "" {
+		return "", fmt.Errorf("no release image configured to source openshift-install from")
+	}
+	installer, err := g.exec.ExtractInstaller(ctx, log, g.cfg.ReleaseImage, g.cfg.AuthFile, workDir)
+	if err != nil {
+		return "", fmt.Errorf("extracting openshift-install from release image %q: %w", g.cfg.ReleaseImage, err)
+	}
+	if err := g.verifyInstallerVersion(ctx, installer); err != nil {
+		return "", err
+	}
+	return installer, nil
+}
+
+// verifyInstallerVersion fails unless the extracted installer reports the manifest release version.
+func (g *installerConfigImageGenerator) verifyInstallerVersion(ctx context.Context, binaryPath string) error {
+	want := strings.TrimSpace(g.cfg.ReleaseVersion)
+	if want == "" {
+		return nil
+	}
+	out, err := g.exec.InstallerVersion(ctx, binaryPath)
+	if err != nil {
+		return fmt.Errorf("determining extracted openshift-install version: %w", err)
+	}
+	got := parseInstallerVersion(out)
+	if got == "" {
+		return fmt.Errorf("could not parse openshift-install version from %q", strings.TrimSpace(out))
+	}
+	if got != want {
+		return fmt.Errorf("extracted openshift-install version %q does not match manifest releaseVersion %q", got, want)
+	}
+	return nil
+}
+
+// parseInstallerVersion extracts the version token from `openshift-install version` output, whose
+// first line is "openshift-install <version>".
+func parseInstallerVersion(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == installerBinaryName {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
+// ocInstallerExec is the production installerExec: it shells out to `oc adm release extract` to pull
+// openshift-install from the release image, runs the binary to read its version, and runs the
+// image-based config-image flow.
+type ocInstallerExec struct{}
+
+// ExtractInstaller runs `oc adm release extract --command=openshift-install --to=<destDir>` so the
+// installer always matches the release payload (it lives in a release-referenced image, not at a
+// fixed path in the release image itself).
+func (ocInstallerExec) ExtractInstaller(ctx context.Context, log *logrus.Logger, releaseImage, authFile, destDir string) (string, error) {
+	log.Infof("create-usb: extracting %s from release image %s", installerBinaryName, releaseImage)
+	args := []string{"adm", "release", "extract", "--command=" + installerBinaryName, "--to=" + destDir}
+	if strings.TrimSpace(authFile) != "" {
+		args = append(args, "--registry-config="+authFile)
+	}
+	args = append(args, releaseImage)
+	cmd := exec.CommandContext(ctx, "oc", args...) //nolint:gosec // oc is a fixed command; args are the operator-supplied release image and auth file
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("oc adm release extract failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	binary := filepath.Join(destDir, installerBinaryName)
+	if _, err := os.Stat(binary); err != nil {
+		return "", fmt.Errorf("extracted %s not found in %s: %w", installerBinaryName, destDir, err)
+	}
+	return binary, nil
+}
+
+// InstallerVersion runs `<binaryPath> version` and returns its stdout.
+func (ocInstallerExec) InstallerVersion(ctx context.Context, binaryPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, binaryPath, "version") //nolint:gosec // binaryPath is the installer this package extracted into its per-run temp dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("running %s version: %w", binaryPath, err)
+	}
+	return string(out), nil
+}
+
+// RunConfigImage executes `<binaryPath> --dir=<workDir> image-based create config-image`. Its output
+// is captured and discarded rather than logged because the installer can echo its input, which
+// carries the pull secret and SSH key; the error reports the exit status only.
+func (ocInstallerExec) RunConfigImage(ctx context.Context, log *logrus.Logger, binaryPath, workDir string) error {
+	log.Infof("create-usb: running %s %s %s %s", binaryPath,
 		installerSubcmdImageBased, installerSubcmdCreate, installerSubcmdConfigImage)
-	cmd := exec.CommandContext(ctx, g.installerBinary, "--dir="+workDir, //nolint:gosec // installerBinary is the operator-supplied --openshift-install value
+	cmd := exec.CommandContext(ctx, binaryPath, "--dir="+workDir, //nolint:gosec // binaryPath is the installer this package extracted into its per-run temp dir
 		installerSubcmdImageBased, installerSubcmdCreate, installerSubcmdConfigImage)
 	var sink bytes.Buffer
 	cmd.Stdout = &sink
 	cmd.Stderr = &sink
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s image-based create config-image failed: %w; its output was suppressed because it can contain credential material from install-config.yaml -- rerun the documented manual openshift-install command to see the full output", g.installerBinary, err)
+		return fmt.Errorf("%s image-based create config-image failed: %w; its output was suppressed because it can contain credential material from install-config.yaml -- rerun the documented manual openshift-install command to see the full output", binaryPath, err)
 	}
 	return nil
 }
