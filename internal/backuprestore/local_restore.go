@@ -84,7 +84,9 @@ func (h *BRHandler) StartRestore(ctx context.Context, oadpContent []ibuv1.Config
 	configured := len(oadpContent) > 0 || len(backupContent) > 0
 
 	backupPath := filepath.Join(hostPath, LocalBackupPath)
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+	_, statErr := os.Stat(backupPath)
+	backupExists := statErr == nil
+	if os.IsNotExist(statErr) {
 		// A missing backup directory is only acceptable when the user did not
 		// configure any backup content. If content was configured but no backup
 		// exists on disk, the backup is gone (e.g. never taken, or wiped) and we
@@ -100,6 +102,17 @@ func (h *BRHandler) StartRestore(ctx context.Context, oadpContent []ibuv1.Config
 		// absent directory and spuriously fail the upgrade).
 		rt.NoBackupToRestore = true
 		return rt, nil
+	}
+
+	// The backup directory is present but no backup content is configured for this
+	// upgrade. Idle cleanup normally removes a backup directory, so a surviving one
+	// here is a stale leftover from a prior upgrade whose cleanup did not complete.
+	// Applying it would restore data the user did not request, so fail terminally
+	// and let an admin investigate rather than silently restoring a leftover backup.
+	if backupExists && !configured {
+		return rt, NewBRFailedError("Restore",
+			fmt.Sprintf("a local backup exists at %s but no backup content is configured for this upgrade; "+
+				"refusing to restore a leftover backup", backupPath))
 	}
 
 	// If a previous PostPivot run already completed the restore (all resources

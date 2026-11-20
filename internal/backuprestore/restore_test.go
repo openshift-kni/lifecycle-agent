@@ -58,6 +58,29 @@ func TestStartRestoreMissingBackup(t *testing.T) {
 	})
 }
 
+// TestStartRestoreLeftoverBackupDirNoContent verifies that when a local backup
+// directory is present but no backup content is configured for the upgrade (a
+// stale leftover from a prior upgrade whose Idle cleanup did not complete),
+// StartRestore fails terminally rather than silently applying the leftover backup.
+func TestStartRestoreLeftoverBackupDirNoContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHostPath := hostPath
+	hostPath = tmpDir
+	defer func() { hostPath = origHostPath }()
+
+	backupPath := filepath.Join(tmpDir, LocalBackupPath)
+	require.NoError(t, os.MkdirAll(backupPath, 0o700))
+
+	h := &BRHandler{Log: logr.Discard()}
+
+	rt, err := h.StartRestore(context.Background(), nil, nil)
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedError(err),
+		"a leftover backup with no configured content must fail terminally, got: %v", err)
+	assert.NotNil(t, rt)
+	assert.False(t, rt.NoBackupToRestore)
+}
+
 // TestStartRestoreCompletedMarker verifies that when the backup directory exists
 // and already carries the restore-completed marker, StartRestore skips resource
 // restoration and succeeds without touching the backup contents (idempotent
