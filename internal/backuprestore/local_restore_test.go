@@ -147,6 +147,57 @@ func TestCreateOrUpdateResourceConflictRetry(t *testing.T) {
 	})
 }
 
+// TestCreateOrUpdateResourceAlreadyExistsRace verifies that when the initial Get
+// returns NotFound but the Create then races another actor and returns
+// AlreadyExists, the live object is re-read and the backed-up spec is applied via
+// an update, rather than AlreadyExists being treated as success and the spec left
+// unapplied.
+func TestCreateOrUpdateResourceAlreadyExistsRace(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	// Seed the object so the re-read after AlreadyExists finds it; the first Get is
+	// forced to return NotFound via a reactor to reproduce the race.
+	existing := newConfigMap("race-cm", "test-ns", "old")
+	dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme(), existing)
+
+	var getAttempts, createAttempts, updateAttempts int
+	dc.PrependReactor("get", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		getAttempts++
+		if getAttempts == 1 {
+			// The object does not exist when we first read it.
+			return true, nil, k8serrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "race-cm")
+		}
+		// Subsequent Gets fall through to the tracker (the object now "exists").
+		return false, nil, nil
+	})
+	dc.PrependReactor("create", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		createAttempts++
+		// Another actor created the object between our Get and this Create.
+		return true, nil, k8serrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, "race-cm")
+	})
+	dc.PrependReactor("update", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		updateAttempts++
+		// Fall through to the default tracker so the update is actually applied.
+		return false, nil, nil
+	})
+
+	h := &BRHandler{DynamicClient: dc, Log: logr.Discard()}
+
+	toApply := newConfigMap("race-cm", "test-ns", "new")
+	unstructured.RemoveNestedField(toApply.Object, "metadata", "resourceVersion")
+
+	err := h.applyNamespacedResource(context.Background(), gvr, "test-ns", "race-cm", toApply)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, createAttempts, "create should be attempted exactly once")
+	assert.Equal(t, 2, getAttempts, "expected the initial NotFound Get plus a re-read after AlreadyExists")
+	assert.Equal(t, 1, updateAttempts, "the backed-up spec must be applied via update after AlreadyExists")
+
+	got, err := dc.Resource(gvr).Namespace("test-ns").Get(context.Background(), "race-cm", metav1.GetOptions{})
+	assert.NoError(t, err)
+	val, _, _ := unstructured.NestedString(got.Object, "data", "key")
+	assert.Equal(t, "new", val, "the restored spec, not the pre-existing object, must win")
+}
+
 // TestStripRestoreMetadata verifies that the cluster-assigned, non-portable
 // metadata fields are removed while managedFields and the
 // last-applied-configuration annotation are preserved.

@@ -589,8 +589,12 @@ func (h *BRHandler) applyClusterScopedResource(ctx context.Context, gvr schema.G
 // that reads its resourceVersion and the Update, so if the Update fails with a
 // 409 Conflict the live object is re-fetched, its latest resourceVersion is
 // re-applied to the resource being restored, and the Update is retried (bounded
-// by retry.DefaultRetry). The existing create, AlreadyExists, success, and
-// non-conflict error handling are preserved.
+// by retry.DefaultRetry).
+//
+// If the initial Get returns NotFound but the subsequent Create races another
+// actor and returns AlreadyExists, the live object is re-read and the update path
+// is taken so the backed-up spec is still applied, rather than treating
+// AlreadyExists as success and silently leaving the restored spec unapplied.
 func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.ResourceInterface,
 	name string, resource *unstructured.Unstructured) error {
 
@@ -599,11 +603,25 @@ func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.Resou
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get existing resource: %w", err)
 		}
-		_, err = ri.Create(ctx, resource, metav1.CreateOptions{})
-		if err != nil && !k8serrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create resource: %w", err)
+		// The resource did not exist when we read it, so create it.
+		_, createErr := ri.Create(ctx, resource, metav1.CreateOptions{})
+		if createErr == nil {
+			return nil
 		}
-		return nil
+		if !k8serrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("failed to create resource: %w", createErr)
+		}
+		// Another actor created the resource between our Get (which returned
+		// NotFound) and this Create. Treating AlreadyExists as success would leave
+		// the backed-up spec unapplied, so re-read the live object and fall through
+		// to the update path below, ensuring the restored spec wins and closing the
+		// create/create race.
+		h.Log.Info("Resource already exists (created concurrently after a NotFound), updating it instead",
+			"kind", resource.GetKind(), "name", name, "namespace", resource.GetNamespace())
+		existing, err = ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get existing resource after AlreadyExists on create: %w", err)
+		}
 	}
 
 	resource.SetResourceVersion(existing.GetResourceVersion())
