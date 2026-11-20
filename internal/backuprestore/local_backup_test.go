@@ -351,11 +351,14 @@ func TestWriteAndLoadGroupRestoreConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "not listed in checksum manifest")
 	})
 
-	t.Run("missing config file yields an empty map", func(t *testing.T) {
+	t.Run("missing config file fails the restore", func(t *testing.T) {
+		// Layout 1.0.0 always writes restore-config.json for every group, so an
+		// absent file signals an incomplete/corrupted backup and must fail rather
+		// than silently restoring with no status restoration and no PV rebinding.
 		emptyDir := t.TempDir()
-		fc, err := loadGroupRestoreConfig(emptyDir, "restore-3", map[string]bool{})
-		assert.NoError(t, err)
-		assert.Empty(t, fc)
+		_, err := loadGroupRestoreConfig(emptyDir, "restore-3", map[string]bool{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), restoreConfigFileName)
 	})
 }
 
@@ -462,8 +465,18 @@ func TestLoadBackupResourcesByWaveNumericOrder(t *testing.T) {
 		assert.NoError(t, os.WriteFile(
 			filepath.Join(bad, "restore-1", "noindex.yaml"),
 			[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"), 0o600))
-		vf := map[string]bool{filepath.Join("restore-1", "noindex.yaml"): true}
-		_, err := loadBackupResourcesByWave(bad, vf, logr.Discard())
+		// Layout 1.0.0 always writes a restore-config.json per group; provide one so
+		// the load reaches (and rejects on) the unprefixed resource file rather than
+		// failing earlier on the now-mandatory config file.
+		_, err := writeGroupRestoreConfig(
+			filepath.Join(bad, "restore-1"), "restore-1",
+			[]groupRestoreConfigEntry{{Files: []string{"noindex.yaml"}}})
+		assert.NoError(t, err)
+		vf := map[string]bool{
+			filepath.Join("restore-1", "noindex.yaml"):        true,
+			filepath.Join("restore-1", restoreConfigFileName): true,
+		}
+		_, err = loadBackupResourcesByWave(bad, vf, logr.Discard())
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no numeric index prefix")
 	})

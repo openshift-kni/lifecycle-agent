@@ -839,18 +839,21 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 // loadGroupRestoreConfig reads the per-group restore configuration persisted in a
 // restore ordinal group directory and returns a map from each resource file name
 // in the group to the restore configuration that applies to it. The file is
-// covered by checksums.sha256, so when present it must appear in the validated
-// manifest. A group directory without a config file yields an empty map, under
-// which the restore applies no status and no PV rebinding.
+// covered by checksums.sha256, so it must appear in the validated manifest. Its
+// absence is a terminal restore failure: layout 1.0.0 always writes it for every
+// group, so a missing file indicates an incomplete or corrupted backup.
 func loadGroupRestoreConfig(groupDir, dirName string, validatedFiles map[string]bool) (map[string]*specRestoreConfig, error) {
 	fileConfig := map[string]*specRestoreConfig{}
 
 	configPath := filepath.Join(groupDir, restoreConfigFileName)
 	data, err := os.ReadFile(configPath) //nolint:gosec
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fileConfig, nil
-		}
+		// Layout 1.0.0 always writes restore-config.json for every restore group
+		// (writeGroupRestoreConfig emits a valid empty config even for a group with
+		// no configured backups). An absent file therefore signals an incomplete or
+		// corrupted backup rather than a group that legitimately carries no config,
+		// so fail the restore instead of silently proceeding with no status
+		// restoration and no PV rebinding.
 		return nil, fmt.Errorf("failed to read restore config %s: %w", configPath, err)
 	}
 
