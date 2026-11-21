@@ -88,8 +88,8 @@ func resolveSeedLiveISO(ctx context.Context, fetcher isoFetcher, reader seedRHCO
 	if err != nil {
 		return RHCOSLiveISO{}, err
 	}
-	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64", "ppc64le": "ppc64le", "s390x": "s390x"}[runtime.GOARCH]
-	if arch == "" {
+	arch, err := ocReleaseArch(runtime.GOARCH)
+	if err != nil {
 		return RHCOSLiveISO{}, fmt.Errorf("unsupported RHCOS architecture %q", runtime.GOARCH)
 	}
 	baseURL := fmt.Sprintf("%s/%s/builds/%s/%s/", rhcosBuildsURL, stream, buildID, arch)
