@@ -2,6 +2,7 @@
 
 - [Backup and restore with the Openshift API for Data Protection(OADP)](#backup-and-restore-with-the-openshift-api-for-data-protectionoadp)
   - [Overview](#overview)
+  - [Backup and restore with BackupContent](#backup-and-restore-with-backupcontent)
   - [Pre-Requisites](#pre-requisites)
   - [LCA apply wave annotation](#lca-apply-wave-annotation)
   - [LCA apply label annotation](#lca-apply-label-annotation)
@@ -34,6 +35,64 @@ After the cluster is rebooted to the new stateroot:
 
 - Restore the preserved secrets and DPA
 - Apply all preserved restore CRs (with the same `clusterID` label). If any restore CR fails, the upgrade process is terminated.
+
+## Backup and restore with BackupContent
+
+> **Note:** `spec.oadpContent` (the Velero `Backup`/`Restore` CRs wrapped in
+> ConfigMaps, described throughout the rest of this document) is **deprecated**.
+> The replacement is the `BackupContent` CRD, referenced by name from
+> `spec.backupContent`. The two are mutually exclusive on a single IBU. Both are
+> honoured by the same local backup/restore engine and produce the **same on-disk
+> backup layout** (`layoutVersion 1.0.0`), consumed post-pivot by the same reader.
+> LCA no longer requires the OADP operator for either path.
+
+A `BackupContent` CR is inert, declarative input (it has no status and nothing
+reconciles it). An IBU references one or more by name:
+
+```yaml
+spec:
+  backupContent:
+  - name: my-backup-content
+```
+
+The referenced `BackupContent` CRs are resolved **by name in LCA's install
+namespace** (the references carry no namespace), the same way
+`seedImageRef.pullSecretRef` is resolved. A reference that does not resolve there
+is a terminal Upgrade failure before the pivot — which also makes a hub/spoke
+namespace mismatch loud. Prep does not validate the referenced CRs. The engine
+reads them at Upgrade pre-pivot and backs up what is present at that time.
+
+The engine honours the `BackupContent` field semantics as follows:
+
+- **Per-entry names.** Each entry in `namespacedResources` / `clusterScopedResources`
+  specifies a kind and an optional list of `names`. An entry without names selects
+  all objects of that kind in scope; an entry with names selects exactly those
+  objects. A single `BackupContent` may mix named and unnamed entries, and each
+  entry is handled independently.
+- **labelSelector scope.** The top-level `labelSelector` is applied **only** to the
+  unnamed included entries. It never applies to named entries, and never to the
+  excluded lists.
+- **Kind-and-name exclusions.** `excludedNamespacedResources` /
+  `excludedClusterScopedResources` are applied independently of the `labelSelector`.
+  An excluded entry without names excludes the whole kind; an excluded entry with
+  names excludes only those objects (including objects that were explicitly named in
+  the included lists). Exclusions work for both namespaced and cluster-scoped
+  resources.
+- **Independent backup and restore waves.** `backupWave` orders backup capture and
+  `restoreWave` orders restore, independently of each other. An omitted wave is
+  processed last, after all explicitly numbered waves. The restore order on disk is
+  derived solely from `restoreWave`.
+- **Always-on restorePVs / restoreStatus.** On the `BackupContent` path the
+  PersistentVolume `claimRef` is always removed (so a PV can rebind to its restored
+  PVC) and `logicalvolumes` status is always restored. There are no per-entry knobs
+  for these; they are always on.
+
+The namespaces listed in `spec.namespaces` are always backed up first so they are
+recreated (in restore wave 0) before their contained resources. If
+`spec.backupContent` is set and the backup directory is missing post-pivot, the
+restore fails terminally, exactly as it does for `oadpContent`.
+
+The remaining sections of this document describe the deprecated `oadpContent` path.
 
 ## Pre-Requisites
 

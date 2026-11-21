@@ -466,12 +466,9 @@ spec:
           - '*'
           verbs:
           - create
-          - delete
           - get
           - list
-          - patch
           - update
-          - watch
         - apiGroups:
           - apiextensions.k8s.io
           resources:
@@ -570,6 +567,14 @@ spec:
           verbs:
           - create
           - patch
+        - apiGroups:
+          - lca.openshift.io
+          resources:
+          - backupcontents
+          verbs:
+          - get
+          - list
+          - watch
         - apiGroups:
           - lca.openshift.io
           resources:

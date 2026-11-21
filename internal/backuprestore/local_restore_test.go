@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -28,10 +29,20 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clienttesting "k8s.io/client-go/testing"
 )
+
+// withFastTransientBackoff shrinks the transient-retry backoff for the duration of a
+// test so retry paths do not sleep for seconds, restoring the original on cleanup.
+func withFastTransientBackoff(t *testing.T) {
+	t.Helper()
+	saved := transientRetryBackoff
+	transientRetryBackoff = wait.Backoff{Duration: time.Millisecond, Factor: 1.0, Steps: 3}
+	t.Cleanup(func() { transientRetryBackoff = saved })
+}
 
 // fakeDiscovery is a minimal discovery.DiscoveryInterface that answers only
 // ServerResourcesForGroupVersion from a static map. Embedding the interface
@@ -134,6 +145,57 @@ func TestCreateOrUpdateResourceConflictRetry(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, 1, updateAttempts, "a non-conflict error must not be retried")
 	})
+}
+
+// TestCreateOrUpdateResourceAlreadyExistsRace verifies that when the initial Get
+// returns NotFound but the Create then races another actor and returns
+// AlreadyExists, the live object is re-read and the backed-up spec is applied via
+// an update, rather than AlreadyExists being treated as success and the spec left
+// unapplied.
+func TestCreateOrUpdateResourceAlreadyExistsRace(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	// Seed the object so the re-read after AlreadyExists finds it; the first Get is
+	// forced to return NotFound via a reactor to reproduce the race.
+	existing := newConfigMap("race-cm", "test-ns", "old")
+	dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme(), existing)
+
+	var getAttempts, createAttempts, updateAttempts int
+	dc.PrependReactor("get", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		getAttempts++
+		if getAttempts == 1 {
+			// The object does not exist when we first read it.
+			return true, nil, k8serrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "race-cm")
+		}
+		// Subsequent Gets fall through to the tracker (the object now "exists").
+		return false, nil, nil
+	})
+	dc.PrependReactor("create", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		createAttempts++
+		// Another actor created the object between our Get and this Create.
+		return true, nil, k8serrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, "race-cm")
+	})
+	dc.PrependReactor("update", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		updateAttempts++
+		// Fall through to the default tracker so the update is actually applied.
+		return false, nil, nil
+	})
+
+	h := &BRHandler{DynamicClient: dc, Log: logr.Discard()}
+
+	toApply := newConfigMap("race-cm", "test-ns", "new")
+	unstructured.RemoveNestedField(toApply.Object, "metadata", "resourceVersion")
+
+	err := h.applyNamespacedResource(context.Background(), gvr, "test-ns", "race-cm", toApply)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, createAttempts, "create should be attempted exactly once")
+	assert.Equal(t, 2, getAttempts, "expected the initial NotFound Get plus a re-read after AlreadyExists")
+	assert.Equal(t, 1, updateAttempts, "the backed-up spec must be applied via update after AlreadyExists")
+
+	got, err := dc.Resource(gvr).Namespace("test-ns").Get(context.Background(), "race-cm", metav1.GetOptions{})
+	assert.NoError(t, err)
+	val, _, _ := unstructured.NestedString(got.Object, "data", "key")
+	assert.Equal(t, "new", val, "the restored spec, not the pre-existing object, must win")
 }
 
 // TestStripRestoreMetadata verifies that the cluster-assigned, non-portable
@@ -242,6 +304,123 @@ func TestRestoreResourceEntryStatusGating(t *testing.T) {
 		assert.NoError(t, err)
 		_, found, _ := unstructured.NestedMap(got.Object, "status")
 		assert.False(t, found, "status must not be restored when no kind is configured")
+	})
+}
+
+// TestRestoreResourceEntryStatusRestorationRetries verifies that status restoration
+// is mandatory and resilient: a transient status-update error is retried with
+// backoff and then succeeds, a 409 Conflict is retried after re-reading the live
+// object, and a status update that keeps failing after the bounded retries fails the
+// restore terminally and records the resource as a failed restore (rather than being
+// logged and ignored).
+func TestRestoreResourceEntryStatusRestorationRetries(t *testing.T) {
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+
+	newCMWithStatus := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]interface{}{"name": "cm1", "namespace": "ns1"},
+			"data":       map[string]interface{}{"k": "v"},
+			"status":     map[string]interface{}{"phase": "Ready"},
+		}}
+	}
+
+	disc := &fakeDiscovery{byGV: map[string]*metav1.APIResourceList{
+		"v1": {GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
+		}},
+	}}
+
+	statusCfg := &specRestoreConfig{RestoreStatusResources: []string{"configmaps"}}
+
+	assertStatusRestored := func(t *testing.T, dc *dynamicfake.FakeDynamicClient) {
+		t.Helper()
+		got, err := dc.Resource(gvr).Namespace("ns1").Get(context.Background(), "cm1", metav1.GetOptions{})
+		assert.NoError(t, err)
+		phase, _, _ := unstructured.NestedString(got.Object, "status", "phase")
+		assert.Equal(t, "Ready", phase, "the saved status must be restored")
+	}
+
+	t.Run("transient status update error is retried then succeeds", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme())
+
+		var statusUpdates int
+		dc.PrependReactor("update", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			statusUpdates++
+			if statusUpdates == 1 {
+				return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is temporarily unavailable")
+			}
+			return false, nil, nil
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+		rt := &RestoreTracker{}
+		err := h.restoreResourceEntry(context.Background(), resourceEntry{
+			resource: newCMWithStatus(), fileName: "cm1.yaml", restoreConfig: statusCfg,
+		}, rt)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, statusUpdates, "a transient status update must be retried once then succeed")
+		assert.Empty(t, rt.FailedRestores)
+		assert.Contains(t, rt.SucceededRestores, "ConfigMap/ns1/cm1")
+		assertStatusRestored(t, dc)
+	})
+
+	t.Run("status update conflict is retried then succeeds", func(t *testing.T) {
+		dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme())
+
+		var statusUpdates int
+		dc.PrependReactor("update", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			statusUpdates++
+			if statusUpdates == 1 {
+				return true, nil, k8serrors.NewConflict(
+					schema.GroupResource{Resource: "configmaps"}, "cm1",
+					fmt.Errorf("the object has been modified; please apply your changes to the latest version"))
+			}
+			return false, nil, nil
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+		rt := &RestoreTracker{}
+		err := h.restoreResourceEntry(context.Background(), resourceEntry{
+			resource: newCMWithStatus(), fileName: "cm1.yaml", restoreConfig: statusCfg,
+		}, rt)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, statusUpdates, "a status update conflict must be retried after re-reading the live object")
+		assert.Empty(t, rt.FailedRestores)
+		assertStatusRestored(t, dc)
+	})
+
+	t.Run("status restoration failing after retries fails the restore terminally", func(t *testing.T) {
+		withFastTransientBackoff(t)
+		dc := dynamicfake.NewSimpleDynamicClient(newConfigMapScheme())
+
+		var statusUpdates int
+		dc.PrependReactor("update", "configmaps", func(action clienttesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			statusUpdates++
+			return true, nil, k8serrors.NewServiceUnavailable("kube-apiserver is unavailable")
+		})
+
+		h := &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
+		rt := &RestoreTracker{}
+		err := h.restoreResourceEntry(context.Background(), resourceEntry{
+			resource: newCMWithStatus(), fileName: "cm1.yaml", restoreConfig: statusCfg,
+		}, rt)
+		assert.Error(t, err)
+		assert.True(t, IsBRFailedError(err), "exhausted status retries must yield a terminal restore error")
+		assert.Greater(t, statusUpdates, 1, "the status update must be retried before the restore fails")
+		assert.Contains(t, rt.FailedRestores, "ConfigMap/ns1/cm1",
+			"a resource whose status cannot be restored must be recorded as a failed restore")
 	})
 }
 
