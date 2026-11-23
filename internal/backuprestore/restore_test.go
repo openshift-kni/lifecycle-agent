@@ -40,18 +40,45 @@ func TestStartRestoreMissingBackup(t *testing.T) {
 	h := &BRHandler{Log: logr.Discard()}
 
 	t.Run("no content configured and no backup on disk skips restore", func(t *testing.T) {
-		rt, err := h.StartRestore(context.Background(), nil)
+		rt, err := h.StartRestore(context.Background(), nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, rt)
 		assert.Empty(t, rt.FailedRestores)
+		// The caller must bypass the restore-completed marker: there is no backup
+		// directory to hold it.
+		assert.True(t, rt.NoBackupToRestore)
 	})
 
 	t.Run("content configured but no backup on disk fails hard", func(t *testing.T) {
-		rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}})
+		rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}}, nil)
 		assert.Error(t, err)
 		assert.True(t, IsBRFailedError(err))
 		assert.NotNil(t, rt)
+		assert.False(t, rt.NoBackupToRestore)
 	})
+}
+
+// TestStartRestoreLeftoverBackupDirNoContent verifies that when a local backup
+// directory is present but no backup content is configured for the upgrade (a
+// stale leftover from a prior upgrade whose Idle cleanup did not complete),
+// StartRestore fails terminally rather than silently applying the leftover backup.
+func TestStartRestoreLeftoverBackupDirNoContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHostPath := hostPath
+	hostPath = tmpDir
+	defer func() { hostPath = origHostPath }()
+
+	backupPath := filepath.Join(tmpDir, LocalBackupPath)
+	require.NoError(t, os.MkdirAll(backupPath, 0o700))
+
+	h := &BRHandler{Log: logr.Discard()}
+
+	rt, err := h.StartRestore(context.Background(), nil, nil)
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedError(err),
+		"a leftover backup with no configured content must fail terminally, got: %v", err)
+	assert.NotNil(t, rt)
+	assert.False(t, rt.NoBackupToRestore)
 }
 
 // TestStartRestoreCompletedMarker verifies that when the backup directory exists
@@ -72,7 +99,7 @@ func TestStartRestoreCompletedMarker(t *testing.T) {
 
 	h := &BRHandler{Log: logr.Discard()}
 
-	rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}})
+	rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}}, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, rt)
 	assert.Empty(t, rt.SucceededRestores)
@@ -111,7 +138,7 @@ func TestMarkRestoreCompleted(t *testing.T) {
 	require.NoError(t, h.MarkRestoreCompleted(context.Background()))
 
 	// With the marker in place, StartRestore skips restoration successfully.
-	rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}})
+	rt, err := h.StartRestore(context.Background(), []ibuv1.ConfigMapRef{{Name: "backup", Namespace: "ns"}}, nil)
 	assert.NoError(t, err)
 	assert.Empty(t, rt.SucceededRestores)
 }

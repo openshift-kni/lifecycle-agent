@@ -73,22 +73,46 @@ var resourceWaveOrder = map[string]int{
 	"Ingress":                  9,
 }
 
-func (h *BRHandler) StartRestore(ctx context.Context, content []ibuv1.ConfigMapRef) (*RestoreTracker, error) {
+func (h *BRHandler) StartRestore(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*RestoreTracker, error) {
 	rt := &RestoreTracker{}
 
+	// Backup content is configured when either input source is set. At most one of
+	// them is populated (guaranteed by the IBU CEL mutual-exclusivity rule); the
+	// restore walks only the on-disk backup regardless of which source produced it,
+	// so the only thing the sources decide here is whether a missing backup
+	// directory is an error (configured) or expected (nothing configured).
+	configured := len(oadpContent) > 0 || len(backupContent) > 0
+
 	backupPath := filepath.Join(hostPath, LocalBackupPath)
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+	_, statErr := os.Stat(backupPath)
+	backupExists := statErr == nil
+	if os.IsNotExist(statErr) {
 		// A missing backup directory is only acceptable when the user did not
 		// configure any backup content. If content was configured but no backup
 		// exists on disk, the backup is gone (e.g. never taken, or wiped) and we
 		// must fail the restore hard rather than silently succeeding, otherwise
 		// the upgrade would complete without the user's application data.
-		if len(content) > 0 {
+		if configured {
 			return rt, NewBRFailedError("Restore",
 				fmt.Sprintf("backup content was configured but no local backup found at %s", backupPath))
 		}
 		h.Log.Info("No backup content configured and no local backup found, skipping restore")
+		// Signal the caller that there is no backup directory, so it bypasses the
+		// restore-completed marker (which would otherwise fail to be created inside the
+		// absent directory and spuriously fail the upgrade).
+		rt.NoBackupToRestore = true
 		return rt, nil
+	}
+
+	// The backup directory is present but no backup content is configured for this
+	// upgrade. Idle cleanup normally removes a backup directory, so a surviving one
+	// here is a stale leftover from a prior upgrade whose cleanup did not complete.
+	// Applying it would restore data the user did not request, so fail terminally
+	// and let an admin investigate rather than silently restoring a leftover backup.
+	if backupExists && !configured {
+		return rt, NewBRFailedError("Restore",
+			fmt.Sprintf("a local backup exists at %s but no backup content is configured for this upgrade; "+
+				"refusing to restore a leftover backup", backupPath))
 	}
 
 	// If a previous PostPivot run already completed the restore (all resources
@@ -283,9 +307,15 @@ func (h *BRHandler) restoreResourceEntry(ctx context.Context, entry resourceEntr
 	}
 
 	if restoreStatus && hasStatus && savedStatus != nil {
+		// Status restoration is mandatory: a configured status that cannot be
+		// restored (after bounded conflict and transient retries) fails the restore
+		// rather than being logged and ignored, so the resource is not silently
+		// restored without its status.
 		if err := h.applyStatusSubresource(ctx, resource, savedStatus); err != nil {
-			h.Log.Info("Failed to restore status subresource, continuing",
-				"kind", kind, "name", name, "namespace", namespace, "error", err.Error())
+			rt.FailedRestores = append(rt.FailedRestores,
+				fmt.Sprintf("%s/%s/%s", kind, namespace, name))
+			return NewBRFailedError("Restore",
+				fmt.Sprintf("failed to restore status for %s %s/%s: %s", kind, namespace, name, err.Error()))
 		}
 	}
 
@@ -306,35 +336,68 @@ func isCRD(resource *unstructured.Unstructured) bool {
 	return resource.GetKind() == "CustomResourceDefinition"
 }
 
+// applyStatusSubresource restores a resource's saved status via the status
+// subresource. Status restoration is mandatory: a failure is never logged and
+// ignored, it is returned to the caller so the restore fails and is retried.
+//
+// A 409 Conflict (the object changed between the Get and the UpdateStatus) is
+// retried in place by re-reading the live object, re-applying the saved status, and
+// retrying the UpdateStatus, bounded by retry.DefaultRetry. A transient API error
+// (server timeout, throttling, service unavailable) on either the Get or the
+// UpdateStatus is retried with a bounded in-process backoff. If the retries are
+// exhausted the final error is returned; the caller records the resource as a
+// failed restore and fails the Upgrade terminally.
 func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstructured.Unstructured, status interface{}) error {
 	gvk := resource.GroupVersionKind()
 	gvr := h.resolveGVR(gvk)
 
 	name := resource.GetName()
 	namespace := resource.GetNamespace()
+	ri := h.resourceInterface(gvr, namespace)
 
-	var existing *unstructured.Unstructured
-	var err error
-	if namespace != "" {
-		existing, err = h.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	} else {
-		existing, err = h.DynamicClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get resource for status update: %w", err)
+	// apply performs one full status-restore attempt (Get live object, copy the
+	// saved status onto it, UpdateStatus), retrying only 409 Conflicts in place.
+	apply := func() error {
+		existing, err := ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get resource for status update: %w", err)
+		}
+		existing.Object["status"] = status
+
+		// updateErr is either nil or an error already wrapped inside the closure
+		// (RetryOnConflict returns the closure's own error verbatim).
+		updateErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if _, err := ri.UpdateStatus(ctx, existing, metav1.UpdateOptions{}); err != nil {
+				if !k8serrors.IsConflict(err) {
+					return fmt.Errorf("failed to update status subresource: %w", err)
+				}
+				// The live object changed since we read it. Re-fetch it, re-apply
+				// the saved status, and let RetryOnConflict retry the UpdateStatus.
+				// The returned error stays conflict-typed (errors.As unwraps it) so
+				// RetryOnConflict keeps retrying.
+				latest, getErr := ri.Get(ctx, name, metav1.GetOptions{})
+				if getErr != nil {
+					return fmt.Errorf("failed to re-fetch resource during status conflict retry: %w", getErr)
+				}
+				latest.Object["status"] = status
+				existing = latest
+				return fmt.Errorf("status update conflict, retrying: %w", err)
+			}
+			return nil
+		})
+		return updateErr //nolint:wrapcheck
 	}
 
-	existing.Object["status"] = status
-
-	if namespace != "" {
-		_, err = h.DynamicClient.Resource(gvr).Namespace(namespace).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
-	} else {
-		_, err = h.DynamicClient.Resource(gvr).UpdateStatus(ctx, existing, metav1.UpdateOptions{})
+	err := apply()
+	if err == nil {
+		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("failed to update status subresource: %w", err)
+	if !isTransientError(err) {
+		return err
 	}
-	return nil
+	h.Log.Info("Transient error during status restore, retrying with backoff",
+		"kind", gvk.Kind, "name", name, "namespace", namespace, "error", err.Error())
+	return retryWithBackoff(ctx, apply)
 }
 
 func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Unstructured) error {
@@ -539,8 +602,12 @@ func (h *BRHandler) applyClusterScopedResource(ctx context.Context, gvr schema.G
 // that reads its resourceVersion and the Update, so if the Update fails with a
 // 409 Conflict the live object is re-fetched, its latest resourceVersion is
 // re-applied to the resource being restored, and the Update is retried (bounded
-// by retry.DefaultRetry). The existing create, AlreadyExists, success, and
-// non-conflict error handling are preserved.
+// by retry.DefaultRetry).
+//
+// If the initial Get returns NotFound but the subsequent Create races another
+// actor and returns AlreadyExists, the live object is re-read and the update path
+// is taken so the backed-up spec is still applied, rather than treating
+// AlreadyExists as success and silently leaving the restored spec unapplied.
 func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.ResourceInterface,
 	name string, resource *unstructured.Unstructured) error {
 
@@ -549,11 +616,25 @@ func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.Resou
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get existing resource: %w", err)
 		}
-		_, err = ri.Create(ctx, resource, metav1.CreateOptions{})
-		if err != nil && !k8serrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create resource: %w", err)
+		// The resource did not exist when we read it, so create it.
+		_, createErr := ri.Create(ctx, resource, metav1.CreateOptions{})
+		if createErr == nil {
+			return nil
 		}
-		return nil
+		if !k8serrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("failed to create resource: %w", createErr)
+		}
+		// Another actor created the resource between our Get (which returned
+		// NotFound) and this Create. Treating AlreadyExists as success would leave
+		// the backed-up spec unapplied, so re-read the live object and fall through
+		// to the update path below, ensuring the restored spec wins and closing the
+		// create/create race.
+		h.Log.Info("Resource already exists (created concurrently after a NotFound), updating it instead",
+			"kind", resource.GetKind(), "name", name, "namespace", resource.GetNamespace())
+		existing, err = ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get existing resource after AlreadyExists on create: %w", err)
+		}
 	}
 
 	resource.SetResourceVersion(existing.GetResourceVersion())
@@ -586,14 +667,17 @@ func isTransientError(err error) bool {
 	return k8serrors.IsServerTimeout(err) || k8serrors.IsTooManyRequests(err) || k8serrors.IsServiceUnavailable(err)
 }
 
-func retryWithBackoff(ctx context.Context, fn func() error) error {
-	backoff := wait.Backoff{
-		Duration: 1 * time.Second,
-		Factor:   2.0,
-		Steps:    3,
-	}
+// transientRetryBackoff bounds the in-process retry of a transient API error
+// (server timeout, throttling, service unavailable) during backup and restore. It
+// is a package variable rather than a constant so tests can shrink the delays.
+var transientRetryBackoff = wait.Backoff{
+	Duration: 1 * time.Second,
+	Factor:   2.0,
+	Steps:    3,
+}
 
-	return wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
+func retryWithBackoff(ctx context.Context, fn func() error) error {
+	return wait.ExponentialBackoffWithContext(ctx, transientRetryBackoff, func(ctx context.Context) (bool, error) { //nolint:wrapcheck
 		err := fn()
 		if err == nil {
 			return true, nil
@@ -786,18 +870,21 @@ func loadBackupResourcesByWave(backupPath string, validatedFiles map[string]bool
 // loadGroupRestoreConfig reads the per-group restore configuration persisted in a
 // restore ordinal group directory and returns a map from each resource file name
 // in the group to the restore configuration that applies to it. The file is
-// covered by checksums.sha256, so when present it must appear in the validated
-// manifest. A group directory without a config file yields an empty map, under
-// which the restore applies no status and no PV rebinding.
+// covered by checksums.sha256, so it must appear in the validated manifest. Its
+// absence is a terminal restore failure: layout 1.0.0 always writes it for every
+// group, so a missing file indicates an incomplete or corrupted backup.
 func loadGroupRestoreConfig(groupDir, dirName string, validatedFiles map[string]bool) (map[string]*specRestoreConfig, error) {
 	fileConfig := map[string]*specRestoreConfig{}
 
 	configPath := filepath.Join(groupDir, restoreConfigFileName)
 	data, err := os.ReadFile(configPath) //nolint:gosec
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fileConfig, nil
-		}
+		// Layout 1.0.0 always writes restore-config.json for every restore group
+		// (writeGroupRestoreConfig emits a valid empty config even for a group with
+		// no configured backups). An absent file therefore signals an incomplete or
+		// corrupted backup rather than a group that legitimately carries no config,
+		// so fail the restore instead of silently proceeding with no status
+		// restoration and no PV rebinding.
 		return nil, fmt.Errorf("failed to read restore config %s: %w", configPath, err)
 	}
 

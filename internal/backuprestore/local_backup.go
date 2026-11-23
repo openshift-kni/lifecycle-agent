@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	k8syaml "sigs.k8s.io/yaml"
 )
 
@@ -89,14 +90,30 @@ func (h *BRHandler) ValidateBackupConfigmaps(ctx context.Context, content []ibuv
 	return nil
 }
 
-func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRef) (*BackupTracker, error) {
+func (h *BRHandler) StartBackup(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*BackupTracker, error) {
 	bt := &BackupTracker{}
 
-	if len(content) == 0 {
+	// At most one of backupContent/oadpContent is set (guaranteed by the IBU CEL
+	// mutual-exclusivity rule). The BackupContent path is the replacement for the
+	// deprecated oadpContent path; both converge on the shared []collectedBackup
+	// representation and the same on-disk layout written by writeCollectedBackups.
+	switch {
+	case len(backupContent) > 0:
+		return h.startBackupFromBackupContent(ctx, backupContent, bt)
+	case len(oadpContent) > 0:
+		return h.startBackupFromConfigmaps(ctx, oadpContent, bt)
+	default:
 		h.Log.Info("No backup content provided, skipping")
 		return bt, nil
 	}
+}
 
+// startBackupFromConfigmaps runs the deprecated oadpContent backup path: it parses
+// the Velero Backup/Restore CRs out of the referenced ConfigMaps, validates them,
+// fetches the configured resources ordered by Backup apply-wave, and hands the
+// collected backups to the shared write pass (writeCollectedBackups). Its
+// behaviour is unchanged from before the BackupContent path was added.
+func (h *BRHandler) startBackupFromConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef, bt *BackupTracker) (*BackupTracker, error) {
 	configmaps, err := common.GetConfigMaps(ctx, h.Client, content)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -140,23 +157,9 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		return bt, fmt.Errorf("failed to sort backup specs: %w", err)
 	}
 
-	backupDir := filepath.Join(hostPath, LocalBackupPath)
-	// Clear any stale contents from a previous backup attempt before recreating
-	// the directory. PrePivot can re-enter and re-run the backup after a partial
-	// failure; if the resource set shrank between attempts, orphaned YAML files
-	// would otherwise survive while checksums.sha256 is rewritten without them,
-	// causing the post-pivot restore to hard-fail on the unlisted files.
-	// Filesystem errors below are returned as BRFailedError so the Upgrade stage
-	// fails terminally instead of requeuing forever: a backup that cannot write
-	// to local node storage will not succeed on retry, so human intervention
-	// (moving the IBU back to Idle and restarting) is required.
-	if err := os.RemoveAll(backupDir); err != nil {
-		return bt, NewBRFailedError("Backup",
-			fmt.Sprintf("failed to clear stale backup directory %s: %s", backupDir, err.Error()))
-	}
-	if err := os.MkdirAll(backupDir, 0o700); err != nil {
-		return bt, NewBRFailedError("Backup",
-			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
+	backupDir, err := prepareLocalBackupDir()
+	if err != nil {
+		return bt, err
 	}
 
 	// Fetch every backup's resources, processing lower Backup apply-waves first.
@@ -189,6 +192,43 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		}
 	}
 
+	if err := h.writeCollectedBackups(backupDir, collected, bt); err != nil {
+		return bt, err
+	}
+	return bt, nil
+}
+
+// prepareLocalBackupDir clears any stale contents from a previous backup attempt
+// and recreates the local backup directory, returning its path.
+//
+// PrePivot can re-enter and re-run the backup after a partial failure; if the
+// resource set shrank between attempts, orphaned YAML files would otherwise survive
+// while checksums.sha256 is rewritten without them, causing the post-pivot restore
+// to hard-fail on the unlisted files. Filesystem errors are returned as
+// BRFailedError so the Upgrade stage fails terminally instead of requeuing forever:
+// a backup that cannot write to local node storage will not succeed on retry, so
+// human intervention (moving the IBU back to Idle and restarting) is required.
+func prepareLocalBackupDir() (string, error) {
+	backupDir := filepath.Join(hostPath, LocalBackupPath)
+	if err := os.RemoveAll(backupDir); err != nil {
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to clear stale backup directory %s: %s", backupDir, err.Error()))
+	}
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", NewBRFailedError("Backup",
+			fmt.Sprintf("failed to create backup directory %s: %s", backupDir, err.Error()))
+	}
+	return backupDir, nil
+}
+
+// writeCollectedBackups is the shared write pass for both the oadpContent and
+// BackupContent input paths. Given the collected backups (each carrying its
+// resources and synthetic/parsed restore settings), it assigns restore ordinal
+// groups, writes the per-group resource files and restore config, the root-level
+// layout manifest, and the checksum manifest. Both paths produce the identical
+// layoutVersion 1.0.0 on-disk layout, consumable by the same post-pivot reader
+// without input-source-specific handling.
+func (h *BRHandler) writeCollectedBackups(backupDir string, collected []collectedBackup, bt *BackupTracker) error {
 	// Assign each backup to a 1-based restore ordinal group, ordered by the paired
 	// Restore CR's apply-wave (missing or empty last). Backups that share a restore
 	// wave share an ordinal. The ordinals are written as zero-padded directory names
@@ -212,13 +252,13 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 		groupDirName := fmt.Sprintf("restore-%0*d", ordinalWidth, ordinal)
 		groupDir := filepath.Join(backupDir, groupDirName)
 		if err := os.MkdirAll(groupDir, 0o700); err != nil {
-			return bt, NewBRFailedError("Backup",
+			return NewBRFailedError("Backup",
 				fmt.Sprintf("failed to create restore group directory %s: %s", groupDir, err.Error()))
 		}
 
 		groupChecksums, err := h.writeRestoreGroup(groupDir, groupDirName, bucket, numDigits(total), bt)
 		if err != nil {
-			return bt, err
+			return err
 		}
 		checksums = append(checksums, groupChecksums...)
 	}
@@ -235,21 +275,21 @@ func (h *BRHandler) StartBackup(ctx context.Context, content []ibuv1.ConfigMapRe
 	}
 	layoutChecksum, err := writeBackupLayoutManifest(backupDir, totalResources, specNames)
 	if err != nil {
-		return bt, err
+		return err
 	}
 	checksums = append(checksums, layoutChecksum)
 
 	checksumContent := strings.Join(checksums, "\n") + "\n"
 	checksumPath := filepath.Join(backupDir, "checksums.sha256")
 	if err := os.WriteFile(checksumPath, []byte(checksumContent), 0o600); err != nil {
-		return bt, NewBRFailedError("Backup",
+		return NewBRFailedError("Backup",
 			fmt.Sprintf("failed to write checksum manifest %s: %s", checksumPath, err.Error()))
 	}
 
 	h.Log.Info("All backups completed successfully",
 		"succeeded", bt.SucceededBackups,
 		"targetDir", backupDir)
-	return bt, nil
+	return nil
 }
 
 // collectedBackup pairs a backup spec with its paired Restore CR and the already
@@ -483,7 +523,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// regardless of whether the apply-label annotation is used.
 	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
 	for _, ns := range spec.IncludedNamespaces {
-		nsObj, err := h.DynamicClient.Resource(nsGVR).Get(ctx, ns, metav1.GetOptions{})
+		nsObj, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns)
 		if err != nil {
 			// An explicitly included namespace that does not exist is a
 			// configuration error: fail the backup instead of silently skipping
@@ -523,7 +563,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// Discover the server's preferred API resources on every fetch so that CRDs
 	// installed after the controller started (e.g. lvmclusters) are visible and
 	// resources configured by name only can be resolved to their preferred GVR.
-	apiResourceLists, failedGroups, err := h.getServerPreferredResources()
+	apiResourceLists, failedGroups, err := h.getServerPreferredResources(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -557,26 +597,81 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 // can distinguish "resource type genuinely not registered" from "resource type
 // unknown because its API group could not be discovered" and avoid silently
 // omitting requested resources from the backup.
-func (h *BRHandler) getServerPreferredResources() ([]*metav1.APIResourceList, map[string]bool, error) {
+//
+// A transient full discovery failure (server timeout, throttling, service
+// unavailable) is retried with a bounded in-process backoff before failing, so a
+// momentarily unavailable API server does not fail an otherwise valid backup. A
+// partial failure is not retried.
+func (h *BRHandler) getServerPreferredResources(ctx context.Context) ([]*metav1.APIResourceList, map[string]bool, error) {
 	if h.DiscoveryClient == nil {
 		return nil, nil, fmt.Errorf("discovery client is not initialized")
 	}
 
 	failedGroups := map[string]bool{}
-	lists, err := h.DiscoveryClient.ServerPreferredResources()
-	if err != nil {
+	var lists []*metav1.APIResourceList
+
+	err := retryWithBackoff(ctx, func() error {
+		var discErr error
+		lists, discErr = h.DiscoveryClient.ServerPreferredResources()
+		if discErr == nil {
+			return nil
+		}
 		var groupErr *discovery.ErrGroupDiscoveryFailed
-		if errors.As(err, &groupErr) {
+		if errors.As(discErr, &groupErr) {
 			for gv := range groupErr.Groups {
 				failedGroups[gv.Group] = true
 			}
 			h.Log.Info("Partial API discovery failure, continuing with available resources",
-				"failedGroups", failedGroups, "error", err.Error())
-		} else {
-			return nil, nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
+				"failedGroups", failedGroups, "error", discErr.Error())
+			return nil
 		}
+		// A full discovery failure is retried only when transient (see
+		// retryWithBackoff); any other error stops the retry immediately.
+		return discErr //nolint:wrapcheck
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to discover server preferred resources: %w", err)
 	}
 	return lists, failedGroups, nil
+}
+
+// getResourceWithRetry performs a dynamic-client Get, retrying transient API errors
+// (server timeout, throttling, service unavailable) with a bounded in-process
+// backoff so a flaky API server does not fail an otherwise valid backup. NotFound
+// and other non-transient errors are returned unchanged so the caller's existing
+// handling (e.g. treating NotFound as a configuration error) is preserved.
+func (h *BRHandler) getResourceWithRetry(ctx context.Context, ri dynamic.ResourceInterface, name string) (*unstructured.Unstructured, error) {
+	var result *unstructured.Unstructured
+	err := retryWithBackoff(ctx, func() error {
+		obj, getErr := ri.Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr //nolint:wrapcheck
+		}
+		result = obj
+		return nil
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return result, nil
+}
+
+// listResourcesWithRetry performs a dynamic-client List, retrying transient API
+// errors with a bounded in-process backoff before giving up.
+func (h *BRHandler) listResourcesWithRetry(ctx context.Context, ri dynamic.ResourceInterface, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	var result *unstructured.UnstructuredList
+	err := retryWithBackoff(ctx, func() error {
+		list, listErr := ri.List(ctx, opts)
+		if listErr != nil {
+			return listErr //nolint:wrapcheck
+		}
+		result = list
+		return nil
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return result, nil
 }
 
 func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata) (*unstructured.Unstructured, error) {
@@ -586,15 +681,7 @@ func (h *BRHandler) getResourceByMetadata(ctx context.Context, obj *ObjMetadata)
 		Resource: obj.Resource,
 	}
 
-	var result *unstructured.Unstructured
-	var err error
-
-	if obj.Namespace != "" {
-		result, err = h.DynamicClient.Resource(gvr).Namespace(obj.Namespace).Get(ctx, obj.Name, metav1.GetOptions{})
-	} else {
-		result, err = h.DynamicClient.Resource(gvr).Get(ctx, obj.Name, metav1.GetOptions{})
-	}
-
+	result, err := h.getResourceWithRetry(ctx, h.resourceInterface(gvr, obj.Namespace), obj.Name)
 	if err != nil {
 		// An apply-label names an exact object the backup must capture. If it does
 		// not exist, the configuration is wrong: fail the backup instead of
@@ -695,7 +782,7 @@ func (h *BRHandler) fetchNamespacedResources(ctx context.Context, namespace stri
 		// including NotFound or "not registered" — is a real error, not an absent
 		// type. A successful List that returns zero items is fine. Failing closed
 		// prevents recording an incomplete backup as successful.
-		list, err := h.DynamicClient.Resource(gvr).Namespace(namespace).List(ctx, listOpts)
+		list, err := h.listResourcesWithRetry(ctx, h.DynamicClient.Resource(gvr).Namespace(namespace), listOpts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list %s in namespace %s: %w", resourceType, namespace, err)
 		}
@@ -735,7 +822,7 @@ func (h *BRHandler) fetchClusterScopedResources(ctx context.Context, resourceTyp
 	// The GVR was confirmed via discovery above, so any List failure here —
 	// including NotFound or "not registered" — is a real error, not an absent
 	// type. A successful List returning zero items is fine.
-	list, err := h.DynamicClient.Resource(gvr).List(ctx, listOpts)
+	list, err := h.listResourcesWithRetry(ctx, h.DynamicClient.Resource(gvr), listOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list cluster-scoped resource %s: %w", resourceType, err)
 	}
