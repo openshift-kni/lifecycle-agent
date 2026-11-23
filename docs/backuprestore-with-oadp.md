@@ -92,6 +92,11 @@ recreated (in restore wave 0) before their contained resources. If
 `spec.backupContent` is set and the backup directory is missing post-pivot, the
 restore fails terminally, exactly as it does for `oadpContent`.
 
+Conversely, if neither `spec.backupContent` nor `spec.oadpContent` is configured
+but a local backup directory is left behind on disk (for example, from a failed
+Idle cleanup of a previous upgrade), the restore fails terminally rather than
+silently applying the leftover backup.
+
 The remaining sections of this document describe the deprecated `oadpContent` path.
 
 ## Pre-Requisites
