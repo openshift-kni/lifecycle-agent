@@ -331,7 +331,7 @@ func (h *BRHandler) fetchEntry(ctx context.Context, gvr schema.GroupVersionResou
 			found = true
 		}
 		if !found {
-			return nil, fmt.Errorf("resource %s %q not found in any in-scope namespace", entry.Kind, name)
+			return nil, fmt.Errorf("resource %s %q not found%s", entry.Kind, name, notFoundScopeSuffix(scopes))
 		}
 	}
 	return out, nil
@@ -344,6 +344,17 @@ func scopeSuffix(scope string) string {
 		return ""
 	}
 	return fmt.Sprintf(" in namespace %s", scope)
+}
+
+// notFoundScopeSuffix renders the scope portion of a named-entry "not found" error.
+// A cluster-scoped lookup spans the single empty scope and has no namespace to
+// report, so it is phrased as cluster scope; a namespaced lookup spans the in-scope
+// namespaces.
+func notFoundScopeSuffix(scopes []string) string {
+	if len(scopes) == 1 && scopes[0] == "" {
+		return " in cluster scope"
+	}
+	return " in any in-scope namespace"
 }
 
 // resourceInterface returns the dynamic client's resource interface scoped to a

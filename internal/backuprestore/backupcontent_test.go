@@ -511,6 +511,32 @@ func TestFetchResourcesFromBackupContentNamedMissing(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "nope")
 	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "in any in-scope namespace",
+		"a namespaced miss should report the namespace scope")
+}
+
+// TestFetchResourcesFromBackupContentClusterScopedNamedMissing verifies that a named
+// cluster-scoped include that does not exist fails the backup with a scope-aware
+// message: cluster-scoped lookups have no namespace, so the error must not claim the
+// object was searched for "in any in-scope namespace".
+func TestFetchResourcesFromBackupContentClusterScopedNamedMissing(t *testing.T) {
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme())
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-named-missing"},
+		Spec: backupcontentv1.BackupContentSpec{
+			ClusterScopedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "persistentvolumes", Names: []string{"nope"}},
+			},
+		},
+	}
+	_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "nope")
+	assert.Contains(t, err.Error(), "not found in cluster scope")
+	assert.NotContains(t, err.Error(), "in-scope namespace",
+		"a cluster-scoped miss must not report a namespace scope")
 }
 
 // TestFetchResourcesFromBackupContentNamedAcrossNamespaces verifies that a named
