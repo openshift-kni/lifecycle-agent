@@ -7,5 +7,5 @@
 # Recert
 - key: recert_image
   source: quay.io/edge-infrastructure/recert:v0
-  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-19@sha256:f2d54dc06b061ad56fdec876a16149cf5133955e0d44dfc2d4b5784724d2f954
+  target: quay.io/redhat-user-workloads/telco-5g-tenant/recert-4-19@sha256:0f4898fbb9ca4298e27bb484fd515dce33f36c82403bedcf6a388959b1243f7e
 #
