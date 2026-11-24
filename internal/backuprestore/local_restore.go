@@ -1067,7 +1067,10 @@ func collectLastAppliedNodePorts(lastApplied string, names sets.Set[string], unn
 		if !ok {
 			continue
 		}
-		if _, ok := nodePortValue(port); !ok {
+		// Kubernetes treats nodePort: 0 as a request for automatic allocation, so
+		// only a positive value counts as an explicit assignment. A zero (or absent)
+		// value degrades to clearing the live nodePort for reallocation.
+		if nodePort, ok := nodePortValue(port); !ok || nodePort <= 0 {
 			continue
 		}
 		recordExplicitNodePort(port, names, unnamed)

@@ -329,6 +329,42 @@ func TestPrepareServiceForRestoreNodePorts(t *testing.T) {
 			"explicit nodePort from last-applied-configuration must be preserved")
 	})
 
+	t.Run("named port with nodePort: 0 in last-applied-configuration is reallocated", func(t *testing.T) {
+		// Kubernetes treats nodePort: 0 as a request for automatic allocation, so the
+		// live allocated nodePort must be cleared rather than recorded as explicit.
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						map[string]interface{}{
+							"name":     "https",
+							"port":     int64(443),
+							"protocol": "TCP",
+							"nodePort": int64(0),
+						}),
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present,
+			"nodePort: 0 in last-applied-configuration requests reallocation, so the live nodePort must be removed")
+	})
+
 	t.Run("explicit named nodePort recorded only in managedFields is preserved", func(t *testing.T) {
 		resource := &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "v1",
