@@ -27,7 +27,7 @@ import (
 )
 
 // This file holds the source-independent backup-selection model and the
-// stage-aware validator shared by Prep and Upgrade pre-pivot (CNF-28671).
+// stage-aware validator shared by Prep and Upgrade pre-pivot.
 //
 // The validator deliberately never references BackupContentSpec: it operates on
 // SelectionModel so the deprecated spec.oadpContent path (and any future source)
@@ -36,8 +36,8 @@ import (
 
 // ResourceScope classifies a resource entry's scope. Modelling scope explicitly
 // collapses a source's namespaced/cluster-scoped (and excluded) lists into a
-// single typed list each, and lets BC-3/BC-8 confirm the declared scope against
-// discovery with one shared check.
+// single typed list each, and lets the included/excluded scope-match rules confirm
+// the declared scope against discovery with one shared check.
 type ResourceScope int
 
 const (
@@ -48,12 +48,14 @@ const (
 )
 
 // namespacesResource is the core v1 resource name for Namespace objects, used for
-// the BC-5 declared-namespace existence check and when capturing namespaces.
+// the declared-namespace existence check and when capturing namespaces.
 const namespacesResource = "namespaces"
 
 // ValidationStage identifies which IBU stage is running the validation. It drives
-// the stage-specific severity of BC-5, BC-9 and BC-10 (a Prep warning but an
-// Upgrade terminal failure). Every other rule is terminal in both stages.
+// the stage-specific severity of the existence and non-empty-selection rules
+// (missing declared namespaces, missing named objects, and a structurally empty
+// selection are a Prep warning but an Upgrade terminal failure). Every other rule
+// is terminal in both stages.
 type ValidationStage int
 
 const (
@@ -99,7 +101,7 @@ type SelectionModel struct {
 	Included []ResourceEntry
 	Excluded []ResourceEntry
 	// LabelSelector applies only to unnamed included entries and never to the
-	// excluded lists (BC-6).
+	// excluded lists.
 	LabelSelector *metav1.LabelSelector
 }
 
@@ -138,7 +140,9 @@ func terminalFinding(source, field, cause string) Finding {
 }
 
 // stageFinding builds a finding whose severity depends on the stage: a Prep
-// warning but an Upgrade terminal failure (BC-5, BC-9, BC-10).
+// warning but an Upgrade terminal failure. Used by the stage-dependent rules:
+// declared-namespace existence, named-object existence, and the non-empty-selection
+// check.
 func stageFinding(stage ValidationStage, source, field, cause string) Finding {
 	sev := SeverityTerminal
 	if stage == StagePrep {
@@ -164,13 +168,13 @@ func excludedField(scope ResourceScope) string {
 }
 
 // resolveEntryGVR is the single shared implementation of the kind-resolution and
-// scope rules: BC-2/BC-7 (every included/excluded kind resolves to exactly one
-// API resource; a missing, ambiguous, or unconfirmable kind is an error) and
-// BC-3/BC-8 (the resolved scope matches the list the kind was declared under).
-// Both the Prep/Upgrade validator and the pre-pivot capture call it, so the rule
-// is never duplicated. A resolution or scope mismatch is a terminal configuration
-// error; a partial discovery failure in an unrelated group does not fail a kind
-// that still resolves (the semantics of resolveRequiredGVR).
+// scope rules: every included or excluded kind must resolve to exactly one API
+// resource (a missing, ambiguous, or unconfirmable kind is an error), and the
+// resolved scope must match the list the kind was declared under (namespaced vs
+// cluster-scoped). Both the Prep/Upgrade validator and the pre-pivot capture call
+// it, so the rule is never duplicated. A resolution or scope mismatch is a terminal
+// configuration error; a partial discovery failure in an unrelated group does not
+// fail a kind that still resolves (the semantics of resolveRequiredGVR).
 func resolveEntryGVR(kind string, scope ResourceScope, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) (schema.GroupVersionResource, error) {
 	gvr, namespaced, err := resolveRequiredGVR(kind, apiResourceLists, failedGroups)
 	if err != nil {
@@ -191,15 +195,15 @@ func resolveEntryGVR(kind string, scope ResourceScope, apiResourceLists []*metav
 	return gvr, nil
 }
 
-// ValidateSelectionModels runs every shared BackupContent rule (BC-2..BC-10)
-// against the given source-independent models in a single pass, appending a
-// Finding per violation rather than returning on the first. Config errors are
-// returned as Findings (so Prep can report them all and classify severity by
-// stage); a returned error signals a transient discovery/API failure that the
-// caller must treat as retryable (requeue), not as a configuration failure.
+// ValidateSelectionModels runs every shared selection rule against the given
+// source-independent models in a single pass, appending a Finding per violation
+// rather than returning on the first. Config errors are returned as Findings (so
+// Prep can report them all and classify severity by stage); a returned error
+// signals a transient discovery/API failure that the caller must treat as
+// retryable (requeue), not as a configuration failure.
 //
-// BC-1 (reference resolution) is source-specific and handled by the adapter
-// before this runs.
+// Reference resolution (every name-only source reference must resolve to an
+// existing CR) is source-specific and handled by the adapter before this runs.
 func (h *BRHandler) ValidateSelectionModels(ctx context.Context, models []SelectionModel, stage ValidationStage) ([]Finding, error) {
 	// Discover the server's preferred API resources once for the whole pass. A
 	// full discovery failure is transient (retryable); a partial failure yields
@@ -221,7 +225,8 @@ func (h *BRHandler) ValidateSelectionModels(ctx context.Context, models []Select
 }
 
 // resolvedInclude is an included entry that resolved to a GVR, carried from the
-// include-resolution pass to the BC-9/BC-10 checks.
+// include-resolution pass to the named-object-existence and non-empty-selection
+// checks.
 type resolvedInclude struct {
 	entry ResourceEntry
 	gvr   schema.GroupVersionResource
@@ -237,24 +242,24 @@ func (h *BRHandler) validateModel(ctx context.Context, m *SelectionModel, stage 
 
 	var findings []Finding
 
-	findings = append(findings, validateLabelSelector(m)...) // BC-6
-	findings = append(findings, validateNamespaceList(m)...) // BC-4
+	findings = append(findings, validateLabelSelector(m)...) // label-selector validity
+	findings = append(findings, validateNamespaceList(m)...) // namespace-list sanity
 
-	nsFindings, err := h.validateNamespacesExist(ctx, m, stage) // BC-5
+	nsFindings, err := h.validateNamespacesExist(ctx, m, stage) // declared-namespace existence
 	findings = append(findings, nsFindings...)
 	if err != nil {
 		return findings, err
 	}
 
-	excluded, exclFindings := resolveExclusions(m, apiResourceLists, failedGroups) // BC-7/BC-8
+	excluded, exclFindings := resolveExclusions(m, apiResourceLists, failedGroups) // excluded-kind resolution and scope
 	findings = append(findings, exclFindings...)
 
-	resolved, incFindings := resolveIncludes(m, apiResourceLists, failedGroups) // BC-2/BC-3
+	resolved, incFindings := resolveIncludes(m, apiResourceLists, failedGroups) // included-kind resolution and scope
 	findings = append(findings, incFindings...)
 
-	findings = append(findings, checkEmptySelection(m, stage, resolved, excluded)...) // BC-10
+	findings = append(findings, checkEmptySelection(m, stage, resolved, excluded)...) // non-empty selection
 
-	namedFindings, err := h.validateNamedObjects(ctx, m, stage, resolved, excluded) // BC-9
+	namedFindings, err := h.validateNamedObjects(ctx, m, stage, resolved, excluded) // named-object existence
 	findings = append(findings, namedFindings...)
 	if err != nil {
 		return findings, err
@@ -263,9 +268,9 @@ func (h *BRHandler) validateModel(ctx context.Context, m *SelectionModel, stage 
 	return findings, nil
 }
 
-// validateLabelSelector implements BC-6: the labelSelector must be syntactically
-// valid. It applies only to unnamed includes; a valid selector that matches zero
-// objects is never a finding.
+// validateLabelSelector enforces label-selector validity: the labelSelector must be
+// syntactically valid. It applies only to unnamed includes; a valid selector that
+// matches zero objects is never a finding.
 func validateLabelSelector(m *SelectionModel) []Finding {
 	if m.LabelSelector == nil {
 		return nil
@@ -277,8 +282,8 @@ func validateLabelSelector(m *SelectionModel) []Finding {
 	return nil
 }
 
-// validateNamespaceList implements BC-4: a namespaced selection needs at least one
-// namespace to search, and an empty namespace entry is never valid.
+// validateNamespaceList enforces namespace-list sanity: a namespaced selection needs
+// at least one namespace to search, and an empty namespace entry is never valid.
 func validateNamespaceList(m *SelectionModel) []Finding {
 	var findings []Finding
 	for _, ns := range m.Namespaces {
@@ -301,15 +306,15 @@ func validateNamespaceList(m *SelectionModel) []Finding {
 	return findings
 }
 
-// validateNamespacesExist implements BC-5: every declared namespace must exist.
-// Missing is a Prep warning and an Upgrade terminal failure; a non-NotFound error
-// is transient (retryable).
+// validateNamespacesExist enforces declared-namespace existence: every declared
+// namespace must exist. Missing is a Prep warning and an Upgrade terminal failure;
+// a non-NotFound error is transient (retryable).
 func (h *BRHandler) validateNamespacesExist(ctx context.Context, m *SelectionModel, stage ValidationStage) ([]Finding, error) {
 	var findings []Finding
 	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: namespacesResource}
 	for _, ns := range m.Namespaces {
 		if ns == "" {
-			continue // already reported by BC-4
+			continue // already reported by the namespace-list sanity check
 		}
 		if _, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns); err != nil {
 			if k8serrors.IsNotFound(err) {
@@ -323,10 +328,11 @@ func (h *BRHandler) validateNamespacesExist(ctx context.Context, m *SelectionMod
 	return findings, nil
 }
 
-// resolveExclusions implements BC-7/BC-8: resolve the excluded kinds (and their
-// scope) and build the exclusion set from the ones that resolve. An unresolvable,
-// ambiguous, or wrongly-scoped exclusion is terminal and must not be silently
-// skipped.
+// resolveExclusions enforces excluded-kind resolution and scope: resolve the
+// excluded kinds (and their scope) and build the exclusion set from the ones that
+// resolve. An unresolvable, ambiguous, or wrongly-scoped exclusion is terminal and
+// must not be silently skipped (fail closed so an intended exclusion is never
+// silently dropped).
 func resolveExclusions(m *SelectionModel, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) (exclusionSet, []Finding) {
 	var findings []Finding
 	excluded := exclusionSet{kinds: map[string]bool{}, names: map[string]map[string]bool{}}
@@ -352,9 +358,10 @@ func resolveExclusions(m *SelectionModel, apiResourceLists []*metav1.APIResource
 	return excluded, findings
 }
 
-// resolveIncludes implements BC-2/BC-3: resolve every included kind and confirm
-// its scope, returning the resolved entries (for BC-9/BC-10) and the findings for
-// the ones that fail to resolve.
+// resolveIncludes enforces included-kind resolution and scope: resolve every
+// included kind and confirm its scope, returning the resolved entries (for the
+// named-object-existence and non-empty-selection checks) and the findings for the
+// ones that fail to resolve.
 func resolveIncludes(m *SelectionModel, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) ([]resolvedInclude, []Finding) {
 	var resolved []resolvedInclude
 	var findings []Finding
@@ -369,10 +376,10 @@ func resolveIncludes(m *SelectionModel, apiResourceLists []*metav1.APIResourceLi
 	return resolved, findings
 }
 
-// checkEmptySelection implements BC-10: the selection must not be structurally
-// empty after exclusions (every included kind excluded, or no effective include
-// configured). A valid selector that matches zero live objects is NOT a BC-10
-// finding, so this is a purely structural check.
+// checkEmptySelection enforces the non-empty-selection rule: the selection must not
+// be structurally empty after exclusions (every included kind excluded, or no
+// effective include configured). A valid selector that matches zero live objects is
+// NOT a finding here, so this is a purely structural check.
 func checkEmptySelection(m *SelectionModel, stage ValidationStage, resolved []resolvedInclude, excluded exclusionSet) []Finding {
 	for _, r := range resolved {
 		if excluded.excludesKind(r.gr) {
@@ -391,10 +398,10 @@ func checkEmptySelection(m *SelectionModel, stage ValidationStage, resolved []re
 		"selection is structurally empty: no included resource remains after exclusions")}
 }
 
-// validateNamedObjects implements BC-9: every explicitly included, non-excluded
-// object name must exist in at least one declared scope (a declared namespace, or
-// cluster scope for a cluster-scoped resource). Missing is a Prep warning and an
-// Upgrade terminal failure; a non-NotFound error is transient.
+// validateNamedObjects enforces named-object existence: every explicitly included,
+// non-excluded object name must exist in at least one declared scope (a declared
+// namespace, or cluster scope for a cluster-scoped resource). Missing is a Prep
+// warning and an Upgrade terminal failure; a non-NotFound error is transient.
 func (h *BRHandler) validateNamedObjects(ctx context.Context, m *SelectionModel, stage ValidationStage,
 	resolved []resolvedInclude, excluded exclusionSet) ([]Finding, error) {
 
@@ -407,7 +414,7 @@ func (h *BRHandler) validateNamedObjects(ctx context.Context, m *SelectionModel,
 		if r.entry.Scope == ScopeNamespaced {
 			scopes = nonEmptyNamespaces(m.Namespaces)
 			if len(scopes) == 0 {
-				continue // no namespace to search: already reported by BC-4
+				continue // no namespace to search: already reported by the namespace-list sanity check
 			}
 		}
 		for _, name := range r.entry.Names {
@@ -453,7 +460,7 @@ func (h *BRHandler) namedObjectExists(ctx context.Context, gvr schema.GroupVersi
 }
 
 // nonEmptyNamespaces returns the namespaces with empty entries dropped (empty
-// entries are reported separately by BC-4).
+// entries are reported separately by the namespace-list sanity check).
 func nonEmptyNamespaces(namespaces []string) []string {
 	out := make([]string, 0, len(namespaces))
 	for _, ns := range namespaces {

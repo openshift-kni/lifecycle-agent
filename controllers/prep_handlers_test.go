@@ -130,7 +130,8 @@ func TestValidateIBUSpecBackupContentTerminal(t *testing.T) {
 }
 
 // TestValidateIBUSpecBackupContentWarning verifies a warning-only BackupContent
-// result completes Prep and records the warning annotation on the IBU.
+// result completes Prep without failing and without annotating the IBU (the
+// warnings are reported to the controller log only).
 func TestValidateIBUSpecBackupContentWarning(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -144,59 +145,8 @@ func TestValidateIBUSpecBackupContentWarning(t *testing.T) {
 
 	err := r.validateIBUSpec(context.Background(), ibu)
 	assert.NoError(t, err)
-	assert.Contains(t, ibu.GetAnnotations(), backuprestore.BackupContentValidationWarningAnnotation)
-	assert.Contains(t, ibu.GetAnnotations()[backuprestore.BackupContentValidationWarningAnnotation], "missing-ns")
-}
-
-// TestValidateIBUSpecBackupContentClearsStaleWarning verifies that when a later
-// validation within the same Prep cycle (e.g. a retry after container storage
-// cleanup failed) reports no warnings, a stale warning annotation from an earlier
-// attempt is removed so PrepCompleted does not re-surface a resolved warning.
-func TestValidateIBUSpecBackupContentClearsStaleWarning(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockBR := mock_backuprestore.NewMockBackuperRestorer(ctrl)
-	ibu := newBackupContentIBU()
-	ibu.SetAnnotations(map[string]string{
-		backuprestore.BackupContentValidationWarningAnnotation: "stale warning from a previous attempt",
-		"unrelated.lca.openshift.io/keep":                      "value",
-	})
-	r := newBackupContentValidateReconciler(t, ibu, mockBR)
-
-	mockBR.EXPECT().
-		ValidateBackupContent(gomock.Any(), ibu.Spec.BackupContent).
-		Return(nil, nil)
-
-	err := r.validateIBUSpec(context.Background(), ibu)
-	assert.NoError(t, err)
-	assert.NotContains(t, ibu.GetAnnotations(), backuprestore.BackupContentValidationWarningAnnotation,
-		"a now-clean validation must drop the stale warning annotation")
-	assert.Contains(t, ibu.GetAnnotations(), "unrelated.lca.openshift.io/keep",
-		"unrelated annotations must be preserved")
-}
-
-// TestValidateIBUSpecBackupContentNotConfiguredClearsStaleWarning verifies that
-// when BackupContent is no longer configured, a stale warning annotation is removed
-// without running validation.
-func TestValidateIBUSpecBackupContentNotConfiguredClearsStaleWarning(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockBR := mock_backuprestore.NewMockBackuperRestorer(ctrl) // no validation call expected
-	ibu := &ibuv1.ImageBasedUpgrade{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "upgrade",
-			Annotations: map[string]string{
-				backuprestore.BackupContentValidationWarningAnnotation: "stale warning",
-			},
-		},
-		Spec: ibuv1.ImageBasedUpgradeSpec{SeedImageRef: ibuv1.SeedImageRef{Version: "4.14.9"}},
-	}
-	r := newBackupContentValidateReconciler(t, ibu, mockBR)
-
-	err := r.validateIBUSpec(context.Background(), ibu)
-	assert.NoError(t, err)
-	assert.NotContains(t, ibu.GetAnnotations(), backuprestore.BackupContentValidationWarningAnnotation,
-		"removing BackupContent must drop the stale warning annotation")
+	assert.Empty(t, ibu.GetAnnotations(),
+		"BackupContent warnings must not be persisted as an IBU annotation")
 }
 
 // TestValidateIBUSpecBackupContentTransient verifies a transient failure is wrapped
@@ -236,7 +186,7 @@ func TestValidateIBUSpecNoBackupSource(t *testing.T) {
 }
 
 // TestPrepSuccessMessage verifies the PrepCompleted message names the validated
-// BackupContent CRs, reports when no backup is configured, and surfaces warnings.
+// BackupContent CRs and reports when no backup is configured.
 func TestPrepSuccessMessage(t *testing.T) {
 	assert.NoError(t, ibuv1.AddToScheme(scheme.Scheme))
 
@@ -254,15 +204,6 @@ func TestPrepSuccessMessage(t *testing.T) {
 		assert.NoError(t, err)
 		msg := prepCompletedMessage(t, ibu)
 		assert.Contains(t, msg, "no application backup configured")
-	})
-
-	t.Run("surfaces BackupContent warning annotation", func(t *testing.T) {
-		ibu := newBackupContentIBU()
-		ibu.SetAnnotations(map[string]string{backuprestore.BackupContentValidationWarningAnnotation: "x"})
-		_, err := prepSuccessDoNotRequeue(logr.Discard(), ibu)
-		assert.NoError(t, err)
-		msg := prepCompletedMessage(t, ibu)
-		assert.Contains(t, msg, "BackupContent validation warning")
 	})
 }
 

@@ -18,7 +18,6 @@ package backuprestore
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -108,7 +107,7 @@ func TestValidateBackupContentTerminalRule(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
 		Spec: backupcontentv1.BackupContentSpec{
 			Namespaces:          []string{"app-ns"},
-			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "widgets"}}, // unknown kind -> BC-2 terminal
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "widgets"}}, // unknown kind -> terminal
 		},
 	}
 	h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc}, nsObj("app-ns"))
@@ -126,7 +125,7 @@ func TestValidateBackupContentWarningOnly(t *testing.T) {
 	bc := &backupcontentv1.BackupContent{
 		ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
 		Spec: backupcontentv1.BackupContentSpec{
-			Namespaces:          []string{"missing-ns"}, // BC-5 -> Prep warning
+			Namespaces:          []string{"missing-ns"}, // missing namespace -> Prep warning
 			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
 		},
 	}
@@ -162,7 +161,7 @@ func TestValidateBackupContentTransientDiscovery(t *testing.T) {
 
 // TestValidateBackupContentTerminalFindingSurvivesTransientError verifies that a
 // terminal finding collected before a transient API failure still fails Prep
-// terminally: a missing reference (BC-1) is reported even though discovery then
+// terminally: a missing reference is reported even though discovery then
 // fails transiently, so Prep does not requeue forever on a known-bad config.
 func TestValidateBackupContentTerminalFindingSurvivesTransientError(t *testing.T) {
 	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
@@ -179,7 +178,7 @@ func TestValidateBackupContentTerminalFindingSurvivesTransientError(t *testing.T
 	// Discovery fails transiently, so the shared validator returns a transient error.
 	h := &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: &fullFailDiscovery{}, Log: logr.Discard()}
 
-	// "absent" is a missing reference (terminal BC-1 finding); "present" resolves.
+	// "absent" is a missing reference (terminal finding); "present" resolves.
 	_, err := h.ValidateBackupContent(context.Background(),
 		[]ibuv1.BackupContentRef{{Name: "present"}, {Name: "absent"}})
 	assert.Error(t, err)
@@ -204,7 +203,7 @@ func TestBackupContentIntroducedAfterPrep(t *testing.T) {
 				NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
 			},
 		}
-		// app-ns is absent -> BC-5.
+		// app-ns is absent -> missing-namespace warning.
 		h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc})
 
 		// Prep: a warning, Prep completes.
@@ -248,84 +247,5 @@ func TestBackupContentIntroducedAfterPrep(t *testing.T) {
 		_, err := h.startBackupFromBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "gone"}}, &BackupTracker{})
 		assert.Error(t, err)
 		assert.True(t, IsBRFailedValidationError(err), "a deleted reference is terminal at pre-pivot")
-	})
-}
-
-// TestBoundWarningAnnotationValue verifies the persisted warning annotation stays
-// within the remaining annotation budget: a short list is kept verbatim, an
-// oversized list is truncated to whole warnings with an omitted count, and the
-// space already used by unrelated annotations shrinks the budget.
-func TestBoundWarningAnnotationValue(t *testing.T) {
-	t.Run("short list kept verbatim", func(t *testing.T) {
-		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
-		warnings := []string{"warning one", "warning two"}
-		got, ok := BoundWarningAnnotationValue(ibu, warnings)
-		assert.True(t, ok)
-		assert.Equal(t, "warning one; warning two", got)
-	})
-
-	t.Run("oversized list truncated with omitted count", func(t *testing.T) {
-		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
-		long := strings.Repeat("x", 1024)
-		warnings := make([]string, 0, 1000)
-		for i := 0; i < 1000; i++ {
-			warnings = append(warnings, long)
-		}
-		got, ok := BoundWarningAnnotationValue(ibu, warnings)
-		assert.True(t, ok)
-		assert.LessOrEqual(t, len(got), maxTotalAnnotationBytes)
-		assert.Contains(t, got, "more; see controller log for the full list")
-	})
-
-	t.Run("existing annotations shrink the budget", func(t *testing.T) {
-		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
-		ibu.SetAnnotations(map[string]string{"other": strings.Repeat("y", maxTotalAnnotationBytes-4096)})
-		long := strings.Repeat("z", 512)
-		warnings := make([]string, 0, 100)
-		for i := 0; i < 100; i++ {
-			warnings = append(warnings, long)
-		}
-		got, ok := BoundWarningAnnotationValue(ibu, warnings)
-		assert.True(t, ok)
-		used := len("other") + (maxTotalAnnotationBytes - 4096)
-		assert.LessOrEqual(t, len(got)+used+len(BackupContentValidationWarningAnnotation), maxTotalAnnotationBytes,
-			"persisted warning plus existing annotations must fit the total annotation limit")
-	})
-
-	t.Run("existing annotations leave no room for the omitted summary", func(t *testing.T) {
-		// Existing annotations consume almost the entire budget, so even the
-		// "(and N more...)" summary does not fit. The result must still stay within
-		// the total annotation limit rather than overflowing it and failing the patch.
-		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
-		otherKey := "other"
-		// Leave a budget of 40 bytes — smaller than the omitted-count summary itself.
-		otherVal := strings.Repeat("y", maxTotalAnnotationBytes-len(otherKey)-len(BackupContentValidationWarningAnnotation)-warningAnnotationReserve-40)
-		ibu.SetAnnotations(map[string]string{otherKey: otherVal})
-		long := strings.Repeat("z", 512)
-		warnings := make([]string, 0, 100)
-		for i := 0; i < 100; i++ {
-			warnings = append(warnings, long)
-		}
-		got, ok := BoundWarningAnnotationValue(ibu, warnings)
-		assert.True(t, ok)
-		used := len(otherKey) + len(otherVal)
-		assert.LessOrEqual(t, len(got)+used+len(BackupContentValidationWarningAnnotation), maxTotalAnnotationBytes,
-			"persisted warning plus existing annotations must fit the total annotation limit even with no room for the summary")
-	})
-
-	t.Run("existing annotations leave no room for even the warning key", func(t *testing.T) {
-		// The IBU's other annotations fill the limit so completely that not even the
-		// warning key fits. BoundWarningAnnotationValue must report ok=false so the
-		// caller skips the patch instead of overflowing the total annotation limit and
-		// turning a warning-only Prep into a terminal failure.
-		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
-		otherKey := "other"
-		// Consume the entire limit: nothing is left for the warning key or its value.
-		otherVal := strings.Repeat("y", maxTotalAnnotationBytes-len(otherKey))
-		ibu.SetAnnotations(map[string]string{otherKey: otherVal})
-		warnings := []string{"warning one", "warning two"}
-		got, ok := BoundWarningAnnotationValue(ibu, warnings)
-		assert.False(t, ok, "annotation must not be persisted when there is no room for even the key")
-		assert.Empty(t, got)
 	})
 }

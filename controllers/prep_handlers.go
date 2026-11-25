@@ -59,37 +59,6 @@ type retryableValidationError struct {
 func (e *retryableValidationError) Error() string { return e.err.Error() }
 func (e *retryableValidationError) Unwrap() error { return e.err }
 
-// isTerminalAPIRejection reports whether err is a permanent API rejection that
-// retrying cannot fix (invalid object, forbidden, too large, etc.), as opposed to
-// a transient failure (server timeout, throttling, service unavailable) or a
-// connection-level failure, both of which are worth retrying. It is used only to
-// classify the BackupContent warning-annotation save at the Prep call site, so the
-// restore retry paths that rely on backuprestore.IsTransientError are unaffected.
-func isTerminalAPIRejection(err error) bool {
-	return k8serrors.IsInvalid(err) ||
-		k8serrors.IsBadRequest(err) ||
-		k8serrors.IsForbidden(err) ||
-		k8serrors.IsUnauthorized(err) ||
-		k8serrors.IsMethodNotSupported(err) ||
-		k8serrors.IsNotAcceptable(err) ||
-		k8serrors.IsRequestEntityTooLargeError(err)
-}
-
-// clearBackupContentWarning removes a stale BackupContent validation warning
-// annotation left by an earlier Prep attempt within the same cycle (for example a
-// retry after container storage cleanup failed) once validation no longer reports a
-// warning or BackupContent is no longer configured. A transient/connection-level
-// patch failure requeues; a terminal rejection fails Prep.
-func (r *ImageBasedUpgradeReconciler) clearBackupContentWarning(ibu *ibuv1.ImageBasedUpgrade) error {
-	if err := backuprestore.RemoveAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu); err != nil {
-		if isTerminalAPIRejection(err) {
-			return fmt.Errorf("failed to remove backup content warning validation annotation: %w", err)
-		}
-		return &retryableValidationError{err: fmt.Errorf("transient error removing backup content warning annotation: %w", err)}
-	}
-	return nil
-}
-
 func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, log logr.Logger, ops ops.Execute) error {
 	// Use cluster wide pull-secret by default
 	pullSecretFilename := common.ImageRegistryAuthFile
@@ -488,10 +457,10 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 	}
 
 	// Validate spec.backupContent (read-only) so misconfiguration is caught during
-	// Prep, before the upgrade window (CNF-28671). Terminal findings are returned as
-	// a BRFailedValidationError and fail Prep without requeue; a transient
+	// Prep, before the upgrade window. Terminal findings are returned as a
+	// BRFailedValidationError and fail Prep without requeue; a transient
 	// discovery/API failure is wrapped as retryable so Prep requeues instead of
-	// failing; warnings are recorded on the IBU and surfaced in PrepCompleted.
+	// failing; warnings are reported to the controller log only.
 	if len(ibu.Spec.BackupContent) != 0 {
 		warnings, err := r.BackupRestore.ValidateBackupContent(ctx, ibu.Spec.BackupContent)
 		if err != nil {
@@ -501,34 +470,11 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 			return &retryableValidationError{err: fmt.Errorf("transient error validating backup content: %w", err)}
 		}
 		if len(warnings) != 0 {
-			// Log the complete findings; the persisted annotation is bounded to stay
-			// within Kubernetes' total annotation size limit, so a warning-only
-			// selection with many findings does not fail the patch.
-			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation), "warnings", strings.Join(warnings, "; "))
-			warn, ok := backuprestore.BoundWarningAnnotationValue(ibu, warnings)
-			if !ok {
-				// The IBU's existing annotations leave no room for even the warning key, so
-				// persisting it would exceed Kubernetes' total annotation size limit and
-				// fail the patch. Skip the annotation (the full warnings are logged above)
-				// rather than turning a warning-only Prep into a terminal failure.
-				r.Log.Info("Skipping backup content validation warning annotation: no room within the annotation size limit; warnings logged above")
-			} else if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
-				// A transient (e.g. HTTP 503) or connection-level failure saving the
-				// warning must not fail Prep outright: validation only produced warnings,
-				// so requeue and retry the patch. Permanent rejections stay non-retryable.
-				if isTerminalAPIRejection(err) {
-					return fmt.Errorf("failed to add backup content warning validation annotation: %w", err)
-				}
-				return &retryableValidationError{err: fmt.Errorf("transient error saving backup content warning annotation: %w", err)}
-			}
-		} else if err := r.clearBackupContentWarning(ibu); err != nil {
-			// Validation is now clean: drop a stale warning from an earlier attempt in
-			// this Prep cycle so PrepCompleted does not re-surface a resolved warning.
-			return err
+			// Non-terminal findings do not fail Prep. Report them to the controller log
+			// instead of annotating the IBU, so the warnings are visible without
+			// modifying the BackupContent CRs or the IBU object.
+			r.Log.Info("WARNING: backup content validation produced non-terminal findings", "warnings", strings.Join(warnings, "; "))
 		}
-	} else if err := r.clearBackupContentWarning(ibu); err != nil {
-		// BackupContent is no longer configured: drop any stale warning annotation.
-		return err
 	}
 
 	// Validate the extraManifests configmap if it's provided
@@ -646,9 +592,9 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 			r.Log.Info("Validating IBU spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
 				// A transient discovery/API failure while validating the spec (e.g.
-				// spec.backupContent) must requeue rather than terminally fail Prep
-				// (CNF-28671). Every other validation error is a configuration error
-				// and fails Prep without requeue.
+				// spec.backupContent) must requeue rather than terminally fail Prep.
+				// Every other validation error is a configuration error and fails Prep
+				// without requeue.
 				var retryable *retryableValidationError
 				if errors.As(err, &retryable) {
 					return requeueWithError(fmt.Errorf("transient error validating IBU spec, will retry: %w", err))
@@ -789,8 +735,8 @@ func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctr
 	msg := "Prep stage completed successfully"
 
 	// Report the validated application backup source so the status reflects what
-	// Prep checked (CNF-28671). When neither source is configured, say so
-	// explicitly rather than implying a backup will run.
+	// Prep checked. When neither source is configured, say so explicitly rather
+	// than implying a backup will run.
 	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility
 	switch {
 	case len(ibu.Spec.BackupContent) != 0:
@@ -803,12 +749,11 @@ func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctr
 		msg = fmt.Sprintf("%s; no application backup configured", msg)
 	}
 
-	// Surface validation warnings via the recorded annotations without failing Prep.
+	// Surface the extramanifest validation warning via its recorded annotation
+	// without failing Prep. BackupContent validation warnings are reported to the
+	// controller log during validation and are not persisted on the IBU.
 	if _, exists := ibu.GetAnnotations()[extramanifest.ValidationWarningAnnotation]; exists {
 		msg = fmt.Sprintf("%s. Extramanifests validation warning, check the annotation '%s' for details.", msg, extramanifest.ValidationWarningAnnotation)
-	}
-	if _, exists := ibu.GetAnnotations()[backuprestore.BackupContentValidationWarningAnnotation]; exists {
-		msg = fmt.Sprintf("%s. BackupContent validation warning, check the annotation '%s' for details.", msg, backuprestore.BackupContentValidationWarningAnnotation)
 	}
 
 	log.Info(msg)

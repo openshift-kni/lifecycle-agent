@@ -39,7 +39,7 @@ import (
 // adapter.
 
 // newValidatorHandler builds a BRHandler backed by a fake dynamic client (for the
-// live BC-5/BC-9 existence checks) and the given discovery interface.
+// live declared-namespace and named-object existence checks) and the given discovery interface.
 func newValidatorHandler(disc discovery.DiscoveryInterface, objs ...runtime.Object) *BRHandler {
 	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), objs...)
 	return &BRHandler{DynamicClient: dc, DiscoveryClient: disc, Log: logr.Discard()}
@@ -120,7 +120,7 @@ func TestValidateSelectionModelsBC2UnknownKind(t *testing.T) {
 		findings, err := h.ValidateSelectionModels(context.Background(), models, stage)
 		assert.NoError(t, err)
 		f := findingWith(findings, "widgets")
-		if assert.NotNil(t, f, "expected a BC-2 finding for the unknown kind") {
+		if assert.NotNil(t, f, "expected a finding for the unknown kind") {
 			assert.Equal(t, SeverityTerminal, f.Severity)
 			assert.Contains(t, f.Cause, "not found")
 		}
@@ -138,7 +138,7 @@ func TestValidateSelectionModelsBC2AmbiguousKind(t *testing.T) {
 		findings, err := h.ValidateSelectionModels(context.Background(), models, stage)
 		assert.NoError(t, err)
 		f := findingWith(findings, "ambiguous")
-		if assert.NotNil(t, f, "expected a BC-2 ambiguity finding") {
+		if assert.NotNil(t, f, "expected an ambiguity finding") {
 			assert.Equal(t, SeverityTerminal, f.Severity)
 			assert.Contains(t, f.Cause, "a.example.com")
 			assert.Contains(t, f.Cause, "b.example.com")
@@ -186,7 +186,7 @@ func TestValidateSelectionModelsBC3IncludedScopeMismatch(t *testing.T) {
 		findings, err := h.ValidateSelectionModels(context.Background(), models, stage)
 		assert.NoError(t, err)
 		f := findingWith(findings, "namespace-scoped per discovery")
-		if assert.NotNil(t, f, "expected a BC-3 scope-mismatch finding") {
+		if assert.NotNil(t, f, "expected a scope-mismatch finding") {
 			assert.Equal(t, SeverityTerminal, f.Severity)
 		}
 	})
@@ -247,7 +247,7 @@ func TestValidateSelectionModelsBC5MissingNamespace(t *testing.T) {
 			findings, err := h.ValidateSelectionModels(context.Background(), models, tc.stage)
 			assert.NoError(t, err)
 			f := findingWith(findings, `declared namespace "missing-ns" does not exist`)
-			if assert.NotNil(t, f, "expected a BC-5 finding") {
+			if assert.NotNil(t, f, "expected a missing-namespace finding") {
 				assert.Equal(t, tc.severity, f.Severity)
 			}
 		})
@@ -387,7 +387,7 @@ func TestValidateSelectionModelsBC9MissingNamedObject(t *testing.T) {
 			findings, err := h.ValidateSelectionModels(context.Background(), models, tc.stage)
 			assert.NoError(t, err)
 			f := findingWith(findings, `named configmaps "cm-missing" does not exist`)
-			if assert.NotNil(t, f, "expected a BC-9 finding") {
+			if assert.NotNil(t, f, "expected a missing-named-object finding") {
 				assert.Equal(t, tc.severity, f.Severity)
 			}
 		})
@@ -442,7 +442,7 @@ func TestValidateSelectionModelsBC10StructurallyEmpty(t *testing.T) {
 		})
 	}
 
-	t.Run("a valid selector matching zero objects is not BC-10", func(t *testing.T) {
+	t.Run("a valid selector matching zero objects is not an empty-selection finding", func(t *testing.T) {
 		bothStages(t, func(t *testing.T, stage ValidationStage) {
 			cm := newUnstructuredWithLabels("ConfigMap", "cm", "app-ns", nil)
 			h := newValidatorHandler(backupContentDiscovery(), nsObj("app-ns"), cm)
@@ -469,13 +469,13 @@ func TestValidateSelectionModelsOnePass(t *testing.T) {
 		{
 			SourceName: "bc-a",
 			Namespaces: []string{"app-ns"},
-			Included:   []ResourceEntry{{Kind: "widgets", Scope: ScopeNamespaced}}, // BC-2 unknown kind
+			Included:   []ResourceEntry{{Kind: "widgets", Scope: ScopeNamespaced}}, // unknown kind
 		},
 		{
 			SourceName: "bc-b",
 			Namespaces: []string{"app-ns"},
 			Included:   []ResourceEntry{{Kind: "configmaps", Scope: ScopeNamespaced}},
-			Excluded:   []ResourceEntry{{Kind: "persistentvolumes", Scope: ScopeNamespaced}}, // BC-8 wrong scope
+			Excluded:   []ResourceEntry{{Kind: "persistentvolumes", Scope: ScopeNamespaced}}, // wrong scope
 		},
 	}
 	findings, err := h.ValidateSelectionModels(context.Background(), models, StageUpgrade)
@@ -500,7 +500,7 @@ func TestValidateSelectionModelsTransientDiscovery(t *testing.T) {
 }
 
 // TestValidateSelectionModelsTransientLiveAccess verifies that a non-NotFound
-// error from a live existence check (BC-9) is returned as a retryable error.
+// error from a live existence check (named-object existence) is returned as a retryable error.
 func TestValidateSelectionModelsTransientLiveAccess(t *testing.T) {
 	withFastTransientBackoff(t)
 	cm := newUnstructuredWithLabels("ConfigMap", "cm", "app-ns", nil)

@@ -53,7 +53,7 @@ func (h *BRHandler) startBackupFromBackupContent(ctx context.Context, refs []ibu
 		return bt, nil
 	}
 
-	// Re-validate the freshly read BackupContent CRs before capture (CNF-28671):
+	// Re-validate the freshly read BackupContent CRs before capture:
 	// the referenced CRs and the objects they select can change between Prep and
 	// pre-pivot. Every shared rule is terminal at Upgrade, so any finding aborts
 	// the upgrade with a BRFailedValidationError (no requeue, original stateroot
@@ -189,7 +189,7 @@ func waveString(wave *int32) string {
 }
 
 // fetchResourcesFromBackupContent fetches the resources selected by a single
-// BackupContent, honouring the CNF-26659 field semantics:
+// BackupContent, honouring the spec.backupContent field semantics:
 //   - the spec.Namespaces Namespace objects are always fetched first, so they
 //     restore in wave 0 before their contained resources;
 //   - an included entry without names lists the kind (per namespace for namespaced
@@ -406,8 +406,8 @@ type exclusionSet struct {
 }
 
 // buildExclusionSet resolves each excluded selector through the shared
-// resolveEntryGVR rule (BC-7/BC-8) and records whether the whole kind or only
-// specific names are excluded.
+// resolveEntryGVR rule (excluded-kind resolution and scope match) and records
+// whether the whole kind or only specific names are excluded.
 //
 // Both an unresolvable or ambiguous exclusion kind and an exclusion in the wrong
 // scope are terminal: an unresolvable (misspelled) exclusion could otherwise let

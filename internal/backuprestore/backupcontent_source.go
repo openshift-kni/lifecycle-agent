@@ -19,27 +19,18 @@ package backuprestore
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/go-logr/logr"
 	backupcontentv1 "github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1"
 	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // This file is the BackupContent adapter onto the source-independent selection
 // model and validator (selection.go). It is the only part of the validation layer
 // that references BackupContentSpec, so the follow-up ConfigMap/Velero source can
 // reuse every rule by supplying its own adapter.
-
-// BackupContentValidationWarningAnnotation records the non-terminal BackupContent
-// validation findings from Prep on the IBU, mirroring
-// extramanifest.ValidationWarningAnnotation. prepSuccessDoNotRequeue surfaces it
-// in the PrepCompleted message so a warning is visible without failing Prep.
-const BackupContentValidationWarningAnnotation = "backup-content.lca.openshift.io/validation-warning"
 
 // backupContentToSelectionModel maps a BackupContent CR into the source-independent
 // SelectionModel: the namespaced/cluster-scoped included and excluded lists
@@ -68,7 +59,9 @@ func backupContentToSelectionModel(bc *backupcontentv1.BackupContent) SelectionM
 }
 
 // resolveBackupContentModels resolves the name-only BackupContent references in
-// LCA's install namespace and maps each resolved CR to a SelectionModel (BC-1).
+// LCA's install namespace and maps each resolved CR to a SelectionModel. This is
+// the reference-resolution rule: every name-only spec.backupContent reference must
+// resolve to an existing BackupContent CR in LCA's install namespace.
 // A reference that does not resolve is collected as a terminal finding rather than
 // aborting, so Prep can report every missing reference in one pass; a non-NotFound
 // read error is returned as a transient (retryable) error.
@@ -95,12 +88,12 @@ func (h *BRHandler) resolveBackupContentModels(ctx context.Context, refs []ibuv1
 }
 
 // ValidateBackupContent validates the configured spec.backupContent during Prep
-// (read-only). It resolves the referenced CRs (BC-1), runs every shared rule
-// against their selection models in one pass, and splits the result: terminal
-// findings become a single aggregated BRFailedValidationError (so Prep fails
-// terminally, no requeue), warning findings are returned as strings (recorded on
-// the IBU and surfaced in PrepCompleted), and a transient discovery/API failure
-// is returned as a plain error so Prep requeues instead of failing.
+// (read-only). It resolves the referenced CRs, runs every shared rule against
+// their selection models in one pass, and splits the result: terminal findings
+// become a single aggregated BRFailedValidationError (so Prep fails terminally,
+// no requeue), warning findings are logged to the controller log and returned as
+// strings for the caller, and a transient discovery/API failure is returned as a
+// plain error so Prep requeues instead of failing.
 func (h *BRHandler) ValidateBackupContent(ctx context.Context, backupContent []ibuv1.BackupContentRef) ([]string, error) {
 	// Collect findings from both passes before acting on any transient error: a
 	// terminal configuration finding (e.g. a missing reference) must fail Prep
@@ -134,128 +127,4 @@ func (h *BRHandler) ValidateBackupContent(ctx context.Context, backupContent []i
 	}
 	h.Log.Info("BackupContent validated", "backupContent", backupContent, "warnings", len(warnings))
 	return findingStrings(warnings), nil
-}
-
-// AddAnnotationBackupContentWarningValidation records the Prep BackupContent
-// validation warnings on the IBU via a merge patch, mirroring
-// extramanifest.AddAnnotationEMWarningValidation so other runtime changes are
-// preserved.
-func AddAnnotationBackupContentWarningValidation(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade, annotationValue string) error {
-	patch := client.MergeFrom(ibu.DeepCopy())
-
-	ann := ibu.GetAnnotations()
-	if ann == nil {
-		ann = make(map[string]string)
-	}
-	ann[BackupContentValidationWarningAnnotation] = annotationValue
-	ibu.SetAnnotations(ann)
-
-	if err := c.Patch(context.Background(), ibu, patch); err != nil {
-		return fmt.Errorf("failed to update annotations: %w", err)
-	}
-
-	log.Info("Successfully added annotation", "annotation", BackupContentValidationWarningAnnotation)
-	return nil
-}
-
-// maxTotalAnnotationBytes is Kubernetes' total size limit for an object's
-// annotations (the sum of all keys and values). A persisted warning larger than
-// what this leaves after the IBU's other annotations is rejected by the API
-// server, which would turn a warning-only Prep into a terminal failure.
-const maxTotalAnnotationBytes = 256 * 1024
-
-// warningAnnotationReserve leaves headroom within the annotation budget for the
-// warning key itself and incidental annotation growth between read and patch.
-const warningAnnotationReserve = 2048
-
-// maxOmittedSummaryLen bounds the trailing "(and N more; see controller log for
-// the full list)" summary appended when not every warning fits the annotation
-// budget, leaving room for the fixed text plus the omitted count's digits.
-const maxOmittedSummaryLen = 96
-
-// BoundWarningAnnotationValue joins the BackupContent validation warnings into a
-// single annotation value that fits within the IBU's remaining annotation budget.
-// When the full list does not fit it keeps as many whole warnings as fit and
-// appends a count of those omitted; the caller logs the complete list. This keeps
-// a warning-only selection from becoming a terminal Prep failure when the joined
-// warnings would otherwise exceed the annotation size limit.
-//
-// The returned bool is false when the IBU's existing annotations leave no room for
-// even the warning key: in that case the caller must skip persisting the annotation
-// (the complete warnings are still logged) so a near-full annotation set cannot turn
-// a warning-only Prep into a terminal patch failure.
-func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string) (string, bool) {
-	used := 0
-	for k, v := range ibu.GetAnnotations() {
-		if k == BackupContentValidationWarningAnnotation {
-			continue // replaced by the value we are about to set
-		}
-		used += len(k) + len(v)
-	}
-
-	// Room left for the warning key plus its value once the IBU's other annotations
-	// are accounted for. If not even the key fits, the annotation cannot be persisted
-	// without exceeding the total annotation size limit, so signal the caller to skip it.
-	if maxTotalAnnotationBytes-used-len(BackupContentValidationWarningAnnotation) <= 0 {
-		return "", false
-	}
-
-	budget := maxTotalAnnotationBytes - used - len(BackupContentValidationWarningAnnotation) - warningAnnotationReserve
-	if budget < 0 {
-		budget = 0
-	}
-
-	full := strings.Join(warnings, "; ")
-	if len(full) <= budget {
-		return full, true
-	}
-
-	var b strings.Builder
-	included := 0
-	for _, w := range warnings {
-		// Reserve room for the trailing "(and N more...)" summary.
-		if b.Len()+len(w)+2+maxOmittedSummaryLen > budget {
-			break
-		}
-		if b.Len() > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(w)
-		included++
-	}
-
-	// Append the omitted-count summary, but never let the result exceed the budget:
-	// when existing annotations leave less room than the summary needs, truncate it
-	// so the persisted value (plus existing annotations) stays within the API size
-	// limit and a warning-only Prep cannot become a terminal failure. The complete
-	// findings are still logged in full by the caller.
-	summary := fmt.Sprintf(" (and %d more; see controller log for the full list)", len(warnings)-included)
-	if keep := budget - b.Len(); len(summary) > keep {
-		if keep < 0 {
-			keep = 0
-		}
-		summary = summary[:keep]
-	}
-	b.WriteString(summary)
-	return b.String(), true
-}
-
-// RemoveAnnotationBackupContentWarningValidation removes the BackupContent warning
-// annotation if present, mirroring extramanifest.RemoveAnnotationEMWarningValidation.
-// It is called on the transition back to Idle so a stale warning from a prior Prep
-// is not re-surfaced after the underlying misconfiguration has been fixed.
-func RemoveAnnotationBackupContentWarningValidation(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) error {
-	if _, exists := ibu.GetAnnotations()[BackupContentValidationWarningAnnotation]; exists {
-		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
-
-		ann := ibu.GetAnnotations()
-		delete(ann, BackupContentValidationWarningAnnotation)
-		ibu.SetAnnotations(ann)
-
-		if err := c.Patch(context.Background(), ibu, patch); err != nil {
-			return fmt.Errorf("failed to update annotations: %w", err)
-		}
-		log.Info("Successfully removed annotation", "annotation", BackupContentValidationWarningAnnotation)
-	}
-	return nil
 }

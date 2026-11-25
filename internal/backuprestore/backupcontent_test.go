@@ -453,10 +453,10 @@ func TestFetchResourcesFromBackupContentAmbiguousExclusionFailsBackup(t *testing
 	assert.Contains(t, err.Error(), "ambiguous")
 }
 
-// TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup verifies the
-// CNF-28671 fix for the deferred bug: an exclusion kind that cannot be resolved (a
-// typo) now fails the backup instead of being silently skipped, so an object the
-// administrator intended to exclude is not backed up and restored.
+// TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup verifies that
+// an exclusion kind that cannot be resolved (a typo) fails the backup instead of
+// being silently skipped, so an object the administrator intended to exclude is not
+// backed up and restored.
 func TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup(t *testing.T) {
 	ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
 	cm := newUnstructuredWithLabels("ConfigMap", "cm", "app-ns", nil)
@@ -479,10 +479,10 @@ func TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup(t *test
 	assert.Contains(t, err.Error(), "exclusion")
 }
 
-// TestFetchResourcesFromBackupContentWrongScopeExclusionFailsBackup verifies the
-// CNF-28671 fix for the second deferred bug: an exclusion listed under the wrong
-// scope (a cluster-scoped kind in excludedNamespacedResources) now fails the backup
-// instead of being silently ineffective.
+// TestFetchResourcesFromBackupContentWrongScopeExclusionFailsBackup verifies that
+// an exclusion listed under the wrong scope (a cluster-scoped kind in
+// excludedNamespacedResources) fails the backup instead of being silently
+// ineffective.
 func TestFetchResourcesFromBackupContentWrongScopeExclusionFailsBackup(t *testing.T) {
 	ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
 	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns)
