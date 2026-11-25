@@ -521,7 +521,7 @@ func (h *BRHandler) fetchResources(ctx context.Context, spec BackupSpec) ([]*uns
 	// Always include the Namespace objects for the included namespaces so they
 	// are recreated (in wave 0) before their contained resources during restore,
 	// regardless of whether the apply-label annotation is used.
-	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: namespacesResource}
 	for _, ns := range spec.IncludedNamespaces {
 		nsObj, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns)
 		if err != nil {

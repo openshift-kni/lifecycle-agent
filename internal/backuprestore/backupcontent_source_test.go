@@ -1,0 +1,223 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package backuprestore
+
+import (
+	"context"
+	"testing"
+
+	"github.com/go-logr/logr"
+	backupcontentv1 "github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1"
+	ibuv1 "github.com/openshift-kni/lifecycle-agent/api/imagebasedupgrade/v1"
+	"github.com/openshift-kni/lifecycle-agent/internal/common"
+	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// TestBackupContentToSelectionModel verifies the adapter maps a BackupContent CR
+// into the source-independent SelectionModel: scope tagging, the excluded lists,
+// and the labelSelector carried as-is.
+func TestBackupContentToSelectionModel(t *testing.T) {
+	sel := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "x"}}
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "bc1"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces: []string{"ns-a", "ns-b"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "configmaps"},
+				{Kind: "secrets", Names: []string{"s1"}},
+			},
+			ClusterScopedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "persistentvolumes"},
+			},
+			ExcludedNamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "secrets", Names: []string{"s-excl"}},
+			},
+			ExcludedClusterScopedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "clusterroles"},
+			},
+			LabelSelector: sel,
+		},
+	}
+
+	m := backupContentToSelectionModel(bc)
+	assert.Equal(t, "bc1", m.SourceName)
+	assert.Equal(t, []string{"ns-a", "ns-b"}, m.Namespaces)
+	assert.Same(t, sel, m.LabelSelector)
+
+	assert.Equal(t, []ResourceEntry{
+		{Kind: "configmaps", Scope: ScopeNamespaced},
+		{Kind: "secrets", Names: []string{"s1"}, Scope: ScopeNamespaced},
+		{Kind: "persistentvolumes", Scope: ScopeClusterScoped},
+	}, m.Included)
+
+	assert.Equal(t, []ResourceEntry{
+		{Kind: "secrets", Names: []string{"s-excl"}, Scope: ScopeNamespaced},
+		{Kind: "clusterroles", Scope: ScopeClusterScoped},
+	}, m.Excluded)
+}
+
+// newBackupContentValidationHandler builds a BRHandler with a typed client holding
+// the BackupContent CRs, a fake dynamic client holding the live objects, and the
+// given discovery.
+func newBackupContentValidationHandler(t *testing.T, bcs []*backupcontentv1.BackupContent, dynObjs ...runtime.Object) *BRHandler {
+	typedObjs := make([]client.Object, 0, len(bcs))
+	for _, bc := range bcs {
+		typedObjs = append(typedObjs, bc)
+	}
+	c := newBackupContentTypedClient(t, typedObjs...)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), dynObjs...)
+	return &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+}
+
+func TestValidateBackupContentDanglingReferences(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+	h := newBackupContentValidationHandler(t, nil)
+
+	warnings, err := h.ValidateBackupContent(context.Background(),
+		[]ibuv1.BackupContentRef{{Name: "absent-a"}, {Name: "absent-b"}})
+	assert.Empty(t, warnings)
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedValidationError(err), "a missing reference is terminal in Prep")
+	// One-pass: both missing references are reported.
+	assert.Contains(t, err.Error(), "absent-a")
+	assert.Contains(t, err.Error(), "absent-b")
+}
+
+func TestValidateBackupContentTerminalRule(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "widgets"}}, // unknown kind -> BC-2 terminal
+		},
+	}
+	h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc}, nsObj("app-ns"))
+
+	// A terminal finding fails Prep via the returned error; any incidental warnings
+	// are irrelevant because the caller fails on err first.
+	_, err := h.ValidateBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc1"}})
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedValidationError(err))
+	assert.Contains(t, err.Error(), "widgets")
+}
+
+func TestValidateBackupContentWarningOnly(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"missing-ns"}, // BC-5 -> Prep warning
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+		},
+	}
+	// missing-ns is absent from the dynamic client.
+	h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc})
+
+	warnings, err := h.ValidateBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc1"}})
+	assert.NoError(t, err, "a warning-only config must not fail Prep")
+	if assert.Len(t, warnings, 1) {
+		assert.Contains(t, warnings[0], "missing-ns")
+	}
+}
+
+func TestValidateBackupContentTransientDiscovery(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+	withFastTransientBackoff(t)
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+		},
+	}
+	c := newBackupContentTypedClient(t, bc)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme())
+	h := &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: &fullFailDiscovery{}, Log: logr.Discard()}
+
+	warnings, err := h.ValidateBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc1"}})
+	assert.Empty(t, warnings)
+	assert.Error(t, err)
+	assert.False(t, IsBRFailedValidationError(err), "a transient discovery failure must not be terminal")
+}
+
+// TestBackupContentIntroducedAfterPrep covers the same invalid BackupContent both
+// when it is present during Prep (a warning, Prep continues) and when the same
+// invalidity is introduced after a successful Prep and caught at Upgrade pre-pivot
+// (terminal). It also asserts the pre-pivot failure is a BRFailedValidationError,
+// so it takes the terminal (no plain-error requeue) path.
+func TestBackupContentIntroducedAfterPrep(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+
+	t.Run("missing selected namespace", func(t *testing.T) {
+		bc := &backupcontentv1.BackupContent{
+			ObjectMeta: metav1.ObjectMeta{Name: "bc1", Namespace: "lca-ns"},
+			Spec: backupcontentv1.BackupContentSpec{
+				Namespaces:          []string{"app-ns"},
+				NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+			},
+		}
+		// app-ns is absent -> BC-5.
+		h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc})
+
+		// Prep: a warning, Prep completes.
+		warnings, err := h.ValidateBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc1"}})
+		assert.NoError(t, err)
+		assert.NotEmpty(t, warnings)
+
+		// Upgrade pre-pivot: the same condition is now terminal.
+		_, err = h.startBackupFromBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc1"}}, &BackupTracker{})
+		assert.Error(t, err)
+		assert.True(t, IsBRFailedValidationError(err), "a missing namespace is terminal at pre-pivot")
+		assert.Contains(t, err.Error(), "app-ns")
+	})
+
+	t.Run("missing named object", func(t *testing.T) {
+		bc := &backupcontentv1.BackupContent{
+			ObjectMeta: metav1.ObjectMeta{Name: "bc2", Namespace: "lca-ns"},
+			Spec: backupcontentv1.BackupContentSpec{
+				Namespaces: []string{"app-ns"},
+				NamespacedResources: []backupcontentv1.ResourceSelector{
+					{Kind: "configmaps", Names: []string{"cm-missing"}},
+				},
+			},
+		}
+		// app-ns exists but cm-missing does not.
+		h := newBackupContentValidationHandler(t, []*backupcontentv1.BackupContent{bc}, nsObj("app-ns"))
+
+		warnings, err := h.ValidateBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc2"}})
+		assert.NoError(t, err)
+		assert.NotEmpty(t, warnings)
+
+		_, err = h.startBackupFromBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "bc2"}}, &BackupTracker{})
+		assert.Error(t, err)
+		assert.True(t, IsBRFailedValidationError(err))
+		assert.Contains(t, err.Error(), "cm-missing")
+	})
+
+	t.Run("referenced BackupContent deleted after Prep", func(t *testing.T) {
+		// No BackupContent CRs exist: the reference is dangling at pre-pivot.
+		h := newBackupContentValidationHandler(t, nil)
+		_, err := h.startBackupFromBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "gone"}}, &BackupTracker{})
+		assert.Error(t, err)
+		assert.True(t, IsBRFailedValidationError(err), "a deleted reference is terminal at pre-pivot")
+	})
+}

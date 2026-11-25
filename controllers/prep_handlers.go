@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/common"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/precache"
@@ -46,6 +48,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+// retryableValidationError wraps a transient (non-terminal) failure encountered
+// while validating the IBU spec, so handlePrep can requeue instead of terminally
+// failing Prep. A terminal configuration error is not wrapped in this type.
+type retryableValidationError struct {
+	err error
+}
+
+func (e *retryableValidationError) Error() string { return e.err.Error() }
+func (e *retryableValidationError) Unwrap() error { return e.err }
 
 func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, log logr.Logger, ops ops.Execute) error {
 	// Use cluster wide pull-secret by default
@@ -435,15 +447,34 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 
 	// Validate backup configmaps if provided. OADPContent is deprecated (replaced by
 	// spec.backupContent) but still honoured for backward compatibility, now backed by
-	// the local backup/restore mechanism instead of the OADP operator. Prep-time
-	// validation of spec.backupContent CRs is tracked separately in CNF-28671; this
-	// story wires only the pre-pivot read and the missing-at-pre-pivot terminal
-	// failure (in StartBackup).
+	// the local backup/restore mechanism instead of the OADP operator.
 	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility
 	oadpContent := ibu.Spec.OADPContent
 	if len(oadpContent) != 0 {
 		if err := r.BackupRestore.ValidateBackupConfigmaps(ctx, oadpContent); err != nil {
 			return fmt.Errorf("failed to validate backup configmaps: %w", err)
+		}
+	}
+
+	// Validate spec.backupContent (read-only) so misconfiguration is caught during
+	// Prep, before the upgrade window (CNF-28671). Terminal findings are returned as
+	// a BRFailedValidationError and fail Prep without requeue; a transient
+	// discovery/API failure is wrapped as retryable so Prep requeues instead of
+	// failing; warnings are recorded on the IBU and surfaced in PrepCompleted.
+	if len(ibu.Spec.BackupContent) != 0 {
+		warnings, err := r.BackupRestore.ValidateBackupContent(ctx, ibu.Spec.BackupContent)
+		if err != nil {
+			if backuprestore.IsBRFailedValidationError(err) {
+				return fmt.Errorf("failed to validate backup content: %w", err)
+			}
+			return &retryableValidationError{err: fmt.Errorf("transient error validating backup content: %w", err)}
+		}
+		if len(warnings) != 0 {
+			warn := strings.Join(warnings, "; ")
+			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation))
+			if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
+				return fmt.Errorf("failed to add backup content warning validation annotation: %w", err)
+			}
 		}
 	}
 
@@ -561,6 +592,14 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 
 			r.Log.Info("Validating IBU spec")
 			if err := r.validateIBUSpec(ctx, ibu); err != nil {
+				// A transient discovery/API failure while validating the spec (e.g.
+				// spec.backupContent) must requeue rather than terminally fail Prep
+				// (CNF-28671). Every other validation error is a configuration error
+				// and fails Prep without requeue.
+				var retryable *retryableValidationError
+				if errors.As(err, &retryable) {
+					return requeueWithError(fmt.Errorf("transient error validating IBU spec, will retry: %w", err))
+				}
 				return prepFailDoNotRequeue(r.Log, fmt.Sprintf("failed to validate IBU spec: %s", err.Error()), ibu)
 			}
 
@@ -663,8 +702,28 @@ func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpgr
 // prepInProgressRequeue helper function when everything is a success at the end
 func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	msg := "Prep stage completed successfully"
+
+	// Report the validated application backup source so the status reflects what
+	// Prep checked (CNF-28671). When neither source is configured, say so
+	// explicitly rather than implying a backup will run.
+	//nolint:staticcheck // SA1019: OADPContent is deprecated but still honoured for backward compatibility
+	switch {
+	case len(ibu.Spec.BackupContent) != 0:
+		names := make([]string, 0, len(ibu.Spec.BackupContent))
+		for _, ref := range ibu.Spec.BackupContent {
+			names = append(names, ref.Name)
+		}
+		msg = fmt.Sprintf("%s; validated BackupContent: %s", msg, strings.Join(names, ", "))
+	case len(ibu.Spec.OADPContent) == 0:
+		msg = fmt.Sprintf("%s; no application backup configured", msg)
+	}
+
+	// Surface validation warnings via the recorded annotations without failing Prep.
 	if _, exists := ibu.GetAnnotations()[extramanifest.ValidationWarningAnnotation]; exists {
-		msg = fmt.Sprintf("Prep stage completed with extramanifests validation warning. Please check the annotation '%s' for details.", extramanifest.ValidationWarningAnnotation)
+		msg = fmt.Sprintf("%s. Extramanifests validation warning, check the annotation '%s' for details.", msg, extramanifest.ValidationWarningAnnotation)
+	}
+	if _, exists := ibu.GetAnnotations()[backuprestore.BackupContentValidationWarningAnnotation]; exists {
+		msg = fmt.Sprintf("%s. BackupContent validation warning, check the annotation '%s' for details.", msg, backuprestore.BackupContentValidationWarningAnnotation)
 	}
 
 	log.Info(msg)

@@ -53,6 +53,26 @@ func (h *BRHandler) startBackupFromBackupContent(ctx context.Context, refs []ibu
 		return bt, nil
 	}
 
+	// Re-validate the freshly read BackupContent CRs before capture (CNF-28671):
+	// the referenced CRs and the objects they select can change between Prep and
+	// pre-pivot. Every shared rule is terminal at Upgrade, so any finding aborts
+	// the upgrade with a BRFailedValidationError (no requeue, original stateroot
+	// stays active); a transient discovery/API failure is returned as a plain
+	// error so PrePivot requeues. Capture below stays fail-closed as defence in
+	// depth.
+	models := make([]SelectionModel, 0, len(backupContents))
+	for i := range backupContents {
+		models = append(models, backupContentToSelectionModel(&backupContents[i]))
+	}
+	findings, err := h.ValidateSelectionModels(ctx, models, StageUpgrade)
+	if err != nil {
+		return bt, fmt.Errorf("failed to validate backup content: %w", err)
+	}
+	if len(findings) > 0 {
+		h.Log.Info("BackupContent validation failed at pre-pivot", "findings", findingStrings(findings))
+		return bt, NewBRFailedValidationError("Backup", findingsMessage(findings))
+	}
+
 	// Build a synthetic BackupSpec per BackupContent so capture is ordered by
 	// backupWave (omitted waves last), reusing SortBackupSpecsByApplyWave. The
 	// BackupContent is looked up by name to fetch its resources below.
@@ -186,7 +206,7 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 	// Always include the Namespace objects so they are recreated (in wave 0) before
 	// their contained resources during restore. A missing included namespace is a
 	// configuration error (matching the oadpContent path).
-	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+	nsGVR := schema.GroupVersionResource{Version: "v1", Resource: namespacesResource}
 	for _, ns := range spec.Namespaces {
 		nsObj, err := h.getResourceWithRetry(ctx, h.DynamicClient.Resource(nsGVR), ns)
 		if err != nil {
@@ -214,7 +234,7 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 	}
 
 	// Namespaced entries are fetched across the in-scope namespaces.
-	nsExcluded, err := h.buildExclusionSet(spec.ExcludedNamespacedResources, apiResourceLists)
+	nsExcluded, err := h.buildExclusionSet(spec.ExcludedNamespacedResources, ScopeNamespaced, apiResourceLists, failedGroups)
 	if err != nil {
 		return nil, err
 	}
@@ -229,13 +249,9 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 			return nil, fmt.Errorf("namespaced resource %q selects nothing: an entry without names is only "+
 				"backed up within spec.namespaces, which is empty", entry.Kind)
 		}
-		gvr, namespaced, err := resolveRequiredGVR(entry.Kind, apiResourceLists, failedGroups)
+		gvr, err := resolveEntryGVR(entry.Kind, ScopeNamespaced, apiResourceLists, failedGroups)
 		if err != nil {
 			return nil, err
-		}
-		if !namespaced {
-			return nil, fmt.Errorf("resource %q configured as namespaced is cluster-scoped per discovery; "+
-				"move it to spec.clusterScopedResources", entry.Kind)
 		}
 		gr := gvr.GroupResource().String()
 		if nsExcluded.excludesKind(gr) {
@@ -250,18 +266,14 @@ func (h *BRHandler) fetchResourcesFromBackupContent(ctx context.Context, bc *bac
 
 	// Cluster-scoped entries are fetched in the single cluster scope (the empty
 	// namespace).
-	csExcluded, err := h.buildExclusionSet(spec.ExcludedClusterScopedResources, apiResourceLists)
+	csExcluded, err := h.buildExclusionSet(spec.ExcludedClusterScopedResources, ScopeClusterScoped, apiResourceLists, failedGroups)
 	if err != nil {
 		return nil, err
 	}
 	for _, entry := range spec.ClusterScopedResources {
-		gvr, namespaced, err := resolveRequiredGVR(entry.Kind, apiResourceLists, failedGroups)
+		gvr, err := resolveEntryGVR(entry.Kind, ScopeClusterScoped, apiResourceLists, failedGroups)
 		if err != nil {
 			return nil, err
-		}
-		if namespaced {
-			return nil, fmt.Errorf("resource %q configured as cluster-scoped is namespace-scoped per discovery; "+
-				"move it to spec.namespacedResources", entry.Kind)
 		}
 		gr := gvr.GroupResource().String()
 		if csExcluded.excludesKind(gr) {
@@ -390,28 +402,22 @@ type exclusionSet struct {
 	names map[string]map[string]bool
 }
 
-// buildExclusionSet resolves each excluded selector through the discovery-backed
-// resolver and records whether the whole kind or only specific names are excluded.
+// buildExclusionSet resolves each excluded selector through the shared
+// resolveEntryGVR rule (BC-7/BC-8) and records whether the whole kind or only
+// specific names are excluded.
 //
-// An ambiguous bare-name exclusion (one that matches more than one API group)
-// cannot be applied reliably: a differently-qualified include of the same resource
-// could still fetch an object the user meant to exclude, so the excluded object
-// would be persisted and later restored. Fail the backup in that case rather than
-// silently dropping the exclusion.
-//
-// A kind absent from cluster API discovery is skipped (with a log line): it is never
-// fetched, so it cannot be included either, which makes dropping its exclusion safe.
-func (h *BRHandler) buildExclusionSet(selectors []backupcontentv1.ResourceSelector, apiResourceLists []*metav1.APIResourceList) (exclusionSet, error) {
+// Both an unresolvable or ambiguous exclusion kind and an exclusion in the wrong
+// scope are terminal: an unresolvable (misspelled) exclusion could otherwise let
+// an object the administrator meant to exclude be backed up and restored, and an
+// exclusion declared under the wrong scope list is silently ineffective. Failing
+// closed here matches the validator (ValidateSelectionModels), which reports the
+// same findings at Prep and Upgrade.
+func (h *BRHandler) buildExclusionSet(selectors []backupcontentv1.ResourceSelector, scope ResourceScope, apiResourceLists []*metav1.APIResourceList, failedGroups map[string]bool) (exclusionSet, error) {
 	es := exclusionSet{kinds: map[string]bool{}, names: map[string]map[string]bool{}}
 	for _, sel := range selectors {
-		gvr, _, found, err := resolveResourceGVR(sel.Kind, apiResourceLists)
+		gvr, err := resolveEntryGVR(sel.Kind, scope, apiResourceLists, failedGroups)
 		if err != nil {
 			return exclusionSet{}, fmt.Errorf("cannot apply BackupContent exclusion for %q: %w", sel.Kind, err)
-		}
-		if !found {
-			h.Log.Info("WARNING: BackupContent exclusion kind not found in cluster API discovery; it will not be applied",
-				"kind", sel.Kind, "names", sel.Names)
-			continue
 		}
 		gr := gvr.GroupResource().String()
 		if len(sel.Names) == 0 {

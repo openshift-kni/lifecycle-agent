@@ -5,6 +5,7 @@
 //
 //	mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
 //
+
 // Package mock_backuprestore is a generated GoMock package.
 package mock_backuprestore
 
@@ -17,12 +18,13 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-//go:generate mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
+//go:generate /home/sandbox/.cache/go-build/fb/fb8961d38250e71d94f352e2fedbee4743b9028e884b10a699a2a51a5389138a-d/mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
 
 // MockBackuperRestorer is a mock of BackuperRestorer interface.
 type MockBackuperRestorer struct {
 	ctrl     *gomock.Controller
 	recorder *MockBackuperRestorerMockRecorder
+	isgomock struct{}
 }
 
 // MockBackuperRestorerMockRecorder is the mock recorder for MockBackuperRestorer.
@@ -140,4 +142,19 @@ func (m *MockBackuperRestorer) ValidateBackupConfigmaps(ctx context.Context, con
 func (mr *MockBackuperRestorerMockRecorder) ValidateBackupConfigmaps(ctx, content any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateBackupConfigmaps", reflect.TypeOf((*MockBackuperRestorer)(nil).ValidateBackupConfigmaps), ctx, content)
+}
+
+// ValidateBackupContent mocks base method.
+func (m *MockBackuperRestorer) ValidateBackupContent(ctx context.Context, backupContent []v1.BackupContentRef) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateBackupContent", ctx, backupContent)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ValidateBackupContent indicates an expected call of ValidateBackupContent.
+func (mr *MockBackuperRestorerMockRecorder) ValidateBackupContent(ctx, backupContent any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateBackupContent", reflect.TypeOf((*MockBackuperRestorer)(nil).ValidateBackupContent), ctx, backupContent)
 }
