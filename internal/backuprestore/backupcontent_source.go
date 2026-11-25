@@ -19,6 +19,7 @@ package backuprestore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	backupcontentv1 "github.com/openshift-kni/lifecycle-agent/api/backupcontent/v1"
@@ -155,6 +156,57 @@ func AddAnnotationBackupContentWarningValidation(c client.Client, log logr.Logge
 
 	log.Info("Successfully added annotation", "annotation", BackupContentValidationWarningAnnotation)
 	return nil
+}
+
+// maxTotalAnnotationBytes is Kubernetes' total size limit for an object's
+// annotations (the sum of all keys and values). A persisted warning larger than
+// what this leaves after the IBU's other annotations is rejected by the API
+// server, which would turn a warning-only Prep into a terminal failure.
+const maxTotalAnnotationBytes = 256 * 1024
+
+// warningAnnotationReserve leaves headroom within the annotation budget for the
+// warning key itself and incidental annotation growth between read and patch.
+const warningAnnotationReserve = 2048
+
+// BoundWarningAnnotationValue joins the BackupContent validation warnings into a
+// single annotation value that fits within the IBU's remaining annotation budget.
+// When the full list does not fit it keeps as many whole warnings as fit and
+// appends a count of those omitted; the caller logs the complete list. This keeps
+// a warning-only selection from becoming a terminal Prep failure when the joined
+// warnings would otherwise exceed the annotation size limit.
+func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string) string {
+	used := 0
+	for k, v := range ibu.GetAnnotations() {
+		if k == BackupContentValidationWarningAnnotation {
+			continue // replaced by the value we are about to set
+		}
+		used += len(k) + len(v)
+	}
+	budget := maxTotalAnnotationBytes - used - len(BackupContentValidationWarningAnnotation) - warningAnnotationReserve
+	if budget < 0 {
+		budget = 0
+	}
+
+	full := strings.Join(warnings, "; ")
+	if len(full) <= budget {
+		return full
+	}
+
+	var b strings.Builder
+	included := 0
+	for _, w := range warnings {
+		// Reserve room for the trailing "(and N more...)" summary.
+		if b.Len()+len(w)+2+96 > budget {
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(w)
+		included++
+	}
+	fmt.Fprintf(&b, " (and %d more; see controller log for the full list)", len(warnings)-included)
+	return b.String()
 }
 
 // RemoveAnnotationBackupContentWarningValidation removes the BackupContent warning

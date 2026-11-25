@@ -69,7 +69,7 @@ again and re-validated, because the referenced CRs and the objects they select c
 change after Prep. The same rules run in both stages; only their severity differs
 (see below).
 
-#### What is validated, and what is rejected
+### What is validated, and what is rejected
 
 The following are **terminal in both Prep and Upgrade** (Prep sets
 `PrepInProgress=False` with reason `Failed`; Upgrade sets `UpgradeInProgress=False`

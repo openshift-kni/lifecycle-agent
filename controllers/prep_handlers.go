@@ -59,6 +59,37 @@ type retryableValidationError struct {
 func (e *retryableValidationError) Error() string { return e.err.Error() }
 func (e *retryableValidationError) Unwrap() error { return e.err }
 
+// isTerminalAPIRejection reports whether err is a permanent API rejection that
+// retrying cannot fix (invalid object, forbidden, too large, etc.), as opposed to
+// a transient failure (server timeout, throttling, service unavailable) or a
+// connection-level failure, both of which are worth retrying. It is used only to
+// classify the BackupContent warning-annotation save at the Prep call site, so the
+// restore retry paths that rely on backuprestore.IsTransientError are unaffected.
+func isTerminalAPIRejection(err error) bool {
+	return k8serrors.IsInvalid(err) ||
+		k8serrors.IsBadRequest(err) ||
+		k8serrors.IsForbidden(err) ||
+		k8serrors.IsUnauthorized(err) ||
+		k8serrors.IsMethodNotSupported(err) ||
+		k8serrors.IsNotAcceptable(err) ||
+		k8serrors.IsRequestEntityTooLargeError(err)
+}
+
+// clearBackupContentWarning removes a stale BackupContent validation warning
+// annotation left by an earlier Prep attempt within the same cycle (for example a
+// retry after container storage cleanup failed) once validation no longer reports a
+// warning or BackupContent is no longer configured. A transient/connection-level
+// patch failure requeues; a terminal rejection fails Prep.
+func (r *ImageBasedUpgradeReconciler) clearBackupContentWarning(ibu *ibuv1.ImageBasedUpgrade) error {
+	if err := backuprestore.RemoveAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu); err != nil {
+		if isTerminalAPIRejection(err) {
+			return fmt.Errorf("failed to remove backup content warning validation annotation: %w", err)
+		}
+		return &retryableValidationError{err: fmt.Errorf("transient error removing backup content warning annotation: %w", err)}
+	}
+	return nil
+}
+
 func GetSeedImage(c client.Client, ctx context.Context, ibu *ibuv1.ImageBasedUpgrade, log logr.Logger, ops ops.Execute) error {
 	// Use cluster wide pull-secret by default
 	pullSecretFilename := common.ImageRegistryAuthFile
@@ -470,18 +501,28 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 			return &retryableValidationError{err: fmt.Errorf("transient error validating backup content: %w", err)}
 		}
 		if len(warnings) != 0 {
-			warn := strings.Join(warnings, "; ")
-			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation))
+			// Log the complete findings; the persisted annotation is bounded to stay
+			// within Kubernetes' total annotation size limit, so a warning-only
+			// selection with many findings does not fail the patch.
+			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation), "warnings", strings.Join(warnings, "; "))
+			warn := backuprestore.BoundWarningAnnotationValue(ibu, warnings)
 			if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
-				// A transient API failure (e.g. HTTP 503) saving the warning must not
-				// fail Prep outright: validation only produced warnings, so requeue and
-				// retry the patch. Permanent rejections remain non-retryable.
-				if backuprestore.IsTransientError(err) {
-					return &retryableValidationError{err: fmt.Errorf("transient error saving backup content warning annotation: %w", err)}
+				// A transient (e.g. HTTP 503) or connection-level failure saving the
+				// warning must not fail Prep outright: validation only produced warnings,
+				// so requeue and retry the patch. Permanent rejections stay non-retryable.
+				if isTerminalAPIRejection(err) {
+					return fmt.Errorf("failed to add backup content warning validation annotation: %w", err)
 				}
-				return fmt.Errorf("failed to add backup content warning validation annotation: %w", err)
+				return &retryableValidationError{err: fmt.Errorf("transient error saving backup content warning annotation: %w", err)}
 			}
+		} else if err := r.clearBackupContentWarning(ibu); err != nil {
+			// Validation is now clean: drop a stale warning from an earlier attempt in
+			// this Prep cycle so PrepCompleted does not re-surface a resolved warning.
+			return err
 		}
+	} else if err := r.clearBackupContentWarning(ibu); err != nil {
+		// BackupContent is no longer configured: drop any stale warning annotation.
+		return err
 	}
 
 	// Validate the extraManifests configmap if it's provided

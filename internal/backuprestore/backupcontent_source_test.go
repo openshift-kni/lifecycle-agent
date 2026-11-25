@@ -18,6 +18,7 @@ package backuprestore
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -247,5 +248,44 @@ func TestBackupContentIntroducedAfterPrep(t *testing.T) {
 		_, err := h.startBackupFromBackupContent(context.Background(), []ibuv1.BackupContentRef{{Name: "gone"}}, &BackupTracker{})
 		assert.Error(t, err)
 		assert.True(t, IsBRFailedValidationError(err), "a deleted reference is terminal at pre-pivot")
+	})
+}
+
+// TestBoundWarningAnnotationValue verifies the persisted warning annotation stays
+// within the remaining annotation budget: a short list is kept verbatim, an
+// oversized list is truncated to whole warnings with an omitted count, and the
+// space already used by unrelated annotations shrinks the budget.
+func TestBoundWarningAnnotationValue(t *testing.T) {
+	t.Run("short list kept verbatim", func(t *testing.T) {
+		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
+		warnings := []string{"warning one", "warning two"}
+		got := BoundWarningAnnotationValue(ibu, warnings)
+		assert.Equal(t, "warning one; warning two", got)
+	})
+
+	t.Run("oversized list truncated with omitted count", func(t *testing.T) {
+		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
+		long := strings.Repeat("x", 1024)
+		warnings := make([]string, 0, 1000)
+		for i := 0; i < 1000; i++ {
+			warnings = append(warnings, long)
+		}
+		got := BoundWarningAnnotationValue(ibu, warnings)
+		assert.LessOrEqual(t, len(got), maxTotalAnnotationBytes)
+		assert.Contains(t, got, "more; see controller log for the full list")
+	})
+
+	t.Run("existing annotations shrink the budget", func(t *testing.T) {
+		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
+		ibu.SetAnnotations(map[string]string{"other": strings.Repeat("y", maxTotalAnnotationBytes-4096)})
+		long := strings.Repeat("z", 512)
+		warnings := make([]string, 0, 100)
+		for i := 0; i < 100; i++ {
+			warnings = append(warnings, long)
+		}
+		got := BoundWarningAnnotationValue(ibu, warnings)
+		used := len("other") + (maxTotalAnnotationBytes - 4096)
+		assert.LessOrEqual(t, len(got)+used+len(BackupContentValidationWarningAnnotation), maxTotalAnnotationBytes,
+			"persisted warning plus existing annotations must fit the total annotation limit")
 	})
 }
