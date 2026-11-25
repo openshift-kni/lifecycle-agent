@@ -83,7 +83,10 @@ func (h *BRHandler) resolveBackupContentModels(ctx context.Context, refs []ibuv1
 					fmt.Sprintf("BackupContent %q not found in namespace %q", ref.Name, namespace)))
 				continue
 			}
-			return nil, nil, fmt.Errorf("failed to get BackupContent %q in namespace %q: %w", ref.Name, namespace, err)
+			// Return the findings collected so far alongside the error: a missing
+			// reference already found is a terminal finding the caller must still
+			// report even though this read failed transiently.
+			return models, findings, fmt.Errorf("failed to get BackupContent %q in namespace %q: %w", ref.Name, namespace, err)
 		}
 		models = append(models, backupContentToSelectionModel(bc))
 	}
@@ -98,15 +101,13 @@ func (h *BRHandler) resolveBackupContentModels(ctx context.Context, refs []ibuv1
 // the IBU and surfaced in PrepCompleted), and a transient discovery/API failure
 // is returned as a plain error so Prep requeues instead of failing.
 func (h *BRHandler) ValidateBackupContent(ctx context.Context, backupContent []ibuv1.BackupContentRef) ([]string, error) {
-	models, bc1Findings, err := h.resolveBackupContentModels(ctx, backupContent)
-	if err != nil {
-		return nil, err
-	}
+	// Collect findings from both passes before acting on any transient error: a
+	// terminal configuration finding (e.g. a missing reference) must fail Prep
+	// terminally even if a later lookup failed transiently, since requeuing would
+	// never make a known-bad configuration valid.
+	models, bc1Findings, resolveErr := h.resolveBackupContentModels(ctx, backupContent)
 
-	ruleFindings, err := h.ValidateSelectionModels(ctx, models, StagePrep)
-	if err != nil {
-		return nil, err
-	}
+	ruleFindings, ruleErr := h.ValidateSelectionModels(ctx, models, StagePrep)
 
 	all := make([]Finding, 0, len(bc1Findings)+len(ruleFindings))
 	all = append(all, bc1Findings...)
@@ -116,6 +117,15 @@ func (h *BRHandler) ValidateBackupContent(ctx context.Context, backupContent []i
 	if len(terminal) > 0 {
 		h.Log.Info("BackupContent validation failed", "terminalFindings", findingStrings(terminal))
 		return findingStrings(warnings), NewBRFailedValidationError("Backup", findingsMessage(terminal))
+	}
+
+	// No terminal finding is known. If a lookup failed transiently, propagate it so
+	// Prep requeues rather than reporting an incomplete validation as successful.
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	if ruleErr != nil {
+		return nil, ruleErr
 	}
 
 	for _, w := range warnings {
@@ -144,5 +154,25 @@ func AddAnnotationBackupContentWarningValidation(c client.Client, log logr.Logge
 	}
 
 	log.Info("Successfully added annotation", "annotation", BackupContentValidationWarningAnnotation)
+	return nil
+}
+
+// RemoveAnnotationBackupContentWarningValidation removes the BackupContent warning
+// annotation if present, mirroring extramanifest.RemoveAnnotationEMWarningValidation.
+// It is called on the transition back to Idle so a stale warning from a prior Prep
+// is not re-surfaced after the underlying misconfiguration has been fixed.
+func RemoveAnnotationBackupContentWarningValidation(c client.Client, log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) error {
+	if _, exists := ibu.GetAnnotations()[BackupContentValidationWarningAnnotation]; exists {
+		patch := client.MergeFrom(ibu.DeepCopy()) // a merge patch will preserve other fields modified at runtime.
+
+		ann := ibu.GetAnnotations()
+		delete(ann, BackupContentValidationWarningAnnotation)
+		ibu.SetAnnotations(ann)
+
+		if err := c.Patch(context.Background(), ibu, patch); err != nil {
+			return fmt.Errorf("failed to update annotations: %w", err)
+		}
+		log.Info("Successfully removed annotation", "annotation", BackupContentValidationWarningAnnotation)
+	}
 	return nil
 }

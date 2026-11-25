@@ -411,6 +411,15 @@ func (h *BRHandler) validateNamedObjects(ctx context.Context, m *SelectionModel,
 			}
 		}
 		for _, name := range r.entry.Names {
+			if name == "" {
+				// An empty object name is a configuration error: the dynamic client
+				// rejects it locally ("name is required"), which is not a NotFound and
+				// would otherwise be misclassified as a transient API failure and
+				// retried forever. Report it terminally instead.
+				findings = append(findings, terminalFinding(m.SourceName, includedField(r.entry.Scope),
+					fmt.Sprintf("%s contains an empty object name", r.entry.Kind)))
+				continue
+			}
 			if excluded.excludesName(r.gr, name) {
 				continue
 			}

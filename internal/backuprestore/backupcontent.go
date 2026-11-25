@@ -64,13 +64,16 @@ func (h *BRHandler) startBackupFromBackupContent(ctx context.Context, refs []ibu
 	for i := range backupContents {
 		models = append(models, backupContentToSelectionModel(&backupContents[i]))
 	}
+	// Check findings before the error: every Upgrade finding is terminal, so a
+	// finding collected before a later transient API failure must abort the upgrade
+	// rather than requeue (a known-bad selection will never become valid on retry).
 	findings, err := h.ValidateSelectionModels(ctx, models, StageUpgrade)
-	if err != nil {
-		return bt, fmt.Errorf("failed to validate backup content: %w", err)
-	}
 	if len(findings) > 0 {
 		h.Log.Info("BackupContent validation failed at pre-pivot", "findings", findingStrings(findings))
 		return bt, NewBRFailedValidationError("Backup", findingsMessage(findings))
+	}
+	if err != nil {
+		return bt, fmt.Errorf("failed to validate backup content: %w", err)
 	}
 
 	// Build a synthetic BackupSpec per BackupContent so capture is ordered by

@@ -473,6 +473,12 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 			warn := strings.Join(warnings, "; ")
 			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation))
 			if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
+				// A transient API failure (e.g. HTTP 503) saving the warning must not
+				// fail Prep outright: validation only produced warnings, so requeue and
+				// retry the patch. Permanent rejections remain non-retryable.
+				if backuprestore.IsTransientError(err) {
+					return &retryableValidationError{err: fmt.Errorf("transient error saving backup content warning annotation: %w", err)}
+				}
 				return fmt.Errorf("failed to add backup content warning validation annotation: %w", err)
 			}
 		}
@@ -692,6 +698,38 @@ func (r *ImageBasedUpgradeReconciler) handlePrep(ctx context.Context, ibu *ibuv1
 	return prepSuccessDoNotRequeue(r.Log, ibu)
 }
 
+// maxBackupContentNamesLen bounds the validated-BackupContent name list rendered
+// into the PrepCompleted condition message. A condition message accepts at most
+// 32768 characters and spec.backupContent has no maxItems, so without a bound a
+// large list could exceed the limit and the API would reject the status write. The
+// bound leaves ample room for the rest of the message.
+const maxBackupContentNamesLen = 8192
+
+// joinNamesBounded joins names with ", " but keeps the result within maxLen,
+// appending a "(and N more)" summary when the full list would not fit, so the
+// PrepCompleted condition message stays within the condition message limit.
+func joinNamesBounded(names []string, maxLen int) string {
+	full := strings.Join(names, ", ")
+	if len(full) <= maxLen {
+		return full
+	}
+	var b strings.Builder
+	included := 0
+	for _, n := range names {
+		// Reserve room for the trailing summary.
+		if b.Len()+len(n)+2 > maxLen-64 {
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(n)
+		included++
+	}
+	fmt.Fprintf(&b, " (and %d more)", len(names)-included)
+	return b.String()
+}
+
 // prepInProgressRequeue helper function to stop everything when fail detected
 func prepFailDoNotRequeue(log logr.Logger, msg string, ibu *ibuv1.ImageBasedUpgrade) (ctrl.Result, error) {
 	log.Error(fmt.Errorf("prep stage failed"), msg)
@@ -713,7 +751,7 @@ func prepSuccessDoNotRequeue(log logr.Logger, ibu *ibuv1.ImageBasedUpgrade) (ctr
 		for _, ref := range ibu.Spec.BackupContent {
 			names = append(names, ref.Name)
 		}
-		msg = fmt.Sprintf("%s; validated BackupContent: %s", msg, strings.Join(names, ", "))
+		msg = fmt.Sprintf("%s; validated BackupContent: %s", msg, joinNamesBounded(names, maxBackupContentNamesLen))
 	case len(ibu.Spec.OADPContent) == 0:
 		msg = fmt.Sprintf("%s; no application backup configured", msg)
 	}

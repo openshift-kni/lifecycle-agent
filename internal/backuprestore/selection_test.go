@@ -394,6 +394,28 @@ func TestValidateSelectionModelsBC9MissingNamedObject(t *testing.T) {
 	}
 }
 
+// TestValidateSelectionModelsEmptyNamedObject verifies that an empty object name in
+// an included entry is reported as a terminal configuration finding in both stages,
+// rather than reaching the dynamic client (which rejects it locally with "name is
+// required") where it would be misclassified as a transient failure and retried
+// forever.
+func TestValidateSelectionModelsEmptyNamedObject(t *testing.T) {
+	bothStages(t, func(t *testing.T, stage ValidationStage) {
+		h := newValidatorHandler(backupContentDiscovery(), nsObj("app-ns"))
+		models := []SelectionModel{{
+			SourceName: "bc",
+			Namespaces: []string{"app-ns"},
+			Included:   []ResourceEntry{{Kind: "configmaps", Names: []string{""}, Scope: ScopeNamespaced}},
+		}}
+		findings, err := h.ValidateSelectionModels(context.Background(), models, stage)
+		assert.NoError(t, err, "an empty name is a config finding, never a transient error")
+		f := findingWith(findings, "empty object name")
+		if assert.NotNil(t, f, "expected an empty-name finding") {
+			assert.Equal(t, SeverityTerminal, f.Severity)
+		}
+	})
+}
+
 func TestValidateSelectionModelsBC10StructurallyEmpty(t *testing.T) {
 	cases := []struct {
 		stage    ValidationStage

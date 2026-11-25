@@ -159,6 +159,34 @@ func TestValidateBackupContentTransientDiscovery(t *testing.T) {
 	assert.False(t, IsBRFailedValidationError(err), "a transient discovery failure must not be terminal")
 }
 
+// TestValidateBackupContentTerminalFindingSurvivesTransientError verifies that a
+// terminal finding collected before a transient API failure still fails Prep
+// terminally: a missing reference (BC-1) is reported even though discovery then
+// fails transiently, so Prep does not requeue forever on a known-bad config.
+func TestValidateBackupContentTerminalFindingSurvivesTransientError(t *testing.T) {
+	t.Setenv(common.OperatorNamespaceEnvVar, "lca-ns")
+	withFastTransientBackoff(t)
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "present", Namespace: "lca-ns"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+		},
+	}
+	c := newBackupContentTypedClient(t, bc)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme())
+	// Discovery fails transiently, so the shared validator returns a transient error.
+	h := &BRHandler{Client: c, DynamicClient: dc, DiscoveryClient: &fullFailDiscovery{}, Log: logr.Discard()}
+
+	// "absent" is a missing reference (terminal BC-1 finding); "present" resolves.
+	_, err := h.ValidateBackupContent(context.Background(),
+		[]ibuv1.BackupContentRef{{Name: "present"}, {Name: "absent"}})
+	assert.Error(t, err)
+	assert.True(t, IsBRFailedValidationError(err),
+		"a known terminal finding must fail Prep terminally even when a later lookup fails transiently")
+	assert.Contains(t, err.Error(), "absent")
+}
+
 // TestBackupContentIntroducedAfterPrep covers the same invalid BackupContent both
 // when it is present during Prep (a warning, Prep continues) and when the same
 // invalidity is introduced after a successful Prep and caught at Upgrade pre-pivot

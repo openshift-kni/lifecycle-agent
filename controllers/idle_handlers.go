@@ -24,6 +24,7 @@ import (
 	"github.com/openshift-kni/lifecycle-agent/internal/prep"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-kni/lifecycle-agent/internal/backuprestore"
 	"github.com/openshift-kni/lifecycle-agent/internal/extramanifest"
 	"github.com/openshift-kni/lifecycle-agent/internal/ostreeclient"
 	"github.com/openshift-kni/lifecycle-agent/lca-cli/ops"
@@ -178,6 +179,9 @@ func (r *ImageBasedUpgradeReconciler) cleanup(ctx context.Context, ibu *ibuv1.Im
 	r.Log.Info("Removing annotation with warning")
 	if err := extramanifest.RemoveAnnotationEMWarningValidation(r.Client, r.Log, ibu); err != nil {
 		handleError(err, "failed to remove extra manifest warning annotation from IBU")
+	}
+	if err := backuprestore.RemoveAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu); err != nil {
+		handleError(err, "failed to remove backup content warning annotation from IBU")
 	}
 
 	r.Log.Info("Cleaning up backup resources")

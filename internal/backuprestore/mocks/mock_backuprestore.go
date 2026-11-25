@@ -18,7 +18,7 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-//go:generate /home/sandbox/.cache/go-build/fb/fb8961d38250e71d94f352e2fedbee4743b9028e884b10a699a2a51a5389138a-d/mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
+//go:generate mockgen -source ../common.go -destination mock_backuprestore.go -write_generate_directive
 
 // MockBackuperRestorer is a mock of BackuperRestorer interface.
 type MockBackuperRestorer struct {
