@@ -505,8 +505,14 @@ func (r *ImageBasedUpgradeReconciler) validateIBUSpec(ctx context.Context, ibu *
 			// within Kubernetes' total annotation size limit, so a warning-only
 			// selection with many findings does not fail the patch.
 			r.Log.Info(fmt.Sprintf("Adding IBU annotation '%s' with the backup content validation warning", backuprestore.BackupContentValidationWarningAnnotation), "warnings", strings.Join(warnings, "; "))
-			warn := backuprestore.BoundWarningAnnotationValue(ibu, warnings)
-			if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
+			warn, ok := backuprestore.BoundWarningAnnotationValue(ibu, warnings)
+			if !ok {
+				// The IBU's existing annotations leave no room for even the warning key, so
+				// persisting it would exceed Kubernetes' total annotation size limit and
+				// fail the patch. Skip the annotation (the full warnings are logged above)
+				// rather than turning a warning-only Prep into a terminal failure.
+				r.Log.Info("Skipping backup content validation warning annotation: no room within the annotation size limit; warnings logged above")
+			} else if err := backuprestore.AddAnnotationBackupContentWarningValidation(r.Client, r.Log, ibu, warn); err != nil {
 				// A transient (e.g. HTTP 503) or connection-level failure saving the
 				// warning must not fail Prep outright: validation only produced warnings,
 				// so requeue and retry the patch. Permanent rejections stay non-retryable.

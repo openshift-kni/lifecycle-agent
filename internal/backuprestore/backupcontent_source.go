@@ -179,7 +179,12 @@ const maxOmittedSummaryLen = 96
 // appends a count of those omitted; the caller logs the complete list. This keeps
 // a warning-only selection from becoming a terminal Prep failure when the joined
 // warnings would otherwise exceed the annotation size limit.
-func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string) string {
+//
+// The returned bool is false when the IBU's existing annotations leave no room for
+// even the warning key: in that case the caller must skip persisting the annotation
+// (the complete warnings are still logged) so a near-full annotation set cannot turn
+// a warning-only Prep into a terminal patch failure.
+func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string) (string, bool) {
 	used := 0
 	for k, v := range ibu.GetAnnotations() {
 		if k == BackupContentValidationWarningAnnotation {
@@ -187,6 +192,14 @@ func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string
 		}
 		used += len(k) + len(v)
 	}
+
+	// Room left for the warning key plus its value once the IBU's other annotations
+	// are accounted for. If not even the key fits, the annotation cannot be persisted
+	// without exceeding the total annotation size limit, so signal the caller to skip it.
+	if maxTotalAnnotationBytes-used-len(BackupContentValidationWarningAnnotation) <= 0 {
+		return "", false
+	}
+
 	budget := maxTotalAnnotationBytes - used - len(BackupContentValidationWarningAnnotation) - warningAnnotationReserve
 	if budget < 0 {
 		budget = 0
@@ -194,7 +207,7 @@ func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string
 
 	full := strings.Join(warnings, "; ")
 	if len(full) <= budget {
-		return full
+		return full, true
 	}
 
 	var b strings.Builder
@@ -224,7 +237,7 @@ func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string
 		summary = summary[:keep]
 	}
 	b.WriteString(summary)
-	return b.String()
+	return b.String(), true
 }
 
 // RemoveAnnotationBackupContentWarningValidation removes the BackupContent warning
