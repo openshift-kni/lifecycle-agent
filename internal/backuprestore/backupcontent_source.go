@@ -168,6 +168,11 @@ const maxTotalAnnotationBytes = 256 * 1024
 // warning key itself and incidental annotation growth between read and patch.
 const warningAnnotationReserve = 2048
 
+// maxOmittedSummaryLen bounds the trailing "(and N more; see controller log for
+// the full list)" summary appended when not every warning fits the annotation
+// budget, leaving room for the fixed text plus the omitted count's digits.
+const maxOmittedSummaryLen = 96
+
 // BoundWarningAnnotationValue joins the BackupContent validation warnings into a
 // single annotation value that fits within the IBU's remaining annotation budget.
 // When the full list does not fit it keeps as many whole warnings as fit and
@@ -196,7 +201,7 @@ func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string
 	included := 0
 	for _, w := range warnings {
 		// Reserve room for the trailing "(and N more...)" summary.
-		if b.Len()+len(w)+2+96 > budget {
+		if b.Len()+len(w)+2+maxOmittedSummaryLen > budget {
 			break
 		}
 		if b.Len() > 0 {
@@ -205,7 +210,20 @@ func BoundWarningAnnotationValue(ibu *ibuv1.ImageBasedUpgrade, warnings []string
 		b.WriteString(w)
 		included++
 	}
-	fmt.Fprintf(&b, " (and %d more; see controller log for the full list)", len(warnings)-included)
+
+	// Append the omitted-count summary, but never let the result exceed the budget:
+	// when existing annotations leave less room than the summary needs, truncate it
+	// so the persisted value (plus existing annotations) stays within the API size
+	// limit and a warning-only Prep cannot become a terminal failure. The complete
+	// findings are still logged in full by the caller.
+	summary := fmt.Sprintf(" (and %d more; see controller log for the full list)", len(warnings)-included)
+	if keep := budget - b.Len(); len(summary) > keep {
+		if keep < 0 {
+			keep = 0
+		}
+		summary = summary[:keep]
+	}
+	b.WriteString(summary)
 	return b.String()
 }
 

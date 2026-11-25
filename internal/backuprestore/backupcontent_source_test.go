@@ -288,4 +288,24 @@ func TestBoundWarningAnnotationValue(t *testing.T) {
 		assert.LessOrEqual(t, len(got)+used+len(BackupContentValidationWarningAnnotation), maxTotalAnnotationBytes,
 			"persisted warning plus existing annotations must fit the total annotation limit")
 	})
+
+	t.Run("existing annotations leave no room for the omitted summary", func(t *testing.T) {
+		// Existing annotations consume almost the entire budget, so even the
+		// "(and N more...)" summary does not fit. The result must still stay within
+		// the total annotation limit rather than overflowing it and failing the patch.
+		ibu := &ibuv1.ImageBasedUpgrade{ObjectMeta: metav1.ObjectMeta{Name: "upgrade"}}
+		otherKey := "other"
+		// Leave a budget of 40 bytes — smaller than the omitted-count summary itself.
+		otherVal := strings.Repeat("y", maxTotalAnnotationBytes-len(otherKey)-len(BackupContentValidationWarningAnnotation)-warningAnnotationReserve-40)
+		ibu.SetAnnotations(map[string]string{otherKey: otherVal})
+		long := strings.Repeat("z", 512)
+		warnings := make([]string, 0, 100)
+		for i := 0; i < 100; i++ {
+			warnings = append(warnings, long)
+		}
+		got := BoundWarningAnnotationValue(ibu, warnings)
+		used := len(otherKey) + len(otherVal)
+		assert.LessOrEqual(t, len(got)+used+len(BackupContentValidationWarningAnnotation), maxTotalAnnotationBytes,
+			"persisted warning plus existing annotations must fit the total annotation limit even with no room for the summary")
+	})
 }
