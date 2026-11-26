@@ -4,41 +4,13 @@ lockfileVendor: redhat
 arches:
 - arch: aarch64
   packages:
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libblkid-2.37.4-28.el9_9.1.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/r/rsync-3.2.7-4.el9_9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 113696
-    checksum: sha256:e2307632f494302b1884047003c99ec0c9590e77439d1512f61459bb8286ba93
-    name: libblkid
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libmount-2.37.4-28.el9_9.1.aarch64.rpm
-    repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 140796
-    checksum: sha256:946737fb38165fb190c85a74a1523e56ca488da3f2c2adfce68b5c3eaa11d1af
-    name: libmount
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libsmartcols-2.37.4-28.el9_9.1.aarch64.rpm
-    repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 67106
-    checksum: sha256:f1480925e1a0ed0f7096899f8382e200b80c1367d77ed8474e43098a9f85fdcc
-    name: libsmartcols
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libuuid-2.37.4-28.el9_9.1.aarch64.rpm
-    repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 32321
-    checksum: sha256:abb35d21c3b2c791b8c369443f6df1336c4568d8d10de402dce5cb9bd8979e14
-    name: libuuid
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/r/rsync-3.2.7-1.el9_8.aarch64.rpm
-    repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 466719
-    checksum: sha256:77ba6761d7316c4842a350af8bb3da69941634f9253bcbbfeaa7f79237b78261
+    size: 469934
+    checksum: sha256:7f644bf8657ba515bc46e768108fd1fbbc998d183283068e89b3ea8567765b02
     name: rsync
-    evr: 3.2.7-1.el9_8
-    sourcerpm: rsync-3.2.7-1.el9_8.src.rpm
+    evr: 3.2.7-4.el9_9
+    sourcerpm: rsync-3.2.7-4.el9_9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/t/tar-1.34-13.el9_8.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
     size: 909271
@@ -57,41 +29,13 @@ arches:
   module_metadata: []
 - arch: x86_64
   packages:
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libblkid-2.37.4-28.el9_9.1.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/r/rsync-3.2.7-4.el9_9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 114092
-    checksum: sha256:0f72a28d6152ee8f36ad95dd9b7f607defdf324f84be93b976d958efd58011db
-    name: libblkid
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libmount-2.37.4-28.el9_9.1.x86_64.rpm
-    repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 144006
-    checksum: sha256:2404bd69db482d528e8e59d4426b4fb817cb66b9fd31c4a0542334cc02491fb4
-    name: libmount
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libsmartcols-2.37.4-28.el9_9.1.x86_64.rpm
-    repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 68386
-    checksum: sha256:ce3cf13d649ad273be43eb267505a6b6c83ae8637c940da926755b27264169b2
-    name: libsmartcols
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libuuid-2.37.4-28.el9_9.1.x86_64.rpm
-    repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 32439
-    checksum: sha256:b59dbb311df5b4b9c36b758a82ee1dc264837a3ba0bba111996dcf59766f249d
-    name: libuuid
-    evr: 2.37.4-28.el9_9.1
-    sourcerpm: util-linux-2.37.4-28.el9_9.1.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/r/rsync-3.2.7-1.el9_8.x86_64.rpm
-    repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 471331
-    checksum: sha256:c56921bb5c0304fc0e9b7bb8ea1b95cc66a789d2e8c0d1f1ec078433cac4c78f
+    size: 474460
+    checksum: sha256:8ebc873a8f6b35e700305e8b8ddfee032c69c5d88dd7b38db0de30fabfc62418
     name: rsync
-    evr: 3.2.7-1.el9_8
-    sourcerpm: rsync-3.2.7-1.el9_8.src.rpm
+    evr: 3.2.7-4.el9_9
+    sourcerpm: rsync-3.2.7-4.el9_9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/t/tar-1.34-13.el9_8.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
     size: 914200
