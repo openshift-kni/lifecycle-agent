@@ -420,11 +420,13 @@ func (o *ops) prepareSELinuxTar() (string, error) {
 
 	newTarPathInsideChroot, err := common.PathInsideChroot(newTarPath)
 	if err != nil {
+		_ = os.Remove(newTarPath)
 		return "", fmt.Errorf("failed to get path for file %s inside chroot: %w", newTarPath, err)
 	}
 
 	// Set SELinux attribute
 	if _, err := o.hostCommandsExecutor.Execute("chcon", "-t", "install_exec_t", newTarPathInsideChroot); err != nil {
+		_ = os.Remove(newTarPath)
 		return "", fmt.Errorf("failed to set SELinux context install_exec_t to %s: %w", newTarPath, err)
 	}
 	return newTarPath, nil
