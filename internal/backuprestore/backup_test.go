@@ -19,6 +19,7 @@ package backuprestore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -610,6 +611,95 @@ func TestRestorePVsReclaimPolicy(t *testing.T) {
 					assert.Equal(t, expected, pv.Spec.PersistentVolumeReclaimPolicy, "PV %s", pv.Name)
 				}
 			}
+		})
+	}
+}
+
+func TestBRStatusErrorConstructors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		err            *BRStatusError
+		wantType       string
+		wantReason     string
+		wantErrMessage string
+	}{
+		{
+			name:           "NewBRFailedError",
+			err:            NewBRFailedError("Backup", "backup failed"),
+			wantType:       "Backup",
+			wantReason:     "Failed",
+			wantErrMessage: "backup failed",
+		},
+		{
+			name:           "NewBRFailedValidationError",
+			err:            NewBRFailedValidationError("OADP", "validation failed"),
+			wantType:       "OADP",
+			wantReason:     "FailedValidation",
+			wantErrMessage: "validation failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.wantType, tc.err.Type)
+			assert.Equal(t, tc.wantReason, tc.err.Reason)
+			assert.Equal(t, tc.wantErrMessage, tc.err.Error())
+		})
+	}
+}
+
+func TestBRStatusErrorPredicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                     string
+		err                      error
+		wantIsBRFailed           bool
+		wantIsBRFailedValidation bool
+	}{
+		{
+			name:           "BRFailedError with Backup type matches IsBRFailedError",
+			err:            NewBRFailedError("Backup", "msg"),
+			wantIsBRFailed: true,
+		},
+		{
+			name:           "BRFailedError with Restore type matches IsBRFailedError",
+			err:            NewBRFailedError("Restore", "msg"),
+			wantIsBRFailed: true,
+		},
+		{
+			name: "BRFailedError with OADP type does not match IsBRFailedError",
+			err:  NewBRFailedError("OADP", "msg"),
+		},
+		{
+			name:                     "BRFailedValidationError does not match IsBRFailedError",
+			err:                      NewBRFailedValidationError("Backup", "msg"),
+			wantIsBRFailedValidation: true,
+		},
+		{
+			name:           "BRFailedError wrapped with fmt.Errorf still matches IsBRFailedError",
+			err:            fmt.Errorf("wrapped: %w", NewBRFailedError("Backup", "msg")),
+			wantIsBRFailed: true,
+		},
+		{
+			name:                     "BRFailedValidationError wrapped with fmt.Errorf still matches",
+			err:                      fmt.Errorf("wrapped: %w", NewBRFailedValidationError("Restore", "msg")),
+			wantIsBRFailedValidation: true,
+		},
+		{
+			name: "BRFailedError with unknown type does not match any predicate",
+			err:  NewBRFailedError("Unknown", "msg"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.wantIsBRFailed, IsBRFailedError(tc.err))
+			assert.Equal(t, tc.wantIsBRFailedValidation, IsBRFailedValidationError(tc.err))
 		})
 	}
 }
