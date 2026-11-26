@@ -2,6 +2,7 @@ package reboot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,10 @@ import (
 
 var (
 	defaultRebootTimeout = 60 * time.Minute
+
+	// Auto-rollback config file locations, as variables so unit tests can redirect them
+	ibuAutoRollbackConfigFile = common.IBUAutoRollbackConfigFile
+	ipcAutoRollbackConfigFile = common.IPCAutoRollbackConfigFile
 )
 
 const (
@@ -131,7 +136,7 @@ func (c *IBURebootClient) ReadAutoRollbackConfigFile() (*AutoRollbackConfig, err
 		EnabledComponents:  make(map[string]bool),
 	}
 
-	filename := common.PathOutsideChroot(common.IBUAutoRollbackConfigFile)
+	filename := common.PathOutsideChroot(ibuAutoRollbackConfigFile)
 	if _, err := os.Stat(filename); err != nil {
 		return rollbackCfg, fmt.Errorf("unable to find auto-rollback config file (%s): %w", filename, err)
 	}
@@ -249,7 +254,7 @@ func (c *IBURebootClient) InitiateRollback(msg string) error {
 func (c *IBURebootClient) AutoRollbackIfEnabled(component, msg string) {
 	rollbackCfg, err := c.ReadAutoRollbackConfigFile()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			// Config file doesn't exist, so do nothing
 			return
 		}
@@ -294,7 +299,7 @@ func NewIPCRebootClient(log *logr.Logger,
 
 // WriteIPCAutoRollbackConfigFile writes the IP-config auto-rollback configuration
 func WriteIPCAutoRollbackConfigFile(log logr.Logger, ipc *ipcv1.IPConfig, ops ops.Ops) error {
-	cfgfile := common.PathOutsideChroot(common.IPCAutoRollbackConfigFile)
+	cfgfile := common.PathOutsideChroot(ipcAutoRollbackConfigFile)
 
 	monitorTimeout := common.IPCAutoRollbackInitMonitorTimeoutDefaultSeconds
 	if ipc != nil && ipc.Spec.AutoRollbackOnFailure != nil && ipc.Spec.AutoRollbackOnFailure.InitMonitorTimeoutSeconds > 0 {
@@ -353,7 +358,7 @@ func (c *IPCRebootClient) ReadAutoRollbackConfigFile() (*AutoRollbackConfig, err
 		EnabledComponents:  make(map[string]bool),
 	}
 
-	filename := common.PathOutsideChroot(common.IPCAutoRollbackConfigFile)
+	filename := common.PathOutsideChroot(ipcAutoRollbackConfigFile)
 	if _, err := os.Stat(filename); err != nil {
 		return rollbackCfg, fmt.Errorf("unable to find ip-config auto-rollback config file (%s): %w", filename, err)
 	}
@@ -420,7 +425,7 @@ func (c *IPCRebootClient) InitiateRollback(msg string) error {
 func (c *IPCRebootClient) AutoRollbackIfEnabled(component, msg string) {
 	rollbackCfg, err := c.ReadAutoRollbackConfigFile() // reads IPC path
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return
 		}
 		c.log.Info(fmt.Sprintf("Unable to read IPConfig auto-rollback config: %s", err))
