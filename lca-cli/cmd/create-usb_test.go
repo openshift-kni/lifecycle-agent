@@ -17,14 +17,27 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/openshift-kni/lifecycle-agent/api/seedreconfig"
+	"github.com/openshift-kni/lifecycle-agent/lca-cli/createusb"
 )
 
 const (
@@ -197,4 +210,193 @@ func TestCreateUsbInvalidManifestFailsValidation(t *testing.T) {
 	err := runCreateUsbCmd(t, "--manifest", manifest, "--output", "/tmp/out.img")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "manifest validation failed")
+}
+
+func TestCredentialsOutputDir(t *testing.T) {
+	// The default credentials directory must key off the full output image file name so distinct
+	// images built into the same parent directory do not overwrite each other's credentials. The
+	// extension is kept, not stripped.
+	assert.Equal(t, filepath.Join("out", "cluster-a.img-credentials"), credentialsOutputDir(filepath.Join("out", "cluster-a.img")))
+	assert.Equal(t, filepath.Join("out", "cluster-b.img-credentials"), credentialsOutputDir(filepath.Join("out", "cluster-b.img")))
+
+	// Two distinct images in the same parent directory resolve to distinct credential directories.
+	a := credentialsOutputDir(filepath.Join("out", "cluster-a.img"))
+	b := credentialsOutputDir(filepath.Join("out", "cluster-b.img"))
+	assert.NotEqual(t, a, b)
+
+	// An .img extension is not enforced, so an output with the extension and one without it must
+	// still resolve to distinct credential directories (stripping the extension would collide them).
+	withExt := credentialsOutputDir(filepath.Join("out", "cluster-a.img"))
+	withoutExt := credentialsOutputDir(filepath.Join("out", "cluster-a"))
+	assert.NotEqual(t, withExt, withoutExt)
+	assert.Equal(t, filepath.Join("out", "cluster-a-credentials"), withoutExt)
+
+	// No output file path (device target) falls back to a fixed local directory.
+	assert.Equal(t, "credentials", credentialsOutputDir(""))
+}
+
+func TestExistingCredentialArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	assert.Empty(t, existingCredentialArtifacts(dir))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, createusb.KubeconfigArtifactName), []byte("x"), 0o600))
+	got := existingCredentialArtifacts(dir)
+	require.Len(t, got, 1)
+	assert.Equal(t, filepath.Join(dir, createusb.KubeconfigArtifactName), got[0])
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, createusb.KubeadminPasswordArtifactName), []byte("y"), 0o600))
+	assert.Len(t, existingCredentialArtifacts(dir), 2)
+}
+
+func TestResolveOverwriteConsent(t *testing.T) {
+	// The force branch logs via the package logger; initialize it as Execute() would.
+	log.SetFormatter(&logrus.TextFormatter{})
+	log.SetOutput(io.Discard)
+
+	existing := []string{"/creds/kubeconfig"}
+
+	t.Run("force overwrites without prompting", func(t *testing.T) {
+		proceed, err := resolveOverwriteConsent("/creds", existing, true, false, strings.NewReader(""))
+		require.NoError(t, err)
+		assert.True(t, proceed)
+	})
+	t.Run("non-interactive without force is refused", func(t *testing.T) {
+		proceed, err := resolveOverwriteConsent("/creds", existing, false, false, strings.NewReader(""))
+		require.Error(t, err)
+		assert.False(t, proceed)
+		assert.Contains(t, err.Error(), "--force")
+	})
+	t.Run("interactive yes proceeds", func(t *testing.T) {
+		for _, answer := range []string{"y\n", "yes\n", "Y\n"} {
+			proceed, err := resolveOverwriteConsent("/creds", existing, false, true, strings.NewReader(answer))
+			require.NoError(t, err, answer)
+			assert.True(t, proceed, answer)
+		}
+	})
+	t.Run("interactive no or empty declines", func(t *testing.T) {
+		for _, answer := range []string{"n\n", "\n", ""} {
+			proceed, err := resolveOverwriteConsent("/creds", existing, false, true, strings.NewReader(answer))
+			require.NoError(t, err, answer)
+			assert.False(t, proceed, answer)
+		}
+	})
+}
+
+// cmdValidKubeadminPasswordHash is a syntactically valid bcrypt hash the manifest validator accepts.
+const cmdValidKubeadminPasswordHash = "$2a$04$Ykm0CxvKvwedKPDc2j8xVe.ztV1L17ZRF.OJYFRIUtSoDyBGWWg7O"
+
+// fakeGenerator is a command-test CredentialGenerator that returns a canned identity bundle, so the
+// command's self-contained generation path is exercised without oc or openshift-install.
+type fakeGenerator struct {
+	result *createusb.GeneratedCredentials
+	err    error
+}
+
+func (f *fakeGenerator) Generate(_ context.Context, _ *logrus.Logger, _ createusb.CredentialInputs) (*createusb.GeneratedCredentials, error) {
+	return f.result, f.err
+}
+
+// validCmdCryptoRetention builds a kubeconfigCryptoRetention whose PEMs parse, so a manifest populated
+// with it passes Validate. One EC key and one self-signed cert are reused across the fields.
+func validCmdCryptoRetention(t *testing.T) seedreconfig.KubeConfigCryptoRetention {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := seedreconfig.PEM(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-ca"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	certPEM := seedreconfig.PEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+
+	return seedreconfig.KubeConfigCryptoRetention{
+		KubeAPICrypto: seedreconfig.KubeAPICrypto{
+			ServingCrypto: seedreconfig.ServingCrypto{
+				LoadbalancerSignerPrivateKey:   keyPEM,
+				LocalhostSignerPrivateKey:      keyPEM,
+				ServiceNetworkSignerPrivateKey: keyPEM,
+			},
+			ClientAuthCrypto: seedreconfig.ClientAuthCrypto{AdminCACertificate: certPEM},
+		},
+		IngresssCrypto: seedreconfig.IngresssCrypto{
+			IngressCAPrivateKey:  keyPEM,
+			IngressCertificateCN: "ingress-operator@test",
+		},
+	}
+}
+
+// selfContainedNoReleaseVersionYAML returns a self-contained manifest that omits releaseVersion and
+// the credential material, so the command must mint the identity and default releaseVersion from the
+// seed before validation.
+func selfContainedNoReleaseVersionYAML() string {
+	return `mode: self-contained
+seedImage: quay.io/example/seed@sha256:` + testSHA256 + `
+seedVersion: 4.20.0
+installationDisk: /dev/disk/by-id/ata-example
+disconnected: true
+shutdown: false
+rhcosLiveIso:
+  url: https://example.com/rhcos-live.x86_64.iso
+  sha256: ` + testSHA256 + `
+clusterManifests:
+  - path: manifests/cluster.yaml
+siteConfig:
+  clusterName: example
+  baseDomain: example.com
+  hostname: node0
+  pullSecret: '` + testValidPullSec + `'
+`
+}
+
+// TestCreateUsbSelfContainedDefaultsReleaseVersionFromSeed proves the end-to-end wiring for a
+// self-contained manifest that omits releaseVersion: the generator mints the identity, the
+// seed-derived release version is written back, and validation then passes (the command reaches Build,
+// which defers --write-device). The injected fake stands in for the seed-derived metadata.
+func TestCreateUsbSelfContainedDefaultsReleaseVersionFromSeed(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "m.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte(selfContainedNoReleaseVersionYAML()), 0o600))
+
+	var gotCfg createusb.InstallerConfig
+	orig := newCredentialGenerator
+	t.Cleanup(func() { newCredentialGenerator = orig })
+	newCredentialGenerator = func(_ *logrus.Logger, cfg createusb.InstallerConfig) createusb.CredentialGenerator {
+		gotCfg = cfg
+		return &fakeGenerator{result: &createusb.GeneratedCredentials{
+			KubeadminPasswordHash:     cmdValidKubeadminPasswordHash,
+			KubeconfigCryptoRetention: validCmdCryptoRetention(t),
+			Kubeconfig:                []byte("kc"),
+			KubeadminPassword:         []byte("pw"),
+			ReleaseVersion:            "4.20.0",
+		}}
+	}
+
+	// --write-device reaches Build (rejected there without a privileged op), so the deferral error proves
+	// the manifest passed validation after the seed-derived releaseVersion was written back.
+	err := runCreateUsbCmd(t, "--manifest", manifest, "--write-device", "/dev/sdx", "--credentials-dir", t.TempDir())
+	assert.ErrorContains(t, err, "--write-device is not yet supported")
+
+	// The generator is wired to derive the release image from the seed: the seed image is passed and no
+	// explicit --release-image or releaseVersion override is set.
+	assert.Equal(t, "quay.io/example/seed@sha256:"+testSHA256, gotCfg.SeedImage)
+	assert.Empty(t, gotCfg.ReleaseImage)
+	assert.Empty(t, gotCfg.ReleaseVersion)
+}
+
+func TestResolveCredentialsDir(t *testing.T) {
+	// An explicit --credentials-dir always wins over the per-output default.
+	opts := createUsbOptions{outputPath: filepath.Join("out", "cluster-a.img"), credentialsDir: filepath.Join("custom", "creds")}
+	assert.Equal(t, filepath.Join("custom", "creds"), resolveCredentialsDir(opts))
+
+	// With no override, it falls back to the per-output default (credentialsOutputDir). The pre-build
+	// preflight and the post-build publish must resolve to the same directory.
+	opts = createUsbOptions{outputPath: filepath.Join("out", "cluster-a.img")}
+	assert.Equal(t, credentialsOutputDir(filepath.Join("out", "cluster-a.img")), resolveCredentialsDir(opts))
+	assert.Equal(t, filepath.Join("out", "cluster-a.img-credentials"), resolveCredentialsDir(opts))
 }
