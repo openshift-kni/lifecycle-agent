@@ -39,6 +39,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -997,6 +998,10 @@ func prepareServiceForRestore(resource *unstructured.Unstructured) {
 
 	unstructured.RemoveNestedField(resource.Object, "spec", "healthCheckNodePort")
 
+	// Clear auto-assigned nodePorts while preserving the ones the user explicitly
+	// assigned, mirroring Velero's default restore behavior. A reallocated nodePort
+	// would break firewall rules and external tooling that reference the original.
+	explicitNames, explicitUnnamed := explicitlyAssignedNodePorts(resource)
 	ports, found, _ := unstructured.NestedSlice(resource.Object, "spec", "ports")
 	if found {
 		for i, p := range ports {
@@ -1004,7 +1009,15 @@ func prepareServiceForRestore(resource *unstructured.Unstructured) {
 			if !ok {
 				continue
 			}
-			delete(port, "nodePort")
+			keep := false
+			if name, hasName, _ := unstructured.NestedString(port, "name"); hasName && name != "" {
+				keep = explicitNames.Has(name)
+			} else if nodePort, ok := nodePortValue(port); ok {
+				keep = explicitUnnamed.Has(nodePort)
+			}
+			if !keep {
+				delete(port, "nodePort")
+			}
 			ports[i] = port
 		}
 		_ = unstructured.SetNestedSlice(resource.Object, ports, "spec", "ports")
@@ -1013,6 +1026,174 @@ func prepareServiceForRestore(resource *unstructured.Unstructured) {
 	svcType, _, _ := unstructured.NestedString(resource.Object, "spec", "type")
 	if svcType == "LoadBalancer" {
 		unstructured.RemoveNestedField(resource.Object, "spec", "externalIPs")
+	}
+}
+
+// explicitlyAssignedNodePorts reports which Service nodePorts were explicitly
+// assigned by the user, so prepareServiceForRestore can preserve them rather than
+// clear them for reallocation. It mirrors the detection in Velero's deleteNodePorts
+// (pkg/restore/actions/service_action.go, velero v1.18.4): explicit ports are read
+// from the kubectl.kubernetes.io/last-applied-configuration annotation when present,
+// and otherwise from metadata.managedFields (server-side apply). Named ports are
+// reported by name and unnamed ports by their nodePort value. Malformed or missing
+// metadata is treated as "no explicit ports" so a restore never fails on it.
+func explicitlyAssignedNodePorts(resource *unstructured.Unstructured) (names sets.Set[string], unnamed sets.Set[int]) {
+	names = sets.New[string]()
+	unnamed = sets.New[int]()
+
+	if lastApplied, ok := resource.GetAnnotations()["kubectl.kubernetes.io/last-applied-configuration"]; ok {
+		collectLastAppliedNodePorts(lastApplied, names, unnamed)
+		return names, unnamed
+	}
+
+	// Annotation absent: fall back to managedFields (server-side apply), matching Velero.
+	collectManagedFieldsNodePorts(resource, names, unnamed)
+	return names, unnamed
+}
+
+// collectLastAppliedNodePorts records the explicitly assigned nodePorts declared in a
+// kubectl.kubernetes.io/last-applied-configuration annotation value.
+func collectLastAppliedNodePorts(lastApplied string, names sets.Set[string], unnamed sets.Set[int]) {
+	var applied map[string]interface{}
+	if err := json.Unmarshal([]byte(lastApplied), &applied); err != nil {
+		return
+	}
+	ports, found, err := unstructured.NestedSlice(applied, "spec", "ports")
+	if err != nil || !found {
+		return
+	}
+	for _, p := range ports {
+		port, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Kubernetes treats nodePort: 0 as a request for automatic allocation, so
+		// only a positive value counts as an explicit assignment. A zero (or absent)
+		// value degrades to clearing the live nodePort for reallocation.
+		if nodePort, ok := nodePortValue(port); !ok || nodePort <= 0 {
+			continue
+		}
+		recordExplicitNodePort(port, names, unnamed)
+	}
+}
+
+// collectManagedFieldsNodePorts records the explicitly assigned nodePorts tracked in
+// metadata.managedFields (set via server-side apply), correlating each managed port
+// entry back to the live spec.ports to recover its name or nodePort value.
+func collectManagedFieldsNodePorts(resource *unstructured.Unstructured, names sets.Set[string], unnamed sets.Set[int]) {
+	livePorts, _, _ := unstructured.NestedSlice(resource.Object, "spec", "ports")
+	managedFields, found, _ := unstructured.NestedSlice(resource.Object, "metadata", "managedFields")
+	if !found {
+		return
+	}
+	for _, mf := range managedFields {
+		entry, ok := mf.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fieldsV1, ok, _ := unstructured.NestedMap(entry, "fieldsV1")
+		if !ok {
+			continue
+		}
+		portFields, ok, err := unstructured.NestedMap(fieldsV1, "f:spec", "f:ports")
+		if err != nil || !ok {
+			continue
+		}
+		for key, v := range portFields {
+			recordManagedFieldNodePort(key, v, livePorts, names, unnamed)
+		}
+	}
+}
+
+// recordManagedFieldNodePort inspects a single metadata.managedFields f:spec.f:ports
+// entry and, when it manages a nodePort, records the matching live port as explicit.
+// The key encodes the port's list-map identity, e.g. k:{"port":443,"protocol":"TCP"};
+// it is correlated to the live port by port+protocol.
+func recordManagedFieldNodePort(key string, value interface{}, livePorts []interface{}, names sets.Set[string], unnamed sets.Set[int]) {
+	if key == "." || !strings.HasPrefix(key, "k:") {
+		return
+	}
+	fieldMap, ok := value.(map[string]interface{})
+	if !ok {
+		return
+	}
+	if _, ok := fieldMap["f:nodePort"]; !ok {
+		return
+	}
+	var portKey map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(key, "k:")), &portKey); err != nil {
+		return
+	}
+	keyPort, ok := numericValue(portKey["port"])
+	if !ok {
+		return
+	}
+	keyProtocol, _ := portKey["protocol"].(string)
+	if keyProtocol == "" {
+		keyProtocol = "TCP"
+	}
+	for _, p := range livePorts {
+		livePort, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		specPort, ok := numericValue(livePort["port"])
+		if !ok || specPort != keyPort {
+			continue
+		}
+		protocol, _, _ := unstructured.NestedString(livePort, "protocol")
+		if protocol == "" {
+			protocol = "TCP"
+		}
+		if protocol != keyProtocol {
+			continue
+		}
+		recordExplicitNodePort(livePort, names, unnamed)
+		return
+	}
+}
+
+// recordExplicitNodePort records a Service port as explicitly assigned: by name when
+// the port is named, otherwise by its nodePort value.
+func recordExplicitNodePort(port map[string]interface{}, names sets.Set[string], unnamed sets.Set[int]) {
+	if name, hasName, _ := unstructured.NestedString(port, "name"); hasName && name != "" {
+		names.Insert(name)
+	} else if nodePort, ok := nodePortValue(port); ok {
+		unnamed.Insert(nodePort)
+	}
+}
+
+// nodePortValue returns the integer nodePort of an unstructured Service port entry
+// and whether it is present.
+func nodePortValue(port map[string]interface{}) (int, bool) {
+	np, found := port["nodePort"]
+	if !found {
+		return 0, false
+	}
+	return numericValue(np)
+}
+
+// numericValue coerces a numeric unstructured value to an int. Numbers may be
+// decoded as int64, float64, int32, int, or a numeric string depending on the
+// source (JSON annotation, managedFields key, or live object).
+func numericValue(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case int:
+		return n, true
+	case string:
+		i, err := strconv.Atoi(n)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
 	}
 }
 

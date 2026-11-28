@@ -18,6 +18,7 @@ package backuprestore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -247,6 +248,533 @@ func TestStripRestoreMetadata(t *testing.T) {
 	assert.Equal(t, "{}", annotations["kubectl.kubernetes.io/last-applied-configuration"],
 		"last-applied-configuration annotation must be preserved on restore")
 	assert.Equal(t, "yes", annotations["custom.io/keep"])
+}
+
+// svcPort builds an unstructured Service port entry. A zero nodePort or an empty
+// name/protocol is omitted so the fixture matches how such ports are serialized.
+func svcPort(name string, port, nodePort int, protocol string) map[string]interface{} {
+	p := map[string]interface{}{"port": int64(port)}
+	if name != "" {
+		p["name"] = name
+	}
+	if nodePort != 0 {
+		p["nodePort"] = int64(nodePort)
+	}
+	if protocol != "" {
+		p["protocol"] = protocol
+	}
+	return p
+}
+
+// lastAppliedConfig renders the kubectl.kubernetes.io/last-applied-configuration
+// annotation value for a Service with the given ports.
+func lastAppliedConfig(t *testing.T, ports ...map[string]interface{}) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"spec":       map[string]interface{}{"ports": ports},
+	})
+	assert.NoError(t, err)
+	return string(raw)
+}
+
+// servicePorts returns the restored spec.ports keyed by port name, falling back to
+// "port-<port>" for unnamed ports, so tests can assert per-port nodePort handling.
+func servicePorts(t *testing.T, resource *unstructured.Unstructured) map[string]map[string]interface{} {
+	t.Helper()
+	ports, _, _ := unstructured.NestedSlice(resource.Object, "spec", "ports")
+	out := map[string]map[string]interface{}{}
+	for _, p := range ports {
+		pm, ok := p.(map[string]interface{})
+		assert.True(t, ok)
+		key, _ := pm["name"].(string)
+		if key == "" {
+			key = fmt.Sprintf("port-%v", pm["port"])
+		}
+		out[key] = pm
+	}
+	return out
+}
+
+// TestPrepareServiceForRestoreNodePorts verifies that explicitly assigned nodePorts
+// are preserved on restore (detected from last-applied-configuration or managedFields)
+// while auto-assigned nodePorts are cleared for reallocation.
+func TestPrepareServiceForRestoreNodePorts(t *testing.T) {
+	t.Run("explicit named nodePort in last-applied-configuration is preserved", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						svcPort("https", 443, 30443, "TCP")),
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30443), ports["https"]["nodePort"],
+			"explicit nodePort from last-applied-configuration must be preserved")
+	})
+
+	t.Run("named port with nodePort: 0 in last-applied-configuration is reallocated", func(t *testing.T) {
+		// Kubernetes treats nodePort: 0 as a request for automatic allocation, so the
+		// live allocated nodePort must be cleared rather than recorded as explicit.
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						map[string]interface{}{
+							"name":     "https",
+							"port":     int64(443),
+							"protocol": "TCP",
+							"nodePort": int64(0),
+						}),
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present,
+			"nodePort: 0 in last-applied-configuration requests reallocation, so the live nodePort must be removed")
+	})
+
+	t.Run("explicit named nodePort recorded only in managedFields is preserved", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									".": map[string]interface{}{},
+									`k:{"port":443,"protocol":"TCP"}`: map[string]interface{}{
+										".":          map[string]interface{}{},
+										"f:name":     map[string]interface{}{},
+										"f:nodePort": map[string]interface{}{},
+										"f:port":     map[string]interface{}{},
+										"f:protocol": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30443), ports["https"]["nodePort"],
+			"explicit nodePort from managedFields must be preserved")
+	})
+
+	t.Run("nodePort in neither source is removed", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata":   map[string]interface{}{"name": "svc", "namespace": "ns"},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present, "auto-assigned nodePort must be removed for reallocation")
+	})
+
+	t.Run("unnamed explicit port preserved by value, unnamed auto-assigned removed", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						svcPort("", 80, 30080, "TCP")),
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("", 80, 30080, "TCP"),
+					svcPort("", 81, 31081, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30080), ports["port-80"]["nodePort"],
+			"unnamed explicit nodePort must be preserved by value")
+		_, present := ports["port-81"]["nodePort"]
+		assert.False(t, present, "unnamed auto-assigned nodePort must be removed")
+	})
+
+	t.Run("unnamed port explicit only in managedFields is preserved", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									".": map[string]interface{}{},
+									`k:{"port":80,"protocol":"TCP"}`: map[string]interface{}{
+										".":          map[string]interface{}{},
+										"f:nodePort": map[string]interface{}{},
+										"f:port":     map[string]interface{}{},
+										"f:protocol": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("", 80, 30080, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30080), ports["port-80"]["nodePort"],
+			"unnamed explicit nodePort from managedFields must be preserved")
+	})
+
+	t.Run("managedFields port without f:nodePort is removed", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									".": map[string]interface{}{},
+									// Managed but without f:nodePort: the port was declared
+									// by the user but its nodePort was auto-assigned.
+									`k:{"port":443,"protocol":"TCP"}`: map[string]interface{}{
+										".":      map[string]interface{}{},
+										"f:name": map[string]interface{}{},
+										"f:port": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present, "nodePort not tracked in managedFields must be removed")
+	})
+
+	t.Run("duplicate port number distinguished by protocol", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									".": map[string]interface{}{},
+									// Only the TCP port's nodePort is explicitly managed.
+									`k:{"port":53,"protocol":"TCP"}`: map[string]interface{}{
+										".":          map[string]interface{}{},
+										"f:name":     map[string]interface{}{},
+										"f:nodePort": map[string]interface{}{},
+										"f:port":     map[string]interface{}{},
+										"f:protocol": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("dns-tcp", 53, 30053, "TCP"),
+					svcPort("dns-udp", 53, 31053, "UDP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30053), ports["dns-tcp"]["nodePort"],
+			"the TCP port with a managed nodePort must be preserved")
+		_, present := ports["dns-udp"]["nodePort"]
+		assert.False(t, present, "the UDP port sharing the port number must be reallocated")
+	})
+
+	t.Run("last-applied-configuration takes precedence over managedFields", func(t *testing.T) {
+		// Annotation present but does not declare a nodePort for the port, while
+		// managedFields does. Velero consults managedFields only when the annotation
+		// is absent, so the nodePort must still be removed.
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						svcPort("https", 443, 0, "TCP")),
+				},
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									`k:{"port":443,"protocol":"TCP"}`: map[string]interface{}{
+										"f:nodePort": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present,
+			"managedFields must be ignored when the annotation is present")
+	})
+
+	t.Run("malformed metadata degrades to strip-all without error", func(t *testing.T) {
+		// Invalid annotation JSON.
+		badAnnotation := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": "{not-json",
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports":     []interface{}{svcPort("https", 443, 30443, "TCP")},
+			},
+		}}
+
+		assert.NotPanics(t, func() { prepareServiceForRestore(badAnnotation) })
+		ports := servicePorts(t, badAnnotation)
+		_, present := ports["https"]["nodePort"]
+		assert.False(t, present, "malformed annotation must fall back to removing nodePorts")
+
+		// Malformed managedFields key.
+		badManagedFields := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"managedFields": []interface{}{
+					map[string]interface{}{
+						"manager": "kubectl",
+						"fieldsV1": map[string]interface{}{
+							"f:spec": map[string]interface{}{
+								"f:ports": map[string]interface{}{
+									`k:{bad-json`: map[string]interface{}{
+										"f:nodePort": map[string]interface{}{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports":     []interface{}{svcPort("https", 443, 30443, "TCP")},
+			},
+		}}
+
+		assert.NotPanics(t, func() { prepareServiceForRestore(badManagedFields) })
+		ports = servicePorts(t, badManagedFields)
+		_, present = ports["https"]["nodePort"]
+		assert.False(t, present, "malformed managedFields key must be skipped, not preserved")
+	})
+
+	t.Run("mixed service keeps only the explicit port", func(t *testing.T) {
+		resource := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      "svc",
+				"namespace": "ns",
+				"annotations": map[string]interface{}{
+					"kubectl.kubernetes.io/last-applied-configuration": lastAppliedConfig(t,
+						svcPort("https", 443, 30443, "TCP")),
+				},
+			},
+			"spec": map[string]interface{}{
+				"clusterIP": "10.0.0.1",
+				"type":      "NodePort",
+				"ports": []interface{}{
+					svcPort("https", 443, 30443, "TCP"),
+					svcPort("metrics", 9090, 32090, "TCP"),
+				},
+			},
+		}}
+
+		prepareServiceForRestore(resource)
+
+		ports := servicePorts(t, resource)
+		assert.EqualValues(t, int64(30443), ports["https"]["nodePort"],
+			"explicit nodePort must be preserved")
+		_, present := ports["metrics"]["nodePort"]
+		assert.False(t, present, "auto-assigned nodePort on the same Service must be removed")
+	})
+}
+
+// TestPrepareServiceForRestoreUnchangedFields verifies that the nodePort change does
+// not regress the existing clusterIP, headless, healthCheckNodePort, and
+// LoadBalancer externalIPs handling.
+func TestPrepareServiceForRestoreUnchangedFields(t *testing.T) {
+	resource := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata":   map[string]interface{}{"name": "svc", "namespace": "ns"},
+		"spec": map[string]interface{}{
+			"clusterIP":           "10.0.0.1",
+			"clusterIPs":          []interface{}{"10.0.0.1"},
+			"healthCheckNodePort": int64(32000),
+			"externalIPs":         []interface{}{"1.2.3.4"},
+			"type":                "LoadBalancer",
+			"ports":               []interface{}{svcPort("https", 443, 30443, "TCP")},
+		},
+	}}
+
+	prepareServiceForRestore(resource)
+
+	_, present, _ := unstructured.NestedString(resource.Object, "spec", "clusterIP")
+	assert.False(t, present, "non-headless clusterIP must be cleared on restore")
+	_, present, _ = unstructured.NestedSlice(resource.Object, "spec", "clusterIPs")
+	assert.False(t, present, "clusterIPs must be cleared on restore")
+	_, present, _ = unstructured.NestedInt64(resource.Object, "spec", "healthCheckNodePort")
+	assert.False(t, present, "healthCheckNodePort must still be removed on restore")
+	_, present, _ = unstructured.NestedSlice(resource.Object, "spec", "externalIPs")
+	assert.False(t, present, "LoadBalancer externalIPs must be removed on restore")
+
+	// Headless services keep their clusterIP/clusterIPs.
+	headless := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata":   map[string]interface{}{"name": "svc", "namespace": "ns"},
+		"spec": map[string]interface{}{
+			"clusterIP":  "None",
+			"clusterIPs": []interface{}{"None"},
+			"type":       "ClusterIP",
+		},
+	}}
+
+	prepareServiceForRestore(headless)
+
+	clusterIP, present, _ := unstructured.NestedString(headless.Object, "spec", "clusterIP")
+	assert.True(t, present)
+	assert.Equal(t, "None", clusterIP, "headless clusterIP must be preserved")
 }
 
 // TestRestoreResourceEntryStatusGating verifies that status is restored only when
