@@ -59,8 +59,56 @@ The referenced `BackupContent` CRs are resolved **by name in LCA's install
 namespace** (the references carry no namespace), the same way
 `seedImageRef.pullSecretRef` is resolved. A reference that does not resolve there
 is a terminal Upgrade failure before the pivot — which also makes a hub/spoke
-namespace mismatch loud. Prep does not validate the referenced CRs. The engine
-reads them at Upgrade pre-pivot and backs up what is present at that time.
+namespace mismatch loud.
+
+LCA validates `spec.backupContent` in two places. During **Prep** the referenced
+CRs are resolved and validated read-only, so most misconfiguration is caught
+before the upgrade window; Prep reports every finding it can determine in a single
+pass rather than one per reconcile. During **Upgrade pre-pivot** the CRs are read
+again and re-validated, because the referenced CRs and the objects they select can
+change after Prep. The same rules run in both stages; only their severity differs
+(see below).
+
+### What is validated, and what is rejected
+
+The following are **terminal in both Prep and Upgrade** (Prep sets
+`PrepInProgress=False` with reason `Failed`; Upgrade sets `UpgradeInProgress=False`
+with reason `Failed` and leaves the original stateroot active):
+
+- A `spec.backupContent[].name` that does not resolve to an existing
+  `BackupContent` in LCA's install namespace.
+- An included or excluded kind that does not resolve to exactly one API resource:
+  an unknown kind, a bare name that is ambiguous across API groups (the error
+  names the groups and asks for `<resource>.<group>`), or a kind that cannot be
+  confirmed because discovery is incomplete.
+- A kind listed under the wrong scope: a cluster-scoped kind in
+  `namespacedResources`/`excludedNamespacedResources`, or a namespaced kind in
+  `clusterScopedResources`/`excludedClusterScopedResources`.
+- A namespaced selection with no namespace to search — an empty `spec.namespaces`
+  list, or an empty namespace entry.
+- A syntactically invalid `spec.labelSelector`. (A valid selector that matches
+  zero objects is **not** an error.)
+- A misspelled, unresolvable, or ambiguous exclusion. An exclusion is never
+  silently dropped.
+
+The following are a **Prep warning (Prep still completes)** but **terminal at
+Upgrade pre-pivot** if still true when the backup runs:
+
+- A declared namespace in `spec.namespaces` that does not exist.
+- An explicitly named, non-excluded included object that does not exist in any
+  declared scope.
+- A `BackupContent` whose selection is structurally empty after exclusions (for
+  example every included kind is excluded, or no effective include is configured).
+  A valid selector that happens to match zero live objects is not this case.
+
+A transient discovery or API failure during validation is not treated as a
+configuration error: Prep requeues (it does not fail), and Upgrade pre-pivot
+requeues through the existing retry path.
+
+When neither `spec.backupContent` nor `spec.oadpContent` is configured, Prep
+completes and reports `no application backup configured`. When `spec.backupContent`
+is configured, the `PrepCompleted` message names the validated CRs; validation
+warnings are recorded on the IBU and referenced from that message.
 
 The engine honours the `BackupContent` field semantics as follows:
 

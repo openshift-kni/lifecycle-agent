@@ -453,6 +453,57 @@ func TestFetchResourcesFromBackupContentAmbiguousExclusionFailsBackup(t *testing
 	assert.Contains(t, err.Error(), "ambiguous")
 }
 
+// TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup verifies that
+// an exclusion kind that cannot be resolved (a typo) fails the backup instead of
+// being silently skipped, so an object the administrator intended to exclude is not
+// backed up and restored.
+func TestFetchResourcesFromBackupContentUnresolvableExclusionFailsBackup(t *testing.T) {
+	ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
+	cm := newUnstructuredWithLabels("ConfigMap", "cm", "app-ns", nil)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns, cm)
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "unresolvable-exclusion"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+			ExcludedNamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "configmapz"}, // misspelled -> unresolvable
+			},
+		},
+	}
+	_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "configmapz")
+	assert.Contains(t, err.Error(), "exclusion")
+}
+
+// TestFetchResourcesFromBackupContentWrongScopeExclusionFailsBackup verifies that
+// an exclusion listed under the wrong scope (a cluster-scoped kind in
+// excludedNamespacedResources) fails the backup instead of being silently
+// ineffective.
+func TestFetchResourcesFromBackupContentWrongScopeExclusionFailsBackup(t *testing.T) {
+	ns := newUnstructuredWithLabels("Namespace", "app-ns", "", nil)
+	dc := dynamicfake.NewSimpleDynamicClient(backupContentDynScheme(), ns)
+	h := &BRHandler{DynamicClient: dc, DiscoveryClient: backupContentDiscovery(), Log: logr.Discard()}
+
+	bc := &backupcontentv1.BackupContent{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-scope-exclusion"},
+		Spec: backupcontentv1.BackupContentSpec{
+			Namespaces:          []string{"app-ns"},
+			NamespacedResources: []backupcontentv1.ResourceSelector{{Kind: "configmaps"}},
+			ExcludedNamespacedResources: []backupcontentv1.ResourceSelector{
+				{Kind: "persistentvolumes"}, // cluster-scoped kind in the namespaced excluded list
+			},
+		},
+	}
+	_, err := h.fetchResourcesFromBackupContent(context.Background(), bc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "persistentvolumes")
+	assert.Contains(t, err.Error(), "cluster-scoped per discovery")
+}
+
 // TestFetchResourcesFromBackupContentNamespacedWithoutNamespaces verifies that an
 // unnamed namespaced entry with no in-scope namespaces is rejected rather than
 // silently recording an empty backup as successful, matching the oadpContent path.

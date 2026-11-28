@@ -103,6 +103,7 @@ var (
 // BackuperRestorer interface also used for mocks
 type BackuperRestorer interface {
 	ValidateBackupConfigmaps(ctx context.Context, content []ibuv1.ConfigMapRef) error
+	ValidateBackupContent(ctx context.Context, backupContent []ibuv1.BackupContentRef) ([]string, error)
 	StartBackup(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*BackupTracker, error)
 	StartRestore(ctx context.Context, oadpContent []ibuv1.ConfigMapRef, backupContent []ibuv1.BackupContentRef) (*RestoreTracker, error)
 	MarkRestoreCompleted(ctx context.Context) error

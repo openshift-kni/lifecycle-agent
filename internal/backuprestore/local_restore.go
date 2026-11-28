@@ -392,7 +392,7 @@ func (h *BRHandler) applyStatusSubresource(ctx context.Context, resource *unstru
 	if err == nil {
 		return nil
 	}
-	if !isTransientError(err) {
+	if !IsTransientError(err) {
 		return err
 	}
 	h.Log.Info("Transient error during status restore, retrying with backoff",
@@ -426,7 +426,7 @@ func (h *BRHandler) applyResource(ctx context.Context, resource *unstructured.Un
 		return nil
 	}
 
-	if !isTransientError(err) {
+	if !IsTransientError(err) {
 		return err
 	}
 
@@ -663,7 +663,10 @@ func (h *BRHandler) createOrUpdateResource(ctx context.Context, ri dynamic.Resou
 	return updateErr //nolint:wrapcheck
 }
 
-func isTransientError(err error) bool {
+// IsTransientError reports whether err is a transient API failure (server timeout,
+// throttling, or service unavailable) that is worth retrying rather than treating
+// as a permanent failure.
+func IsTransientError(err error) bool {
 	return k8serrors.IsServerTimeout(err) || k8serrors.IsTooManyRequests(err) || k8serrors.IsServiceUnavailable(err)
 }
 
@@ -682,7 +685,7 @@ func retryWithBackoff(ctx context.Context, fn func() error) error {
 		if err == nil {
 			return true, nil
 		}
-		if isTransientError(err) {
+		if IsTransientError(err) {
 			return false, nil
 		}
 		return false, err
